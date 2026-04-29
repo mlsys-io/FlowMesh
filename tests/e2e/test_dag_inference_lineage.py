@@ -81,11 +81,7 @@ def _submit_workflow() -> str:
 
 def _fetch_jsonl(workflow_id: str, kind: str) -> list[dict]:
     result = _run(["logs", "fetch", kind, workflow_id])
-    return [
-        json.loads(line)
-        for line in result.stdout.splitlines()
-        if line.strip()
-    ]
+    return [json.loads(line) for line in result.stdout.splitlines() if line.strip()]
 
 
 def test_dag_inference_lineage_e2e(stack_up) -> None:
