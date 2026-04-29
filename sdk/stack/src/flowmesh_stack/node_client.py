@@ -1,10 +1,13 @@
 """Node direct API client."""
 
+import logging
 import os
 from typing import Any
 
 import httpx
 from flowmesh.exceptions import FlowMeshConnectionError, FlowMeshError
+
+logger = logging.getLogger(__name__)
 
 _DEFAULT_TIMEOUT = 30.0
 _WORKER_CREATE_TIMEOUT = 600.0
@@ -90,36 +93,41 @@ class NodeClient:
     def stop_worker(self, name: str, *, ignore_unreachable: bool = False) -> None:
         """Stop a running worker.
 
-        With ``ignore_unreachable=True``, return cleanly when the FlowMesh
-        server is unreachable; other errors (auth, 5xx) propagate.
+        With ``ignore_unreachable=True``, log a warning and return cleanly
+        when the FlowMesh server is unreachable; other errors (auth, 5xx)
+        propagate.
         """
         try:
             self._request("POST", f"/api/v1/stack/workers/{name}/stop")
-        except FlowMeshConnectionError:
+        except FlowMeshConnectionError as exc:
             if not ignore_unreachable:
                 raise
+            logger.warning(
+                "stop_worker(%s): server unreachable; skipping. %s", name, exc
+            )
 
     def destroy_worker(self, name: str, *, ignore_unreachable: bool = False) -> None:
         """Destroy a single worker, removing its container.
 
-        With ``ignore_unreachable=True``, return cleanly when the FlowMesh
-        server is unreachable; other errors (auth, 5xx) propagate.
+        With ``ignore_unreachable=True``, log a warning and return cleanly
+        when the FlowMesh server is unreachable; other errors (auth, 5xx)
+        propagate.
         """
         try:
             self._request("DELETE", f"/api/v1/stack/workers/{name}")
-        except FlowMeshConnectionError:
+        except FlowMeshConnectionError as exc:
             if not ignore_unreachable:
                 raise
+            logger.warning(
+                "destroy_worker(%s): server unreachable; skipping. %s", name, exc
+            )
 
     def destroy_all_workers(self, *, ignore_unreachable: bool = False) -> None:
         """Destroy all workers managed by this node.
 
-        With ``ignore_unreachable=True``, return cleanly when the FlowMesh
-        server is unreachable (the connection is refused or times out).
-        Useful for teardown flows that need to tolerate a server that
-        never came up — there are no workers to destroy in that case
-        anyway. Other errors (auth, 5xx) still propagate so genuine
-        misconfiguration stays loud.
+        With ``ignore_unreachable=True``, log a warning and return cleanly
+        when the FlowMesh server is unreachable; other errors (auth, 5xx)
+        propagate.
         """
         try:
             self._request(
@@ -127,9 +135,10 @@ class NodeClient:
                 "/api/v1/stack/workers",
                 headers={"Content-Type": "application/json"},
             )
-        except FlowMeshConnectionError:
+        except FlowMeshConnectionError as exc:
             if not ignore_unreachable:
                 raise
+            logger.warning("destroy_all_workers: server unreachable; skipping. %s", exc)
 
     def worker_names(self) -> list[str]:
         """Return a list of all worker names."""
