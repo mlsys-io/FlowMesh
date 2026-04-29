@@ -412,9 +412,11 @@ STACK_ENV_SCHEMA = EnvSchema(
                 EnvVar("WORKER_CACHE_DIR", var_type=EnvVarType.DIR_PATH),
                 EnvVar(
                     "WORKER_DATA_TTL_SEC",
-                    "86400",
+                    "600",
                     description=(
-                        "TTL for cross-task data payloads in Redis (seconds). "
+                        "Redis cache TTL (seconds) for cross-task payloads. "
+                        "Redis is a hot-path cache; the durable copy is the "
+                        "result the producing task uploaded to the server. "
                         "0 disables expiry."
                     ),
                     var_type=EnvVarType.INT,

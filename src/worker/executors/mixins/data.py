@@ -71,7 +71,9 @@ class InferenceEntry:
     tables: list[pd.DataFrame]
 
 
-_DEFAULT_DATA_TTL_SEC = 24 * 60 * 60
+_DEFAULT_DATA_TTL_SEC = (
+    10 * 60
+)  # 10 min — Redis is a hot-path cache, not the durable store.
 _DEFAULT_WORKER_CACHE_DIR = Path(tempfile.gettempdir()) / "flowmesh_worker_cache"
 
 
@@ -205,31 +207,110 @@ class DataMixin:
     # ------------------------------------------------------------------ #
     # Redis-backed cross-task data transport                             #
     # ------------------------------------------------------------------ #
-    def _get_redis(self) -> redis.Redis:
-        if self._redis_client is None:
-            if not self._redis_url:
-                raise ExecutionError(
-                    "REDIS_CONTROL_URL is required for cross-task data flow"
-                )
-            url = self._redis_url
-            if (os.getenv("REDIS_ACL_ENABLED") or "").strip() in ("1", "true", "True"):
-                username = os.getenv("REDIS_USERNAME") or "default"
-                password = os.getenv("REDIS_PASSWORD") or ""
-                parsed = urlparse(url)
-                if not parsed.username and not parsed.password and password:
-                    host = parsed.hostname or ""
-                    if parsed.port:
-                        host = f"{host}:{parsed.port}"
-                    parsed = parsed._replace(netloc=f"{username}:{password}@{host}")
-                    url = urlunparse(parsed)
-            kwargs: dict[str, Any] = {"decode_responses": True}
-            tls_ca = os.getenv("REDIS_TLS_CA_FILE")
-            if tls_ca:
-                kwargs["connection_class"] = redis.connection.SSLConnection
-                kwargs["ssl_cert_reqs"] = "required"
-                kwargs["ssl_ca_certs"] = tls_ca
-            self._redis_client = redis.Redis.from_url(url, **kwargs)
+    def _get_redis(self) -> redis.Redis | None:
+        """Return the Redis client, or None if Redis is unavailable.
+
+        Redis is a hot-path cache for cross-task payloads, not the
+        authoritative store. Callers must tolerate `None` (Redis not
+        configured) and `RedisError` at use-time (treat as cache miss).
+        """
+        if self._redis_client is not None:
+            return self._redis_client
+        if not self._redis_url:
+            return None
+        url = self._redis_url
+        if (os.getenv("REDIS_ACL_ENABLED") or "").strip() in ("1", "true", "True"):
+            username = os.getenv("REDIS_USERNAME") or "default"
+            password = os.getenv("REDIS_PASSWORD") or ""
+            parsed = urlparse(url)
+            if not parsed.username and not parsed.password and password:
+                host = parsed.hostname or ""
+                if parsed.port:
+                    host = f"{host}:{parsed.port}"
+                parsed = parsed._replace(netloc=f"{username}:{password}@{host}")
+                url = urlunparse(parsed)
+        kwargs: dict[str, Any] = {"decode_responses": True}
+        tls_ca = os.getenv("REDIS_TLS_CA_FILE")
+        if tls_ca:
+            kwargs["connection_class"] = redis.connection.SSLConnection
+            kwargs["ssl_cert_reqs"] = "required"
+            kwargs["ssl_ca_certs"] = tls_ca
+        self._redis_client = redis.Redis.from_url(url, **kwargs)
         return self._redis_client
+
+    def _fetch_from_redis(self, data_id: str) -> Any | None:
+        """Best-effort Redis cache lookup. Returns None on miss or any error."""
+        client = self._get_redis()
+        if client is None:
+            return None
+        try:
+            raw = cast(str | bytes | None, client.get(data_key(data_id)))
+        except redis.RedisError as exc:
+            logger.warning("Redis GET %s failed; falling back: %s", data_id, exc)
+            return None
+        if raw is None:
+            return None
+        try:
+            deduped = json.loads(raw)
+            return restore_json(deduped) if isinstance(deduped, dict) else deduped
+        except (json.JSONDecodeError, KeyError) as exc:
+            logger.warning(
+                "Redis payload for %s is malformed; ignoring: %s", data_id, exc
+            )
+            return None
+
+    def _fetch_from_server(self, data_id: str) -> Any | None:
+        """Durable fallback: GET /api/v1/results/{task_id} from the server.
+
+        Returns None on 404; raises ExecutionError on transport / 5xx.
+        """
+        base_url = (os.getenv("FLOWMESH_BASE_URL") or "").rstrip("/")
+        if not base_url:
+            return None
+        url = f"{base_url}/api/v1/results/{data_id}"
+        headers: dict[str, str] = {}
+        api_key = os.getenv("FLOWMESH_API_KEY") or ""
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+        try:
+            response = requests.get(url, headers=headers, timeout=30)
+        except requests.RequestException as exc:
+            raise ExecutionError(
+                f"Failed to fetch upstream result {data_id} from server: {exc}"
+            ) from exc
+        if response.status_code == 404:
+            return None
+        if response.status_code >= 400:
+            raise ExecutionError(
+                f"Server returned {response.status_code} for result {data_id}: "
+                f"{response.text[:200]}"
+            )
+        try:
+            return response.json()
+        except ValueError as exc:
+            raise ExecutionError(
+                f"Server returned non-JSON for result {data_id}: {exc}"
+            ) from exc
+
+    def _publish_to_redis(self, data_id: str, payload: str) -> bool:
+        """Best-effort Redis publish. Returns True on success, False otherwise."""
+        client = self._get_redis()
+        if client is None:
+            return False
+        try:
+            if self._data_ttl_sec > 0:
+                client.set(data_key(data_id), payload, ex=self._data_ttl_sec)
+            else:
+                client.set(data_key(data_id), payload)
+        except redis.RedisError as exc:
+            logger.warning(
+                "Failed to publish %s to Redis cache (server upload remains "
+                "the source of truth): %s",
+                data_id,
+                exc,
+            )
+            return False
+        return True
 
     @staticmethod
     def _user_id(governance_spec: dict[str, Any] | None) -> str:
@@ -255,12 +336,17 @@ class DataMixin:
                 json.dump(payload, fh, ensure_ascii=False, default=str)
 
     def _fetch_data(
-        self, data_id: str, governance_spec: dict[str, Any] | None
+        self,
+        data_id: str,
+        governance_spec: dict[str, Any] | None,  # noqa: ARG002
     ) -> dict[str, Any]:
-        self._log_event(
-            data_id=data_id,
-            event_type="read request initiated",
-        )
+        """Resolve an upstream payload. Cache → Redis → server, in that order.
+
+        Redis is a hot-path optimization with a short TTL. The durable copy
+        is the result the producing task uploaded to the server; missing
+        Redis keys are recoverable, missing server results are fatal.
+        """
+        self._log_event(data_id=data_id, event_type="read request initiated")
         cached = self._read_cache(data_id)
         if cached is not None:
             self._log_event(
@@ -270,28 +356,21 @@ class DataMixin:
             )
             return cached
 
-        try:
-            client = self._get_redis()
-            raw = cast(str | bytes | None, client.get(data_key(data_id)))
-        except redis.RedisError as exc:
+        payload = self._fetch_from_redis(data_id)
+        source = "redis"
+        if payload is None:
+            payload = self._fetch_from_server(data_id)
+            source = "server"
+        if payload is None:
             raise ExecutionError(
-                f"Error fetching upstream result {data_id}: {exc}"
-            ) from exc
-        if raw is None:
-            raise ExecutionError(
-                f"Upstream data {data_id} not found in Redis "
-                f"(key={data_key(data_id)})"
+                f"Upstream data {data_id} not found in Redis cache or "
+                f"server results (key={data_key(data_id)})"
             )
-        self._log_event(data_id=data_id, event_type="read response transfer")
-        try:
-            deduped = json.loads(raw)
-            payload = restore_json(deduped) if isinstance(deduped, dict) else deduped
-        except (json.JSONDecodeError, KeyError) as exc:
-            raise ExecutionError(
-                f"Error decoding upstream result {data_id}: {exc}"
-            ) from exc
-        self._log_event(data_id=data_id, event_type="read response decoding")
-
+        self._log_event(
+            data_id=data_id,
+            event_type="read response transfer",
+            event_data=f"source={source}",
+        )
         self._write_cache(data_id, payload)
         self._log_event(data_id=data_id, event_type="read response cache write")
         return payload
@@ -313,19 +392,13 @@ class DataMixin:
         except (TypeError, ValueError) as exc:
             raise ExecutionError(f"Failed to serialize data {data_id}: {exc}") from exc
 
-        try:
-            client = self._get_redis()
-            if self._data_ttl_sec > 0:
-                client.set(data_key(data_id), payload, ex=self._data_ttl_sec)
-            else:
-                client.set(data_key(data_id), payload)
-        except redis.RedisError as exc:
-            raise ExecutionError(
-                f"Failed to write data {data_id} to Redis: {exc}"
-            ) from exc
-
+        published = self._publish_to_redis(data_id, payload)
         self._write_cache(data_id, data)
-        self._log_event(data_id=data_id, event_type="write request transfer")
+        self._log_event(
+            data_id=data_id,
+            event_type="write request transfer",
+            event_data=f"redis_cache={'hit' if published else 'miss'}",
+        )
         self._log_event(data_id=data_id, event_type="dump to storage")
 
         # Asset row — single source inherits the source's asset_guid (let the
@@ -342,10 +415,11 @@ class DataMixin:
         if source_data_ids:
             self._record_lineage(data_id=data_id, source_data_ids=source_data_ids)
         logger.info(
-            "Wrote data %s to Redis (size: %d bytes, sources: %d)",
+            "Wrote data %s (size: %d bytes, sources: %d, redis_cache=%s)",
             data_id,
             len(payload.encode("utf-8")),
             len(source_data_ids),
+            "hit" if published else "miss",
         )
 
     def _load_image_from_artifact(self, source: str) -> Image.Image:

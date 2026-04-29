@@ -162,12 +162,69 @@ def test_dump_to_governance_with_merged_children(tmp_path: Path, monkeypatch) ->
     }
 
 
-def test_fetch_data_missing_key_raises(tmp_path: Path, monkeypatch) -> None:
+def test_fetch_data_falls_back_to_server_on_redis_miss(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Redis is a cache; the durable copy lives on the server."""
     monkeypatch.setenv("WORKER_CACHE_DIR", str(tmp_path / "wc"))
+    monkeypatch.setenv("FLOWMESH_BASE_URL", "http://server.test")
     fake = fakeredis.FakeRedis(decode_responses=True)
     mixin = _Mixin(fake)
     mixin._init_task_lineage("tsk-down", tmp_path / "task-down")
 
+    server_payload = {"items": [{"output": "from-server"}], "ok": True}
+    monkeypatch.setattr(
+        mixin,
+        "_fetch_from_server",
+        lambda data_id: server_payload if data_id == "tsk-missing-in-redis" else None,
+    )
+
+    fetched = mixin._fetch_data(
+        "tsk-missing-in-redis", governance_spec={"user_id": "alice"}
+    )
+    assert fetched == server_payload
+
+    events = _read_jsonl(tmp_path / "task-down" / "artifacts" / "logs" / "events.jsonl")
+    assert any(
+        row["event_type"] == "read response transfer"
+        and "source=server" in str(row.get("event_data", ""))
+        for row in events
+    )
+
+
+def test_fetch_data_missing_in_redis_and_server_raises(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setenv("WORKER_CACHE_DIR", str(tmp_path / "wc"))
+    fake = fakeredis.FakeRedis(decode_responses=True)
+    mixin = _Mixin(fake)
+    mixin._init_task_lineage("tsk-down", tmp_path / "task-down")
+    monkeypatch.setattr(mixin, "_fetch_from_server", lambda data_id: None)
+
     with pytest.raises(Exception) as excinfo:
         mixin._fetch_data("tsk-missing", governance_spec={"user_id": "alice"})
     assert "tsk-missing" in str(excinfo.value)
+
+
+def test_write_data_tolerates_redis_failure(tmp_path: Path, monkeypatch) -> None:
+    """Server upload is the source of truth; Redis is best-effort."""
+    monkeypatch.setenv("WORKER_CACHE_DIR", str(tmp_path / "wc"))
+
+    class _BrokenRedis:
+        def set(self, *_a, **_kw):  # noqa: ANN001
+            import redis as _redis
+
+            raise _redis.RedisError("connection lost")
+
+    mixin = _Mixin(_BrokenRedis())  # type: ignore[arg-type]
+    mixin._init_task_lineage("tsk-up", tmp_path / "task-up")
+
+    # Should not raise — write proceeds even though Redis publish failed.
+    mixin._write_data(
+        data_id="tsk-up",
+        data={"items": [{"output": "ok"}]},
+        source_data_ids=[],
+        governance_spec={"user_id": "alice"},
+    )
+    assets = _read_jsonl(tmp_path / "task-up" / "artifacts" / "logs" / "assets.jsonl")
+    assert assets and assets[0]["data_id"] == "tsk-up"
