@@ -6,6 +6,7 @@ from typing import Any
 
 import fakeredis
 import pytest
+
 from worker.executors.mixins.data import DataMixin
 
 
@@ -44,9 +45,7 @@ def test_record_asset_and_lineage(tmp_path: Path, monkeypatch) -> None:
     mixin = _Mixin(fake)
     mixin._init_task_lineage("tsk-1", tmp_path / "task")
 
-    mixin._record_asset(
-        data_id="tsk-1", asset_guid="g-1", version=1, user_id="alice"
-    )
+    mixin._record_asset(data_id="tsk-1", asset_guid="g-1", version=1, user_id="alice")
     mixin._record_lineage("tsk-1", ["upstream-a", "upstream-b"])
 
     base = tmp_path / "task" / "artifacts" / "logs"
@@ -108,18 +107,14 @@ def test_cache_hit_avoids_redis(tmp_path: Path, monkeypatch) -> None:
 
     fetched = reader._fetch_data("tsk-up", governance_spec={"user_id": "alice"})
     assert fetched == payload
-    events = _read_jsonl(
-        tmp_path / "task-down" / "artifacts" / "logs" / "events.jsonl"
-    )
+    events = _read_jsonl(tmp_path / "task-down" / "artifacts" / "logs" / "events.jsonl")
     assert any(
         row["event_type"] == "read cache hit" and row["data_id"] == "tsk-up"
         for row in events
     )
 
 
-def test_dump_to_governance_with_merged_children(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_dump_to_governance_with_merged_children(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("WORKER_CACHE_DIR", str(tmp_path / "wc"))
     fake = fakeredis.FakeRedis(decode_responses=True)
     mixin = _Mixin(fake)
