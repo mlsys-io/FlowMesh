@@ -35,12 +35,13 @@ def test_destroy_all_workers_raises_connection_error_by_default() -> None:
         client.destroy_all_workers()
 
 
-def test_destroy_all_workers_swallows_connection_error_when_ignored(
+def test_destroy_all_workers_returns_false_and_warns_when_ignored(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     client = _client_against_unreachable()
     with caplog.at_level(logging.WARNING, logger="flowmesh_stack.node_client"):
-        client.destroy_all_workers(ignore_unreachable=True)
+        result = client.destroy_all_workers(ignore_unreachable=True)
+    assert result is False
     assert any("destroy_all_workers" in r.message for r in caplog.records)
 
 
@@ -50,12 +51,13 @@ def test_destroy_worker_raises_connection_error_by_default() -> None:
         client.destroy_worker("worker-1")
 
 
-def test_destroy_worker_swallows_connection_error_when_ignored(
+def test_destroy_worker_returns_false_and_warns_when_ignored(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     client = _client_against_unreachable()
     with caplog.at_level(logging.WARNING, logger="flowmesh_stack.node_client"):
-        client.destroy_worker("worker-1", ignore_unreachable=True)
+        result = client.destroy_worker("worker-1", ignore_unreachable=True)
+    assert result is False
     assert any("destroy_worker(worker-1)" in r.message for r in caplog.records)
 
 
@@ -65,10 +67,11 @@ def test_stop_worker_raises_connection_error_by_default() -> None:
         client.stop_worker("worker-1")
 
 
-def test_stop_worker_swallows_connection_error_when_ignored(
+def test_stop_worker_returns_false_and_warns_when_ignored(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     client = _client_against_unreachable()
     with caplog.at_level(logging.WARNING, logger="flowmesh_stack.node_client"):
-        client.stop_worker("worker-1", ignore_unreachable=True)
+        result = client.stop_worker("worker-1", ignore_unreachable=True)
+    assert result is False
     assert any("stop_worker(worker-1)" in r.message for r in caplog.records)

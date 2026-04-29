@@ -90,12 +90,11 @@ class NodeClient:
         """Start a stopped worker."""
         self._request("POST", f"/api/v1/stack/workers/{name}/start")
 
-    def stop_worker(self, name: str, *, ignore_unreachable: bool = False) -> None:
+    def stop_worker(self, name: str, *, ignore_unreachable: bool = False) -> bool:
         """Stop a running worker.
 
-        With ``ignore_unreachable=True``, log a warning and return cleanly
-        when the FlowMesh server is unreachable; other errors (auth, 5xx)
-        propagate.
+        Returns ``True`` on success, ``False`` when ``ignore_unreachable=True``
+        and the FlowMesh server was unreachable. Other errors propagate.
         """
         try:
             self._request("POST", f"/api/v1/stack/workers/{name}/stop")
@@ -105,13 +104,14 @@ class NodeClient:
             logger.warning(
                 "stop_worker(%s): server unreachable; skipping. %s", name, exc
             )
+            return False
+        return True
 
-    def destroy_worker(self, name: str, *, ignore_unreachable: bool = False) -> None:
+    def destroy_worker(self, name: str, *, ignore_unreachable: bool = False) -> bool:
         """Destroy a single worker, removing its container.
 
-        With ``ignore_unreachable=True``, log a warning and return cleanly
-        when the FlowMesh server is unreachable; other errors (auth, 5xx)
-        propagate.
+        Returns ``True`` on success, ``False`` when ``ignore_unreachable=True``
+        and the FlowMesh server was unreachable. Other errors propagate.
         """
         try:
             self._request("DELETE", f"/api/v1/stack/workers/{name}")
@@ -121,13 +121,14 @@ class NodeClient:
             logger.warning(
                 "destroy_worker(%s): server unreachable; skipping. %s", name, exc
             )
+            return False
+        return True
 
-    def destroy_all_workers(self, *, ignore_unreachable: bool = False) -> None:
+    def destroy_all_workers(self, *, ignore_unreachable: bool = False) -> bool:
         """Destroy all workers managed by this node.
 
-        With ``ignore_unreachable=True``, log a warning and return cleanly
-        when the FlowMesh server is unreachable; other errors (auth, 5xx)
-        propagate.
+        Returns ``True`` on success, ``False`` when ``ignore_unreachable=True``
+        and the FlowMesh server was unreachable. Other errors propagate.
         """
         try:
             self._request(
@@ -139,6 +140,8 @@ class NodeClient:
             if not ignore_unreachable:
                 raise
             logger.warning("destroy_all_workers: server unreachable; skipping. %s", exc)
+            return False
+        return True
 
     def worker_names(self) -> list[str]:
         """Return a list of all worker names."""
