@@ -37,3 +37,25 @@ def test_destroy_all_workers_raises_connection_error_by_default() -> None:
 def test_destroy_all_workers_swallows_connection_error_when_ignored() -> None:
     client = _client_against_unreachable()
     client.destroy_all_workers(ignore_unreachable=True)
+
+
+def test_destroy_worker_raises_connection_error_by_default() -> None:
+    client = _client_against_unreachable()
+    with pytest.raises(FlowMeshConnectionError):
+        client.destroy_worker("worker-1")
+
+
+def test_destroy_worker_swallows_connection_error_when_ignored() -> None:
+    client = _client_against_unreachable()
+    client.destroy_worker("worker-1", ignore_unreachable=True)
+
+
+def test_stop_worker_raises_connection_error_by_default() -> None:
+    client = _client_against_unreachable()
+    with pytest.raises(FlowMeshConnectionError):
+        client.stop_worker("worker-1")
+
+
+def test_stop_worker_swallows_connection_error_when_ignored() -> None:
+    client = _client_against_unreachable()
+    client.stop_worker("worker-1", ignore_unreachable=True)

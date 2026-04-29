@@ -228,11 +228,8 @@ def up(
 
 def _drain_workers(env_file: Path) -> None:
     """Destroy all dynamically spawned workers before stopping the server."""
-    try:
-        client = stack_node_client(env_file, base_url=None, token=None)
-        client.destroy_all_workers()
-    except Exception as exc:
-        logging.warning(f"Unable to drain workers; continuing shutdown. {exc}")
+    client = stack_node_client(env_file, base_url=None, token=None)
+    client.destroy_all_workers(ignore_unreachable=True)
 
 
 @app.command()
