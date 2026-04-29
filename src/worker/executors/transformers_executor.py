@@ -392,6 +392,7 @@ class HFTransformersExecutor(InferenceMixin, Executor):
                 f"{spec.__class__.__name__}"
             )
         task_id = task.task_id
+        self._init_task_lineage(task_id, out_dir)
         self._ensure_model(spec)
 
         deps = self._extract_source_data_ids(spec)
@@ -473,8 +474,6 @@ class HFTransformersExecutor(InferenceMixin, Executor):
             if image_group_sizes is not None:
                 result["image_group_sizes"] = image_group_sizes
 
-            maybe_upload_artifacts(task, out_dir, logger=logger)
-
             if governance_spec := spec.governance:
                 self._dump_to_governance(
                     governance_spec=governance_spec,
@@ -482,6 +481,8 @@ class HFTransformersExecutor(InferenceMixin, Executor):
                     result=result,
                     dependencies_by_task=dependencies_by_task,
                 )
+
+            maybe_upload_artifacts(task, out_dir, logger=logger)
 
             return result
 
@@ -591,9 +592,7 @@ class HFTransformersExecutor(InferenceMixin, Executor):
 
         if isinstance(spec, InferenceSpecStrict):
             self._maybe_export_jsonl(spec, task_id, result, out_dir)
-        maybe_upload_artifacts(task, out_dir, logger=logger)
 
-        # Dump execution result to GovernanceRelay
         if governance_spec := spec.governance:
             self._dump_to_governance(
                 governance_spec=governance_spec,
@@ -601,5 +600,7 @@ class HFTransformersExecutor(InferenceMixin, Executor):
                 result=result,
                 dependencies_by_task=dependencies_by_task,
             )
+
+        maybe_upload_artifacts(task, out_dir, logger=logger)
 
         return result

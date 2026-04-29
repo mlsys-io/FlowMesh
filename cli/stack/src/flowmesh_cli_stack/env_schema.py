@@ -409,6 +409,17 @@ STACK_ENV_SCHEMA = EnvSchema(
                 ),
                 EnvVar("WORKER_TAGS", var_type=EnvVarType.CSV),
                 EnvVar("WORKER_HB_DIR", var_type=EnvVarType.DIR_PATH),
+                EnvVar("WORKER_CACHE_DIR", var_type=EnvVarType.DIR_PATH),
+                EnvVar(
+                    "WORKER_DATA_TTL_SEC",
+                    "86400",
+                    description=(
+                        "TTL for cross-task data payloads in Redis (seconds). "
+                        "0 disables expiry."
+                    ),
+                    var_type=EnvVarType.INT,
+                    min_value=0,
+                ),
                 EnvVar(
                     "FLOWMESH_BASE_URL",
                     "http://localhost:8000",

@@ -244,6 +244,7 @@ class DiffusersExecutor(DataMixin, Executor):
         configure_hf_library_logging()
         spec = self.require_spec(task, DiffusionSpecStrict)
         task_id = task.task_id.strip()
+        self._init_task_lineage(task_id, out_dir)
         self._ensure_pipeline(spec)
         assert self._pipe is not None
 
@@ -333,8 +334,6 @@ class DiffusersExecutor(DataMixin, Executor):
             "images": generated_images,
         }
 
-        maybe_upload_artifacts(task, out_dir, logger=logger)
-
         if governance_spec := spec.governance:
             self._dump_to_governance(
                 governance_spec=governance_spec,
@@ -342,6 +341,8 @@ class DiffusersExecutor(DataMixin, Executor):
                 result=response,
                 dependencies_by_task=dependencies_by_task,
             )
+
+        maybe_upload_artifacts(task, out_dir, logger=logger)
 
         return response
 
