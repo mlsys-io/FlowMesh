@@ -9,7 +9,7 @@ from .analyzer import (
     ProfileSummary,
     analyze,
 )
-from .render import render_critical_path, render_e2e, render_mermaid
+from .render import to_mermaid
 
 __all__ = [
     "ActiveWaitBreakdown",
@@ -21,7 +21,5 @@ __all__ = [
     "NetworkSummary",
     "ProfileSummary",
     "analyze",
-    "render_critical_path",
-    "render_e2e",
-    "render_mermaid",
+    "to_mermaid",
 ]
