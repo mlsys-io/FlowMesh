@@ -1,21 +1,27 @@
 from .analyzer import (
+    ActiveWaitBreakdown,
     AssetSummary,
-    DataIdSummary,
+    CriticalPathSummary,
+    E2EBreakdown,
+    HardwareSummary,
     LineageEdge,
-    PhaseTiming,
+    NetworkSummary,
     ProfileSummary,
     analyze,
 )
-from .render import render_mermaid, render_phase_timings, render_table
+from .render import render_critical_path, render_e2e, render_mermaid
 
 __all__ = [
+    "ActiveWaitBreakdown",
     "AssetSummary",
-    "DataIdSummary",
+    "CriticalPathSummary",
+    "E2EBreakdown",
+    "HardwareSummary",
     "LineageEdge",
-    "PhaseTiming",
+    "NetworkSummary",
     "ProfileSummary",
     "analyze",
+    "render_critical_path",
+    "render_e2e",
     "render_mermaid",
-    "render_phase_timings",
-    "render_table",
 ]

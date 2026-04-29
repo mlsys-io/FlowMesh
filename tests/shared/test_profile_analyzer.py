@@ -1,27 +1,77 @@
-from shared.profile import analyze, render_mermaid, render_table
+from shared.profile import analyze, render_critical_path, render_e2e, render_mermaid
 
 
 def _events() -> list[dict]:
+    # Two parallel branches (same batch_id="bat-1") + one downstream synthesis.
     return [
+        # Branch tsk-1
         {
             "timestamp": "2026-04-29T00:00:00+00:00",
-            "event_type": "write request transfer",
+            "event_type": "queuing for execution",
             "data_id": "tsk-1",
+            "batch_id": "bat-1",
         },
         {
             "timestamp": "2026-04-29T00:00:01+00:00",
-            "event_type": "read request initiated",
+            "event_type": "model initialization",
             "data_id": "tsk-1",
+            "batch_id": "bat-1",
         },
         {
             "timestamp": "2026-04-29T00:00:02+00:00",
-            "event_type": "read cache hit",
+            "event_type": "write request transfer",
             "data_id": "tsk-1",
+            "batch_id": "bat-1",
+        },
+        {
+            "timestamp": "2026-04-29T00:00:02+00:00",
+            "event_type": "dump to storage",
+            "data_id": "tsk-1",
+            "batch_id": "bat-1",
+        },
+        # Branch tsk-2 (parallel)
+        {
+            "timestamp": "2026-04-29T00:00:00+00:00",
+            "event_type": "queuing for execution",
+            "data_id": "tsk-2",
+            "batch_id": "bat-1",
         },
         {
             "timestamp": "2026-04-29T00:00:03+00:00",
+            "event_type": "model initialization",
+            "data_id": "tsk-2",
+            "batch_id": "bat-1",
+        },
+        {
+            "timestamp": "2026-04-29T00:00:04+00:00",
             "event_type": "write request transfer",
             "data_id": "tsk-2",
+            "batch_id": "bat-1",
+        },
+        {
+            "timestamp": "2026-04-29T00:00:04+00:00",
+            "event_type": "dump to storage",
+            "data_id": "tsk-2",
+            "batch_id": "bat-1",
+        },
+        # Synthesis tsk-3 (depends on tsk-1, tsk-2)
+        {
+            "timestamp": "2026-04-29T00:00:05+00:00",
+            "event_type": "read response transfer",
+            "data_id": "tsk-3",
+            "batch_id": "bat-3",
+        },
+        {
+            "timestamp": "2026-04-29T00:00:06+00:00",
+            "event_type": "write request transfer",
+            "data_id": "tsk-3",
+            "batch_id": "bat-3",
+        },
+        {
+            "timestamp": "2026-04-29T00:00:06+00:00",
+            "event_type": "dump to storage",
+            "data_id": "tsk-3",
+            "batch_id": "bat-3",
         },
     ]
 
@@ -33,14 +83,21 @@ def _assets() -> list[dict]:
             "asset_guid": "g-1",
             "version": 1,
             "user_id": "alice",
-            "created_at": "2026-04-29T00:00:00+00:00",
+            "created_at": "2026-04-29T00:00:02+00:00",
         },
         {
             "data_id": "tsk-2",
-            "asset_guid": "g-1",
-            "version": 2,
+            "asset_guid": "g-2",
+            "version": 1,
             "user_id": "alice",
-            "created_at": "2026-04-29T00:00:03+00:00",
+            "created_at": "2026-04-29T00:00:04+00:00",
+        },
+        {
+            "data_id": "tsk-3",
+            "asset_guid": "g-3",
+            "version": 1,
+            "user_id": "alice",
+            "created_at": "2026-04-29T00:00:06+00:00",
         },
     ]
 
@@ -48,41 +105,77 @@ def _assets() -> list[dict]:
 def _lineage() -> list[dict]:
     return [
         {
-            "data_id": "tsk-2",
+            "data_id": "tsk-3",
             "source_data_id": "tsk-1",
-            "created_at": "2026-04-29T00:00:03+00:00",
-        }
+            "created_at": "2026-04-29T00:00:06+00:00",
+        },
+        {
+            "data_id": "tsk-3",
+            "source_data_id": "tsk-2",
+            "created_at": "2026-04-29T00:00:06+00:00",
+        },
     ]
 
 
-def test_analyze_counts_events() -> None:
+def test_e2e_breakdown_workflow_duration_and_network_union() -> None:
     summary = analyze(_events(), _assets(), _lineage())
-    assert summary.total_events == 4
-    assert summary.total_assets == 1  # one guid spans two versions
-    assert summary.total_lineage_edges == 1
-    assert summary.cache_hit_count == 1
-    assert summary.read_count == 2
-    assert summary.write_count == 2
+    e2e = summary.e2e_breakdown
+    # Span: 00:00:00 → 00:00:06 = 6 sec.
+    assert e2e.workflow_duration_seconds == 6.0
+    # Network events: 3 transfers (write, write, read, write). Their elapsed
+    # intervals overlap with each other across data_ids, but merging them
+    # gives a non-zero, deterministic active span.
+    assert e2e.total_network_seconds > 0
 
 
-def test_analyze_per_data_id() -> None:
+def test_e2e_hardware_summary_lists_event_types() -> None:
     summary = analyze(_events(), _assets(), _lineage())
-    by_id = {entry.data_id: entry for entry in summary.data_ids}
-    assert by_id["tsk-1"].read_count == 2
-    assert by_id["tsk-1"].cache_hit_count == 1
-    assert by_id["tsk-1"].asset_guid == "g-1"
-    assert by_id["tsk-2"].source_data_ids == ["tsk-1"]
-    assert by_id["tsk-2"].version == 2
-    assert by_id["tsk-2"].duration_sec == 0.0
+    hw = summary.e2e_breakdown.hardware_summary
+    types = set(hw.event_type)
+    # `dump to storage` is hardware-side (not in NETWORK_EVENT_TYPES).
+    assert "dump to storage" in types
+    assert "model initialization" in types
+    # Network event_types must NOT appear in hardware.
+    assert "write request transfer" not in types
+    assert "read response transfer" not in types
 
 
-def test_analyze_asset_versions() -> None:
+def test_e2e_network_summary_includes_transfers() -> None:
     summary = analyze(_events(), _assets(), _lineage())
-    asset = summary.assets[0]
-    assert asset.asset_guid == "g-1"
-    assert asset.versions == 2
-    assert asset.latest_version == 2
-    assert asset.latest_data_id == "tsk-2"
+    net = summary.e2e_breakdown.network_summary
+    types = set(net.event_type)
+    assert "write request transfer" in types
+    assert "read response transfer" in types
+
+
+def test_critical_path_picks_synthesis_chain() -> None:
+    summary = analyze(_events(), _assets(), _lineage())
+    cp = summary.critical_path
+    assert cp is not None
+    # Sink is tsk-3 (latest finish at T6). It depends on both branches; the
+    # later-finishing one is tsk-2 (T4). Path: tsk-2 → tsk-3.
+    assert cp.path == ["tsk-2", "tsk-3"]
+    # active_seconds for tsk-3: from first event at T5 to dump at T6 = 1s.
+    awb = cp.active_wait_breakdown
+    assert awb.data_id == ["tsk-2", "tsk-3"]
+    assert awb.active_seconds[1] == 1.0
+    # wait_seconds for tsk-3 between tsk-2 finish (T4) and tsk-3 start (T5).
+    assert awb.wait_seconds[1] == 1.0
+
+
+def test_render_e2e_smoke() -> None:
+    summary = analyze(_events(), _assets(), _lineage())
+    out = render_e2e(summary)
+    assert "Hardware time" in out
+    assert "Network time" in out
+    assert "workflow_duration" in out
+
+
+def test_render_critical_path_smoke() -> None:
+    summary = analyze(_events(), _assets(), _lineage())
+    out = render_critical_path(summary)
+    assert "critical_path_seconds" in out
+    assert "tsk-3" in out
 
 
 def test_render_mermaid_includes_edges() -> None:
@@ -90,75 +183,13 @@ def test_render_mermaid_includes_edges() -> None:
     rendered = render_mermaid(summary)
     assert rendered.startswith("graph TD")
     assert "tsk_1" in rendered
-    assert "tsk_2" in rendered
-    assert "tsk_1 --> tsk_2" in rendered
+    assert "tsk_3" in rendered
+    assert "-->" in rendered
 
 
-def test_render_table_smoke() -> None:
-    summary = analyze(_events(), _assets(), _lineage())
-    table = render_table(summary)
-    assert "data_id" in table
-    assert "tsk-1" in table
-    assert "tsk-2" in table
-    assert "events=4" in table
-
-
-def test_phase_timings_aggregate_across_data_ids() -> None:
-    events = [
-        {
-            "timestamp": "2026-04-29T00:00:00+00:00",
-            "event_type": "queuing",
-            "data_id": "tsk-1",
-        },
-        {
-            "timestamp": "2026-04-29T00:00:01+00:00",
-            "event_type": "model init",
-            "data_id": "tsk-1",
-        },
-        {
-            "timestamp": "2026-04-29T00:00:04+00:00",
-            "event_type": "inference",
-            "data_id": "tsk-1",
-        },
-        {
-            "timestamp": "2026-04-29T00:00:00+00:00",
-            "event_type": "queuing",
-            "data_id": "tsk-2",
-        },
-        {
-            "timestamp": "2026-04-29T00:00:03+00:00",
-            "event_type": "model init",
-            "data_id": "tsk-2",
-        },
-        {
-            "timestamp": "2026-04-29T00:00:08+00:00",
-            "event_type": "inference",
-            "data_id": "tsk-2",
-        },
-    ]
-    summary = analyze(events, [], [])
-    by_phase = {p.event_type: p for p in summary.phase_timings}
-
-    # "model init" should sum the (T1-T0) deltas from both data_ids: 1s + 3s = 4s.
-    assert by_phase["model init"].count == 2
-    assert by_phase["model init"].total_sec == 4.0
-    assert by_phase["model init"].min_sec == 1.0
-    assert by_phase["model init"].max_sec == 3.0
-    assert by_phase["model init"].avg_sec == 2.0
-
-    # "inference" sums (T2-T1) deltas: 3s + 5s = 8s.
-    assert by_phase["inference"].total_sec == 8.0
-    # Sorted descending by total — inference (8s) should come before model init.
-    assert summary.phase_timings[0].event_type == "inference"
-
-    # workflow_wall is global span: T0=00:00, last T2=00:08 → 8s.
-    assert summary.workflow_wall_sec == 8.0
-
-
-def test_analyze_handles_missing_rows() -> None:
-    # No events but has assets + lineage — should still build data_ids.
+def test_analyze_handles_empty_events() -> None:
     summary = analyze([], _assets(), _lineage())
-    assert summary.total_events == 0
-    assert summary.total_assets == 1
-    assert summary.total_lineage_edges == 1
-    assert {entry.data_id for entry in summary.data_ids} == {"tsk-1", "tsk-2"}
+    assert summary.event_count == 0
+    assert summary.data_ids == []
+    assert summary.e2e_breakdown.workflow_duration_seconds == 0.0
+    assert summary.critical_path is None
