@@ -48,15 +48,14 @@ class DataRetrievalExecutor(DataMixin, Executor):
                 f"Unsupported data_retrieval type: {retrieval_type!r}."
             )
 
-        if governance_spec := spec.governance:
-            deps = self._extract_source_data_ids(spec)
-            dependencies_by_task = {task_id: deps}
-            self._dump_to_governance(
-                governance_spec=governance_spec,
-                task_id=task_id,
-                result=result,
-                dependencies_by_task=dependencies_by_task,
-            )
+        deps = self._extract_source_data_ids(spec)
+        dependencies_by_task = {task_id: deps}
+        self._dump_to_governance(
+            governance_spec=spec.governance,
+            task_id=task_id,
+            result=result,
+            dependencies_by_task=dependencies_by_task,
+        )
 
         maybe_upload_artifacts(task, out_dir, logger=logger)
 

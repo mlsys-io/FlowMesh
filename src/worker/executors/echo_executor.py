@@ -81,11 +81,10 @@ class EchoExecutor(DataMixin, Executor):
         deps = self._extract_source_data_ids(spec)
         dependencies_by_task = {task_id: deps}
 
-        if governance_spec := spec.governance:
-            self._dump_to_governance(
-                governance_spec=governance_spec,
-                task_id=task_id,
-                result=payload,
-                dependencies_by_task=dependencies_by_task,
-            )
+        self._dump_to_governance(
+            governance_spec=spec.governance,
+            task_id=task_id,
+            result=payload,
+            dependencies_by_task=dependencies_by_task,
+        )
         return payload

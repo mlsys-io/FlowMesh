@@ -5,7 +5,13 @@ from typing import Any
 
 import typer
 from flowmesh.exceptions import FlowMeshError
-from shared.profile import ProfileSummary, render_mermaid, render_table
+
+from shared.profile import (
+    ProfileSummary,
+    render_mermaid,
+    render_phase_timings,
+    render_table,
+)
 
 from ..core import logging
 from ..core.runtime import flowmesh_client_from_config
@@ -25,7 +31,7 @@ def fetch(
         "json",
         "--format",
         "-f",
-        help="Output format: json, table, mermaid",
+        help="Output format: json, table, mermaid, phases",
         case_sensitive=False,
     ),
 ) -> None:
@@ -47,5 +53,10 @@ def fetch(
     if fmt_lower == "table":
         logging.log(render_table(_to_summary(payload)))
         return
-    logging.error(f"Unknown format '{fmt}'; expected one of: json, table, mermaid")
+    if fmt_lower == "phases":
+        logging.log(render_phase_timings(_to_summary(payload)))
+        return
+    logging.error(
+        f"Unknown format '{fmt}'; expected one of: json, table, mermaid, phases"
+    )
     raise typer.Exit(code=2)

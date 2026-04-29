@@ -474,13 +474,12 @@ class HFTransformersExecutor(InferenceMixin, Executor):
             if image_group_sizes is not None:
                 result["image_group_sizes"] = image_group_sizes
 
-            if governance_spec := spec.governance:
-                self._dump_to_governance(
-                    governance_spec=governance_spec,
-                    task_id=task_id,
-                    result=result,
-                    dependencies_by_task=dependencies_by_task,
-                )
+            self._dump_to_governance(
+                governance_spec=spec.governance,
+                task_id=task_id,
+                result=result,
+                dependencies_by_task=dependencies_by_task,
+            )
 
             maybe_upload_artifacts(task, out_dir, logger=logger)
 
@@ -593,13 +592,12 @@ class HFTransformersExecutor(InferenceMixin, Executor):
         if isinstance(spec, InferenceSpecStrict):
             self._maybe_export_jsonl(spec, task_id, result, out_dir)
 
-        if governance_spec := spec.governance:
-            self._dump_to_governance(
-                governance_spec=governance_spec,
-                task_id=task_id,
-                result=result,
-                dependencies_by_task=dependencies_by_task,
-            )
+        self._dump_to_governance(
+            governance_spec=spec.governance,
+            task_id=task_id,
+            result=result,
+            dependencies_by_task=dependencies_by_task,
+        )
 
         maybe_upload_artifacts(task, out_dir, logger=logger)
 

@@ -334,13 +334,12 @@ class DiffusersExecutor(DataMixin, Executor):
             "images": generated_images,
         }
 
-        if governance_spec := spec.governance:
-            self._dump_to_governance(
-                governance_spec=governance_spec,
-                task_id=task_id,
-                result=response,
-                dependencies_by_task=dependencies_by_task,
-            )
+        self._dump_to_governance(
+            governance_spec=spec.governance,
+            task_id=task_id,
+            result=response,
+            dependencies_by_task=dependencies_by_task,
+        )
 
         maybe_upload_artifacts(task, out_dir, logger=logger)
 

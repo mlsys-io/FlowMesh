@@ -8,6 +8,7 @@ loading and rendering.
 from collections import defaultdict
 from collections.abc import Iterable
 from datetime import datetime
+from statistics import quantiles
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict
@@ -55,6 +56,26 @@ class DataIdSummary(_ProfileBase):
     source_data_ids: list[str] = []
 
 
+class PhaseTiming(_ProfileBase):
+    """Aggregated time spent in a named phase across all data_ids.
+
+    A phase is the interval between two consecutive events for the same
+    data_id. The phase is named after the event that *ends* it — so the
+    duration from a "model pre-initialization setup" event to the next
+    "model initialization" event is recorded under phase
+    "model initialization".
+    """
+
+    event_type: str
+    count: int
+    total_sec: float
+    avg_sec: float
+    min_sec: float
+    max_sec: float
+    p50_sec: float
+    p95_sec: float
+
+
 class ProfileSummary(_ProfileBase):
     total_events: int
     total_assets: int
@@ -62,9 +83,11 @@ class ProfileSummary(_ProfileBase):
     cache_hit_count: int
     read_count: int
     write_count: int
+    workflow_wall_sec: float | None = None
     assets: list[AssetSummary]
     data_ids: list[DataIdSummary]
     lineage: list[LineageEdge]
+    phase_timings: list[PhaseTiming]
 
 
 def analyze(
@@ -122,9 +145,7 @@ def analyze(
         if not data_id:
             continue
         ts = _parse_ts(row.get("timestamp"))
-        summary = by_data_id.setdefault(
-            data_id, DataIdSummary(data_id=data_id)
-        )
+        summary = by_data_id.setdefault(data_id, DataIdSummary(data_id=data_id))
         et = str(row.get("event_type") or "")
         if "read" in et:
             summary.read_count += 1
@@ -152,9 +173,7 @@ def analyze(
             first = _parse_ts(summary.first_event_at)
             last = _parse_ts(summary.last_event_at)
             if first and last:
-                summary.duration_sec = round(
-                    (last - first).total_seconds(), 6
-                )
+                summary.duration_sec = round((last - first).total_seconds(), 6)
 
     for data_id in asset_by_data_id:
         if data_id not in by_data_id:
@@ -177,6 +196,9 @@ def analyze(
         if row.get("data_id") and row.get("source_data_id")
     ]
 
+    phase_timings = _compute_phase_timings(event_rows)
+    workflow_wall_sec = _workflow_wall_seconds(event_rows)
+
     return ProfileSummary(
         total_events=len(event_rows),
         total_assets=len(asset_summaries),
@@ -184,7 +206,72 @@ def analyze(
         cache_hit_count=cache_hit_count,
         read_count=read_count,
         write_count=write_count,
+        workflow_wall_sec=workflow_wall_sec,
         assets=asset_summaries,
         data_ids=sorted(by_data_id.values(), key=lambda s: s.data_id),
         lineage=lineage_edges,
+        phase_timings=phase_timings,
     )
+
+
+def _compute_phase_timings(events: list[dict[str, Any]]) -> list[PhaseTiming]:
+    by_data_id: dict[str, list[tuple[datetime, str]]] = defaultdict(list)
+    for row in events:
+        ts = _parse_ts(row.get("timestamp"))
+        if ts is None:
+            continue
+        data_id = str(row.get("data_id") or "")
+        event_type = str(row.get("event_type") or "")
+        if not data_id or not event_type:
+            continue
+        by_data_id[data_id].append((ts, event_type))
+
+    phase_durations: dict[str, list[float]] = defaultdict(list)
+    for items in by_data_id.values():
+        items.sort(key=lambda x: x[0])
+        for i in range(1, len(items)):
+            prev_ts = items[i - 1][0]
+            cur_ts, cur_event = items[i]
+            delta = (cur_ts - prev_ts).total_seconds()
+            if delta < 0:
+                continue
+            phase_durations[cur_event].append(delta)
+
+    timings: list[PhaseTiming] = []
+    for event_type, durs in phase_durations.items():
+        if not durs:
+            continue
+        sorted_durs = sorted(durs)
+        if len(sorted_durs) == 1:
+            p50 = p95 = sorted_durs[0]
+        else:
+            qs = quantiles(sorted_durs, n=20, method="inclusive")
+            # quantiles(n=20) returns 19 cut points; index 9 ≈ 50th, 18 ≈ 95th.
+            p50 = qs[9] if len(qs) > 9 else sorted_durs[len(sorted_durs) // 2]
+            p95 = qs[18] if len(qs) > 18 else sorted_durs[-1]
+        total = sum(durs)
+        timings.append(
+            PhaseTiming(
+                event_type=event_type,
+                count=len(durs),
+                total_sec=round(total, 6),
+                avg_sec=round(total / len(durs), 6),
+                min_sec=round(min(durs), 6),
+                max_sec=round(max(durs), 6),
+                p50_sec=round(p50, 6),
+                p95_sec=round(p95, 6),
+            )
+        )
+    timings.sort(key=lambda t: t.total_sec, reverse=True)
+    return timings
+
+
+def _workflow_wall_seconds(events: list[dict[str, Any]]) -> float | None:
+    timestamps: list[datetime] = []
+    for row in events:
+        ts = _parse_ts(row.get("timestamp"))
+        if ts is not None:
+            timestamps.append(ts)
+    if len(timestamps) < 2:
+        return None
+    return round((max(timestamps) - min(timestamps)).total_seconds(), 6)

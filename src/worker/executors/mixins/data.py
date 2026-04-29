@@ -27,7 +27,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from threading import Lock
 from typing import Any, cast
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlunparse
 
 import pandas as pd
 import redis
@@ -211,9 +211,24 @@ class DataMixin:
                 raise ExecutionError(
                     "REDIS_CONTROL_URL is required for cross-task data flow"
                 )
-            self._redis_client = redis.Redis.from_url(
-                self._redis_url, decode_responses=True
-            )
+            url = self._redis_url
+            if (os.getenv("REDIS_ACL_ENABLED") or "").strip() in ("1", "true", "True"):
+                username = os.getenv("REDIS_USERNAME") or "default"
+                password = os.getenv("REDIS_PASSWORD") or ""
+                parsed = urlparse(url)
+                if not parsed.username and not parsed.password and password:
+                    host = parsed.hostname or ""
+                    if parsed.port:
+                        host = f"{host}:{parsed.port}"
+                    parsed = parsed._replace(netloc=f"{username}:{password}@{host}")
+                    url = urlunparse(parsed)
+            kwargs: dict[str, Any] = {"decode_responses": True}
+            tls_ca = os.getenv("REDIS_TLS_CA_FILE")
+            if tls_ca:
+                kwargs["connection_class"] = redis.connection.SSLConnection
+                kwargs["ssl_cert_reqs"] = "required"
+                kwargs["ssl_ca_certs"] = tls_ca
+            self._redis_client = redis.Redis.from_url(url, **kwargs)
         return self._redis_client
 
     @staticmethod
@@ -792,6 +807,7 @@ class DataMixin:
                 list(upstream_results.keys()),
             )
             self._log_event(data_id=task_id, event_type="upstream fetch")
+            spec.upstreamResults = upstream_results
             prompts = build_prompts_from_graph_template(data, spec)
             self._log_event(
                 data_id=task_id,
@@ -808,6 +824,7 @@ class DataMixin:
                 list(upstream_results.keys()),
             )
             self._log_event(data_id=task_id, event_type="upstream fetch")
+            spec.upstreamResults = upstream_results
             df_columns_cfg = data.get("columns")
             if df_columns_cfg is None:
                 raise ExecutionError(
