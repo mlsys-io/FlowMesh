@@ -2,17 +2,31 @@
 
 The SDK leaves rendering to the caller, but exposes a few convenience
 adapters so downstream Python tools (notebooks, lumilake, ad-hoc scripts)
-don't have to reimplement them. Pandas is imported lazily so
-`flowmesh-sdk` doesn't pull it in by default.
+don't have to reimplement them.
+
+Dataframe helpers require pandas, which is not in the default
+`flowmesh-sdk` install. Install with the `dataframes` extra:
+``pip install "flowmesh-sdk[dataframes]"``.
 """
 
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from shared.profile import ProfileSummary
 from shared.profile import to_mermaid as _to_mermaid
 
-if TYPE_CHECKING:
+try:
     import pandas as pd
+
+    _PANDAS_OK = True
+except ImportError:
+    pd = None  # type: ignore[assignment]
+    _PANDAS_OK = False
+
+
+_PANDAS_HINT = (
+    "pandas is required for dataframe helpers; "
+    'install with `pip install "flowmesh-sdk[dataframes]"`'
+)
 
 
 def hardware_dataframe(
@@ -23,8 +37,8 @@ def hardware_dataframe(
     Set `on_critical_path=True` to restrict to the critical path's
     hardware breakdown. Falls back to the e2e breakdown otherwise.
     """
-    import pandas as pd
-
+    if not _PANDAS_OK:
+        raise ImportError(_PANDAS_HINT)
     hw = (
         summary.critical_path.hardware_summary
         if on_critical_path and summary.critical_path is not None
@@ -49,8 +63,8 @@ def network_dataframe(
     summary: ProfileSummary, *, on_critical_path: bool = False
 ) -> "pd.DataFrame":
     """Network-active-time table as a pandas DataFrame."""
-    import pandas as pd
-
+    if not _PANDAS_OK:
+        raise ImportError(_PANDAS_HINT)
     net = (
         summary.critical_path.network_summary
         if on_critical_path and summary.critical_path is not None
@@ -73,8 +87,8 @@ def network_dataframe(
 
 def critical_path_dataframe(summary: ProfileSummary) -> "pd.DataFrame":
     """Per-node active vs wait on the critical path."""
-    import pandas as pd
-
+    if not _PANDAS_OK:
+        raise ImportError(_PANDAS_HINT)
     if summary.critical_path is None:
         return pd.DataFrame(columns=["data_id", "active_seconds", "wait_seconds"])
     awb = summary.critical_path.active_wait_breakdown

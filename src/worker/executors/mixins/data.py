@@ -335,11 +335,7 @@ class DataMixin:
             with path.open("w", encoding="utf-8") as fh:
                 json.dump(payload, fh, ensure_ascii=False, default=str)
 
-    def _fetch_data(
-        self,
-        data_id: str,
-        governance_spec: dict[str, Any] | None,  # noqa: ARG002
-    ) -> dict[str, Any]:
+    def _fetch_data(self, data_id: str) -> dict[str, Any]:
         """Resolve an upstream payload. Cache → Redis → server, in that order.
 
         Redis is a hot-path optimization with a short TTL. The durable copy
@@ -381,7 +377,6 @@ class DataMixin:
         data: Any,
         source_data_ids: list[str],
         governance_spec: dict[str, Any] | None,
-        events: dict[str, list[dict[str, Any]]] | None = None,  # noqa: ARG002
     ) -> None:
         user_id = self._user_id(governance_spec)
         self._log_event(data_id=data_id, event_type="write request preparation")
@@ -1090,30 +1085,24 @@ class DataMixin:
     def _fetch_upstream_results_from_storage(
         self, spec: TaskSpecStrictBase
     ) -> dict[str, Any]:
-        """Fetch upstream results from Redis (with per-worker on-disk cache)."""
+        """Fetch upstream results — cache → Redis → server."""
         upstream_refs = self._spec_upstream_results(spec)
         if not upstream_refs:
             return {}
-
-        governance_spec = self._spec_governance_cfg(spec)
 
         task_ids_to_fetch: set[str] = set(
             upstream_spec["task_id"] for upstream_spec in upstream_refs.values()
         )
         if len(task_ids_to_fetch) == 1:
             task_id = task_ids_to_fetch.pop()
-            self._upstream_deps_cache[task_id] = self._fetch_data(
-                task_id, governance_spec
-            )
+            self._upstream_deps_cache[task_id] = self._fetch_data(task_id)
         else:
             logger.info(
                 "Fetching %d upstream results in parallel",
                 len(task_ids_to_fetch),
             )
             future_map = {
-                self.io_executor.submit(
-                    self._fetch_data, task_id, governance_spec
-                ): task_id
+                self.io_executor.submit(self._fetch_data, task_id): task_id
                 for task_id in task_ids_to_fetch
             }
             for future in as_completed(future_map):
