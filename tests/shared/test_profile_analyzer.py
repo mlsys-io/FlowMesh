@@ -1,4 +1,4 @@
-from shared.profile import analyze, render_critical_path, render_e2e, render_mermaid
+from shared.profile import analyze, to_mermaid
 
 
 def _events() -> list[dict]:
@@ -163,24 +163,9 @@ def test_critical_path_picks_synthesis_chain() -> None:
     assert awb.wait_seconds[1] == 1.0
 
 
-def test_render_e2e_smoke() -> None:
+def test_to_mermaid_includes_edges() -> None:
     summary = analyze(_events(), _assets(), _lineage())
-    out = render_e2e(summary)
-    assert "Hardware time" in out
-    assert "Network time" in out
-    assert "workflow_duration" in out
-
-
-def test_render_critical_path_smoke() -> None:
-    summary = analyze(_events(), _assets(), _lineage())
-    out = render_critical_path(summary)
-    assert "critical_path_seconds" in out
-    assert "tsk-3" in out
-
-
-def test_render_mermaid_includes_edges() -> None:
-    summary = analyze(_events(), _assets(), _lineage())
-    rendered = render_mermaid(summary)
+    rendered = to_mermaid(summary)
     assert rendered.startswith("graph TD")
     assert "tsk_1" in rendered
     assert "tsk_3" in rendered
