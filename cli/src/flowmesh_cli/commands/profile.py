@@ -37,7 +37,12 @@ def _short(data_id: str) -> str:
     return f"{data_id[:8]}…{data_id[-4:]}"
 
 
-def _hardware_table(hw: HardwareSummary, title: str) -> Table:
+def _compute_table(hw: HardwareSummary, title: str) -> Table:
+    """Render the per-event-type compute (GPU/CPU) time table.
+
+    Schema field is `hardware_summary` for lumilake compatibility, but
+    "Compute time" is clearer in user-facing UI than "Hardware time".
+    """
     table = Table(title=title, box=SIMPLE, header_style="bold cyan", title_style="bold")
     table.add_column("event_type", style="cyan", no_wrap=True)
     table.add_column("n", justify="right")
@@ -171,7 +176,7 @@ def _critical_path_tree(summary: ProfileSummary) -> Tree:
     return tree
 
 
-def _render_rich(summary: ProfileSummary) -> None:
+def _print_header(summary: ProfileSummary) -> None:
     e2e = summary.e2e_breakdown
     headline = (
         f"[bold]workflow:[/bold] {summary.workflow_id or '(unnamed)'}\n"
@@ -183,30 +188,52 @@ def _render_rich(summary: ProfileSummary) -> None:
     )
     console.print(Panel(headline, title="profile", border_style="cyan"))
 
-    # Critical path block
-    if summary.critical_path is not None:
-        console.print(_critical_path_tree(summary))
-        console.print(
-            _hardware_table(
-                summary.critical_path.hardware_summary,
-                "Hardware time (critical path)",
-            )
-        )
-        console.print(
-            _network_table(
-                summary.critical_path.network_summary,
-                "Network time (critical path)",
-            )
-        )
-        console.print(Rule(style="dim"))
 
-    # End-to-end block
-    console.print(_hardware_table(e2e.hardware_summary, "Hardware time (end-to-end)"))
+def _print_critical_path(summary: ProfileSummary) -> None:
+    if summary.critical_path is None:
+        console.print("[dim](no critical path: no events with timestamps)[/dim]")
+        return
+    console.print(_critical_path_tree(summary))
+    console.print(
+        _compute_table(
+            summary.critical_path.hardware_summary, "Compute time (critical path)"
+        )
+    )
+    console.print(
+        _network_table(
+            summary.critical_path.network_summary, "Network time (critical path)"
+        )
+    )
+
+
+def _print_e2e(summary: ProfileSummary) -> None:
+    e2e = summary.e2e_breakdown
+    console.print(_compute_table(e2e.hardware_summary, "Compute time (end-to-end)"))
     console.print(_network_table(e2e.network_summary, "Network time (end-to-end)"))
 
-    # Lineage DAG
-    console.print(Rule(style="dim"))
+
+def _print_dag(summary: ProfileSummary) -> None:
     console.print(_lineage_tree(summary))
+
+
+_FORMAT_HELP = (
+    "Output format: rich (default; everything), critical-path (cp), " "e2e, dag, json"
+)
+_VIEW_ALIASES = {
+    "rich": "rich",
+    "all": "rich",
+    "default": "rich",
+    "critical-path": "critical-path",
+    "critical_path": "critical-path",
+    "cp": "critical-path",
+    "e2e": "e2e",
+    "compute": "e2e",
+    "summary": "e2e",
+    "dag": "dag",
+    "lineage": "dag",
+    "graph": "dag",
+    "json": "json",
+}
 
 
 @app.command("fetch")
@@ -216,7 +243,7 @@ def fetch(
         "rich",
         "--format",
         "-f",
-        help="Output format: rich (default), json",
+        help=_FORMAT_HELP,
         case_sensitive=False,
     ),
 ) -> None:
@@ -228,12 +255,35 @@ def fetch(
         logging.error(str(exc))
         raise typer.Exit(code=1)
 
-    fmt_lower = fmt.lower()
-    if fmt_lower == "json":
+    view = _VIEW_ALIASES.get(fmt.lower())
+    if view is None:
+        logging.error(
+            f"Unknown format '{fmt}'; expected one of: "
+            "rich, critical-path, e2e, dag, json"
+        )
+        raise typer.Exit(code=2)
+
+    if view == "json":
         console.print(RichJSON.from_data(payload))
         return
-    if fmt_lower in {"rich", "default", "table"}:
-        _render_rich(_to_summary(payload))
+
+    summary = _to_summary(payload)
+    _print_header(summary)
+
+    if view == "rich":
+        if summary.critical_path is not None:
+            _print_critical_path(summary)
+            console.print(Rule(style="dim"))
+        _print_e2e(summary)
+        console.print(Rule(style="dim"))
+        _print_dag(summary)
         return
-    logging.error(f"Unknown format '{fmt}'; expected one of: rich, json")
-    raise typer.Exit(code=2)
+    if view == "critical-path":
+        _print_critical_path(summary)
+        return
+    if view == "e2e":
+        _print_e2e(summary)
+        return
+    if view == "dag":
+        _print_dag(summary)
+        return
