@@ -95,13 +95,25 @@ class NodeClient:
         """Destroy a single worker, removing its container."""
         self._request("DELETE", f"/api/v1/stack/workers/{name}")
 
-    def destroy_all_workers(self) -> None:
-        """Destroy all workers managed by this node."""
-        self._request(
-            "DELETE",
-            "/api/v1/stack/workers",
-            headers={"Content-Type": "application/json"},
-        )
+    def destroy_all_workers(self, *, ignore_unreachable: bool = False) -> None:
+        """Destroy all workers managed by this node.
+
+        With ``ignore_unreachable=True``, return cleanly when the FlowMesh
+        server is unreachable (the connection is refused or times out).
+        Useful for teardown flows that need to tolerate a server that
+        never came up — there are no workers to destroy in that case
+        anyway. Other errors (auth, 5xx) still propagate so genuine
+        misconfiguration stays loud.
+        """
+        try:
+            self._request(
+                "DELETE",
+                "/api/v1/stack/workers",
+                headers={"Content-Type": "application/json"},
+            )
+        except FlowMeshConnectionError:
+            if not ignore_unreachable:
+                raise
 
     def worker_names(self) -> list[str]:
         """Return a list of all worker names."""
