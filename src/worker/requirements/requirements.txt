@@ -46,6 +46,7 @@ psycopg[binary]==3.2.12
 pymupdf==1.26.5
 python-dotenv==1.1.1
 qdrant-client==1.15.1
+redis==7.0.1
 rich==14.2.0
 sqlalchemy==2.0.44
 sqlmodel==0.0.27
