@@ -122,7 +122,14 @@ async def test_get_workflow_profile_runs_analyzer(tmp_path: Path) -> None:
                 "timestamp": "2026-04-29T00:00:00+00:00",
                 "event_type": "write request transfer",
                 "data_id": "tsk-a",
-            }
+                "batch_id": "bat-a",
+            },
+            {
+                "timestamp": "2026-04-29T00:00:00+00:00",
+                "event_type": "dump to storage",
+                "data_id": "tsk-a",
+                "batch_id": "bat-a",
+            },
         ],
         assets=[
             {
@@ -140,10 +147,13 @@ async def test_get_workflow_profile_runs_analyzer(tmp_path: Path) -> None:
         registry=_registry(["tsk-a"]),
         results_dir=tmp_path,
     )
-    assert summary.total_events == 1
-    assert summary.total_assets == 1
-    assert summary.write_count == 1
+    assert summary.event_count == 2
+    assert len(summary.assets) == 1
+    assert summary.workflow_id == "wfl-1"
+    assert summary.critical_path is not None
+    assert summary.critical_path.path == ["tsk-a"]
     assert summary.assets[0].asset_guid == "g-a"
+    assert "write request transfer" in summary.e2e_breakdown.network_summary.event_type
 
 
 @pytest.mark.anyio

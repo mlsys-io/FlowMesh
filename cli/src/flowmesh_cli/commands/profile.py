@@ -8,9 +8,9 @@ from flowmesh.exceptions import FlowMeshError
 
 from shared.profile import (
     ProfileSummary,
+    render_critical_path,
+    render_e2e,
     render_mermaid,
-    render_phase_timings,
-    render_table,
 )
 
 from ..core import logging
@@ -31,7 +31,7 @@ def fetch(
         "json",
         "--format",
         "-f",
-        help="Output format: json, table, mermaid, phases",
+        help="Output format: json, e2e, critical-path, mermaid",
         case_sensitive=False,
     ),
 ) -> None:
@@ -50,13 +50,13 @@ def fetch(
     if fmt_lower == "mermaid":
         logging.log(render_mermaid(_to_summary(payload)))
         return
-    if fmt_lower == "table":
-        logging.log(render_table(_to_summary(payload)))
+    if fmt_lower in {"e2e", "hardware", "e2e-breakdown"}:
+        logging.log(render_e2e(_to_summary(payload)))
         return
-    if fmt_lower == "phases":
-        logging.log(render_phase_timings(_to_summary(payload)))
+    if fmt_lower in {"critical-path", "critical_path", "cp"}:
+        logging.log(render_critical_path(_to_summary(payload)))
         return
     logging.error(
-        f"Unknown format '{fmt}'; expected one of: json, table, mermaid, phases"
+        f"Unknown format '{fmt}'; expected one of: " "json, e2e, critical-path, mermaid"
     )
     raise typer.Exit(code=2)

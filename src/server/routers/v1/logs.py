@@ -55,9 +55,7 @@ def _iter_workflow_jsonl(
         yield from _iter_jsonl(path)
 
 
-async def _resolve_task_ids(
-    workflow_id: str, registry: WorkflowRegistry
-) -> list[str]:
+async def _resolve_task_ids(workflow_id: str, registry: WorkflowRegistry) -> list[str]:
     workflow = await registry.get_workflow_async(workflow_id)
     if not workflow:
         raise HTTPException(
@@ -117,4 +115,4 @@ async def get_workflow_profile(
     events = list(_iter_workflow_jsonl(results_dir, task_ids, "events.jsonl"))
     assets = list(_iter_workflow_jsonl(results_dir, task_ids, "assets.jsonl"))
     lineage = list(_iter_workflow_jsonl(results_dir, task_ids, "lineage.jsonl"))
-    return analyze(events, assets, lineage)
+    return analyze(events, assets, lineage, workflow_id=workflow_id)

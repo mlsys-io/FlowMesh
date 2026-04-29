@@ -326,6 +326,7 @@ class DataMixin:
 
         self._write_cache(data_id, data)
         self._log_event(data_id=data_id, event_type="write request transfer")
+        self._log_event(data_id=data_id, event_type="dump to storage")
 
         # Asset row — single source inherits the source's asset_guid (let the
         # reader resolve), otherwise fresh GUID.
