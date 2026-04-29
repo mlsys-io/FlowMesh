@@ -866,11 +866,7 @@ Summary:"""
         if not task_id:
             raise ExecutionError("task_id is required for inference execution")
 
-        # Start a fresh event log per run
-        self._clear_events()
-        self._upstream_deps_cache.clear()
-        self._current_batch_id = task_id
-        self._task_id = task_id
+        self._init_task_lineage(task_id, out_dir)
         self._log_event(
             data_id=task_id,
             event_type="queuing for execution",
@@ -1198,9 +1194,6 @@ Summary:"""
             task_ids, "JSONL export", "vLLM execution completed successfully"
         )
 
-        maybe_upload_artifacts(task, out_dir, logger=logger)
-
-        # Dump execution result to GovernanceRelay
         if governance_spec := spec.governance:
             self._dump_to_governance(
                 governance_spec=governance_spec,
@@ -1208,6 +1201,8 @@ Summary:"""
                 result=result,
                 dependencies_by_task=dependencies_by_task,
             )
+
+        maybe_upload_artifacts(task, out_dir, logger=logger)
 
         return result
 
@@ -1219,8 +1214,6 @@ Summary:"""
         self._prompt_owners = []
         self._batched_metadata = []
         self._base_inference = {}
-
-        self._clear_events()
 
         logger.debug("Shutting down I/O executor")
         self.io_executor.shutdown(wait=True)

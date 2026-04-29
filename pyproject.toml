@@ -33,7 +33,8 @@ worker-core = [
     "httpx>=0.28.1",
     "nvidia-ml-py>=13.580.82",
     "protobuf>=5.29.6",
-    "python-dotenv>=1.2.2",
+    "python-dotenv>=1.1.1",
+    "redis>=7.0.1",
     "websocket-client>=1.9.0",
 ]
 
@@ -130,6 +131,7 @@ dev = [
     "protoletariat>=3.3.10",
     "psutil>=7.1.2",
     "pyarrow-stubs>=20.0.0.20251215",
+    "fakeredis>=2.30.0",
     "pytest>=8.4.2",
     "pytest-asyncio>=1.3.0",
     "respx>=0.22.0",

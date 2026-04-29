@@ -28,6 +28,7 @@ class DataRetrievalExecutor(DataMixin, Executor):
     def run(self, task: ExecutorTask, out_dir: Path) -> dict[str, Any]:
         spec = self.require_spec(task, DataRetrievalSpecStrict)
         task_id = task.task_id
+        self._init_task_lineage(task_id, out_dir)
         data_cfg = spec.data
         if not isinstance(data_cfg, dict):
             raise ExecutionError("spec.data must be a mapping for data_retrieval.")
@@ -47,8 +48,6 @@ class DataRetrievalExecutor(DataMixin, Executor):
                 f"Unsupported data_retrieval type: {retrieval_type!r}."
             )
 
-        maybe_upload_artifacts(task, out_dir, logger=logger)
-
         if governance_spec := spec.governance:
             deps = self._extract_source_data_ids(spec)
             dependencies_by_task = {task_id: deps}
@@ -58,6 +57,8 @@ class DataRetrievalExecutor(DataMixin, Executor):
                 result=result,
                 dependencies_by_task=dependencies_by_task,
             )
+
+        maybe_upload_artifacts(task, out_dir, logger=logger)
 
         return result
 

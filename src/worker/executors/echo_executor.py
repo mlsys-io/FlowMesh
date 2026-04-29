@@ -54,6 +54,7 @@ class EchoExecutor(DataMixin, Executor):
     def run(self, task: ExecutorTask, out_dir: Path) -> dict[str, Any]:
         spec = self.require_spec(task, EchoSpecStrict)
         task_id = task.task_id.strip()
+        self._init_task_lineage(task_id, out_dir)
         data_cfg = spec.data
         context = spec.upstreamResults or {}
 

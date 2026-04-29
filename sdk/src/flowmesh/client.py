@@ -4,7 +4,9 @@ import httpx
 
 from ._base_client import BaseClient, resolve_config
 from ._constants import DEFAULT_TIMEOUT
+from .resources.logs import Logs
 from .resources.nodes import Nodes
+from .resources.profile import Profile
 from .resources.results import Results
 from .resources.ssh import SSH
 from .resources.system import System
@@ -49,6 +51,8 @@ class FlowMesh(BaseClient):
     nodes: Nodes
     ssh: SSH
     system: System
+    logs: Logs
+    profile: Profile
 
     def __init__(
         self,
@@ -71,3 +75,5 @@ class FlowMesh(BaseClient):
         self.nodes = Nodes(self)
         self.ssh = SSH(self)
         self.system = System(self)
+        self.logs = Logs(self)
+        self.profile = Profile(self)

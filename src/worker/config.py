@@ -33,6 +33,9 @@ class WorkerConfig:
     network_bandwidth_bytes_per_sec: float | None
     executor_idle_cleanup_sec: float | None
     enable_mp_executors: bool
+    redis_control_url: str | None
+    worker_cache_dir: Path
+    data_ttl_sec: int
     grpc_keepalive_time_ms: int | None = None
     grpc_keepalive_timeout_ms: int | None = None
     network_mode: str | None = None
@@ -93,6 +96,13 @@ class WorkerConfig:
             "WORKER_EXECUTOR_IDLE_CLEANUP_SEC", 60
         )
 
+        redis_control_url = os.getenv("REDIS_CONTROL_URL", "").strip() or None
+        worker_cache_dir = Path(
+            os.getenv("WORKER_CACHE_DIR") or "/tmp/flowmesh_worker_cache"  # noqa: S108
+        ).absolute()
+        worker_cache_dir.mkdir(parents=True, exist_ok=True)
+        data_ttl_sec = parse_int_env("WORKER_DATA_TTL_SEC", 24 * 60 * 60)
+
         return WorkerConfig(
             worker_token=worker_token,
             supervisor_grpc_target=supervisor_grpc_target,
@@ -111,6 +121,9 @@ class WorkerConfig:
             network_bandwidth_bytes_per_sec=network_bandwidth_bytes_per_sec,
             executor_idle_cleanup_sec=executor_idle_cleanup_sec,
             enable_mp_executors=enable_mp_executors,
+            redis_control_url=redis_control_url,
+            worker_cache_dir=worker_cache_dir,
+            data_ttl_sec=data_ttl_sec,
             grpc_keepalive_time_ms=grpc_keepalive_time_ms,
             grpc_keepalive_timeout_ms=grpc_keepalive_timeout_ms,
             network_mode=network_mode,

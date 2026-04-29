@@ -1468,6 +1468,19 @@ wheels = [
 ]
 
 [[package]]
+name = "fakeredis"
+version = "2.35.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "redis" },
+    { name = "sortedcontainers" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/43/50/b748233c02fa77e5105238190cc9bb58b852eb1c8b1d0763230d3a5b745a/fakeredis-2.35.1.tar.gz", hash = "sha256:5bae5eba7b9d93cb968944ac40936373cf2397ff71667d4b595df65c3d2e413f", size = 189118, upload-time = "2026-04-12T17:05:58.539Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/6f/27/b8b057a23f7777177e92d3a602fd866751b6b45014964548997e92e048fd/fakeredis-2.35.1-py3-none-any.whl", hash = "sha256:67d97e11f562b7870e11e5c30cf182270bfb2dd37f6707dba47cc6d91628d1b9", size = 129678, upload-time = "2026-04-12T17:05:56.86Z" },
+]
+
+[[package]]
 name = "fastapi"
 version = "0.120.3"
 source = { registry = "https://pypi.org/simple" }
@@ -1702,6 +1715,7 @@ dev = [
     { name = "black" },
     { name = "boto3-stubs" },
     { name = "codespell" },
+    { name = "fakeredis" },
     { name = "grpcio-tools" },
     { name = "isort" },
     { name = "mypy" },
@@ -1790,6 +1804,7 @@ worker-core = [
     { name = "nvidia-ml-py" },
     { name = "protobuf" },
     { name = "python-dotenv" },
+    { name = "redis" },
     { name = "websocket-client" },
 ]
 
@@ -1820,6 +1835,7 @@ requires-dist = [
     { name = "diffusers", marker = "extra == 'inference'", specifier = ">=0.36.0" },
     { name = "docker", marker = "extra == 'server'", specifier = ">=7.1.0" },
     { name = "docker", marker = "extra == 'worker-core'", specifier = ">=7.1.0" },
+    { name = "fakeredis", marker = "extra == 'dev'", specifier = ">=2.30.0" },
     { name = "fastapi", marker = "extra == 'server'", specifier = ">=0.120.3" },
     { name = "fastembed", marker = "extra == 'rag'", specifier = ">=0.7.3,<0.8" },
     { name = "flashinfer-python", marker = "extra == 'inference-gpu'", specifier = ">=0.6.6" },
@@ -1874,7 +1890,8 @@ requires-dist = [
     { name = "pyyaml", marker = "extra == 'server'", specifier = ">=6.0.2" },
     { name = "qdrant-client", marker = "extra == 'rag'", specifier = ">=1.15.1" },
     { name = "redis", marker = "extra == 'server'", specifier = ">=7.0.1" },
-    { name = "requests", marker = "extra == 'server'", specifier = ">=2.33.0" },
+    { name = "redis", marker = "extra == 'worker-core'", specifier = ">=7.0.1" },
+    { name = "requests", marker = "extra == 'server'", specifier = ">=2.32.5" },
     { name = "respx", marker = "extra == 'dev'", specifier = ">=0.22.0" },
     { name = "rich", marker = "extra == 'agent'", specifier = ">=14.2.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.14.10" },
@@ -6507,6 +6524,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/f8/5c/48a7d9495be3d1c651198fd99dbb6ce190e2274d0f28b9051307bdec6b85/socksio-1.0.0.tar.gz", hash = "sha256:f88beb3da5b5c38b9890469de67d0cb0f9d494b78b106ca1845f96c10b91c4ac", size = 19055, upload-time = "2020-04-17T15:50:34.664Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/37/c3/6eeb6034408dac0fa653d126c9204ade96b819c936e136c5e8a6897eee9c/socksio-1.0.0-py3-none-any.whl", hash = "sha256:95dc1f15f9b34e8d7b16f06d74b8ccf48f609af32ab33c608d08761c5dcbb1f3", size = 12763, upload-time = "2020-04-17T15:50:31.878Z" },
+]
+
+[[package]]
+name = "sortedcontainers"
+version = "2.4.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/e8/c4/ba2f8066cceb6f23394729afe52f3bf7adec04bf9ed2c820b39e19299111/sortedcontainers-2.4.0.tar.gz", hash = "sha256:25caa5a06cc30b6b83d11423433f65d1f9d76c4c6a0c90e3379eaa43b9bfdb88", size = 30594, upload-time = "2021-05-16T22:03:42.897Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/32/46/9cb0e58b2deb7f82b84065f37f3bffeb12413f947f9388e4cac22c4621ce/sortedcontainers-2.4.0-py2.py3-none-any.whl", hash = "sha256:a163dcaede0f1c021485e957a39245190e74249897e2ae4b2aa38595db237ee0", size = 29575, upload-time = "2021-05-16T22:03:41.177Z" },
 ]
 
 [[package]]

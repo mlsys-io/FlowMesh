@@ -1,4 +1,5 @@
 from . import (
+    logs,
     nodes,
     results,
     ssh,
@@ -10,6 +11,7 @@ from . import (
 )
 
 __all__ = [
+    "logs",
     "nodes",
     "results",
     "ssh",

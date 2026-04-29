@@ -1,31 +1,45 @@
-"""Data mixin helpers used by executors.
+"""Data mixin used by executors.
 
-This module contains small utilities encapsulated in the ``DataMixin``
-class that help executors interact with data sources (via connectors),
-normalize results into Pandas DataFrames. Only docstrings and explanatory comments
-live here — the implementation delegates actual I/O to connector objects obtained via
-``get_connector_from_spec`` which provide the runtime behavior (``execute``,
-``get_schema``, etc.).
+Carries two responsibilities:
+
+- Per-task lineage logging — appends rows to ``out_dir/artifacts/logs/{events,
+  assets,lineage}.jsonl`` so they upload alongside other task artifacts and end
+  up under ``results/{task_id}/logs/`` on the server.
+
+- Cross-task data transport — reads/writes upstream payloads through Redis at
+  ``flowmesh:data:{data_id}``, with a per-worker on-disk cache that survives
+  across tasks (a fan-out task that re-reads the same upstream id hits the
+  cache, not Redis).
 """
 
 import copy
 import datetime
 import io
+import json
 import logging
+import os
+import tempfile
+import threading
+import uuid
 from collections.abc import Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
+from threading import Lock
 from typing import Any, cast
 from urllib.parse import urlparse
 
 import pandas as pd
+import redis
 import requests
 from datasets import Dataset, load_dataset
 from PIL import Image
 
+from shared.governance import data_key
 from shared.tasks.specs import TaskSpecStrictBase
-from shared.utils.json import safe_get
+from shared.utils.json import dedup_json, restore_json, safe_get
+from shared.utils.parsing import parse_int_env
+from shared.utils.time import now_iso
 
 from ...connectors import get_connector_from_spec
 from ..base_executor import ExecutionError
@@ -36,7 +50,6 @@ from ..utils.graph_templates import (
     _resolve_columns,
     build_prompts_from_graph_template,
 )
-from .governance import GovernanceMixin
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +71,11 @@ class InferenceEntry:
     tables: list[pd.DataFrame]
 
 
-class DataMixin(GovernanceMixin):
+_DEFAULT_DATA_TTL_SEC = 24 * 60 * 60
+_DEFAULT_WORKER_CACHE_DIR = Path(tempfile.gettempdir()) / "flowmesh_worker_cache"
+
+
+class DataMixin:
 
     _TEMPLATE_TYPE_MAP: dict[str, type] = {
         "str": str,
@@ -79,13 +96,241 @@ class DataMixin(GovernanceMixin):
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
+        self._task_id: str | None = None
+        self._task_out_dir: Path | None = None
+        self._current_batch_id: str | None = None
+        self._event_lock = threading.Lock()
         self._upstream_deps_cache: dict[str, dict[str, Any]] = {}
         self.io_executor = ThreadPoolExecutor(max_workers=32)
+
+        cache_root = Path(
+            os.getenv("WORKER_CACHE_DIR") or _DEFAULT_WORKER_CACHE_DIR.as_posix()
+        )
+        self._data_cache_dir = cache_root / "data"
+        self._data_cache_dir.mkdir(parents=True, exist_ok=True)
+        self._cache_dir_lock = Lock()
+
+        self._data_ttl_sec = parse_int_env("WORKER_DATA_TTL_SEC", _DEFAULT_DATA_TTL_SEC)
+        self._redis_url = (os.getenv("REDIS_CONTROL_URL") or "").strip()
+        self._redis_client: redis.Redis | None = None
 
     @classmethod
     def _resolve_param_type(cls, type_spec: str) -> type | None:
         normalized = type_spec.strip().lower()
         return cls._TEMPLATE_TYPE_MAP.get(normalized)
+
+    # ------------------------------------------------------------------ #
+    # Lineage state — initialized at the top of each run()               #
+    # ------------------------------------------------------------------ #
+    def _init_task_lineage(self, task_id: str, out_dir: Path) -> None:
+        self._task_id = task_id
+        self._current_batch_id = task_id
+        self._task_out_dir = Path(out_dir)
+        self._upstream_deps_cache.clear()
+
+    def _lineage_dir(self) -> Path | None:
+        if self._task_out_dir is None:
+            return None
+        return self._task_out_dir / "artifacts" / "logs"
+
+    def _append_jsonl(self, filename: str, row: dict[str, Any]) -> None:
+        target_dir = self._lineage_dir()
+        if target_dir is None:
+            return
+        target_dir.mkdir(parents=True, exist_ok=True)
+        line = json.dumps(row, ensure_ascii=False, default=str)
+        path = target_dir / filename
+        with self._event_lock:
+            with path.open("a", encoding="utf-8") as fh:
+                fh.write(line + "\n")
+
+    def _log_event(
+        self,
+        data_id: str = "",
+        event_type: str = "",
+        event_data: Any = "",
+        timestamp: str | None = None,
+    ) -> None:
+        if not data_id:
+            assert (
+                self._task_id is not None
+            ), "data_id must be provided if task_id is not set"
+            data_id = self._task_id
+        if not event_type:
+            raise ExecutionError("event_type must be provided")
+        row: dict[str, Any] = {
+            "timestamp": timestamp or now_iso(),
+            "event_type": event_type,
+            "data_id": data_id,
+            "user_id": "",
+            "batch_id": self._current_batch_id,
+            "event_data": event_data,
+        }
+        self._append_jsonl("events.jsonl", row)
+
+    def _record_asset(
+        self,
+        data_id: str,
+        asset_guid: str,
+        version: int = 1,
+        user_id: str = "",
+        created_at: str | None = None,
+    ) -> None:
+        row = {
+            "data_id": data_id,
+            "asset_guid": asset_guid,
+            "version": version,
+            "user_id": user_id,
+            "created_at": created_at or now_iso(),
+        }
+        self._append_jsonl("assets.jsonl", row)
+
+    def _record_lineage(
+        self,
+        data_id: str,
+        source_data_ids: Sequence[str],
+        created_at: str | None = None,
+    ) -> None:
+        ts = created_at or now_iso()
+        for source_data_id in source_data_ids:
+            self._append_jsonl(
+                "lineage.jsonl",
+                {
+                    "data_id": data_id,
+                    "source_data_id": source_data_id,
+                    "created_at": ts,
+                },
+            )
+
+    # ------------------------------------------------------------------ #
+    # Redis-backed cross-task data transport                             #
+    # ------------------------------------------------------------------ #
+    def _get_redis(self) -> redis.Redis:
+        if self._redis_client is None:
+            if not self._redis_url:
+                raise ExecutionError(
+                    "REDIS_CONTROL_URL is required for cross-task data flow"
+                )
+            self._redis_client = redis.Redis.from_url(
+                self._redis_url, decode_responses=True
+            )
+        return self._redis_client
+
+    @staticmethod
+    def _user_id(governance_spec: dict[str, Any] | None) -> str:
+        if not governance_spec:
+            return ""
+        return str(governance_spec.get("user_id") or "")
+
+    def _cache_path_for(self, data_id: str) -> Path:
+        return self._data_cache_dir / f"{data_id}.json"
+
+    def _read_cache(self, data_id: str) -> Any | None:
+        path = self._cache_path_for(data_id)
+        with self._cache_dir_lock:
+            if not path.exists():
+                return None
+            with path.open(encoding="utf-8") as fh:
+                return json.load(fh)
+
+    def _write_cache(self, data_id: str, payload: Any) -> None:
+        path = self._cache_path_for(data_id)
+        with self._cache_dir_lock:
+            with path.open("w", encoding="utf-8") as fh:
+                json.dump(payload, fh, ensure_ascii=False, default=str)
+
+    def _fetch_data(
+        self, data_id: str, governance_spec: dict[str, Any] | None
+    ) -> dict[str, Any]:
+        self._log_event(
+            data_id=data_id,
+            event_type="read request initiated",
+        )
+        cached = self._read_cache(data_id)
+        if cached is not None:
+            self._log_event(
+                data_id=data_id,
+                event_type="read cache hit",
+                event_data="Using cached upstream result",
+            )
+            return cached
+
+        try:
+            client = self._get_redis()
+            raw = cast(str | bytes | None, client.get(data_key(data_id)))
+        except redis.RedisError as exc:
+            raise ExecutionError(
+                f"Error fetching upstream result {data_id}: {exc}"
+            ) from exc
+        if raw is None:
+            raise ExecutionError(
+                f"Upstream data {data_id} not found in Redis "
+                f"(key={data_key(data_id)})"
+            )
+        self._log_event(data_id=data_id, event_type="read response transfer")
+        try:
+            deduped = json.loads(raw)
+            payload = restore_json(deduped) if isinstance(deduped, dict) else deduped
+        except (json.JSONDecodeError, KeyError) as exc:
+            raise ExecutionError(
+                f"Error decoding upstream result {data_id}: {exc}"
+            ) from exc
+        self._log_event(data_id=data_id, event_type="read response decoding")
+
+        self._write_cache(data_id, payload)
+        self._log_event(data_id=data_id, event_type="read response cache write")
+        return payload
+
+    def _write_data(
+        self,
+        data_id: str,
+        data: Any,
+        source_data_ids: list[str],
+        governance_spec: dict[str, Any] | None,
+        events: dict[str, list[dict[str, Any]]] | None = None,  # noqa: ARG002
+    ) -> None:
+        user_id = self._user_id(governance_spec)
+        self._log_event(data_id=data_id, event_type="write request preparation")
+
+        deduped = dedup_json(data)
+        try:
+            payload = json.dumps(deduped, ensure_ascii=False, default=str)
+        except (TypeError, ValueError) as exc:
+            raise ExecutionError(f"Failed to serialize data {data_id}: {exc}") from exc
+
+        try:
+            client = self._get_redis()
+            if self._data_ttl_sec > 0:
+                client.set(data_key(data_id), payload, ex=self._data_ttl_sec)
+            else:
+                client.set(data_key(data_id), payload)
+        except redis.RedisError as exc:
+            raise ExecutionError(
+                f"Failed to write data {data_id} to Redis: {exc}"
+            ) from exc
+
+        self._write_cache(data_id, data)
+        self._log_event(data_id=data_id, event_type="write request transfer")
+
+        # Asset row — single source inherits the source's asset_guid (let the
+        # reader resolve), otherwise fresh GUID.
+        asset_guid = (
+            source_data_ids[0] if len(source_data_ids) == 1 else str(uuid.uuid4())
+        )
+        self._record_asset(
+            data_id=data_id,
+            asset_guid=asset_guid,
+            version=1,
+            user_id=user_id,
+        )
+        if source_data_ids:
+            self._record_lineage(data_id=data_id, source_data_ids=source_data_ids)
+        logger.info(
+            "Wrote data %s to Redis (size: %d bytes, sources: %d)",
+            data_id,
+            len(payload.encode("utf-8")),
+            len(source_data_ids),
+        )
 
     def _load_image_from_artifact(self, source: str) -> Image.Image:
         """Resolve an artifact URL or local path and load as an RGB PIL image."""
@@ -753,27 +998,12 @@ class DataMixin(GovernanceMixin):
     def _fetch_upstream_results_from_storage(
         self, spec: TaskSpecStrictBase
     ) -> dict[str, Any]:
-        """
-        Fetch upstream results from GovernanceRelay.
-
-        For each upstream result reference, fetches from GovernanceRelay,
-        verifies integrity against the server copy. Appends retrieval timestamp
-        to the event list as metadata.
-
-        Args:
-            spec: The task specification that may contain upstream results
-
-        Returns:
-            Dict of upstream results (empty if none found)
-        """
+        """Fetch upstream results from Redis (with per-worker on-disk cache)."""
         upstream_refs = self._spec_upstream_results(spec)
         if not upstream_refs:
             return {}
 
         governance_spec = self._spec_governance_cfg(spec)
-        if not governance_spec:
-            logger.info("Governance not configured; returning upstream results as-is")
-            return upstream_refs
 
         task_ids_to_fetch: set[str] = set(
             upstream_spec["task_id"] for upstream_spec in upstream_refs.values()
@@ -826,7 +1056,7 @@ class DataMixin(GovernanceMixin):
             raise ExecutionError(f"Failed to shard dataset ({index}/{total}): {exc}")
 
     def _extract_source_data_ids(self, spec: TaskSpecStrictBase) -> list[str]:
-        """Extract upstream task/data IDs from _upstreamResults for governance."""
+        """Extract upstream task/data IDs from _upstreamResults for lineage."""
         upstream_refs = self._spec_upstream_results(spec)
         ids: list[str] = []
         for upstream in upstream_refs.values():
@@ -847,26 +1077,13 @@ class DataMixin(GovernanceMixin):
 
     def _dump_to_governance(
         self,
-        governance_spec: dict[str, Any],
+        governance_spec: dict[str, Any] | None,
         task_id: str,
         result: dict[str, Any],
         dependencies_by_task: dict[str, list[str]],
     ) -> None:
-        """
-        Dump execution result and metadata to GovernanceRelay.
-
-        Keeps the object slim by excluding full nested structures where possible.
-        Logs the size of the dumped object.
-
-        Args:
-            governance_spec: GovernanceRelay specification dictionary
-            task_id: Task identifier
-            result: Execution result to dump
-            dependencies_by_task: Mapping of task_id -> list of source data dependencies
-        """
-
+        """Write parent + merged-child results to Redis and emit lineage rows."""
         parent_deps = dependencies_by_task.get(task_id, [])
-        parent_events = self._events_for([task_id, *parent_deps])
         children_payload = result.get("children", {})
 
         collection_jobs: list[dict[str, Any]] = [
@@ -874,19 +1091,16 @@ class DataMixin(GovernanceMixin):
                 "task_id": task_id,
                 "result": result,
                 "deps": parent_deps,
-                "events": parent_events,
                 "is_parent": True,
             }
         ]
         for child_id, child_result in children_payload.items():
             child_deps = dependencies_by_task.get(child_id, [])
-            child_events = self._events_for([child_id, *child_deps])
             collection_jobs.append(
                 {
                     "task_id": child_id,
                     "result": child_result,
                     "deps": child_deps,
-                    "events": child_events,
                     "is_parent": False,
                 }
             )
@@ -898,7 +1112,6 @@ class DataMixin(GovernanceMixin):
                 data=job["result"],
                 source_data_ids=job["deps"],
                 governance_spec=governance_spec,
-                events=job["events"],
             )
         else:
             logger.info(
@@ -912,7 +1125,6 @@ class DataMixin(GovernanceMixin):
                     data=job["result"],
                     source_data_ids=job["deps"],
                     governance_spec=governance_spec,
-                    events=job["events"],
                 ): job
                 for job in collection_jobs
             }
