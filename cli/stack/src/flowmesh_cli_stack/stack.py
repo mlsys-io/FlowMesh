@@ -229,7 +229,8 @@ def up(
 def _drain_workers(env_file: Path) -> None:
     """Destroy all dynamically spawned workers before stopping the server."""
     client = stack_node_client(env_file, base_url=None, token=None)
-    if not client.destroy_all_workers(ignore_unreachable=True):
+    success = client.destroy_all_workers(ignore_unreachable=True)
+    if not success:
         logging.warning("Server unreachable; skipping worker destruction.")
 
 

@@ -1,6 +1,5 @@
 """Tests for ``flowmesh_stack.node_client.NodeClient``."""
 
-import logging
 from typing import Any
 
 import httpx
@@ -35,14 +34,9 @@ def test_destroy_all_workers_raises_connection_error_by_default() -> None:
         client.destroy_all_workers()
 
 
-def test_destroy_all_workers_returns_false_and_warns_when_ignored(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
+def test_destroy_all_workers_returns_false_when_ignored() -> None:
     client = _client_against_unreachable()
-    with caplog.at_level(logging.WARNING, logger="flowmesh_stack.node_client"):
-        result = client.destroy_all_workers(ignore_unreachable=True)
-    assert result is False
-    assert any("destroy_all_workers" in r.message for r in caplog.records)
+    assert client.destroy_all_workers(ignore_unreachable=True) is False
 
 
 def test_destroy_worker_raises_connection_error_by_default() -> None:
@@ -51,14 +45,9 @@ def test_destroy_worker_raises_connection_error_by_default() -> None:
         client.destroy_worker("worker-1")
 
 
-def test_destroy_worker_returns_false_and_warns_when_ignored(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
+def test_destroy_worker_returns_false_when_ignored() -> None:
     client = _client_against_unreachable()
-    with caplog.at_level(logging.WARNING, logger="flowmesh_stack.node_client"):
-        result = client.destroy_worker("worker-1", ignore_unreachable=True)
-    assert result is False
-    assert any("destroy_worker(worker-1)" in r.message for r in caplog.records)
+    assert client.destroy_worker("worker-1", ignore_unreachable=True) is False
 
 
 def test_stop_worker_raises_connection_error_by_default() -> None:
@@ -67,11 +56,6 @@ def test_stop_worker_raises_connection_error_by_default() -> None:
         client.stop_worker("worker-1")
 
 
-def test_stop_worker_returns_false_and_warns_when_ignored(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
+def test_stop_worker_returns_false_when_ignored() -> None:
     client = _client_against_unreachable()
-    with caplog.at_level(logging.WARNING, logger="flowmesh_stack.node_client"):
-        result = client.stop_worker("worker-1", ignore_unreachable=True)
-    assert result is False
-    assert any("stop_worker(worker-1)" in r.message for r in caplog.records)
+    assert client.stop_worker("worker-1", ignore_unreachable=True) is False

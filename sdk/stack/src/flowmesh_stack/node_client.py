@@ -1,13 +1,10 @@
 """Node direct API client."""
 
-import logging
 import os
 from typing import Any
 
 import httpx
 from flowmesh.exceptions import FlowMeshConnectionError, FlowMeshError
-
-logger = logging.getLogger(__name__)
 
 _DEFAULT_TIMEOUT = 30.0
 _WORKER_CREATE_TIMEOUT = 600.0
@@ -98,12 +95,9 @@ class NodeClient:
         """
         try:
             self._request("POST", f"/api/v1/stack/workers/{name}/stop")
-        except FlowMeshConnectionError as exc:
+        except FlowMeshConnectionError:
             if not ignore_unreachable:
                 raise
-            logger.warning(
-                "stop_worker(%s): server unreachable; skipping. %s", name, exc
-            )
             return False
         return True
 
@@ -115,12 +109,9 @@ class NodeClient:
         """
         try:
             self._request("DELETE", f"/api/v1/stack/workers/{name}")
-        except FlowMeshConnectionError as exc:
+        except FlowMeshConnectionError:
             if not ignore_unreachable:
                 raise
-            logger.warning(
-                "destroy_worker(%s): server unreachable; skipping. %s", name, exc
-            )
             return False
         return True
 
@@ -136,10 +127,9 @@ class NodeClient:
                 "/api/v1/stack/workers",
                 headers={"Content-Type": "application/json"},
             )
-        except FlowMeshConnectionError as exc:
+        except FlowMeshConnectionError:
             if not ignore_unreachable:
                 raise
-            logger.warning("destroy_all_workers: server unreachable; skipping. %s", exc)
             return False
         return True
 
