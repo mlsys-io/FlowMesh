@@ -30,7 +30,7 @@ _KIND_TO_FILENAME: dict[str, str] = {
 
 
 def _logs_dir_for_task(results_dir: Path, task_id: str) -> Path:
-    return result_file_path(results_dir, task_id).parent / "logs"
+    return result_file_path(results_dir, task_id).parent / "artifacts" / "logs"
 
 
 def _iter_jsonl(path: Path) -> Iterator[dict[str, Any]]:

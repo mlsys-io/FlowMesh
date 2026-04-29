@@ -103,6 +103,58 @@ def test_render_table_smoke() -> None:
     assert "events=4" in table
 
 
+def test_phase_timings_aggregate_across_data_ids() -> None:
+    events = [
+        {
+            "timestamp": "2026-04-29T00:00:00+00:00",
+            "event_type": "queuing",
+            "data_id": "tsk-1",
+        },
+        {
+            "timestamp": "2026-04-29T00:00:01+00:00",
+            "event_type": "model init",
+            "data_id": "tsk-1",
+        },
+        {
+            "timestamp": "2026-04-29T00:00:04+00:00",
+            "event_type": "inference",
+            "data_id": "tsk-1",
+        },
+        {
+            "timestamp": "2026-04-29T00:00:00+00:00",
+            "event_type": "queuing",
+            "data_id": "tsk-2",
+        },
+        {
+            "timestamp": "2026-04-29T00:00:03+00:00",
+            "event_type": "model init",
+            "data_id": "tsk-2",
+        },
+        {
+            "timestamp": "2026-04-29T00:00:08+00:00",
+            "event_type": "inference",
+            "data_id": "tsk-2",
+        },
+    ]
+    summary = analyze(events, [], [])
+    by_phase = {p.event_type: p for p in summary.phase_timings}
+
+    # "model init" should sum the (T1-T0) deltas from both data_ids: 1s + 3s = 4s.
+    assert by_phase["model init"].count == 2
+    assert by_phase["model init"].total_sec == 4.0
+    assert by_phase["model init"].min_sec == 1.0
+    assert by_phase["model init"].max_sec == 3.0
+    assert by_phase["model init"].avg_sec == 2.0
+
+    # "inference" sums (T2-T1) deltas: 3s + 5s = 8s.
+    assert by_phase["inference"].total_sec == 8.0
+    # Sorted descending by total — inference (8s) should come before model init.
+    assert summary.phase_timings[0].event_type == "inference"
+
+    # workflow_wall is global span: T0=00:00, last T2=00:08 → 8s.
+    assert summary.workflow_wall_sec == 8.0
+
+
 def test_analyze_handles_missing_rows() -> None:
     # No events but has assets + lineage — should still build data_ids.
     summary = analyze([], _assets(), _lineage())

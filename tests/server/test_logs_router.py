@@ -18,7 +18,7 @@ def _seed_task_logs(
     assets: list[dict[str, Any]] | None = None,
     lineage: list[dict[str, Any]] | None = None,
 ) -> None:
-    logs_dir = base / task_id / "logs"
+    logs_dir = base / task_id / "artifacts" / "logs"
     logs_dir.mkdir(parents=True)
     if events is not None:
         (logs_dir / "events.jsonl").write_text(
