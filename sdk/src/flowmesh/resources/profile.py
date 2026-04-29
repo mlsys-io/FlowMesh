@@ -1,11 +1,10 @@
 """Workflow profile (trace analysis) resource."""
 
-from typing import TYPE_CHECKING, Any
+from typing import Any
+
+from shared.profile import ProfileSummary
 
 from ._base import AsyncResource, SyncResource
-
-if TYPE_CHECKING:
-    from shared.profile import ProfileSummary
 
 
 class Profile(SyncResource):
@@ -19,10 +18,8 @@ class Profile(SyncResource):
         """
         return self._client._request("GET", f"/workflows/{workflow_id}/profile")
 
-    def fetch_summary(self, workflow_id: str) -> "ProfileSummary":
+    def fetch_summary(self, workflow_id: str) -> ProfileSummary:
         """Return a parsed `ProfileSummary` Pydantic model."""
-        from shared.profile import ProfileSummary
-
         return ProfileSummary.model_validate(self.fetch(workflow_id))
 
 
@@ -32,7 +29,5 @@ class AsyncProfile(AsyncResource):
     async def fetch(self, workflow_id: str) -> dict[str, Any]:
         return await self._client._request("GET", f"/workflows/{workflow_id}/profile")
 
-    async def fetch_summary(self, workflow_id: str) -> "ProfileSummary":
-        from shared.profile import ProfileSummary
-
+    async def fetch_summary(self, workflow_id: str) -> ProfileSummary:
         return ProfileSummary.model_validate(await self.fetch(workflow_id))

@@ -77,7 +77,7 @@ def test_redis_round_trip(tmp_path: Path, monkeypatch) -> None:
 
     reader = _Mixin(fake)
     reader._init_task_lineage("tsk-down", tmp_path / "task-down")
-    fetched = reader._fetch_data("tsk-up", governance_spec={"user_id": "alice"})
+    fetched = reader._fetch_data("tsk-up")
 
     assert fetched == {"items": [{"output": "hello"}], "ok": True}
 
@@ -105,7 +105,7 @@ def test_cache_hit_avoids_redis(tmp_path: Path, monkeypatch) -> None:
     # Wipe Redis so a real fetch would fail.
     fake.flushall()
 
-    fetched = reader._fetch_data("tsk-up", governance_spec={"user_id": "alice"})
+    fetched = reader._fetch_data("tsk-up")
     assert fetched == payload
     events = _read_jsonl(tmp_path / "task-down" / "artifacts" / "logs" / "events.jsonl")
     assert any(
@@ -179,9 +179,7 @@ def test_fetch_data_falls_back_to_server_on_redis_miss(
         lambda data_id: server_payload if data_id == "tsk-missing-in-redis" else None,
     )
 
-    fetched = mixin._fetch_data(
-        "tsk-missing-in-redis", governance_spec={"user_id": "alice"}
-    )
+    fetched = mixin._fetch_data("tsk-missing-in-redis")
     assert fetched == server_payload
 
     events = _read_jsonl(tmp_path / "task-down" / "artifacts" / "logs" / "events.jsonl")
@@ -202,7 +200,7 @@ def test_fetch_data_missing_in_redis_and_server_raises(
     monkeypatch.setattr(mixin, "_fetch_from_server", lambda data_id: None)
 
     with pytest.raises(Exception) as excinfo:
-        mixin._fetch_data("tsk-missing", governance_spec={"user_id": "alice"})
+        mixin._fetch_data("tsk-missing")
     assert "tsk-missing" in str(excinfo.value)
 
 
