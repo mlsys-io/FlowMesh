@@ -101,7 +101,7 @@ class WorkerConfig:
             os.getenv("WORKER_CACHE_DIR") or "/tmp/flowmesh_worker_cache"  # noqa: S108
         ).absolute()
         worker_cache_dir.mkdir(parents=True, exist_ok=True)
-        data_ttl_sec = parse_int_env("WORKER_DATA_TTL_SEC", 24 * 60 * 60)
+        data_ttl_sec = parse_int_env("WORKER_DATA_TTL_SEC", 10 * 60)
 
         return WorkerConfig(
             worker_token=worker_token,
