@@ -87,33 +87,13 @@ class NodeClient:
         """Start a stopped worker."""
         self._request("POST", f"/api/v1/stack/workers/{name}/start")
 
-    def stop_worker(self, name: str, *, ignore_unreachable: bool = False) -> bool:
-        """Stop a running worker.
+    def stop_worker(self, name: str) -> None:
+        """Stop a running worker."""
+        self._request("POST", f"/api/v1/stack/workers/{name}/stop")
 
-        Returns ``True`` on success, ``False`` when ``ignore_unreachable=True``
-        and the FlowMesh server was unreachable. Other errors propagate.
-        """
-        try:
-            self._request("POST", f"/api/v1/stack/workers/{name}/stop")
-        except FlowMeshConnectionError:
-            if not ignore_unreachable:
-                raise
-            return False
-        return True
-
-    def destroy_worker(self, name: str, *, ignore_unreachable: bool = False) -> bool:
-        """Destroy a single worker, removing its container.
-
-        Returns ``True`` on success, ``False`` when ``ignore_unreachable=True``
-        and the FlowMesh server was unreachable. Other errors propagate.
-        """
-        try:
-            self._request("DELETE", f"/api/v1/stack/workers/{name}")
-        except FlowMeshConnectionError:
-            if not ignore_unreachable:
-                raise
-            return False
-        return True
+    def destroy_worker(self, name: str) -> None:
+        """Destroy a single worker, removing its container."""
+        self._request("DELETE", f"/api/v1/stack/workers/{name}")
 
     def destroy_all_workers(self, *, ignore_unreachable: bool = False) -> bool:
         """Destroy all workers managed by this node.
