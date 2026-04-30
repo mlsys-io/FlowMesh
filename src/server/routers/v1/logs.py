@@ -62,7 +62,7 @@ async def _resolve_task_ids(workflow_id: str, registry: WorkflowRegistry) -> lis
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Workflow '{workflow_id}' not found",
         )
-    return list(workflow.task_ids)
+    return workflow.task_ids
 
 
 def _stream_jsonl(rows: Iterator[dict[str, Any]]) -> Iterator[bytes]:

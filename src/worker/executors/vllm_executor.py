@@ -1168,7 +1168,7 @@ Summary:"""
             if parent_tables := parent_entry.tables:
                 result = self._populate_table(result, parent_tables)
             if child_results:
-                for child_id, child_payload in list(child_results.items()):
+                for child_id, child_payload in child_results.items():
                     if (child_entry := entry_by_task_id.get(child_id)) and (
                         child_tables := child_entry.tables
                     ):
