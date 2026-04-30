@@ -3,11 +3,11 @@
 Carries two responsibilities:
 
 - Per-task lineage as OTel-shape spans — work done in the executor is wrapped
-  in ``with self._span(...)`` blocks; instantaneous markers (cache hit, dump
-  to storage) emit zero-duration spans via ``self._instant(...)``. Spans land
-  in ``out_dir/artifacts/logs/spans.jsonl`` and ride the artifact-upload path
-  to ``results/{task_id}/logs/spans.jsonl`` on the server. Asset and lineage
-  rows continue as separate JSONL files.
+  in ``with self._span(...)`` blocks; moment-in-time checkpoints (e.g. a
+  merged child's queue entry) emit zero-duration spans via
+  ``self._log_event(...)``. Spans land in ``out_dir/artifacts/logs/spans.jsonl``
+  and ride the artifact-upload path to ``results/{task_id}/logs/spans.jsonl``
+  on the server. Asset and lineage rows continue as separate JSONL files.
 
 - Cross-task data transport — reads/writes upstream payloads through the
   supervisor's gRPC cache (``FetchData`` / ``PublishData``, 10-min TTL),
@@ -207,7 +207,7 @@ class DataMixin:
         with get_tracer().start_as_current_span(name, attributes=attrs) as span:
             yield span
 
-    def _instant(
+    def _log_event(
         self,
         name: str,
         *,
@@ -215,7 +215,7 @@ class DataMixin:
         data_id: str | None = None,
         attributes: dict[str, Any] | None = None,
     ) -> None:
-        """Zero-duration span for instantaneous markers."""
+        """Record a moment-in-time checkpoint as a zero-duration span."""
         attrs = attributes_with_kind(
             kind,
             data_id=data_id if data_id is not None else self._task_id,
@@ -387,19 +387,20 @@ class DataMixin:
                 json.dump(payload, fh, ensure_ascii=False, default=str)
 
     def _fetch_data(self, data_id: str) -> dict[str, Any]:
-        """Resolve an upstream payload. Cache → Redis → server, in that order."""
+        """Resolve an upstream payload. Cache → supervisor → server, in order."""
         with self._span(
             "read", kind=FlowMeshSpanKind.NETWORK, data_id=data_id
         ) as read_span:
             cached = self._read_cache(data_id)
             if cached is not None:
-                self._instant("cache hit", data_id=data_id)
                 read_span.set_attribute("source", "cache")
+                read_span.set_attribute("cache_hit", True)
                 return cached
 
             payload = self._fetch_from_cache(data_id)
             if payload is not None:
                 read_span.set_attribute("source", "supervisor")
+                read_span.set_attribute("cache_hit", False)
                 self._write_cache(data_id, payload)
                 return payload
 
@@ -410,6 +411,7 @@ class DataMixin:
                     f"server results"
                 )
             read_span.set_attribute("source", "server")
+            read_span.set_attribute("cache_hit", False)
             self._write_cache(data_id, payload)
             return payload
 
@@ -421,38 +423,39 @@ class DataMixin:
         governance_spec: dict[str, Any] | None,
     ) -> None:
         user_id = self._user_id(governance_spec)
-        deduped = dedup_json(data)
-        try:
-            payload = json.dumps(deduped, ensure_ascii=False, default=str)
-        except (TypeError, ValueError) as exc:
-            raise ExecutionError(f"Failed to serialize data {data_id}: {exc}") from exc
-
         with self._span(
-            "write", kind=FlowMeshSpanKind.NETWORK, data_id=data_id
-        ) as write_span:
+            "dump to storage", kind=FlowMeshSpanKind.NETWORK, data_id=data_id
+        ) as dump_span:
+            deduped = dedup_json(data)
+            try:
+                payload = json.dumps(deduped, ensure_ascii=False, default=str)
+            except (TypeError, ValueError) as exc:
+                raise ExecutionError(
+                    f"Failed to serialize data {data_id}: {exc}"
+                ) from exc
+
             published = self._publish_to_cache(data_id, payload)
             self._write_cache(data_id, data)
-            write_span.set_attribute("cache", "hit" if published else "miss")
-            write_span.set_attribute("payload_bytes", len(payload.encode("utf-8")))
-        self._instant("dump to storage", data_id=data_id)
+            dump_span.set_attribute("cache_hit", published)
+            dump_span.set_attribute("payload_bytes", len(payload.encode("utf-8")))
 
-        asset_guid = (
-            source_data_ids[0] if len(source_data_ids) == 1 else str(uuid.uuid4())
-        )
-        self._record_asset(
-            data_id=data_id,
-            asset_guid=asset_guid,
-            version=1,
-            user_id=user_id,
-        )
-        if source_data_ids:
-            self._record_lineage(data_id=data_id, source_data_ids=source_data_ids)
+            asset_guid = (
+                source_data_ids[0] if len(source_data_ids) == 1 else str(uuid.uuid4())
+            )
+            self._record_asset(
+                data_id=data_id,
+                asset_guid=asset_guid,
+                version=1,
+                user_id=user_id,
+            )
+            if source_data_ids:
+                self._record_lineage(data_id=data_id, source_data_ids=source_data_ids)
         logger.info(
-            "Wrote data %s (size: %d bytes, sources: %d, cache=%s)",
+            "Wrote data %s (size: %d bytes, sources: %d, cache_hit=%s)",
             data_id,
             len(payload.encode("utf-8")),
             len(source_data_ids),
-            "hit" if published else "miss",
+            published,
         )
 
     def _load_image_from_artifact(self, source: str) -> Image.Image:

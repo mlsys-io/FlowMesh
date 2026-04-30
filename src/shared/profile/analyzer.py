@@ -9,8 +9,9 @@ Per-data_id timing:
 
 - ``start_time`` / ``end_time`` come from the ``"task"`` root span emitted by
   :meth:`worker.executors.mixins.data.DataMixin._task_span`.
-- A zero-duration ``"dump to storage"`` marker stamps when data is durably
-  persisted; its ``end_time`` is the data-ready timestamp.
+- The ``"dump to storage"`` span wraps the producer's storage write
+  (serialize → supervisor cache publish → on-disk → asset/lineage rows);
+  its ``end_time`` is the data-ready timestamp.
 - ``queuing_delay`` is the gap between a task's ``start_time`` and the latest
   parent's ``"dump to storage"`` end_time. Surfaced for every data_id so
   imbalance shows up off the critical path too.

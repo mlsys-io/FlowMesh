@@ -649,13 +649,6 @@ Summary:"""
             **optional_sampling_fields,
         )
 
-    def _instant_for_each(
-        self, task_ids: Iterable[str], event_type: str, message: str | None = None
-    ) -> None:
-        attrs = {"detail": message} if message else None
-        for task_id in task_ids:
-            self._instant(event_type, data_id=task_id, attributes=attrs)
-
     def _remap_grouped_outputs(
         self,
         *,
@@ -884,7 +877,7 @@ Summary:"""
                 raise ExecutionError(
                     "Merged child spec must be inference for merged vLLM execution"
                 )
-            self._instant("queuing for execution", data_id=child_id)
+            self._log_event("queuing for execution", data_id=child_id)
             collection_jobs.append(
                 {"task_id": child_id, "spec": child_spec, "is_parent": False}
             )
@@ -943,12 +936,6 @@ Summary:"""
             entries.append(child_entry)
             dependencies_by_task[child_id] = child_deps
             entry_by_task_id[child_id] = child_entry
-
-        self._instant_for_each(
-            task_ids,
-            "prompt synchronization",
-            f"Prepared prompts for parent and {len(merge_children)} children",
-        )
 
         self._batched_inputs = []
         self._prompt_owners = []
@@ -1028,165 +1015,174 @@ Summary:"""
             )  # type: ignore[attr-defined]
         latency = time.time() - t0
 
-        per_task_items: dict[str, list[dict[str, Any]]] = {}
-        usage_by_task: dict[str, dict[str, int | float]] = {}
-        counts_by_task: dict[str, int] = {}
+        with self._span(
+            "output postprocessing",
+            kind=FlowMeshSpanKind.COMPUTE,
+            attributes={"task_ids": list(task_ids)},
+        ):
+            per_task_items: dict[str, list[dict[str, Any]]] = {}
+            usage_by_task: dict[str, dict[str, int | float]] = {}
+            counts_by_task: dict[str, int] = {}
 
-        total_prompt_tokens = 0
-        total_completion_tokens = 0
+            total_prompt_tokens = 0
+            total_completion_tokens = 0
 
-        for idx, out in enumerate(outputs):
-            owner = (
-                self._prompt_owners[idx] if idx < len(self._prompt_owners) else task_id
-            )
-            owner_items = per_task_items.setdefault(owner, [])
-            local_index = len(owner_items)
-            prompt_text: str = ""
-            if idx < len(self._batched_inputs):
-                prompt_payload = self._batched_inputs[idx]
-                if isinstance(prompt_payload, dict):
-                    prompt_text = prompt_payload["prompt"]
-                else:
-                    prompt_text = prompt_payload
-            metadata_entry = (
-                self._batched_metadata[idx]
-                if idx < len(self._batched_metadata)
-                else {"prompt": prompt_text}
-            )
+            for idx, out in enumerate(outputs):
+                owner = (
+                    self._prompt_owners[idx]
+                    if idx < len(self._prompt_owners)
+                    else task_id
+                )
+                owner_items = per_task_items.setdefault(owner, [])
+                local_index = len(owner_items)
+                prompt_text: str = ""
+                if idx < len(self._batched_inputs):
+                    prompt_payload = self._batched_inputs[idx]
+                    if isinstance(prompt_payload, dict):
+                        prompt_text = prompt_payload["prompt"]
+                    else:
+                        prompt_text = prompt_payload
+                metadata_entry = (
+                    self._batched_metadata[idx]
+                    if idx < len(self._batched_metadata)
+                    else {"prompt": prompt_text}
+                )
 
-            out_outputs = getattr(out, "outputs", None)
-            if not out_outputs:
+                out_outputs = getattr(out, "outputs", None)
+                if not out_outputs:
+                    payload = {
+                        "index": local_index,
+                        "prompt": prompt_text,
+                        "output": "",
+                        "finish_reason": None,
+                    }
+                    if metadata_entry:
+                        payload["metadata"] = metadata_entry
+                    owner_items.append(payload)
+                    usage_by_task.setdefault(
+                        owner, {"prompt_tokens": 0, "completion_tokens": 0}
+                    )
+                    counts_by_task[owner] = counts_by_task.get(owner, 0) + 1
+                    continue
+
+                best = out_outputs[0]
+                text = getattr(best, "text", "") or ""
+
+                output_value: Any = text
+                if template_param_schema:
+                    try:
+                        output_value = json.loads(text)
+                    except json.JSONDecodeError:
+                        logger.warning(
+                            "Task %s: failed to parse structured output as JSON: %r",
+                            owner,
+                            text,
+                        )
+
+                finish_reason = getattr(best, "finish_reason", None)
                 payload = {
                     "index": local_index,
                     "prompt": prompt_text,
-                    "output": "",
-                    "finish_reason": None,
+                    "output": output_value,
+                    "finish_reason": finish_reason,
                 }
                 if metadata_entry:
                     payload["metadata"] = metadata_entry
                 owner_items.append(payload)
-                usage_by_task.setdefault(
+
+                prompt_token_ids = getattr(out, "prompt_token_ids", None) or []
+                best_token_ids = getattr(best, "token_ids", None) or []
+                prompt_len = len(prompt_token_ids)
+                completion_len = len(best_token_ids)
+
+                total_prompt_tokens += prompt_len
+                total_completion_tokens += completion_len
+
+                usage_entry = usage_by_task.setdefault(
                     owner, {"prompt_tokens": 0, "completion_tokens": 0}
                 )
+                usage_entry["prompt_tokens"] += prompt_len
+                usage_entry["completion_tokens"] += completion_len
                 counts_by_task[owner] = counts_by_task.get(owner, 0) + 1
-                continue
 
-            best = out_outputs[0]
-            text = getattr(best, "text", "") or ""
-
-            output_value: Any = text
-            if template_param_schema:
-                try:
-                    output_value = json.loads(text)
-                except json.JSONDecodeError:
-                    logger.warning(
-                        "Task %s: failed to parse structured output as JSON: %r",
-                        owner,
-                        text,
+            for owner, entry in entry_by_task_id.items():
+                group_sizes: list[int] | None = entry.image_group_sizes
+                if group_sizes is None:
+                    continue
+                base_prompts = entry.image_group_base_prompts
+                base_metadata = entry.image_group_base_metadata
+                if base_prompts is None or base_metadata is None:
+                    raise ExecutionError(
+                        "Grouped image outputs require base prompts and metadata "
+                        f"(task={owner})."
                     )
-
-            finish_reason = getattr(best, "finish_reason", None)
-            payload = {
-                "index": local_index,
-                "prompt": prompt_text,
-                "output": output_value,
-                "finish_reason": finish_reason,
-            }
-            if metadata_entry:
-                payload["metadata"] = metadata_entry
-            owner_items.append(payload)
-
-            prompt_token_ids = getattr(out, "prompt_token_ids", None) or []
-            best_token_ids = getattr(best, "token_ids", None) or []
-            prompt_len = len(prompt_token_ids)
-            completion_len = len(best_token_ids)
-
-            total_prompt_tokens += prompt_len
-            total_completion_tokens += completion_len
-
-            usage_entry = usage_by_task.setdefault(
-                owner, {"prompt_tokens": 0, "completion_tokens": 0}
-            )
-            usage_entry["prompt_tokens"] += prompt_len
-            usage_entry["completion_tokens"] += completion_len
-            counts_by_task[owner] = counts_by_task.get(owner, 0) + 1
-
-        for owner, entry in entry_by_task_id.items():
-            group_sizes: list[int] | None = entry.image_group_sizes
-            if group_sizes is None:
-                continue
-            base_prompts = entry.image_group_base_prompts
-            base_metadata = entry.image_group_base_metadata
-            if base_prompts is None or base_metadata is None:
-                raise ExecutionError(
-                    "Grouped image outputs require base prompts and metadata "
-                    f"(task={owner})."
-                )
-            owner_items = per_task_items.get(owner, [])
-            per_task_items[owner] = self._remap_grouped_outputs(
-                task_id=owner,
-                items=owner_items,
-                group_sizes=self._validate_image_group_sizes(
-                    group_sizes,
+                owner_items = per_task_items.get(owner, [])
+                per_task_items[owner] = self._remap_grouped_outputs(
                     task_id=owner,
-                ),
-                base_prompts=base_prompts,
-                base_metadata=base_metadata,
-            )
+                    items=owner_items,
+                    group_sizes=self._validate_image_group_sizes(
+                        group_sizes,
+                        task_id=owner,
+                    ),
+                    base_prompts=base_prompts,
+                    base_metadata=base_metadata,
+                )
 
-        for owner, usage in usage_by_task.items():
-            usage["total_tokens"] = usage["prompt_tokens"] + usage["completion_tokens"]
-            usage["latency_sec"] = latency
-            usage["num_requests"] = counts_by_task.get(owner, 0)
+            for owner, usage in usage_by_task.items():
+                usage["total_tokens"] = (
+                    usage["prompt_tokens"] + usage["completion_tokens"]
+                )
+                usage["latency_sec"] = latency
+                usage["num_requests"] = counts_by_task.get(owner, 0)
 
-        parent_usage = {
-            "prompt_tokens": total_prompt_tokens,
-            "completion_tokens": total_completion_tokens,
-            "total_tokens": total_prompt_tokens + total_completion_tokens,
-            "latency_sec": latency,
-            "num_requests": len(self._batched_inputs),
-        }
-
-        result: dict[str, Any] = {
-            "ok": True,
-            "model": self._model_name,
-            "items": per_task_items.get(task_id, []),
-            "usage": parent_usage,
-        }
-
-        child_results: dict[str, Any] = {}
-        for child in merge_children:
-            child_id = child.task_id.strip()
-            if not child_id:
-                continue
-            child_payload: dict[str, Any] = {
-                "items": per_task_items.get(child_id, []),
+            parent_usage = {
+                "prompt_tokens": total_prompt_tokens,
+                "completion_tokens": total_completion_tokens,
+                "total_tokens": total_prompt_tokens + total_completion_tokens,
+                "latency_sec": latency,
+                "num_requests": len(self._batched_inputs),
             }
-            maybe_usage = usage_by_task.get(child_id)
-            if maybe_usage:
-                child_payload["usage"] = maybe_usage
-            child_results[child_id] = child_payload
 
-        self._instant_for_each(task_ids, "output postprocessing")
+            result: dict[str, Any] = {
+                "ok": True,
+                "model": self._model_name,
+                "items": per_task_items.get(task_id, []),
+                "usage": parent_usage,
+            }
 
-        if parent_tables := parent_entry.tables:
-            result = self._populate_table(result, parent_tables)
-        if child_results:
-            for child_id, child_payload in list(child_results.items()):
-                if (child_entry := entry_by_task_id.get(child_id)) and (
-                    child_tables := child_entry.tables
-                ):
-                    child_results[child_id] = self._populate_table(
-                        child_payload, child_tables
-                    )
+            child_results: dict[str, Any] = {}
+            for child in merge_children:
+                child_id = child.task_id.strip()
+                if not child_id:
+                    continue
+                child_payload: dict[str, Any] = {
+                    "items": per_task_items.get(child_id, []),
+                }
+                maybe_usage = usage_by_task.get(child_id)
+                if maybe_usage:
+                    child_payload["usage"] = maybe_usage
+                child_results[child_id] = child_payload
 
-        if child_results:
-            result["children"] = child_results
+            if parent_tables := parent_entry.tables:
+                result = self._populate_table(result, parent_tables)
+            if child_results:
+                for child_id, child_payload in list(child_results.items()):
+                    if (child_entry := entry_by_task_id.get(child_id)) and (
+                        child_tables := child_entry.tables
+                    ):
+                        child_results[child_id] = self._populate_table(
+                            child_payload, child_tables
+                        )
 
-        self._maybe_export_jsonl(spec, task_id, result, out_dir)
-        self._instant_for_each(
-            task_ids, "JSONL export", "vLLM execution completed successfully"
-        )
+            if child_results:
+                result["children"] = child_results
+
+        with self._span(
+            "JSONL export",
+            kind=FlowMeshSpanKind.COMPUTE,
+            attributes={"task_ids": list(task_ids)},
+        ):
+            self._maybe_export_jsonl(spec, task_id, result, out_dir)
 
         self._dump_to_governance(
             governance_spec=spec.governance,
