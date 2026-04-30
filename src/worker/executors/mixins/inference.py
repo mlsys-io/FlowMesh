@@ -10,6 +10,7 @@ import pandas as pd
 import torch
 from PIL import Image
 
+from shared.governance.spans import FlowMeshSpanKind
 from shared.tasks.specs import InferenceSpecStrict
 from shared.utils.json import to_json_serializable
 
@@ -330,7 +331,11 @@ class InferenceMixin(DataMixin):
         self, entry: InferenceEntry, *, has_images: bool = False
     ) -> PreparedInferenceEntry:
         task_id = entry.task_id
-        with self._span("prompt postprocessing", kind="compute", data_id=task_id):
+        with self._span(
+            "prompt postprocessing",
+            kind=FlowMeshSpanKind.COMPUTE,
+            data_id=task_id,
+        ):
             inference_cfg = entry.inference_cfg
             append_system_prompt = entry.append_system_prompt
             system_prompt = inference_cfg.get("system_prompt")
