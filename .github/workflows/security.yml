@@ -1,15 +1,9 @@
-name: zizmor
+name: security
 
 on:
   pull_request:
-    paths:
-      - ".github/workflows/**"
-      - ".github/actions/**"
   push:
     branches: [main]
-    paths:
-      - ".github/workflows/**"
-      - ".github/actions/**"
 
 permissions:
   contents: read
@@ -28,5 +22,7 @@ jobs:
           persist-credentials: false
       - name: Set up uv
         uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9  # v7
+        with:
+          version: "0.11.8"
       - name: Run zizmor
-        run: uvx zizmor --persona regular --format github .github/workflows
+        run: uvx --from zizmor==1.24.1 zizmor --persona regular --format github .github/workflows
