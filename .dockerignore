@@ -70,3 +70,5 @@ exp/
 templates/
 scripts/
 README.md
+.claude/
+.pr-body.md
