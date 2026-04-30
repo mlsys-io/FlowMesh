@@ -559,6 +559,18 @@ neither `flowmesh stack up` nor `worker up` triggers a rebuild on its own.
 "It worked yesterday" is not evidence that the image matches today's code —
 treat any e2e run on a stack you didn't just rebuild for as untrusted output.
 
+**PR-specific image tag (mandatory).** When building images on a feature
+branch, pass `--image-tag <pr-slug>` to every `flowmesh stack build`,
+`stack up`, and `worker up` invocation, where `<pr-slug>` is a short
+PR-identifying string (e.g. the branch name without the `zsu/` prefix:
+`lineage-redis-jsonl`, `redis-result-cache`). Without this, builds default
+to `FLOWMESH_VERSION=dev` and parallel PRs silently overwrite each other's
+images on the host — one branch's `dev` build replaces another's, and the
+next stack-up pulls the wrong code without any warning. Pick the slug once
+at the top of the e2e session and use it consistently across build / up /
+worker-up; mixing tags between commands lands containers that reference
+unbuilt or stale images.
+
 ## Code Style
 
 - Python 3.12+ (see `[project]` in `pyproject.toml`).
