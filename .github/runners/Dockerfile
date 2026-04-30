@@ -33,7 +33,18 @@ FROM myoung34/github-runner:latest
 # input to the same value or the cache layout written here may not
 # match what CI reads back.
 ARG UV_VERSION=0.11.8
-ENV UV_CACHE_DIR=/root/.cache/uv
+
+# Pinned Python version. ``pyproject.toml`` says ``requires-python =
+# ">=3.12"`` (a lower bound), but the resolved lockfile contains wheels
+# (e.g. ``nvidia-cudnn-frontend``) that only ship for cp312/cp313. uv
+# would otherwise pick the latest available CPython on the build host
+# (3.14 at time of writing) and fail to find compatible wheels. ``UV_PYTHON``
+# locks every uv invocation in the image — both the build-time
+# ``uv sync`` here and any uv calls inside running containers — to the
+# same Python the lockfile was resolved against.
+ARG PYTHON_VERSION=3.12
+ENV UV_CACHE_DIR=/root/.cache/uv \
+    UV_PYTHON=${PYTHON_VERSION}
 
 # Install pinned uv into a shared location.
 RUN curl -LsSf "https://astral.sh/uv/${UV_VERSION}/install.sh" \

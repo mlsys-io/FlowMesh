@@ -10,6 +10,7 @@ Build context is the repo root, so run from the top of your FlowMesh checkout:
 git checkout main && git pull
 docker build \
   --build-arg UV_VERSION=0.11.8 \
+  --build-arg PYTHON_VERSION=3.12 \
   -t flowmesh-oss-ci-runner:0.11.8-$(date +%Y%m%d) \
   -t flowmesh-oss-ci-runner:latest \
   -f .github/runners/Dockerfile \
@@ -17,6 +18,8 @@ docker build \
 ```
 
 The two tags give a date-stamped reference for rollback plus a moving `:latest` for the runner systemd units. Build it on a `linux/amd64` host so the cached wheels are platform-correct for the runners (which are also `linux/amd64`).
+
+`PYTHON_VERSION` defaults to `3.12`. The lockfile includes wheels (e.g. `nvidia-cudnn-frontend`) that only ship for cp312/cp313; `requires-python = ">=3.12"` in `pyproject.toml` is a lower bound, so uv would otherwise pick the latest available CPython (3.14+) and fail. Bump to `3.13` only when every transitive dep has cp313 wheels.
 
 ## Deploy to a runner host
 
