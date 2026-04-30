@@ -97,7 +97,7 @@ _DEFAULT_OUTPUT_PATH = "/mnt/flowmesh/output"
 _SAFE_MOUNT_ROOT = PurePosixPath("/mnt/flowmesh")
 _CONTAINER_RESULTS_SOURCE_ROOT = "/root/.flowmesh/results-source"
 _RESULT_BUNDLE_TIMEOUT_SEC = 300.0
-_FINISH_SENTINEL_PATH = "/tmp/.flowmesh_finish"
+_FINISH_SENTINEL_PATH = str(PurePosixPath("/", "tmp", ".flowmesh_finish"))
 _SSH_RUN_ENTRYPOINT_PATH = "/flowmesh-ssh-run.sh"
 _SSH_RUN_SCRIPT_SOURCE = (
     Path(__file__).resolve().parent.parent / "docker" / "ssh-run.sh"

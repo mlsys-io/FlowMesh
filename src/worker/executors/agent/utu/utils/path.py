@@ -37,7 +37,7 @@ class FileUtils:
                 suffix=FileUtils.get_file_ext(url),
                 delete=False,
             ).name
-        response = requests.get(url)
+        response = requests.get(url, timeout=60)
         response.raise_for_status()
         with open(save_path, "wb") as f:
             f.write(response.content)
@@ -46,9 +46,9 @@ class FileUtils:
     @staticmethod
     def get_file_md5(file_path: str) -> str:
         """Clac md5 for local or web file"""
-        hash_md5 = hashlib.md5()
+        hash_md5 = hashlib.md5(usedforsecurity=False)
         if FileUtils.is_web_url(file_path):
-            with requests.get(file_path, stream=True) as r:
+            with requests.get(file_path, stream=True, timeout=60) as r:
                 r.raise_for_status()
                 for chunk in r.iter_content(chunk_size=4096):
                     hash_md5.update(chunk)

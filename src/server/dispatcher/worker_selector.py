@@ -243,6 +243,6 @@ def _stable_jitter(task_id: str, worker_id: str, magnitude: float) -> float:
     if magnitude <= 0:
         return 0.0
     payload = f"{task_id}:{worker_id}".encode("utf-8", "ignore")
-    digest = hashlib.md5(payload).digest()
+    digest = hashlib.md5(payload, usedforsecurity=False).digest()
     value = int.from_bytes(digest[:8], "big") / float(1 << 64)
     return (value - 0.5) * magnitude * 2

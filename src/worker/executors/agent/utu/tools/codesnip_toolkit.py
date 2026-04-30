@@ -66,7 +66,9 @@ class CodesnipToolkit(AsyncBaseToolkit):
             "code": code,
             "language": language,
         }
-        response = requests.post(f"{self.server_url}/run_code", json=payload)
+        response = requests.post(
+            f"{self.server_url}/run_code", json=payload, timeout=60
+        )
         result = response.json()
         logger.info(
             f"[tool] run_code ```{oneline_object(payload)}``` "

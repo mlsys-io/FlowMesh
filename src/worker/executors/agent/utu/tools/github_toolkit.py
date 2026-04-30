@@ -29,7 +29,7 @@ class GitHubToolkit(AsyncBaseToolkit):
             "X-GitHub-Api-Version": "2022-11-28",
         }
         try:
-            response = requests.get(api_url, headers=headers)
+            response = requests.get(api_url, headers=headers, timeout=30)
             response.raise_for_status()
             repo_data = response.json()
             assert (

@@ -117,7 +117,7 @@ class ReactConverter:
     """
 
     def __init__(self) -> None:
-        self.jinja_env = jinja2.Environment()
+        self.jinja_env = jinja2.Environment(autoescape=jinja2.select_autoescape())
         self.template_sp = self.jinja_env.from_string(TEMPLATE_SP)
         self.template_action = self.jinja_env.from_string(TEMPLATE_ACTION)
         self.observation_str = "Observation:"

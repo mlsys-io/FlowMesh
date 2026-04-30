@@ -19,6 +19,7 @@ Run commands in a bash shell\n
 """
 
 import re
+import tempfile
 
 from ..config import ToolkitConfig
 from ..utils import get_logger
@@ -30,7 +31,9 @@ logger = get_logger(__name__)
 class BashToolkit(AsyncBaseToolkit):
     def __init__(self, config: ToolkitConfig | None = None) -> None:
         super().__init__(config)
-        self.workspace_root = self.config.config.get("workspace_root", "/tmp/")
+        self.workspace_root = self.config.config.get(
+            "workspace_root", tempfile.gettempdir()
+        )
         # self.require_confirmation = self.config.config.get(
         #     "require_confirmation", False
         # )

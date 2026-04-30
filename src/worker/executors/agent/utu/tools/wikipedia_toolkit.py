@@ -122,7 +122,7 @@ class WikipediaSearchTool(AsyncBaseToolkit):
         }
 
         try:
-            response = requests.get(base_url, params=params)
+            response = requests.get(base_url, params=params, timeout=30)
             response.raise_for_status()
         except requests.RequestException as e:
             return f"Request error: {e}"

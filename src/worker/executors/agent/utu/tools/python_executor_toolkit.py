@@ -5,6 +5,7 @@ import glob
 import io
 import os
 import re
+import tempfile
 import traceback
 import uuid
 from datetime import datetime
@@ -168,7 +169,12 @@ class PythonExecutorToolkit(AsyncBaseToolkit):
         if workdir is None:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             unique_id = str(uuid.uuid4())[:8]
-            workdir = f"/tmp/utu/python_executor/{timestamp}_{unique_id}"
+            workdir = os.path.join(
+                tempfile.gettempdir(),
+                "utu",
+                "python_executor",
+                f"{timestamp}_{unique_id}",
+            )
         loop = asyncio.get_running_loop()
         try:
             return await asyncio.wait_for(

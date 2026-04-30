@@ -3,7 +3,7 @@ import importlib.util
 import sys
 from pathlib import Path
 
-from jinja2 import Environment, FileSystemLoader, Template
+from jinja2 import Environment, FileSystemLoader, Template, select_autoescape
 from pydantic import BaseModel, Field
 
 from .path import DIR_ROOT
@@ -19,7 +19,9 @@ def get_event_loop() -> asyncio.AbstractEventLoop:
 
 
 def get_jinja_env(directory: Path) -> Environment:
-    return Environment(loader=FileSystemLoader(directory))
+    return Environment(
+        loader=FileSystemLoader(directory), autoescape=select_autoescape()
+    )
 
 
 def get_jinja_template(template_path: str) -> Template:

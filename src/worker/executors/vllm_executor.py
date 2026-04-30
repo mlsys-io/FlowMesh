@@ -777,7 +777,9 @@ Summary:"""
                 and Path(embedding_path).exists()
             ):
                 try:
-                    loaded = torch.load(embedding_path, map_location="cpu")
+                    loaded = torch.load(
+                        embedding_path, map_location="cpu", weights_only=True
+                    )
                     if not isinstance(loaded, list):
                         raise TypeError(
                             "Loaded image embedding is not a list of tensors"

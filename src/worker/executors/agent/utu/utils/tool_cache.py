@@ -27,7 +27,9 @@ def create_cached_file(cache_path: pathlib.Path, expire_time: int | None = None)
                 args[1:] if args and hasattr(args[0], func.__name__) else args
             )  # remove `self`
             args_str = str(cache_args) + str(sorted(kwargs.items()))
-            cache_key = hashlib.md5(args_str.encode()).hexdigest()
+            cache_key = hashlib.md5(
+                args_str.encode(), usedforsecurity=False
+            ).hexdigest()
             cache_file = cache_path / f"{func_name}" / f"{func_name}_{cache_key}.json"
             cache_file.parent.mkdir(exist_ok=True, parents=True)
 
@@ -76,7 +78,9 @@ def create_cached_db(expire_time: int | None = None):
                 args[1:] if args and hasattr(args[0], func.__name__) else args
             )  # remove `self`
             args_str = str(cache_args) + str(sorted(kwargs.items()))
-            cache_key = hashlib.md5(args_str.encode()).hexdigest()
+            cache_key = hashlib.md5(
+                args_str.encode(), usedforsecurity=False
+            ).hexdigest()
 
             with SQLModelUtils.create_session() as session:
                 stmt = select(ToolCacheModel).where(

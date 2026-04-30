@@ -1,5 +1,6 @@
 import base64
 import os
+import tempfile
 from pathlib import Path
 
 from shared.utils import parse_bool_env, parse_float_env, parse_int_env
@@ -96,7 +97,9 @@ RESULTS_DIR: str = os.getenv("RESULTS_DIR", "flowmesh-node_results")
 HF_CACHE_DIR: str | None = os.getenv("HF_CACHE_DIR") or None
 PREDOWNLOAD_MODEL_LIST: str = os.getenv("PREDOWNLOAD_MODEL_LIST", "")
 WORKER_TAGS: str = os.getenv("WORKER_TAGS", "")
-WORKER_HB_DIR: str = os.getenv("WORKER_HB_DIR") or "/tmp/flowmesh_worker_health"
+WORKER_HB_DIR: str = os.getenv("WORKER_HB_DIR") or os.path.join(
+    tempfile.gettempdir(), "flowmesh_worker_health"
+)
 WORKER_UPLOAD_RESULTS: bool = parse_bool_env("WORKER_UPLOAD_RESULTS", False)
 
 VAST_SEARCH_LIMIT: int = int(os.getenv("VAST_SEARCH_LIMIT") or "10")

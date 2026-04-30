@@ -265,7 +265,7 @@ class VLLMLoRAExecutor(VLLMExecutor):
         import tarfile
 
         with tarfile.open(path, "r:*") as tf:
-            tf.extractall(target_root)
+            tf.extractall(target_root, filter="data")
 
         return self._ensure_adapter_root(select_extracted_subdir(target_root, None))
 

@@ -3,8 +3,6 @@ import os
 import shutil
 import subprocess
 import tarfile
-import urllib.error
-import urllib.request
 import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -146,24 +144,29 @@ def download_and_unpack(load_cfg: dict[str, Any], out_dir: Path) -> Path:
         shutil.rmtree(dest_root, ignore_errors=True)
     dest_root.mkdir(parents=True, exist_ok=True)
 
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"}:
+        raise ExecutionError(
+            f"Unsupported checkpoint URL scheme '{parsed.scheme}'; "
+            "only http and https are allowed"
+        )
+
     provided_name = load_cfg.get("filename")
     if provided_name:
         temp_name = str(provided_name)
     else:
-        from urllib.parse import urlparse
-
-        parsed_name = Path(urlparse(url).path).name
+        parsed_name = Path(parsed.path).name
         temp_name = parsed_name or "checkpoint"
 
     temp_path = (dest_root / temp_name).resolve()
-    request = urllib.request.Request(url, headers=headers)
     try:
-        with (
-            urllib.request.urlopen(request, timeout=timeout) as response,
-            temp_path.open("wb") as fh,
-        ):
-            shutil.copyfileobj(response, fh)
-    except urllib.error.URLError as exc:
+        with requests.get(url, headers=headers, stream=True, timeout=timeout) as resp:
+            resp.raise_for_status()
+            with temp_path.open("wb") as fh:
+                for chunk in resp.iter_content(chunk_size=1 << 16):
+                    if chunk:
+                        fh.write(chunk)
+    except requests.RequestException as exc:
         raise ExecutionError(
             f"Failed to download checkpoint from {url}: {exc}"
         ) from exc
@@ -184,11 +187,11 @@ def download_and_unpack(load_cfg: dict[str, Any], out_dir: Path) -> Path:
 
     try:
         if fmt == "zip":
-            with zipfile.ZipFile(temp_path, "r") as archive:
-                archive.extractall(extracted_dir)
+            with zipfile.ZipFile(temp_path, "r") as zip_archive:
+                _safe_zip_extract(zip_archive, extracted_dir)
         else:
-            with tarfile.open(temp_path, "r:*") as archive:
-                archive.extractall(extracted_dir)
+            with tarfile.open(temp_path, "r:*") as tar_archive:
+                tar_archive.extractall(extracted_dir, filter="data")
     except (tarfile.TarError, zipfile.BadZipFile) as exc:
         raise ExecutionError(f"Failed to unpack checkpoint archive: {exc}") from exc
 
@@ -197,6 +200,17 @@ def download_and_unpack(load_cfg: dict[str, Any], out_dir: Path) -> Path:
     if not candidate.exists():
         raise ExecutionError(f"Extracted checkpoint path {candidate} does not exist")
     return candidate
+
+
+def _safe_zip_extract(archive: zipfile.ZipFile, dest: Path) -> None:
+    dest_resolved = dest.resolve()
+    for info in archive.infolist():
+        target = (dest_resolved / info.filename).resolve()
+        if dest_resolved != target and dest_resolved not in target.parents:
+            raise ExecutionError(
+                f"Refusing to extract zip entry escaping destination: {info.filename}"
+            )
+        archive.extract(info, dest_resolved)
 
 
 def detect_archive_format(requested: str, filename: str) -> str:

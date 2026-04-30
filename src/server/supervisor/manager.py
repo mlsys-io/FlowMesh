@@ -100,7 +100,7 @@ class WorkerManager:
         # Load worker configs from the config file
         with open(self.config_path, encoding="utf-8") as f:
             raw = f.read()
-        config_data = yaml.load(raw, Loader=yaml.FullLoader) if raw.strip() else None
+        config_data = yaml.safe_load(raw) if raw.strip() else None
         if config_data is None:
             self.logger.info(
                 "Worker config file '%s' is empty. Skipping worker initialization.",
