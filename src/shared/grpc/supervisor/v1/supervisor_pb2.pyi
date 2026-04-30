@@ -94,3 +94,42 @@ class LogMessage(_message.Message):
     def __init__(
         self, payload: _Optional[_Union[_struct_pb2.Struct, _Mapping]] = ...
     ) -> None: ...
+
+class FetchDataRequest(_message.Message):
+    __slots__ = ("data_id",)
+    DATA_ID_FIELD_NUMBER: _ClassVar[int]
+    data_id: str
+
+    def __init__(self, data_id: _Optional[str] = ...) -> None: ...
+
+class FetchDataResponse(_message.Message):
+    __slots__ = ("found", "payload")
+    FOUND_FIELD_NUMBER: _ClassVar[int]
+    PAYLOAD_FIELD_NUMBER: _ClassVar[int]
+    found: bool
+    payload: bytes
+
+    def __init__(self, found: bool = ..., payload: _Optional[bytes] = ...) -> None: ...
+
+class PublishDataRequest(_message.Message):
+    __slots__ = ("data_id", "payload", "ttl_sec")
+    DATA_ID_FIELD_NUMBER: _ClassVar[int]
+    PAYLOAD_FIELD_NUMBER: _ClassVar[int]
+    TTL_SEC_FIELD_NUMBER: _ClassVar[int]
+    data_id: str
+    payload: bytes
+    ttl_sec: int
+
+    def __init__(
+        self,
+        data_id: _Optional[str] = ...,
+        payload: _Optional[bytes] = ...,
+        ttl_sec: _Optional[int] = ...,
+    ) -> None: ...
+
+class PublishDataResponse(_message.Message):
+    __slots__ = ("ok",)
+    OK_FIELD_NUMBER: _ClassVar[int]
+    ok: bool
+
+    def __init__(self, ok: bool = ...) -> None: ...

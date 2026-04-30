@@ -26,7 +26,6 @@ DEFAULT_WORKER_CONFIG: Final[WorkerConfig] = WorkerConfig(
     network_bandwidth_bytes_per_sec=None,
     executor_idle_cleanup_sec=None,
     enable_mp_executors=False,
-    redis_control_url=None,
     worker_cache_dir=Path("/tmp/test-worker-cache"),
     data_ttl_sec=600,
 )

@@ -15,6 +15,10 @@ service Supervisor {
   rpc PushEvents(stream EventMessage) returns (google.protobuf.Empty);
   // Accept a stream of task-scoped logs for relay to the supervisor.
   rpc PushLogs(stream LogMessage) returns (google.protobuf.Empty);
+  // Read a cross-task data payload from the node-local cache.
+  rpc FetchData(FetchDataRequest) returns (FetchDataResponse);
+  // Publish a cross-task data payload to the node-local cache.
+  rpc PublishData(PublishDataRequest) returns (PublishDataResponse);
 }
 
 // Worker registration payload.
@@ -69,4 +73,34 @@ message EventMessage {
 message LogMessage {
   // Log data, currently a JSON-shaped struct.
   google.protobuf.Struct payload = 1;
+}
+
+// Lookup request for a cross-task data payload.
+message FetchDataRequest {
+  // Producing task id (the data_id namespace).
+  string data_id = 1;
+}
+
+// Lookup response. `found=false` means cache miss; consumers should fall back
+// to the durable HTTP results endpoint on the server.
+message FetchDataResponse {
+  bool found = 1;
+  bytes payload = 2;
+}
+
+// Publish request for a cross-task data payload.
+message PublishDataRequest {
+  // Producing task id (the data_id namespace).
+  string data_id = 1;
+  // Serialized payload bytes (JSON, encoded by the producer).
+  bytes payload = 2;
+  // Cache TTL in seconds. Zero disables expiry.
+  uint32 ttl_sec = 3;
+}
+
+// Publish response. `ok=false` indicates a non-fatal cache write failure;
+// the producer's durable HTTP upload is the source of truth and proceeds
+// regardless.
+message PublishDataResponse {
+  bool ok = 1;
 }
