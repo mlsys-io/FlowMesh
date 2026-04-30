@@ -13,7 +13,6 @@ on:
 
 permissions:
   contents: read
-  actions: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -24,17 +23,10 @@ jobs:
     runs-on: self-hosted
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
         with:
           persist-credentials: false
+      - name: Set up uv
+        uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9  # v7
       - name: Run zizmor
-        uses: zizmorcore/zizmor-action@v0.5.3
-        with:
-          inputs: .github/workflows
-          persona: regular
-          # No GitHub Advanced Security on this repo — surface findings via
-          # inline workflow annotations instead of SARIF upload.
-          advanced-security: false
-          annotations: true
-          # Per-rule ignores live in .github/zizmor.yml (auto-loaded).
-          config: .github/zizmor.yml
+        run: uvx zizmor --persona regular --format github .github/workflows
