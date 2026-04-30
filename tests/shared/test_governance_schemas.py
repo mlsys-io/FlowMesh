@@ -1,19 +1,47 @@
-from shared.governance import AssetRow, EventRow, LineageRow, data_key
+from shared.governance import AssetRow, FlowMeshSpanKind, LineageRow, Span, data_key
 
 
-def test_event_row_round_trip() -> None:
-    row = EventRow(
-        timestamp="2026-04-29T00:00:00+00:00",
-        event_type="write request transfer",
-        data_id="tsk-1",
-        user_id="alice",
-        batch_id="tsk-1",
-        event_data={"size": 42},
-    )
-    serialized = row.model_dump()
-    parsed = EventRow.model_validate(serialized)
-    assert parsed.event_type == "write request transfer"
-    assert parsed.event_data == {"size": 42}
+def test_span_otel_round_trip() -> None:
+    raw = {
+        "name": "model load",
+        "context": {
+            "trace_id": "0xfbad6be5c4434181a2d394eac830dea1",
+            "span_id": "0xa3f1e9d2c5b40678",
+        },
+        "parent_id": "0x1b2c3d4e5f6a7b8c",
+        "start_time": "2026-04-30T14:00:01.000000Z",
+        "end_time": "2026-04-30T14:00:55.000000Z",
+        "status": {"status_code": "OK"},
+        "attributes": {
+            "data_id": "tsk-1",
+            "batch_id": "tsk-1",
+            "flowmesh.kind": "compute",
+        },
+    }
+    span = Span.parse_otel_json(raw)
+    assert span.name == "model load"
+    assert span.trace_id == "fbad6be5c4434181a2d394eac830dea1"
+    assert span.span_id == "a3f1e9d2c5b40678"
+    assert span.parent_span_id == "1b2c3d4e5f6a7b8c"
+    assert span.data_id == "tsk-1"
+    assert span.batch_id == "tsk-1"
+    assert span.flowmesh_kind == FlowMeshSpanKind.COMPUTE
+    assert span.duration_seconds == 54.0
+
+
+def test_span_marker_zero_duration() -> None:
+    raw = {
+        "name": "dump to storage",
+        "context": {"trace_id": "0x" + "a" * 32, "span_id": "0x" + "b" * 16},
+        "parent_id": "0x" + "c" * 16,
+        "start_time": "2026-04-30T14:00:01.500000Z",
+        "end_time": "2026-04-30T14:00:01.500000Z",
+        "status": {"status_code": "OK"},
+        "attributes": {"data_id": "tsk-2", "flowmesh.kind": "marker"},
+    }
+    span = Span.parse_otel_json(raw)
+    assert span.duration_seconds == 0.0
+    assert span.flowmesh_kind == FlowMeshSpanKind.MARKER
 
 
 def test_asset_row_defaults() -> None:

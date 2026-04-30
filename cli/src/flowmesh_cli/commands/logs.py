@@ -10,7 +10,7 @@ from ..core import logging
 from ..core.runtime import flowmesh_client_from_config
 from ..core.typer import get_typer
 
-app = get_typer(help="Fetch workflow lineage rows (events / assets / lineage).")
+app = get_typer(help="Fetch workflow lineage rows (spans / assets / lineage).")
 
 
 def _fetch_kind(workflow_id: str, kind: str, output: Path | None) -> None:
@@ -38,17 +38,15 @@ def _fetch_kind(workflow_id: str, kind: str, output: Path | None) -> None:
 @app.command("fetch")
 def fetch(
     kind: str = typer.Argument(
-        ..., help="One of: events, assets, lineage", metavar="KIND"
+        ..., help="One of: spans, assets, lineage", metavar="KIND"
     ),
     workflow_id: str = typer.Argument(..., help="Workflow identifier"),
     output: Path | None = typer.Option(
         None, "--out", "-o", help="Write rows to this JSONL file (default: stdout)"
     ),
 ) -> None:
-    """Fetch JSONL rows for a workflow's events / assets / lineage."""
-    if kind not in {"events", "assets", "lineage"}:
-        logging.error(
-            f"Unknown kind '{kind}'; expected one of: events, assets, lineage"
-        )
+    """Fetch JSONL rows for a workflow's spans / assets / lineage."""
+    if kind not in {"spans", "assets", "lineage"}:
+        logging.error(f"Unknown kind '{kind}'; expected one of: spans, assets, lineage")
         raise typer.Exit(code=2)
     _fetch_kind(workflow_id, kind, output)

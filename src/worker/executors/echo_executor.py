@@ -54,37 +54,39 @@ class EchoExecutor(DataMixin, Executor):
     def run(self, task: ExecutorTask, out_dir: Path) -> dict[str, Any]:
         spec = self.require_spec(task, EchoSpecStrict)
         task_id = task.task_id.strip()
-        self._init_task_lineage(task_id, out_dir)
-        data_cfg = spec.data
-        context = spec.upstreamResults or {}
+        with self._task_span(task_id, task.workflow_id, out_dir):
+            data_cfg = spec.data
+            context = spec.upstreamResults or {}
 
-        if not isinstance(data_cfg, dict):
-            raise ExecutionError("echo executor requires spec.data to be a mapping")
-        items_cfg = data_cfg.get("items")
-        if not isinstance(items_cfg, list):
-            raise ExecutionError("echo executor requires spec.data.items to be a list")
-        if not isinstance(context, dict):
-            raise ExecutionError(
-                "echo executor requires spec._upstreamResults to be a mapping"
+            if not isinstance(data_cfg, dict):
+                raise ExecutionError("echo executor requires spec.data to be a mapping")
+            items_cfg = data_cfg.get("items")
+            if not isinstance(items_cfg, list):
+                raise ExecutionError(
+                    "echo executor requires spec.data.items to be a list"
+                )
+            if not isinstance(context, dict):
+                raise ExecutionError(
+                    "echo executor requires spec._upstreamResults to be a mapping"
+                )
+
+            merged_items: list[dict[str, Any]] = []
+            for item in items_cfg:
+                resolved = self._resolve_item(item, context)
+                self._append_outputs(merged_items, resolved)
+
+            payload: dict[str, Any] = {
+                "ok": True,
+                "items": merged_items,
+                "count": len(merged_items),
+            }
+            deps = self._extract_source_data_ids(spec)
+            dependencies_by_task = {task_id: deps}
+
+            self._dump_to_governance(
+                governance_spec=spec.governance,
+                task_id=task_id,
+                result=payload,
+                dependencies_by_task=dependencies_by_task,
             )
-
-        merged_items: list[dict[str, Any]] = []
-        for item in items_cfg:
-            resolved = self._resolve_item(item, context)
-            self._append_outputs(merged_items, resolved)
-
-        payload: dict[str, Any] = {
-            "ok": True,
-            "items": merged_items,
-            "count": len(merged_items),
-        }
-        deps = self._extract_source_data_ids(spec)
-        dependencies_by_task = {task_id: deps}
-
-        self._dump_to_governance(
-            governance_spec=spec.governance,
-            task_id=task_id,
-            result=payload,
-            dependencies_by_task=dependencies_by_task,
-        )
         return payload

@@ -244,7 +244,16 @@ class DiffusersExecutor(DataMixin, Executor):
         configure_hf_library_logging()
         spec = self.require_spec(task, DiffusionSpecStrict)
         task_id = task.task_id.strip()
-        self._init_task_lineage(task_id, out_dir)
+        with self._task_span(task_id, task.workflow_id, out_dir):
+            return self._run_inner(task, spec, task_id, out_dir)
+
+    def _run_inner(
+        self,
+        task: ExecutorTask,
+        spec: DiffusionSpecStrict,
+        task_id: str,
+        out_dir: Path,
+    ) -> dict[str, Any]:
         self._ensure_pipeline(spec)
         assert self._pipe is not None
 

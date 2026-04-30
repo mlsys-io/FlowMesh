@@ -1,4 +1,4 @@
-"""Workflow lineage log resources (events, assets, lineage)."""
+"""Workflow lineage log resources (spans, assets, lineage)."""
 
 import json
 from collections.abc import AsyncIterator, Iterator
@@ -10,7 +10,7 @@ from .._base_client import _make_url, _raise_for_stream_status
 from ..exceptions import FlowMeshConnectionError
 from ._base import AsyncResource, SyncResource
 
-type LineageKind = Literal["events", "assets", "lineage"]
+type LineageKind = Literal["spans", "assets", "lineage"]
 
 
 def _iter_jsonl_lines(lines: Iterator[str]) -> Iterator[dict[str, Any]]:
@@ -35,7 +35,7 @@ class Logs(SyncResource):
     """Synchronous workflow-scoped lineage operations."""
 
     def fetch(self, workflow_id: str, kind: LineageKind) -> Iterator[dict[str, Any]]:
-        """Yield JSONL rows for `events`, `assets`, or `lineage`."""
+        """Yield JSONL rows for `spans`, `assets`, or `lineage`."""
         url = _make_url(self._client.base_url, f"/workflows/{workflow_id}/logs/{kind}")
         try:
             with self._client._http.stream("GET", url) as response:
@@ -44,8 +44,8 @@ class Logs(SyncResource):
         except httpx.ConnectError as exc:
             raise FlowMeshConnectionError(f"Failed to connect to {url}: {exc}")
 
-    def fetch_events(self, workflow_id: str) -> Iterator[dict[str, Any]]:
-        return self.fetch(workflow_id, "events")
+    def fetch_spans(self, workflow_id: str) -> Iterator[dict[str, Any]]:
+        return self.fetch(workflow_id, "spans")
 
     def fetch_assets(self, workflow_id: str) -> Iterator[dict[str, Any]]:
         return self.fetch(workflow_id, "assets")
@@ -71,8 +71,8 @@ class AsyncLogs(AsyncResource):
         except httpx.ConnectError as exc:
             raise FlowMeshConnectionError(f"Failed to connect to {url}: {exc}")
 
-    async def fetch_events(self, workflow_id: str) -> AsyncIterator[dict[str, Any]]:
-        async for row in self.fetch(workflow_id, "events"):
+    async def fetch_spans(self, workflow_id: str) -> AsyncIterator[dict[str, Any]]:
+        async for row in self.fetch(workflow_id, "spans"):
             yield row
 
     async def fetch_assets(self, workflow_id: str) -> AsyncIterator[dict[str, Any]]:

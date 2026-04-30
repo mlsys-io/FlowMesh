@@ -415,12 +415,6 @@ Summary:"""
                 attempt_kwargs = dict(kwargs)
                 attempt_kwargs["gpu_memory_utilization"] = util
                 self._llm_kwargs = dict(attempt_kwargs)
-                if task_ids:
-                    self._log_event_batch(
-                        task_ids=task_ids, event_type="model pre-initialization setup"
-                    )
-                else:
-                    self._log_event(event_type="model pre-initialization setup")
                 logger.info(
                     "Initializing vLLM (TP candidate %d/%d, attempt %d/%d) "
                     "with tensor_parallel_size=%d, gpu_memory_utilization=%.3f",
@@ -432,15 +426,18 @@ Summary:"""
                     util,
                 )
                 try:
-                    self._llm = LLM(**attempt_kwargs)  # type: ignore[call-arg]
+                    with self._span(
+                        "model load",
+                        kind="compute",
+                        attributes={
+                            "task_ids": list(task_ids or ()),
+                            "tensor_parallel_size": tp_value,
+                            "gpu_memory_utilization": util,
+                        },
+                    ):
+                        self._llm = LLM(**attempt_kwargs)  # type: ignore[call-arg]
                     chosen_kwargs = dict(attempt_kwargs)
                     success = True
-                    if task_ids:
-                        self._log_event_batch(
-                            task_ids=task_ids, event_type="model initialization"
-                        )
-                    else:
-                        self._log_event(event_type="model initialization")
                     break
                 except TypeError as exc:
                     last_exc = exc
@@ -651,15 +648,12 @@ Summary:"""
             **optional_sampling_fields,
         )
 
-    def _log_event_batch(
+    def _instant_for_each(
         self, task_ids: Iterable[str], event_type: str, message: str | None = None
     ) -> None:
+        attrs = {"detail": message} if message else None
         for task_id in task_ids:
-            self._log_event(
-                data_id=task_id,
-                event_type=event_type,
-                event_data=message or str(message),
-            )
+            self._instant(event_type, data_id=task_id, attributes=attrs)
 
     def _remap_grouped_outputs(
         self,
@@ -864,13 +858,16 @@ Summary:"""
         if not task_id:
             raise ExecutionError("task_id is required for inference execution")
 
-        self._init_task_lineage(task_id, out_dir)
-        self._log_event(
-            data_id=task_id,
-            event_type="queuing for execution",
-            event_data="vLLM execution started",
-        )
+        with self._task_span(task_id, task.workflow_id, out_dir):
+            return self._run_body(task, spec, task_id, out_dir)
 
+    def _run_body(
+        self,
+        task: ExecutorTask,
+        spec: InferenceSpecStrict,
+        task_id: str,
+        out_dir: Path,
+    ) -> dict[str, Any]:
         merge_children = task.merged_children or []
         entries: list[PreparedInferenceEntry] = []
         collection_jobs: list[dict[str, Any]] = [
@@ -884,11 +881,7 @@ Summary:"""
                 raise ExecutionError(
                     "Merged child spec must be inference for merged vLLM execution"
                 )
-            self._log_event(
-                data_id=child_id,
-                event_type="queuing for execution",
-                event_data=f"Merged child {child_id} ready for execution",
-            )
+            self._instant("queuing for execution", data_id=child_id)
             collection_jobs.append(
                 {"task_id": child_id, "spec": child_spec, "is_parent": False}
             )
@@ -948,7 +941,7 @@ Summary:"""
             dependencies_by_task[child_id] = child_deps
             entry_by_task_id[child_id] = child_entry
 
-        self._log_event_batch(
+        self._instant_for_each(
             task_ids,
             "prompt synchronization",
             f"Prepared prompts for parent and {len(merge_children)} children",
@@ -1017,20 +1010,20 @@ Summary:"""
         generate_kwargs = self._build_generate_kwargs(spec, out_dir)
 
         t0 = time.time()
-        self._log_event_batch(
-            task_ids,
-            "generation-preprocessing",
-            f"Starting LLM generation for {len(self._batched_inputs)} prompts",
-        )
-        outputs = self._llm.generate(
-            self._batched_inputs,
-            sampling_params=sampling_params,
-            **generate_kwargs,
-        )  # type: ignore[attr-defined]
+        with self._span(
+            "generation",
+            kind="compute",
+            attributes={
+                "task_ids": list(task_ids),
+                "prompt_count": len(self._batched_inputs),
+            },
+        ):
+            outputs = self._llm.generate(
+                self._batched_inputs,
+                sampling_params=sampling_params,
+                **generate_kwargs,
+            )  # type: ignore[attr-defined]
         latency = time.time() - t0
-        self._log_event_batch(
-            task_ids, "generation", f"LLM generation completed ({latency:.2f}s)"
-        )
 
         per_task_items: dict[str, list[dict[str, Any]]] = {}
         usage_by_task: dict[str, dict[str, int | float]] = {}
@@ -1171,7 +1164,7 @@ Summary:"""
                 child_payload["usage"] = maybe_usage
             child_results[child_id] = child_payload
 
-        self._log_event_batch(task_ids, "output postprocessing")
+        self._instant_for_each(task_ids, "output postprocessing")
 
         if parent_tables := parent_entry.tables:
             result = self._populate_table(result, parent_tables)
@@ -1188,7 +1181,7 @@ Summary:"""
             result["children"] = child_results
 
         self._maybe_export_jsonl(spec, task_id, result, out_dir)
-        self._log_event_batch(
+        self._instant_for_each(
             task_ids, "JSONL export", "vLLM execution completed successfully"
         )
 

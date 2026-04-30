@@ -1,6 +1,6 @@
 """Workflow-scoped lineage and profile endpoints.
 
-The worker emits per-task `events.jsonl`, `assets.jsonl`, and `lineage.jsonl`
+The worker emits per-task `spans.jsonl`, `assets.jsonl`, and `lineage.jsonl`
 under `out_dir/artifacts/logs/`; the artifact upload pipeline lands them at
 `{results_dir}/{task_id}/logs/<file>.jsonl` on the server. These endpoints
 read each task in a workflow and concatenate the rows.
@@ -23,7 +23,7 @@ from ...schemas.result import result_file_path
 router = APIRouter(prefix="/workflows", tags=["Logs"])
 
 _KIND_TO_FILENAME: dict[str, str] = {
-    "events": "events.jsonl",
+    "spans": "spans.jsonl",
     "assets": "assets.jsonl",
     "lineage": "lineage.jsonl",
 }
@@ -74,7 +74,7 @@ def _stream_jsonl(rows: Iterator[dict[str, Any]]) -> Iterator[bytes]:
     "/{workflow_id}/logs/{kind}",
     summary="Stream workflow lineage rows",
     description=(
-        "Stream concatenated JSONL rows for `events`, `assets`, or `lineage` "
+        "Stream concatenated JSONL rows for `spans`, `assets`, or `lineage` "
         "across every task in the workflow."
     ),
 )
@@ -88,7 +88,7 @@ async def get_workflow_lineage(
     if filename is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"unknown kind '{kind}'; expected events, assets, or lineage",
+            detail=f"unknown kind '{kind}'; expected spans, assets, or lineage",
         )
     task_ids = await _resolve_task_ids(workflow_id, registry)
     return StreamingResponse(
@@ -101,7 +101,7 @@ async def get_workflow_lineage(
     "/{workflow_id}/profile",
     summary="Profile a workflow's lineage",
     description=(
-        "Run the trace analyzer over the workflow's events / assets / lineage "
+        "Run the trace analyzer over the workflow's spans / assets / lineage "
         "rows and return a structured `ProfileSummary`."
     ),
     response_model=ProfileSummary,
@@ -112,7 +112,7 @@ async def get_workflow_profile(
     results_dir: Path = Depends(get_results_dir),
 ) -> ProfileSummary:
     task_ids = await _resolve_task_ids(workflow_id, registry)
-    events = list(_iter_workflow_jsonl(results_dir, task_ids, "events.jsonl"))
+    spans = list(_iter_workflow_jsonl(results_dir, task_ids, "spans.jsonl"))
     assets = list(_iter_workflow_jsonl(results_dir, task_ids, "assets.jsonl"))
     lineage = list(_iter_workflow_jsonl(results_dir, task_ids, "lineage.jsonl"))
-    return analyze(events, assets, lineage, workflow_id=workflow_id)
+    return analyze(spans, assets, lineage, workflow_id=workflow_id)

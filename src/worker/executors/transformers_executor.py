@@ -392,8 +392,18 @@ class HFTransformersExecutor(InferenceMixin, Executor):
                 f"{spec.__class__.__name__}"
             )
         task_id = task.task_id
-        self._init_task_lineage(task_id, out_dir)
-        self._ensure_model(spec)
+        with self._task_span(task_id, task.workflow_id, out_dir):
+            return self._run_body(task, spec, task_id, out_dir)
+
+    def _run_body(
+        self,
+        task: ExecutorTask,
+        spec: "InferenceSpecStrict | EmbeddingSpecStrict",
+        task_id: str,
+        out_dir: Path,
+    ) -> dict[str, Any]:
+        with self._span("model load", kind="compute"):
+            self._ensure_model(spec)
 
         deps = self._extract_source_data_ids(spec)
         dependencies_by_task = {task_id: deps}
@@ -513,23 +523,28 @@ class HFTransformersExecutor(InferenceMixin, Executor):
         enc = {k: v.to(device) for k, v in enc.items()}  # type: ignore[arg-type]
 
         t0 = time.time()
-        with torch.no_grad():
-            try:
-                outputs = self._model.generate(  # type: ignore
-                    **enc, generation_config=gen_cfg
-                )
-            except ValueError as exc:
-                if not (stops and "stop" in str(exc).lower()):
-                    raise
-                logger.warning(
-                    "Falling back to decoded stop-string truncation after native "
-                    "stop configuration failed: %s",
-                    exc,
-                )
-                gen_cfg = self._build_generation_config(self._inf, stop_strings=[])
-                outputs = self._model.generate(  # type: ignore
-                    **enc, generation_config=gen_cfg
-                )
+        with self._span(
+            "generation",
+            kind="compute",
+            attributes={"prompt_count": len(self._prompts)},
+        ):
+            with torch.no_grad():
+                try:
+                    outputs = self._model.generate(  # type: ignore
+                        **enc, generation_config=gen_cfg
+                    )
+                except ValueError as exc:
+                    if not (stops and "stop" in str(exc).lower()):
+                        raise
+                    logger.warning(
+                        "Falling back to decoded stop-string truncation after "
+                        "native stop configuration failed: %s",
+                        exc,
+                    )
+                    gen_cfg = self._build_generation_config(self._inf, stop_strings=[])
+                    outputs = self._model.generate(  # type: ignore
+                        **enc, generation_config=gen_cfg
+                    )
         latency = time.time() - t0
 
         items: list[dict[str, Any]] = []

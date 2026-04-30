@@ -2,14 +2,17 @@
 
 Carries two responsibilities:
 
-- Per-task lineage logging — appends rows to ``out_dir/artifacts/logs/{events,
-  assets,lineage}.jsonl`` so they upload alongside other task artifacts and end
-  up under ``results/{task_id}/logs/`` on the server.
+- Per-task lineage as OTel-shape spans — work done in the executor is wrapped
+  in ``with self._span(...)`` blocks; instantaneous markers (cache hit, dump
+  to storage) emit zero-duration spans via ``self._instant(...)``. Spans land
+  in ``out_dir/artifacts/logs/spans.jsonl`` and ride the artifact-upload path
+  to ``results/{task_id}/logs/spans.jsonl`` on the server. Asset and lineage
+  rows continue as separate JSONL files.
 
 - Cross-task data transport — reads/writes upstream payloads through Redis at
-  ``flowmesh:data:{data_id}``, with a per-worker on-disk cache that survives
-  across tasks (a fan-out task that re-reads the same upstream id hits the
-  cache, not Redis).
+  ``flowmesh:data:{data_id}`` (hot-path cache, 10-min TTL), with a per-worker
+  on-disk cache and a server-side ``GET /api/v1/results/{task_id}`` durable
+  fallback. The producing task's result upload is the source of truth.
 """
 
 import copy
@@ -21,8 +24,9 @@ import os
 import tempfile
 import threading
 import uuid
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from threading import Lock
@@ -33,6 +37,7 @@ import pandas as pd
 import redis
 import requests
 from datasets import Dataset, load_dataset
+from opentelemetry.trace import Span as OTelSpan
 from PIL import Image
 
 from shared.governance import data_key
@@ -49,6 +54,13 @@ from ..utils.graph_templates import (
     _evaluate_expr,
     _resolve_columns,
     build_prompts_from_graph_template,
+)
+from ._otel import (
+    attributes_with_kind,
+    get_tracer,
+    reset_workflow_id,
+    set_active_spans_path,
+    set_workflow_id,
 )
 
 logger = logging.getLogger(__name__)
@@ -122,14 +134,78 @@ class DataMixin:
         return cls._TEMPLATE_TYPE_MAP.get(normalized)
 
     # ------------------------------------------------------------------ #
-    # Lineage state — initialized at the top of each run()               #
+    # Span emission — context managers driven by the OTel SDK            #
     # ------------------------------------------------------------------ #
-    def _init_task_lineage(self, task_id: str, out_dir: Path) -> None:
+    @contextmanager
+    def _task_span(
+        self, task_id: str, workflow_id: str, out_dir: Path
+    ) -> Iterator[OTelSpan]:
+        """Open the root span for a task. Wraps the executor's run() body."""
+        out_path = Path(out_dir)
+        spans_path = out_path / "artifacts" / "logs" / "spans.jsonl"
+        spans_path.parent.mkdir(parents=True, exist_ok=True)
         self._task_id = task_id
         self._current_batch_id = task_id
-        self._task_out_dir = Path(out_dir)
+        self._task_out_dir = out_path
         self._upstream_deps_cache.clear()
+        token = set_workflow_id(workflow_id)
+        set_active_spans_path(spans_path)
+        try:
+            with get_tracer().start_as_current_span(
+                "task",
+                attributes=attributes_with_kind(
+                    "compute",
+                    data_id=task_id,
+                    extra={
+                        "batch_id": task_id,
+                        "workflow_id": workflow_id,
+                        "executor.name": getattr(self, "name", None),
+                    },
+                ),
+            ) as span:
+                yield span
+        finally:
+            set_active_spans_path(None)
+            reset_workflow_id(token)
 
+    @contextmanager
+    def _span(
+        self,
+        name: str,
+        *,
+        kind: str = "compute",
+        data_id: str | None = None,
+        attributes: dict[str, Any] | None = None,
+    ) -> Iterator[OTelSpan]:
+        """Open a child span. Records start at __enter__ / end at __exit__."""
+        attrs = attributes_with_kind(
+            kind,
+            data_id=data_id if data_id is not None else self._task_id,
+            extra={"batch_id": self._current_batch_id, **(attributes or {})},
+        )
+        with get_tracer().start_as_current_span(name, attributes=attrs) as span:
+            yield span
+
+    def _instant(
+        self,
+        name: str,
+        *,
+        kind: str = "marker",
+        data_id: str | None = None,
+        attributes: dict[str, Any] | None = None,
+    ) -> None:
+        """Zero-duration span for instantaneous markers."""
+        attrs = attributes_with_kind(
+            kind,
+            data_id=data_id if data_id is not None else self._task_id,
+            extra={"batch_id": self._current_batch_id, **(attributes or {})},
+        )
+        with get_tracer().start_as_current_span(name, attributes=attrs):
+            pass
+
+    # ------------------------------------------------------------------ #
+    # Lineage rows (assets + lineage) — keep their own JSONL files       #
+    # ------------------------------------------------------------------ #
     def _lineage_dir(self) -> Path | None:
         if self._task_out_dir is None:
             return None
@@ -145,30 +221,6 @@ class DataMixin:
         with self._event_lock:
             with path.open("a", encoding="utf-8") as fh:
                 fh.write(line + "\n")
-
-    def _log_event(
-        self,
-        data_id: str = "",
-        event_type: str = "",
-        event_data: Any = "",
-        timestamp: str | None = None,
-    ) -> None:
-        if not data_id:
-            assert (
-                self._task_id is not None
-            ), "data_id must be provided if task_id is not set"
-            data_id = self._task_id
-        if not event_type:
-            raise ExecutionError("event_type must be provided")
-        row: dict[str, Any] = {
-            "timestamp": timestamp or now_iso(),
-            "event_type": event_type,
-            "data_id": data_id,
-            "user_id": "",
-            "batch_id": self._current_batch_id,
-            "event_data": event_data,
-        }
-        self._append_jsonl("events.jsonl", row)
 
     def _record_asset(
         self,
@@ -336,40 +388,29 @@ class DataMixin:
                 json.dump(payload, fh, ensure_ascii=False, default=str)
 
     def _fetch_data(self, data_id: str) -> dict[str, Any]:
-        """Resolve an upstream payload. Cache → Redis → server, in that order.
+        """Resolve an upstream payload. Cache → Redis → server, in that order."""
+        with self._span("read", kind="network", data_id=data_id) as read_span:
+            cached = self._read_cache(data_id)
+            if cached is not None:
+                self._instant("cache hit", data_id=data_id)
+                read_span.set_attribute("source", "cache")
+                return cached
 
-        Redis is a hot-path optimization with a short TTL. The durable copy
-        is the result the producing task uploaded to the server; missing
-        Redis keys are recoverable, missing server results are fatal.
-        """
-        self._log_event(data_id=data_id, event_type="read request initiated")
-        cached = self._read_cache(data_id)
-        if cached is not None:
-            self._log_event(
-                data_id=data_id,
-                event_type="read cache hit",
-                event_data="Using cached upstream result",
-            )
-            return cached
+            payload = self._fetch_from_redis(data_id)
+            if payload is not None:
+                read_span.set_attribute("source", "redis")
+                self._write_cache(data_id, payload)
+                return payload
 
-        payload = self._fetch_from_redis(data_id)
-        source = "redis"
-        if payload is None:
             payload = self._fetch_from_server(data_id)
-            source = "server"
-        if payload is None:
-            raise ExecutionError(
-                f"Upstream data {data_id} not found in Redis cache or "
-                f"server results (key={data_key(data_id)})"
-            )
-        self._log_event(
-            data_id=data_id,
-            event_type="read response transfer",
-            event_data=f"source={source}",
-        )
-        self._write_cache(data_id, payload)
-        self._log_event(data_id=data_id, event_type="read response cache write")
-        return payload
+            if payload is None:
+                raise ExecutionError(
+                    f"Upstream data {data_id} not found in Redis cache or "
+                    f"server results (key={data_key(data_id)})"
+                )
+            read_span.set_attribute("source", "server")
+            self._write_cache(data_id, payload)
+            return payload
 
     def _write_data(
         self,
@@ -379,25 +420,19 @@ class DataMixin:
         governance_spec: dict[str, Any] | None,
     ) -> None:
         user_id = self._user_id(governance_spec)
-        self._log_event(data_id=data_id, event_type="write request preparation")
-
         deduped = dedup_json(data)
         try:
             payload = json.dumps(deduped, ensure_ascii=False, default=str)
         except (TypeError, ValueError) as exc:
             raise ExecutionError(f"Failed to serialize data {data_id}: {exc}") from exc
 
-        published = self._publish_to_redis(data_id, payload)
-        self._write_cache(data_id, data)
-        self._log_event(
-            data_id=data_id,
-            event_type="write request transfer",
-            event_data=f"redis_cache={'hit' if published else 'miss'}",
-        )
-        self._log_event(data_id=data_id, event_type="dump to storage")
+        with self._span("write", kind="network", data_id=data_id) as write_span:
+            published = self._publish_to_redis(data_id, payload)
+            self._write_cache(data_id, data)
+            write_span.set_attribute("redis_cache", "hit" if published else "miss")
+            write_span.set_attribute("payload_bytes", len(payload.encode("utf-8")))
+        self._instant("dump to storage", data_id=data_id)
 
-        # Asset row — single source inherits the source's asset_guid (let the
-        # reader resolve), otherwise fresh GUID.
         asset_guid = (
             source_data_ids[0] if len(source_data_ids) == 1 else str(uuid.uuid4())
         )
@@ -870,30 +905,26 @@ class DataMixin:
                     )
                 metadata_raw = list(raw_meta)
         elif dtype == "graph_template":
-            upstream_results = self._fetch_upstream_results_from_storage(spec)
+            with self._span("upstream fetch", kind="network", data_id=task_id):
+                upstream_results = self._fetch_upstream_results_from_storage(spec)
             logger.debug(
                 "Task %s graph_template upstream keys: %s",
                 task_id,
                 list(upstream_results.keys()),
             )
-            self._log_event(data_id=task_id, event_type="upstream fetch")
             spec.upstreamResults = upstream_results
-            prompts = build_prompts_from_graph_template(data, spec)
-            self._log_event(
-                data_id=task_id,
-                event_type="build prompt from graph template",
-                event_data=f"Building prompts from graph_template for task {task_id}",
-            )
+            with self._span("build prompt from graph template", data_id=task_id):
+                prompts = build_prompts_from_graph_template(data, spec)
             template_cfg = data.get("template") or {}
             append_system_prompt = bool(template_cfg.get("append_system_prompt", False))
         elif dtype == "dataframe":
-            upstream_results = self._fetch_upstream_results_from_storage(spec)
+            with self._span("upstream fetch", kind="network", data_id=task_id):
+                upstream_results = self._fetch_upstream_results_from_storage(spec)
             logger.debug(
                 "Task %s dataframe upstream keys: %s",
                 task_id,
                 list(upstream_results.keys()),
             )
-            self._log_event(data_id=task_id, event_type="upstream fetch")
             spec.upstreamResults = upstream_results
             df_columns_cfg = data.get("columns")
             if df_columns_cfg is None:

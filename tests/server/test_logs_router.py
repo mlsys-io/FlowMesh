@@ -11,18 +11,46 @@ from fastapi.responses import StreamingResponse
 from server.routers.v1 import logs as logs_router
 
 
+def _otel_span(
+    name: str,
+    *,
+    data_id: str,
+    start: str,
+    end: str,
+    kind: str,
+    span_id: str = "0xa3f1e9d2c5b40678",
+    parent_id: str | None = None,
+    batch_id: str | None = None,
+) -> dict[str, Any]:
+    attributes: dict[str, Any] = {"data_id": data_id, "flowmesh.kind": kind}
+    if batch_id:
+        attributes["batch_id"] = batch_id
+    return {
+        "name": name,
+        "context": {
+            "trace_id": "0xfbad6be5c4434181a2d394eac830dea1",
+            "span_id": span_id,
+        },
+        "parent_id": parent_id,
+        "start_time": start,
+        "end_time": end,
+        "status": {"status_code": "OK"},
+        "attributes": attributes,
+    }
+
+
 def _seed_task_logs(
     base: Path,
     task_id: str,
-    events: list[dict[str, Any]] | None = None,
+    spans: list[dict[str, Any]] | None = None,
     assets: list[dict[str, Any]] | None = None,
     lineage: list[dict[str, Any]] | None = None,
 ) -> None:
     logs_dir = base / task_id / "artifacts" / "logs"
     logs_dir.mkdir(parents=True)
-    if events is not None:
-        (logs_dir / "events.jsonl").write_text(
-            "\n".join(json.dumps(row) for row in events) + "\n"
+    if spans is not None:
+        (logs_dir / "spans.jsonl").write_text(
+            "\n".join(json.dumps(row) for row in spans) + "\n"
         )
     if assets is not None:
         (logs_dir / "assets.jsonl").write_text(
@@ -59,25 +87,43 @@ async def test_get_workflow_lineage_concats_across_tasks(tmp_path: Path) -> None
     _seed_task_logs(
         tmp_path,
         "tsk-a",
-        events=[{"event_type": "write", "data_id": "tsk-a"}],
+        spans=[
+            _otel_span(
+                "write",
+                data_id="tsk-a",
+                start="2026-04-29T00:00:00+00:00",
+                end="2026-04-29T00:00:01+00:00",
+                kind="network",
+                span_id="0xaaaa000000000001",
+            )
+        ],
         assets=[{"data_id": "tsk-a", "asset_guid": "g-a", "version": 1}],
     )
     _seed_task_logs(
         tmp_path,
         "tsk-b",
-        events=[{"event_type": "read", "data_id": "tsk-a"}],
+        spans=[
+            _otel_span(
+                "read",
+                data_id="tsk-a",
+                start="2026-04-29T00:00:01+00:00",
+                end="2026-04-29T00:00:02+00:00",
+                kind="network",
+                span_id="0xbbbb000000000001",
+            )
+        ],
         lineage=[{"data_id": "tsk-b", "source_data_id": "tsk-a"}],
     )
 
     response = await logs_router.get_workflow_lineage(
         workflow_id="wfl-1",
-        kind="events",
+        kind="spans",
         registry=_registry(["tsk-a", "tsk-b"]),
         results_dir=tmp_path,
     )
     lines = await _collect_streamed_lines(response)
     parsed = [json.loads(line) for line in lines]
-    assert [row["event_type"] for row in parsed] == ["write", "read"]
+    assert [row["name"] for row in parsed] == ["write", "read"]
 
 
 @pytest.mark.anyio
@@ -117,19 +163,33 @@ async def test_get_workflow_profile_runs_analyzer(tmp_path: Path) -> None:
     _seed_task_logs(
         tmp_path,
         "tsk-a",
-        events=[
-            {
-                "timestamp": "2026-04-29T00:00:00+00:00",
-                "event_type": "write request transfer",
-                "data_id": "tsk-a",
-                "batch_id": "bat-a",
-            },
-            {
-                "timestamp": "2026-04-29T00:00:00+00:00",
-                "event_type": "dump to storage",
-                "data_id": "tsk-a",
-                "batch_id": "bat-a",
-            },
+        spans=[
+            _otel_span(
+                "task",
+                data_id="tsk-a",
+                start="2026-04-29T00:00:00+00:00",
+                end="2026-04-29T00:00:01+00:00",
+                kind="compute",
+                span_id="0xaaaa000000000001",
+            ),
+            _otel_span(
+                "write",
+                data_id="tsk-a",
+                start="2026-04-29T00:00:00.500000+00:00",
+                end="2026-04-29T00:00:01+00:00",
+                kind="network",
+                parent_id="0xaaaa000000000001",
+                span_id="0xaaaa000000000002",
+            ),
+            _otel_span(
+                "dump to storage",
+                data_id="tsk-a",
+                start="2026-04-29T00:00:01+00:00",
+                end="2026-04-29T00:00:01+00:00",
+                kind="marker",
+                parent_id="0xaaaa000000000001",
+                span_id="0xaaaa000000000003",
+            ),
         ],
         assets=[
             {
@@ -147,13 +207,13 @@ async def test_get_workflow_profile_runs_analyzer(tmp_path: Path) -> None:
         registry=_registry(["tsk-a"]),
         results_dir=tmp_path,
     )
-    assert summary.event_count == 2
+    assert summary.event_count == 3
     assert len(summary.assets) == 1
     assert summary.workflow_id == "wfl-1"
     assert summary.critical_path is not None
     assert summary.critical_path.path == ["tsk-a"]
     assert summary.assets[0].asset_guid == "g-a"
-    assert "write request transfer" in summary.e2e_breakdown.network_summary.event_type
+    assert "write" in summary.e2e_breakdown.network_summary.event_type
 
 
 @pytest.mark.anyio
@@ -166,7 +226,7 @@ async def test_workflow_not_found_raises_404(tmp_path: Path) -> None:
     with pytest.raises(HTTPException) as excinfo:
         await logs_router.get_workflow_lineage(
             workflow_id="wfl-missing",
-            kind="events",
+            kind="spans",
             registry=registry,
             results_dir=tmp_path,
         )
