@@ -9,7 +9,6 @@ from google.protobuf.empty_pb2 import Empty
 from google.protobuf.json_format import MessageToDict
 from google.protobuf.struct_pb2 import Struct
 
-from shared.governance import data_key
 from shared.grpc.supervisor.v1 import (
     supervisor_pb2,
     supervisor_pb2_grpc,
@@ -197,57 +196,6 @@ class SupervisorServicer(supervisor_pb2_grpc.SupervisorServicer):
             self._relay_service.add_log(payload)
         self._logger.debug("Log stream closed for worker %s", worker_id)
         return Empty()
-
-    async def FetchData(
-        self,
-        request: supervisor_pb2.FetchDataRequest,
-        context: grpc.aio.ServicerContext,
-    ) -> supervisor_pb2.FetchDataResponse:
-        worker_id = self._get_worker_id_from_context(context)
-        if worker_id is None:
-            await context.abort(grpc.StatusCode.UNAUTHENTICATED, "Invalid worker token")
-        if not request.data_id:
-            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "data_id is required")
-        try:
-            raw = self._redis.get(data_key(request.data_id))
-        except Exception as exc:
-            self._logger.warning(
-                "Redis GET %s failed; reporting cache miss: %s", request.data_id, exc
-            )
-            return supervisor_pb2.FetchDataResponse(found=False, payload=b"")
-        if raw is None:
-            return supervisor_pb2.FetchDataResponse(found=False, payload=b"")
-        payload_bytes = raw.encode("utf-8") if isinstance(raw, str) else bytes(raw)
-        return supervisor_pb2.FetchDataResponse(found=True, payload=payload_bytes)
-
-    async def PublishData(
-        self,
-        request: supervisor_pb2.PublishDataRequest,
-        context: grpc.aio.ServicerContext,
-    ) -> supervisor_pb2.PublishDataResponse:
-        worker_id = self._get_worker_id_from_context(context)
-        if worker_id is None:
-            await context.abort(grpc.StatusCode.UNAUTHENTICATED, "Invalid worker token")
-        if not request.data_id:
-            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "data_id is required")
-        try:
-            value = request.payload.decode("utf-8")
-        except UnicodeDecodeError:
-            await context.abort(
-                grpc.StatusCode.INVALID_ARGUMENT, "payload must be UTF-8 encoded"
-            )
-        try:
-            self._redis.set_value(
-                data_key(request.data_id),
-                value,
-                ttl_sec=int(request.ttl_sec) if request.ttl_sec else None,
-            )
-        except Exception as exc:
-            self._logger.warning(
-                "Redis SET %s failed (best-effort cache): %s", request.data_id, exc
-            )
-            return supervisor_pb2.PublishDataResponse(ok=False)
-        return supervisor_pb2.PublishDataResponse(ok=True)
 
     def _get_worker_from_context(
         self, context: grpc.aio.ServicerContext

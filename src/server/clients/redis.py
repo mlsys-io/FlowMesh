@@ -232,11 +232,8 @@ class SyncRedisClient:
     def incr(self, key: str) -> int:
         return int(_sync(self._control.incr(key)))
 
-    def set_value(self, key: str, value: str, ttl_sec: int | None = None) -> None:
-        if ttl_sec is None or ttl_sec <= 0:
-            self._control.set(key, value)
-        else:
-            self._control.set(key, value, ex=ttl_sec)
+    def set_value(self, key: str, value: str) -> None:
+        self._control.set(key, value)
 
     def set_value_telemetry(self, key: str, value: str) -> None:
         self._telemetry.set(key, value)

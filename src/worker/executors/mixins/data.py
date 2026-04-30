@@ -9,11 +9,10 @@ Carries two responsibilities:
   and ride the artifact-upload path to ``results/{task_id}/logs/spans.jsonl``
   on the server. Asset and lineage rows continue as separate JSONL files.
 
-- Cross-task data transport — reads/writes upstream payloads through the
-  supervisor's gRPC cache (``FetchData`` / ``PublishData``, 10-min TTL),
-  with a per-worker on-disk cache and a server-side
-  ``GET /api/v1/results/{task_id}`` durable fallback. The producing task's
-  result upload is the source of truth.
+- Cross-task data transport — reads upstream payloads through a per-worker
+  on-disk cache, falling back to ``GET /api/v1/results/{task_id}`` on the
+  server when the local cache misses. The producing task's HTTP results
+  upload is the source of truth.
 """
 
 import contextvars
@@ -43,12 +42,10 @@ from PIL import Image
 
 from shared.governance.spans import FlowMeshSpanKind
 from shared.tasks.specs import TaskSpecStrictBase
-from shared.utils.json import dedup_json, restore_json, safe_get
-from shared.utils.parsing import parse_int_env
+from shared.utils.json import dedup_json, safe_get
 from shared.utils.time import now_iso
 
 from ...connectors import get_connector_from_spec
-from ...supervisor_data_client import SupervisorDataClient
 from ..base_executor import ExecutionError
 from ..utils.artifacts import maybe_resolve_artifact_ref, resolve_artifact
 from ..utils.data_utils import normalize_prompt_payload
@@ -85,9 +82,6 @@ class InferenceEntry:
     tables: list[pd.DataFrame]
 
 
-_DEFAULT_DATA_TTL_SEC = (
-    10 * 60
-)  # 10 min — Redis is a hot-path cache, not the durable store.
 _DEFAULT_WORKER_CACHE_DIR = Path(tempfile.gettempdir()) / "flowmesh_worker_cache"
 
 
@@ -119,22 +113,11 @@ class DataMixin:
         self._upstream_deps_cache: dict[str, dict[str, Any]] = {}
         self.io_executor = ThreadPoolExecutor(max_workers=32)
 
-        config = getattr(self, "_config", None)
-        if config is not None and getattr(config, "worker_cache_dir", None) is not None:
-            cache_root = Path(config.worker_cache_dir)
-        else:
-            override = os.getenv("WORKER_CACHE_DIR", "").strip()
-            cache_root = Path(override) if override else _DEFAULT_WORKER_CACHE_DIR
+        override = os.getenv("WORKER_CACHE_DIR", "").strip()
+        cache_root = Path(override) if override else _DEFAULT_WORKER_CACHE_DIR
         self._data_cache_dir = cache_root / "data"
         self._data_cache_dir.mkdir(parents=True, exist_ok=True)
         self._cache_dir_lock = Lock()
-
-        self._data_ttl_sec = (
-            int(getattr(config, "data_ttl_sec", _DEFAULT_DATA_TTL_SEC))
-            if config is not None
-            else parse_int_env("WORKER_DATA_TTL_SEC", _DEFAULT_DATA_TTL_SEC)
-        )
-        self._supervisor_data: SupervisorDataClient | None = None
 
     @classmethod
     def _resolve_param_type(cls, type_spec: str) -> type | None:
@@ -278,48 +261,8 @@ class DataMixin:
             )
 
     # ------------------------------------------------------------------ #
-    # Cross-task data transport via supervisor RPCs                      #
+    # Cross-task data transport: on-disk cache + server HTTP fallback    #
     # ------------------------------------------------------------------ #
-    def _get_supervisor_data(self) -> SupervisorDataClient | None:
-        """Return the supervisor data-cache stub, or None if unavailable.
-
-        The supervisor owns the node-local Redis. Workers ask via gRPC
-        (`FetchData` / `PublishData`). Callers must tolerate `None` (no
-        config in unit tests) and treat any RPC error as a cache miss.
-        """
-        if self._supervisor_data is not None:
-            return self._supervisor_data
-        config = getattr(self, "_config", None)
-        if config is None:
-            return None
-        target = getattr(config, "supervisor_grpc_target", None)
-        token = getattr(config, "worker_token", None)
-        if not target or not token:
-            return None
-        self._supervisor_data = SupervisorDataClient(
-            grpc_target=target,
-            worker_token=token,
-            grpc_tls_ca_b64=getattr(config, "supervisor_grpc_tls_ca_b64", None),
-        )
-        return self._supervisor_data
-
-    def _fetch_from_cache(self, data_id: str) -> Any | None:
-        """Best-effort cache lookup via supervisor. Returns None on miss / error."""
-        client = self._get_supervisor_data()
-        if client is None:
-            return None
-        raw = client.fetch(data_id)
-        if raw is None:
-            return None
-        try:
-            deduped = json.loads(raw.decode("utf-8"))
-            return restore_json(deduped) if isinstance(deduped, dict) else deduped
-        except (json.JSONDecodeError, UnicodeDecodeError, KeyError) as exc:
-            logger.warning(
-                "Cached payload for %s is malformed; ignoring: %s", data_id, exc
-            )
-            return None
-
     def _fetch_from_server(self, data_id: str) -> Any | None:
         """Durable fallback: GET /api/v1/results/{task_id} from the server.
 
@@ -353,16 +296,6 @@ class DataMixin:
                 f"Server returned non-JSON for result {data_id}: {exc}"
             ) from exc
 
-    def _publish_to_cache(self, data_id: str, payload: str) -> bool:
-        """Best-effort cache publish via supervisor. Returns True on success."""
-        client = self._get_supervisor_data()
-        if client is None:
-            return False
-        return client.publish(
-            data_id, payload.encode("utf-8"), max(0, int(self._data_ttl_sec))
-        )
-        return True
-
     @staticmethod
     def _user_id(governance_spec: dict[str, Any] | None) -> str:
         if not governance_spec:
@@ -387,7 +320,7 @@ class DataMixin:
                 json.dump(payload, fh, ensure_ascii=False, default=str)
 
     def _fetch_data(self, data_id: str) -> dict[str, Any]:
-        """Resolve an upstream payload. Cache → supervisor → server, in order."""
+        """Resolve an upstream payload. On-disk cache → server, in that order."""
         with self._span(
             "read", kind=FlowMeshSpanKind.NETWORK, data_id=data_id
         ) as read_span:
@@ -397,17 +330,10 @@ class DataMixin:
                 read_span.set_attribute("cache_hit", True)
                 return cached
 
-            payload = self._fetch_from_cache(data_id)
-            if payload is not None:
-                read_span.set_attribute("source", "supervisor")
-                read_span.set_attribute("cache_hit", False)
-                self._write_cache(data_id, payload)
-                return payload
-
             payload = self._fetch_from_server(data_id)
             if payload is None:
                 raise ExecutionError(
-                    f"Upstream data {data_id} not found in supervisor cache or "
+                    f"Upstream data {data_id} not found in worker cache or "
                     f"server results"
                 )
             read_span.set_attribute("source", "server")
@@ -434,9 +360,7 @@ class DataMixin:
                     f"Failed to serialize data {data_id}: {exc}"
                 ) from exc
 
-            published = self._publish_to_cache(data_id, payload)
             self._write_cache(data_id, data)
-            dump_span.set_attribute("cache_hit", published)
             dump_span.set_attribute("payload_bytes", len(payload.encode("utf-8")))
 
             asset_guid = (
@@ -451,11 +375,10 @@ class DataMixin:
             if source_data_ids:
                 self._record_lineage(data_id=data_id, source_data_ids=source_data_ids)
         logger.info(
-            "Wrote data %s (size: %d bytes, sources: %d, cache_hit=%s)",
+            "Wrote lineage for %s (size: %d bytes, sources: %d)",
             data_id,
             len(payload.encode("utf-8")),
             len(source_data_ids),
-            published,
         )
 
     def _load_image_from_artifact(self, source: str) -> Image.Image:

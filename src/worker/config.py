@@ -33,8 +33,6 @@ class WorkerConfig:
     network_bandwidth_bytes_per_sec: float | None
     executor_idle_cleanup_sec: float | None
     enable_mp_executors: bool
-    worker_cache_dir: Path
-    data_ttl_sec: int
     grpc_keepalive_time_ms: int | None = None
     grpc_keepalive_timeout_ms: int | None = None
     network_mode: str | None = None
@@ -95,15 +93,6 @@ class WorkerConfig:
             "WORKER_EXECUTOR_IDLE_CLEANUP_SEC", 60
         )
 
-        cache_override = os.getenv("WORKER_CACHE_DIR", "").strip()
-        worker_cache_dir = (
-            Path(cache_override).absolute()
-            if cache_override
-            else results_dir / ".cache"
-        )
-        worker_cache_dir.mkdir(parents=True, exist_ok=True)
-        data_ttl_sec = parse_int_env("WORKER_DATA_TTL_SEC", 10 * 60)
-
         return WorkerConfig(
             worker_token=worker_token,
             supervisor_grpc_target=supervisor_grpc_target,
@@ -122,8 +111,6 @@ class WorkerConfig:
             network_bandwidth_bytes_per_sec=network_bandwidth_bytes_per_sec,
             executor_idle_cleanup_sec=executor_idle_cleanup_sec,
             enable_mp_executors=enable_mp_executors,
-            worker_cache_dir=worker_cache_dir,
-            data_ttl_sec=data_ttl_sec,
             grpc_keepalive_time_ms=grpc_keepalive_time_ms,
             grpc_keepalive_timeout_ms=grpc_keepalive_timeout_ms,
             network_mode=network_mode,
