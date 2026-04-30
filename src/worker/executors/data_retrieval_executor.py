@@ -57,8 +57,7 @@ class DataRetrievalExecutor(DataMixin, Executor):
                 dependencies_by_task=dependencies_by_task,
             )
 
-            maybe_upload_artifacts(task, out_dir, logger=logger)
-
+        maybe_upload_artifacts(task, out_dir, logger=logger)
         return result
 
     def _run_sql(

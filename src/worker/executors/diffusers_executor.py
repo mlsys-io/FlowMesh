@@ -245,7 +245,9 @@ class DiffusersExecutor(DataMixin, Executor):
         spec = self.require_spec(task, DiffusionSpecStrict)
         task_id = task.task_id.strip()
         with self._task_span(task_id, task.workflow_id, out_dir):
-            return self._run_inner(task, spec, task_id, out_dir)
+            response = self._run_inner(task, spec, task_id, out_dir)
+        maybe_upload_artifacts(task, out_dir, logger=logger)
+        return response
 
     def _run_inner(
         self,
@@ -349,8 +351,6 @@ class DiffusersExecutor(DataMixin, Executor):
             result=response,
             dependencies_by_task=dependencies_by_task,
         )
-
-        maybe_upload_artifacts(task, out_dir, logger=logger)
 
         return response
 

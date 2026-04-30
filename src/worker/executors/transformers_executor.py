@@ -393,7 +393,9 @@ class HFTransformersExecutor(InferenceMixin, Executor):
             )
         task_id = task.task_id
         with self._task_span(task_id, task.workflow_id, out_dir):
-            return self._run_body(task, spec, task_id, out_dir)
+            result = self._run_body(task, spec, task_id, out_dir)
+        maybe_upload_artifacts(task, out_dir, logger=logger)
+        return result
 
     def _run_body(
         self,
@@ -490,8 +492,6 @@ class HFTransformersExecutor(InferenceMixin, Executor):
                 result=result,
                 dependencies_by_task=dependencies_by_task,
             )
-
-            maybe_upload_artifacts(task, out_dir, logger=logger)
 
             return result
 
@@ -613,7 +613,5 @@ class HFTransformersExecutor(InferenceMixin, Executor):
             result=result,
             dependencies_by_task=dependencies_by_task,
         )
-
-        maybe_upload_artifacts(task, out_dir, logger=logger)
 
         return result

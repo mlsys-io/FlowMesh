@@ -859,7 +859,9 @@ Summary:"""
             raise ExecutionError("task_id is required for inference execution")
 
         with self._task_span(task_id, task.workflow_id, out_dir):
-            return self._run_body(task, spec, task_id, out_dir)
+            result = self._run_body(task, spec, task_id, out_dir)
+        maybe_upload_artifacts(task, out_dir, logger=logger)
+        return result
 
     def _run_body(
         self,
@@ -914,7 +916,7 @@ Summary:"""
                 len(collection_jobs),
             )
             future_map = {
-                self.io_executor.submit(_collect, job): job for job in collection_jobs
+                self._submit_in_context(_collect, job): job for job in collection_jobs
             }
             for future in as_completed(future_map):
                 job = future_map[future]
@@ -1191,8 +1193,6 @@ Summary:"""
             result=result,
             dependencies_by_task=dependencies_by_task,
         )
-
-        maybe_upload_artifacts(task, out_dir, logger=logger)
 
         return result
 

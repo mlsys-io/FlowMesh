@@ -7,13 +7,13 @@ Consumers (the analyzer, server endpoint, SDK) parse with
 
 import json
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
 
-class FlowMeshSpanKind(str, Enum):
+class FlowMeshSpanKind(StrEnum):
     """Worker-side classification carried in ``attributes["flowmesh.kind"]``."""
 
     COMPUTE = "compute"
@@ -87,7 +87,8 @@ class Span(BaseModel):
             trace_id=_strip_hex_prefix(ctx.get("trace_id")) or "",
             span_id=_strip_hex_prefix(ctx.get("span_id")) or "",
             parent_span_id=_strip_hex_prefix(payload.get("parent_id")),
-            start_time=_parse_iso(payload.get("start_time")) or datetime.fromtimestamp(0),
+            start_time=_parse_iso(payload.get("start_time"))
+            or datetime.fromtimestamp(0),
             end_time=_parse_iso(payload.get("end_time")) or datetime.fromtimestamp(0),
             attributes=dict(payload.get("attributes") or {}),
             status_code=str(status.get("status_code") or "UNSET"),

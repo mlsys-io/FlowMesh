@@ -15,6 +15,7 @@ Carries two responsibilities:
   fallback. The producing task's result upload is the source of truth.
 """
 
+import contextvars
 import copy
 import datetime
 import io
@@ -25,7 +26,7 @@ import tempfile
 import threading
 import uuid
 from collections.abc import Iterator, Mapping, Sequence
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -132,6 +133,19 @@ class DataMixin:
     def _resolve_param_type(cls, type_spec: str) -> type | None:
         normalized = type_spec.strip().lower()
         return cls._TEMPLATE_TYPE_MAP.get(normalized)
+
+    def _submit_in_context(self, fn: Any, *args: Any, **kwargs: Any) -> "Future[Any]":
+        """Submit to ``io_executor`` with the caller's ContextVars copied in.
+
+        ``ThreadPoolExecutor.submit`` runs the worker thread under a fresh
+        ``Context``, so OTel's parent-span ContextVar and our
+        ``_workflow_id_var`` are both invisible inside the submitted call —
+        sub-spans would orphan with random trace ids. Capturing the current
+        ``Context`` and dispatching via ``Context.run`` keeps the parent
+        relationship intact.
+        """
+        ctx = contextvars.copy_context()
+        return self.io_executor.submit(ctx.run, fn, *args, **kwargs)
 
     # ------------------------------------------------------------------ #
     # Span emission — context managers driven by the OTel SDK            #
@@ -1133,7 +1147,7 @@ class DataMixin:
                 len(task_ids_to_fetch),
             )
             future_map = {
-                self.io_executor.submit(self._fetch_data, task_id): task_id
+                self._submit_in_context(self._fetch_data, task_id): task_id
                 for task_id in task_ids_to_fetch
             }
             for future in as_completed(future_map):
@@ -1231,7 +1245,7 @@ class DataMixin:
                 len(collection_jobs),
             )
             future_map = {
-                self.io_executor.submit(
+                self._submit_in_context(
                     self._write_data,
                     data_id=job["task_id"],
                     data=job["result"],
