@@ -9,10 +9,11 @@ Carries two responsibilities:
   to ``results/{task_id}/logs/spans.jsonl`` on the server. Asset and lineage
   rows continue as separate JSONL files.
 
-- Cross-task data transport — reads/writes upstream payloads through Redis at
-  ``flowmesh:data:{data_id}`` (hot-path cache, 10-min TTL), with a per-worker
-  on-disk cache and a server-side ``GET /api/v1/results/{task_id}`` durable
-  fallback. The producing task's result upload is the source of truth.
+- Cross-task data transport — reads/writes upstream payloads through the
+  supervisor's gRPC cache (``FetchData`` / ``PublishData``, 10-min TTL),
+  with a per-worker on-disk cache and a server-side
+  ``GET /api/v1/results/{task_id}`` durable fallback. The producing task's
+  result upload is the source of truth.
 """
 
 import contextvars
@@ -32,16 +33,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from threading import Lock
 from typing import Any, cast
-from urllib.parse import urlparse, urlunparse
+from urllib.parse import urlparse
 
 import pandas as pd
-import redis
 import requests
 from datasets import Dataset, load_dataset
 from opentelemetry.trace import Span as OTelSpan
 from PIL import Image
 
-from shared.governance import data_key
 from shared.governance.spans import FlowMeshSpanKind
 from shared.tasks.specs import TaskSpecStrictBase
 from shared.utils.json import dedup_json, restore_json, safe_get
@@ -49,6 +48,7 @@ from shared.utils.parsing import parse_int_env
 from shared.utils.time import now_iso
 
 from ...connectors import get_connector_from_spec
+from ...supervisor_data_client import SupervisorDataClient
 from ..base_executor import ExecutionError
 from ..utils.artifacts import maybe_resolve_artifact_ref, resolve_artifact
 from ..utils.data_utils import normalize_prompt_payload
@@ -119,16 +119,22 @@ class DataMixin:
         self._upstream_deps_cache: dict[str, dict[str, Any]] = {}
         self.io_executor = ThreadPoolExecutor(max_workers=32)
 
-        cache_root = Path(
-            os.getenv("WORKER_CACHE_DIR") or _DEFAULT_WORKER_CACHE_DIR.as_posix()
-        )
+        config = getattr(self, "_config", None)
+        if config is not None and getattr(config, "worker_cache_dir", None) is not None:
+            cache_root = Path(config.worker_cache_dir)
+        else:
+            override = os.getenv("WORKER_CACHE_DIR", "").strip()
+            cache_root = Path(override) if override else _DEFAULT_WORKER_CACHE_DIR
         self._data_cache_dir = cache_root / "data"
         self._data_cache_dir.mkdir(parents=True, exist_ok=True)
         self._cache_dir_lock = Lock()
 
-        self._data_ttl_sec = parse_int_env("WORKER_DATA_TTL_SEC", _DEFAULT_DATA_TTL_SEC)
-        self._redis_url = (os.getenv("REDIS_CONTROL_URL") or "").strip()
-        self._redis_client: redis.Redis | None = None
+        self._data_ttl_sec = (
+            int(getattr(config, "data_ttl_sec", _DEFAULT_DATA_TTL_SEC))
+            if config is not None
+            else parse_int_env("WORKER_DATA_TTL_SEC", _DEFAULT_DATA_TTL_SEC)
+        )
+        self._supervisor_data: SupervisorDataClient | None = None
 
     @classmethod
     def _resolve_param_type(cls, type_spec: str) -> type | None:
@@ -272,57 +278,45 @@ class DataMixin:
             )
 
     # ------------------------------------------------------------------ #
-    # Redis-backed cross-task data transport                             #
+    # Cross-task data transport via supervisor RPCs                      #
     # ------------------------------------------------------------------ #
-    def _get_redis(self) -> redis.Redis | None:
-        """Return the Redis client, or None if Redis is unavailable.
+    def _get_supervisor_data(self) -> SupervisorDataClient | None:
+        """Return the supervisor data-cache stub, or None if unavailable.
 
-        Redis is a hot-path cache for cross-task payloads, not the
-        authoritative store. Callers must tolerate `None` (Redis not
-        configured) and `RedisError` at use-time (treat as cache miss).
+        The supervisor owns the node-local Redis. Workers ask via gRPC
+        (`FetchData` / `PublishData`). Callers must tolerate `None` (no
+        config in unit tests) and treat any RPC error as a cache miss.
         """
-        if self._redis_client is not None:
-            return self._redis_client
-        if not self._redis_url:
+        if self._supervisor_data is not None:
+            return self._supervisor_data
+        config = getattr(self, "_config", None)
+        if config is None:
             return None
-        url = self._redis_url
-        if (os.getenv("REDIS_ACL_ENABLED") or "").strip() in ("1", "true", "True"):
-            username = os.getenv("REDIS_USERNAME") or "default"
-            password = os.getenv("REDIS_PASSWORD") or ""
-            parsed = urlparse(url)
-            if not parsed.username and not parsed.password and password:
-                host = parsed.hostname or ""
-                if parsed.port:
-                    host = f"{host}:{parsed.port}"
-                parsed = parsed._replace(netloc=f"{username}:{password}@{host}")
-                url = urlunparse(parsed)
-        kwargs: dict[str, Any] = {"decode_responses": True}
-        tls_ca = os.getenv("REDIS_TLS_CA_FILE")
-        if tls_ca:
-            kwargs["connection_class"] = redis.connection.SSLConnection
-            kwargs["ssl_cert_reqs"] = "required"
-            kwargs["ssl_ca_certs"] = tls_ca
-        self._redis_client = redis.Redis.from_url(url, **kwargs)
-        return self._redis_client
+        target = getattr(config, "supervisor_grpc_target", None)
+        token = getattr(config, "worker_token", None)
+        if not target or not token:
+            return None
+        self._supervisor_data = SupervisorDataClient(
+            grpc_target=target,
+            worker_token=token,
+            grpc_tls_ca_b64=getattr(config, "supervisor_grpc_tls_ca_b64", None),
+        )
+        return self._supervisor_data
 
-    def _fetch_from_redis(self, data_id: str) -> Any | None:
-        """Best-effort Redis cache lookup. Returns None on miss or any error."""
-        client = self._get_redis()
+    def _fetch_from_cache(self, data_id: str) -> Any | None:
+        """Best-effort cache lookup via supervisor. Returns None on miss / error."""
+        client = self._get_supervisor_data()
         if client is None:
             return None
-        try:
-            raw = cast(str | bytes | None, client.get(data_key(data_id)))
-        except redis.RedisError as exc:
-            logger.warning("Redis GET %s failed; falling back: %s", data_id, exc)
-            return None
+        raw = client.fetch(data_id)
         if raw is None:
             return None
         try:
-            deduped = json.loads(raw)
+            deduped = json.loads(raw.decode("utf-8"))
             return restore_json(deduped) if isinstance(deduped, dict) else deduped
-        except (json.JSONDecodeError, KeyError) as exc:
+        except (json.JSONDecodeError, UnicodeDecodeError, KeyError) as exc:
             logger.warning(
-                "Redis payload for %s is malformed; ignoring: %s", data_id, exc
+                "Cached payload for %s is malformed; ignoring: %s", data_id, exc
             )
             return None
 
@@ -359,24 +353,14 @@ class DataMixin:
                 f"Server returned non-JSON for result {data_id}: {exc}"
             ) from exc
 
-    def _publish_to_redis(self, data_id: str, payload: str) -> bool:
-        """Best-effort Redis publish. Returns True on success, False otherwise."""
-        client = self._get_redis()
+    def _publish_to_cache(self, data_id: str, payload: str) -> bool:
+        """Best-effort cache publish via supervisor. Returns True on success."""
+        client = self._get_supervisor_data()
         if client is None:
             return False
-        try:
-            if self._data_ttl_sec > 0:
-                client.set(data_key(data_id), payload, ex=self._data_ttl_sec)
-            else:
-                client.set(data_key(data_id), payload)
-        except redis.RedisError as exc:
-            logger.warning(
-                "Failed to publish %s to Redis cache (server upload remains "
-                "the source of truth): %s",
-                data_id,
-                exc,
-            )
-            return False
+        return client.publish(
+            data_id, payload.encode("utf-8"), max(0, int(self._data_ttl_sec))
+        )
         return True
 
     @staticmethod
@@ -404,24 +388,26 @@ class DataMixin:
 
     def _fetch_data(self, data_id: str) -> dict[str, Any]:
         """Resolve an upstream payload. Cache → Redis → server, in that order."""
-        with self._span("read", kind=FlowMeshSpanKind.NETWORK, data_id=data_id) as read_span:
+        with self._span(
+            "read", kind=FlowMeshSpanKind.NETWORK, data_id=data_id
+        ) as read_span:
             cached = self._read_cache(data_id)
             if cached is not None:
                 self._instant("cache hit", data_id=data_id)
                 read_span.set_attribute("source", "cache")
                 return cached
 
-            payload = self._fetch_from_redis(data_id)
+            payload = self._fetch_from_cache(data_id)
             if payload is not None:
-                read_span.set_attribute("source", "redis")
+                read_span.set_attribute("source", "supervisor")
                 self._write_cache(data_id, payload)
                 return payload
 
             payload = self._fetch_from_server(data_id)
             if payload is None:
                 raise ExecutionError(
-                    f"Upstream data {data_id} not found in Redis cache or "
-                    f"server results (key={data_key(data_id)})"
+                    f"Upstream data {data_id} not found in supervisor cache or "
+                    f"server results"
                 )
             read_span.set_attribute("source", "server")
             self._write_cache(data_id, payload)
@@ -441,10 +427,12 @@ class DataMixin:
         except (TypeError, ValueError) as exc:
             raise ExecutionError(f"Failed to serialize data {data_id}: {exc}") from exc
 
-        with self._span("write", kind=FlowMeshSpanKind.NETWORK, data_id=data_id) as write_span:
-            published = self._publish_to_redis(data_id, payload)
+        with self._span(
+            "write", kind=FlowMeshSpanKind.NETWORK, data_id=data_id
+        ) as write_span:
+            published = self._publish_to_cache(data_id, payload)
             self._write_cache(data_id, data)
-            write_span.set_attribute("redis_cache", "hit" if published else "miss")
+            write_span.set_attribute("cache", "hit" if published else "miss")
             write_span.set_attribute("payload_bytes", len(payload.encode("utf-8")))
         self._instant("dump to storage", data_id=data_id)
 
@@ -460,7 +448,7 @@ class DataMixin:
         if source_data_ids:
             self._record_lineage(data_id=data_id, source_data_ids=source_data_ids)
         logger.info(
-            "Wrote data %s (size: %d bytes, sources: %d, redis_cache=%s)",
+            "Wrote data %s (size: %d bytes, sources: %d, cache=%s)",
             data_id,
             len(payload.encode("utf-8")),
             len(source_data_ids),
@@ -920,7 +908,9 @@ class DataMixin:
                     )
                 metadata_raw = list(raw_meta)
         elif dtype == "graph_template":
-            with self._span("upstream fetch", kind=FlowMeshSpanKind.NETWORK, data_id=task_id):
+            with self._span(
+                "upstream fetch", kind=FlowMeshSpanKind.NETWORK, data_id=task_id
+            ):
                 upstream_results = self._fetch_upstream_results_from_storage(spec)
             logger.debug(
                 "Task %s graph_template upstream keys: %s",
@@ -933,7 +923,9 @@ class DataMixin:
             template_cfg = data.get("template") or {}
             append_system_prompt = bool(template_cfg.get("append_system_prompt", False))
         elif dtype == "dataframe":
-            with self._span("upstream fetch", kind=FlowMeshSpanKind.NETWORK, data_id=task_id):
+            with self._span(
+                "upstream fetch", kind=FlowMeshSpanKind.NETWORK, data_id=task_id
+            ):
                 upstream_results = self._fetch_upstream_results_from_storage(spec)
             logger.debug(
                 "Task %s dataframe upstream keys: %s",

@@ -1804,7 +1804,6 @@ worker-core = [
     { name = "nvidia-ml-py" },
     { name = "protobuf" },
     { name = "python-dotenv" },
-    { name = "redis" },
     { name = "websocket-client" },
 ]
 
@@ -1890,7 +1889,6 @@ requires-dist = [
     { name = "pyyaml", marker = "extra == 'server'", specifier = ">=6.0.2" },
     { name = "qdrant-client", marker = "extra == 'rag'", specifier = ">=1.15.1" },
     { name = "redis", marker = "extra == 'server'", specifier = ">=7.0.1" },
-    { name = "redis", marker = "extra == 'worker-core'", specifier = ">=7.0.1" },
     { name = "requests", marker = "extra == 'server'", specifier = ">=2.32.5" },
     { name = "respx", marker = "extra == 'dev'", specifier = ">=0.22.0" },
     { name = "rich", marker = "extra == 'agent'", specifier = ">=14.2.0" },

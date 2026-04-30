@@ -34,7 +34,6 @@ worker-core = [
     "nvidia-ml-py>=13.580.82",
     "protobuf>=5.29.6",
     "python-dotenv>=1.1.1",
-    "redis>=7.0.1",
     "websocket-client>=1.9.0",
 ]
 

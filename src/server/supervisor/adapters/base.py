@@ -153,7 +153,6 @@ class WorkerAdapter(ABC):
                 config.network_bandwidth
             ),
             "WORKER_UPLOAD_RESULTS": to_env_str(config.upload_results),
-            "REDIS_CONTROL_URL": env.REDIS_CONTROL_URL,
             "WORKER_DATA_TTL_SEC": to_env_str(
                 int(os.getenv("WORKER_DATA_TTL_SEC") or 600)
             ),
