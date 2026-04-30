@@ -559,17 +559,12 @@ neither `flowmesh stack up` nor `worker up` triggers a rebuild on its own.
 "It worked yesterday" is not evidence that the image matches today's code —
 treat any e2e run on a stack you didn't just rebuild for as untrusted output.
 
-**PR-specific image tag (mandatory).** Tags come from `FLOWMESH_VERSION`
-read out of the env file at `--env-file` (defaults to `./.env`). Set
-`FLOWMESH_VERSION` to a short PR-identifying slug (lowercase, no `/`)
-before any e2e validation, e.g. `lineage-spans` or `redis-cache`. Only
-`flowmesh stack {up,down,pull,pullall}` exposes a `--image-tag` flag;
-`flowmesh stack build` and `flowmesh stack worker up` read the env file
-exclusively. Either edit the slug into `.env` once at the top of the
-session (consistent across every command) or use `--env-file <pr.env>`
-with a per-PR file. Without a PR-specific slug, builds default to
-`FLOWMESH_VERSION=dev` and parallel PRs silently overwrite each other's
-images on the host.
+**PR-specific image tag (mandatory).** Set `FLOWMESH_VERSION` in `.env`
+to a short PR-identifying slug (lowercase, no `/`) — e.g. `lineage-spans`,
+`redis-cache` — before any e2e validation. Every `flowmesh stack ...`
+command reads it from there with no flags needed. Without a PR-specific
+slug, builds default to `FLOWMESH_VERSION=dev` and parallel PRs silently
+overwrite each other's images on the host.
 
 ## Code Style
 
