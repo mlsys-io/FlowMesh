@@ -20,4 +20,9 @@ jobs:
         run: uv sync --all-extras --frozen
 
       - name: Run unit tests
-        run: uv run pytest tests/ -v
+        # Skip the multiprocessing GPU-cleanup test — it's too costly to
+        # run on every PR (vllm engine startup + multi-process cleanup).
+        run: >
+          uv run pytest tests/
+          --ignore=tests/worker/test_mp_executor_cleanup_gpu.py
+          -v
