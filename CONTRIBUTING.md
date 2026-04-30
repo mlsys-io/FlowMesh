@@ -60,7 +60,7 @@ This installs three hook stages:
 
 | Tool | Purpose | Config |
 |------|---------|--------|
-| [gitleaks](https://github.com/gitleaks/gitleaks) | Committed-secret detection | (built-in rules) |
+| [gitleaks](https://github.com/gitleaks/gitleaks) | Committed-secret detection | - |
 | [isort](https://pycqa.github.io/isort/) | Import sorting | `pyproject.toml` `[tool.isort]` |
 | [Black](https://black.readthedocs.io/) | Code formatting | `pyproject.toml` `[tool.black]` |
 | [Ruff](https://docs.astral.sh/ruff/) | Linting | `pyproject.toml` `[tool.ruff]` |
