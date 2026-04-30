@@ -66,6 +66,7 @@ This installs three hook stages:
 | [Ruff](https://docs.astral.sh/ruff/) | Linting | `pyproject.toml` `[tool.ruff]` |
 | [mypy](https://mypy.readthedocs.io/) | Type checking | `pyproject.toml` `[tool.mypy]` |
 | [codespell](https://github.com/codespell-project/codespell) | Spell checking | `pyproject.toml` `[tool.codespell]` |
+| [bandit](https://bandit.readthedocs.io/) | Python source security audit | `pyproject.toml` `[tool.bandit]` |
 
 You can also run all checks manually:
 

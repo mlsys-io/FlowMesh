@@ -568,6 +568,46 @@ images silently mask code regressions.
   X", "added for Y", "handles issue #123") — those rot as the codebase
   evolves.
 
+### Security Rules (bandit-enforced)
+
+CI runs `bandit` with no severity / confidence threshold. Every finding must
+either have a source-level fix or a documented skip in `[tool.bandit]` in
+`pyproject.toml`. Per-line `# nosec` is disallowed — silencing a finding
+without a written rationale defeats the audit.
+
+When writing new code, follow these rules so bandit stays green:
+
+- **B113 (request timeouts)** — every `requests.get/post/...` call must pass
+  `timeout=`. Hung connections are denial-of-service; no implicit defaults.
+- **B202 (archive extraction)** — `tarfile.extractall(..., filter="data")` is
+  required (Python 3.12+). For zipfile, iterate `infolist()`, validate that
+  each member resolves under the destination, and extract per-member; never
+  call `zipfile.extractall` on untrusted archives.
+- **B310 (urlopen)** — don't use `urllib.request.urlopen`; use the `requests`
+  library and validate the URL scheme (`http`/`https` only) before fetching.
+- **B324 (insecure hash)** — `hashlib.md5(..., usedforsecurity=False)` is
+  required when MD5 is used for cache keys / fingerprints. Never use MD5 for
+  anything that crosses a security boundary.
+- **B506 (yaml load)** — always use `yaml.safe_load`. `yaml.load(...,
+  Loader=yaml.FullLoader)` is forbidden.
+- **B607 (subprocess with partial path)** — prefer the vendored SDK
+  (`pynvml`, `docker-py`, `GitPython`) over shelling out via `nvidia-smi` /
+  `docker` / `git`. If shelling out is unavoidable, the absolute path must
+  be provided.
+- **B614 (torch.load)** — `torch.load(..., weights_only=True)` is required.
+  Pickle deserialization is RCE waiting to happen.
+- **B701 (jinja2 autoescape)** — `Environment(autoescape=select_autoescape())`
+  is required. The default `False` is unsafe even for non-HTML templates.
+- **B108 (hardcoded /tmp)** — use `tempfile.gettempdir()` or
+  `tempfile.NamedTemporaryFile` for local-host work. The literal `"/tmp"` in
+  Python source is forbidden; if a Linux container path is genuinely
+  intended (e.g. an in-container sentinel), construct it from
+  `PurePosixPath` segments rather than as a single string constant.
+
+Skipped rules and the rationale for each are listed in `[tool.bandit]`.
+When the rationale stops being true (e.g. a sandbox stops being a sandbox),
+remove the skip and fix the call sites — don't widen the skip list silently.
+
 ## Commit Conventions
 
 - Single-line subject in imperative mood; no body unless a non-obvious "why"
