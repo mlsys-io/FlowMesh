@@ -19,6 +19,8 @@ jobs:
 
       - name: Set up uv
         uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
 
       - name: Install CLI dependencies
         run: uv sync --extra cli --frozen
