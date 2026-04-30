@@ -13,6 +13,7 @@ concurrency:
 
 jobs:
   check-signoff:
+    name: Check DCO sign-off
     runs-on: self-hosted
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
@@ -20,9 +21,10 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - name: Verify all commits are signed off
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
-          BASE="${{ github.event.pull_request.base.sha }}"
-          HEAD="${{ github.event.pull_request.head.sha }}"
           FAILED=0
           for SHA in $(git rev-list "$BASE".."$HEAD"); do
             # Skip merge commits (2+ parents)

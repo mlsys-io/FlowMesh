@@ -15,6 +15,7 @@ concurrency:
 
 jobs:
   lint:
+    name: Lint / format / typecheck
     runs-on: [self-hosted, cuda]
     steps:
       - name: Checkout

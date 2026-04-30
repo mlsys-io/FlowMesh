@@ -15,6 +15,7 @@ concurrency:
 
 jobs:
   verify:
+    name: Verify worker requirements sync
     runs-on: self-hosted
     steps:
       - name: Checkout
