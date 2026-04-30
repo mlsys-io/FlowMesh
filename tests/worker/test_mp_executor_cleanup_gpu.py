@@ -73,7 +73,7 @@ def test_mp_executor_cleans_up_vllm(caplog, tmp_path: Path) -> None:
                     "model": {
                         "source": {
                             "type": "huggingface",
-                            "identifier": "meta-llama/Llama-3.1-8B-Instruct",
+                            "identifier": "Qwen/Qwen2.5-0.5B-Instruct",
                             "revision": "main",
                         },
                         "vllm": {
