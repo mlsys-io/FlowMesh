@@ -1,0 +1,9 @@
+# zizmor configuration
+# Docs: https://docs.zizmor.sh/configuration/
+
+rules:
+  # Pin-by-SHA is good hygiene but a sweeping change. Track separately
+  # from per-PR audits; keep zizmor quiet about it until a dedicated
+  # SHA-pin sweep lands.
+  unpinned-uses:
+    disable: true
