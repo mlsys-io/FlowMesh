@@ -4,7 +4,7 @@ Brings up the full FlowMesh stack, runs a real multi-stage inference DAG on a
 GPU worker, and verifies that the new lineage transport works end-to-end:
 
 - Cross-task data flow goes through Redis (no HTTP gov calls in worker logs).
-- Each task's `logs/{events,assets,lineage}.jsonl` arrives at the server.
+- Each task's `logs/{spans,assets,lineage}.jsonl` arrives at the server.
 - `flowmesh logs fetch <kind>` returns rows.
 - `flowmesh profile fetch` returns a summary whose lineage edges match the DAG.
 - Redis keys for cross-task payloads carry a TTL.
@@ -89,7 +89,7 @@ def test_dag_inference_lineage_e2e(stack_up) -> None:
     final_status = _wait_for_workflow(workflow_id)
     assert final_status == "DONE", f"workflow ended with status {final_status}"
 
-    events = _fetch_jsonl(workflow_id, "events")
+    spans = _fetch_jsonl(workflow_id, "spans")
     assets = _fetch_jsonl(workflow_id, "assets")
     lineage = _fetch_jsonl(workflow_id, "lineage")
 
@@ -102,19 +102,15 @@ def test_dag_inference_lineage_e2e(stack_up) -> None:
     assert sources, "lineage edges have no source data_ids"
     assert derived, "lineage edges have no derived data_ids"
 
-    # Events should include both write and read sides.
-    event_types = {row["event_type"] for row in events}
-    assert any("write" in et for et in event_types)
-    assert any("read" in et for et in event_types)
+    # Spans should include both write and read sides.
+    span_names = {row["name"] for row in spans}
+    assert "write" in span_names
+    assert "read" in span_names
 
     # Profile summary should agree with raw counts.
     profile_result = _run(["profile", "fetch", workflow_id, "--format", "json"])
     summary = json.loads(profile_result.stdout)
-    assert summary["total_assets"] >= 1
-    assert summary["total_lineage_edges"] == len(lineage)
-    assert summary["read_count"] > 0
-    assert summary["write_count"] > 0
-
-    # Mermaid render is non-empty.
-    mermaid = _run(["profile", "fetch", workflow_id, "--format", "mermaid"])
-    assert mermaid.stdout.startswith("graph TD")
+    assert len(summary["assets"]) >= 1
+    assert len(summary["lineage"]) == len(lineage)
+    assert summary["e2e_breakdown"]["total_network_seconds"] > 0
+    assert summary["per_data_id"], "expected per-data_id timings in profile"

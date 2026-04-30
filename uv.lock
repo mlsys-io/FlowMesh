@@ -1977,12 +1977,19 @@ dependencies = [
     { name = "pyyaml" },
 ]
 
+[package.optional-dependencies]
+dataframes = [
+    { name = "pandas" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "httpx", specifier = ">=0.27.0" },
+    { name = "pandas", marker = "extra == 'dataframes'", specifier = ">=2.3.3" },
     { name = "pydantic", specifier = ">=2.0.0" },
     { name = "pyyaml", specifier = ">=6.0.0" },
 ]
+provides-extras = ["dataframes"]
 
 [[package]]
 name = "flowmesh-sdk-stack"

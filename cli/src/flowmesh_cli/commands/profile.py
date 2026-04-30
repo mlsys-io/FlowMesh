@@ -17,6 +17,7 @@ from shared.profile import (
     HardwareSummary,
     NetworkSummary,
     ProfileSummary,
+    TaskTiming,
 )
 
 from ..core import logging
@@ -70,6 +71,38 @@ def _compute_table(hw: HardwareSummary, title: str) -> Table:
             total_str = f"[{color}]{total_str}[/{color}]"
         table.add_row(
             event_type, str(count), total_str, f"{avg:.3f}", f"{mn:.3f}", f"{mx:.3f}"
+        )
+    return table
+
+
+def _queuing_delay_table(
+    timings: list[TaskTiming], cp_set: set[str], title: str
+) -> Table:
+    """Render per-data_id queuing delay sorted by wait time descending."""
+    table = Table(
+        title=title, box=SIMPLE, header_style="bold yellow", title_style="bold"
+    )
+    table.add_column("data_id", style="cyan", no_wrap=True)
+    table.add_column("duration_sec", justify="right", style="green")
+    table.add_column("wait_sec", justify="right", style="bold yellow")
+    table.add_column("blocked_by", style="cyan", no_wrap=True)
+    table.add_column("", no_wrap=True)
+    rows = sorted(
+        timings,
+        key=lambda t: (t.queuing_delay_seconds, t.duration_seconds),
+        reverse=True,
+    )
+    for t in rows:
+        blocker = t.blocking_parent_data_id or "—"
+        cp_marker = (
+            "[bold red]◆ critical path[/bold red]" if t.data_id in cp_set else ""
+        )
+        table.add_row(
+            t.data_id,
+            f"{t.duration_seconds:.3f}",
+            f"{t.queuing_delay_seconds:.3f}",
+            blocker,
+            cp_marker,
         )
     return table
 
@@ -212,12 +245,24 @@ def _print_e2e(summary: ProfileSummary) -> None:
     console.print(_network_table(e2e.network_summary, "Network time (end-to-end)"))
 
 
+def _print_queuing(summary: ProfileSummary) -> None:
+    if not summary.per_data_id:
+        return
+    cp_set: set[str] = (
+        set(summary.critical_path.path) if summary.critical_path else set()
+    )
+    console.print(
+        _queuing_delay_table(summary.per_data_id, cp_set, "Queuing delay (per data_id)")
+    )
+
+
 def _print_dag(summary: ProfileSummary) -> None:
     console.print(_lineage_tree(summary))
 
 
 _FORMAT_HELP = (
-    "Output format: rich (default; everything), critical-path (cp), " "e2e, dag, json"
+    "Output format: rich (default; everything), critical-path (cp), "
+    "e2e, queuing, dag, json"
 )
 _VIEW_ALIASES = {
     "rich": "rich",
@@ -229,6 +274,9 @@ _VIEW_ALIASES = {
     "e2e": "e2e",
     "compute": "e2e",
     "summary": "e2e",
+    "queuing": "queuing",
+    "queue": "queuing",
+    "wait": "queuing",
     "dag": "dag",
     "lineage": "dag",
     "graph": "dag",
@@ -259,7 +307,7 @@ def fetch(
     if view is None:
         logging.error(
             f"Unknown format '{fmt}'; expected one of: "
-            "rich, critical-path, e2e, dag, json"
+            "rich, critical-path, e2e, queuing, dag, json"
         )
         raise typer.Exit(code=2)
 
@@ -275,6 +323,9 @@ def fetch(
             _print_critical_path(summary)
             console.print(Rule(style="dim"))
         _print_e2e(summary)
+        if summary.per_data_id:
+            console.print(Rule(style="dim"))
+            _print_queuing(summary)
         console.print(Rule(style="dim"))
         _print_dag(summary)
         return
@@ -283,6 +334,9 @@ def fetch(
         return
     if view == "e2e":
         _print_e2e(summary)
+        return
+    if view == "queuing":
+        _print_queuing(summary)
         return
     if view == "dag":
         _print_dag(summary)

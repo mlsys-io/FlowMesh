@@ -1,14 +1,19 @@
-"""Trace analyzer over (events, assets, lineage) JSONL rows.
+"""Trace analyzer over (spans, assets, lineage) JSONL rows.
 
-Mirrors the analysis shape used by lumilake's `TraceAnalyzer`: an end-to-end
-breakdown (hardware + network) across all data_ids in a workflow, plus a
-critical-path summary that walks the lineage DAG from the latest-finishing
-sink back to the root, breaking down active vs. wait time at each step.
+Spans arrive in OTLP/JSON shape (one ``ReadableSpan.to_json()`` per line).
+``flowmesh.kind`` on each span attribute classifies it as ``compute`` /
+``network`` / ``marker``; the analyzer never has to maintain its own
+event-type whitelist.
 
-A `dump to storage` event marks data as ready (the READY marker). Network
-events (`read response transfer`, `write request transfer`) carry their own
-elapsed-derived intervals, and total network time is the union of those
-intervals so overlapping reads / writes don't double-count.
+Per-data_id timing:
+
+- ``start_time`` / ``end_time`` come from the ``"task"`` root span emitted by
+  :meth:`worker.executors.mixins.data.DataMixin._task_span`.
+- A zero-duration ``"dump to storage"`` marker stamps when data is durably
+  persisted; its ``end_time`` is the data-ready timestamp.
+- ``queuing_delay`` is the gap between a task's ``start_time`` and the latest
+  parent's ``"dump to storage"`` end_time. Surfaced for every data_id so
+  imbalance shows up off the critical path too.
 """
 
 from collections import defaultdict
@@ -18,25 +23,10 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 
-READY_EVENT_TYPE = "dump to storage"
-NETWORK_EVENT_TYPES = frozenset(
-    {
-        "read request transfer",
-        "read response transfer",
-        "write request transfer",
-        "read response retrieval",
-    }
-)
-SKIPPED_EVENT_TYPES = frozenset({"read request initiated"})
+from shared.governance.spans import FlowMeshSpanKind, Span
 
-
-def _parse_ts(value: Any) -> datetime | None:
-    if not isinstance(value, str) or not value:
-        return None
-    try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
-        return None
+READY_SPAN_NAME = "dump to storage"
+TASK_SPAN_NAME = "task"
 
 
 class _ProfileBase(BaseModel):
@@ -89,6 +79,16 @@ class ActiveWaitBreakdown(_ProfileBase):
     wait_seconds: list[float]
 
 
+class TaskTiming(_ProfileBase):
+    data_id: str
+    start_time: datetime
+    end_time: datetime
+    duration_seconds: float
+    queuing_delay_seconds: float
+    parent_data_ids: list[str]
+    blocking_parent_data_id: str | None = None
+
+
 class CriticalPathSummary(_ProfileBase):
     path: list[str]
     critical_path_seconds: float
@@ -105,21 +105,30 @@ class ProfileSummary(_ProfileBase):
     assets: list[AssetSummary]
     lineage: list[LineageEdge]
     e2e_breakdown: E2EBreakdown
+    per_data_id: list[TaskTiming]
     critical_path: CriticalPathSummary | None = None
 
 
 def analyze(
-    events: Iterable[dict[str, Any]],
+    spans: Iterable[dict[str, Any]],
     assets: Iterable[dict[str, Any]],
     lineage: Iterable[dict[str, Any]],
     workflow_id: str | None = None,
 ) -> ProfileSummary:
-    event_rows = [e for e in events if isinstance(e, dict)]
+    parsed: list[Span] = []
+    for raw in spans:
+        if not isinstance(raw, dict):
+            continue
+        try:
+            parsed.append(Span.parse_otel_json(raw))
+        except (ValueError, TypeError):
+            continue
+
     asset_rows = [a for a in assets if isinstance(a, dict)]
     lineage_rows = [le for le in lineage if isinstance(le, dict)]
 
     asset_summaries = _asset_summaries(asset_rows)
-    data_ids = sorted({str(e.get("data_id") or "") for e in event_rows} - {""})
+    data_ids = sorted({s.data_id for s in parsed if s.data_id})
     dep_map = _dep_map(lineage_rows)
     lineage_edges = [
         LineageEdge(
@@ -131,17 +140,21 @@ def analyze(
         if le.get("data_id") and le.get("source_data_id")
     ]
 
-    grouped = _group_events(event_rows, data_ids, dep_map)
+    grouped = _group_spans(parsed)
     e2e_breakdown = _obtain_breakdown(grouped)
-    critical_path = _compute_critical_path(grouped, dep_map) if data_ids else None
+    per_data_id = _per_data_id_timings(grouped, dep_map, data_ids)
+    critical_path = (
+        _compute_critical_path(grouped, dep_map, per_data_id) if data_ids else None
+    )
 
     return ProfileSummary(
         workflow_id=workflow_id,
-        event_count=len(event_rows),
+        event_count=len(parsed),
         data_ids=data_ids,
         assets=asset_summaries,
         lineage=lineage_edges,
         e2e_breakdown=E2EBreakdown.model_validate(e2e_breakdown),
+        per_data_id=per_data_id,
         critical_path=(
             CriticalPathSummary.model_validate(critical_path)
             if critical_path is not None
@@ -184,54 +197,76 @@ def _dep_map(lineage_rows: list[dict[str, Any]]) -> dict[str, list[str]]:
     return dict(dep_map)
 
 
-def _group_events(
-    events: list[dict[str, Any]],
-    data_ids: list[str],
-    dep_map: dict[str, list[str]],
-) -> dict[str, list[dict[str, Any]]]:
-    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    for evt in events:
-        data_id = str(evt.get("data_id") or "")
-        if not data_id:
-            continue
-        grouped[data_id].append(evt)
-
-    finish_ts: dict[str, datetime] = {}
-    for data_id, evts in grouped.items():
-        ready_times: list[datetime] = []
-        for e in evts:
-            if e.get("event_type") != READY_EVENT_TYPE:
-                continue
-            parsed = _parse_ts(e.get("timestamp"))
-            if parsed is not None:
-                ready_times.append(parsed)
-        if ready_times:
-            finish_ts[data_id] = max(ready_times)
-
-    for data_id in data_ids:
-        evts = grouped.get(data_id) or []
-        evts.sort(key=lambda e: _parse_ts(e.get("timestamp")) or datetime.min)
-        prev_ts: datetime | None = None
-        parents = dep_map.get(data_id)
-        for idx, evt in enumerate(evts):
-            ts = _parse_ts(evt.get("timestamp"))
-            if ts is None:
-                evt["elapsed"] = timedelta(0)
-                continue
-            baseline: datetime | None = prev_ts
-            if baseline is None and parents and idx == 0:
-                parent_finishes = [finish_ts[p] for p in parents if p in finish_ts]
-                if parent_finishes:
-                    baseline = max(parent_finishes)
-            if baseline is None:
-                elapsed = timedelta(0)
-            elif ts < baseline:
-                elapsed = timedelta(0)
-            else:
-                elapsed = ts - baseline
-            evt["elapsed"] = elapsed
-            prev_ts = ts
+def _group_spans(spans: list[Span]) -> dict[str, list[Span]]:
+    grouped: dict[str, list[Span]] = defaultdict(list)
+    for span in spans:
+        if span.data_id:
+            grouped[span.data_id].append(span)
+    for data_id, items in grouped.items():
+        items.sort(key=lambda s: s.start_time)
     return dict(grouped)
+
+
+def _ready_finish(spans: list[Span]) -> datetime | None:
+    ready_times = [s.end_time for s in spans if s.name == READY_SPAN_NAME]
+    return max(ready_times) if ready_times else None
+
+
+def _task_span(spans: list[Span]) -> Span | None:
+    for span in spans:
+        if span.name == TASK_SPAN_NAME and span.parent_span_id is None:
+            return span
+    for span in spans:
+        if span.name == TASK_SPAN_NAME:
+            return span
+    return None
+
+
+def _per_data_id_timings(
+    grouped: dict[str, list[Span]],
+    dep_map: dict[str, list[str]],
+    data_ids: list[str],
+) -> list[TaskTiming]:
+    finish_ts: dict[str, datetime] = {}
+    for data_id, spans in grouped.items():
+        ready = _ready_finish(spans)
+        if ready is not None:
+            finish_ts[data_id] = ready
+
+    timings: list[TaskTiming] = []
+    for data_id in data_ids:
+        spans = grouped.get(data_id) or []
+        if not spans:
+            continue
+        task = _task_span(spans)
+        if task is not None:
+            start = task.start_time
+            end = task.end_time
+        else:
+            start = min(s.start_time for s in spans)
+            end = max(s.end_time for s in spans)
+
+        parents = dep_map.get(data_id) or []
+        eligible = [(p, finish_ts[p]) for p in parents if p in finish_ts]
+        if eligible:
+            blocking_parent, blocking_finish = max(eligible, key=lambda x: x[1])
+            wait = max((start - blocking_finish).total_seconds(), 0.0)
+        else:
+            blocking_parent = None
+            wait = 0.0
+
+        timings.append(
+            TaskTiming(
+                data_id=data_id,
+                start_time=start,
+                end_time=end,
+                duration_seconds=(end - start).total_seconds(),
+                queuing_delay_seconds=wait,
+                parent_data_ids=list(parents),
+                blocking_parent_data_id=blocking_parent,
+            )
+        )
+    return timings
 
 
 def _merge_intervals(
@@ -259,7 +294,7 @@ def _avg_min_max(values: list[float]) -> tuple[float, float, float]:
 
 
 def _obtain_breakdown(
-    grouped: dict[str, list[dict[str, Any]]],
+    grouped: dict[str, list[Span]],
 ) -> dict[str, Any]:
     by_type: dict[str, list[float]] = defaultdict(list)
     by_type_batch: dict[str, dict[str, timedelta]] = defaultdict(
@@ -269,38 +304,38 @@ def _obtain_breakdown(
     network_intervals_by_type: dict[str, list[tuple[datetime, datetime]]] = defaultdict(
         list
     )
-    network_gap_seconds: dict[str, list[float]] = defaultdict(list)
-    all_timestamps: list[datetime] = []
+    network_active_seconds: dict[str, list[float]] = defaultdict(list)
+    all_starts: list[datetime] = []
+    all_ends: list[datetime] = []
 
-    for evts in grouped.values():
-        for evt in evts:
-            event_type = str(evt.get("event_type") or "")
-            if event_type in SKIPPED_EVENT_TYPES:
+    for spans in grouped.values():
+        for span in spans:
+            kind = span.flowmesh_kind
+            if kind == FlowMeshSpanKind.MARKER:
                 continue
-            ts = _parse_ts(evt.get("timestamp"))
-            if ts is None:
+            if span.name == TASK_SPAN_NAME:
+                all_starts.append(span.start_time)
+                all_ends.append(span.end_time)
                 continue
-            all_timestamps.append(ts)
-            elapsed = evt.get("elapsed")
-            if not isinstance(elapsed, timedelta):
-                elapsed = timedelta(0)
 
-            if event_type in NETWORK_EVENT_TYPES:
-                interval = (ts - elapsed, ts)
+            duration = span.duration_seconds
+
+            if kind == FlowMeshSpanKind.NETWORK:
+                interval = (span.start_time, span.end_time)
                 network_intervals.append(interval)
-                network_intervals_by_type[event_type].append(interval)
-                network_gap_seconds[event_type].append(elapsed.total_seconds())
-            else:
-                by_type[event_type].append(elapsed.total_seconds())
-                batch_id = str(evt.get("batch_id") or "")
-                if batch_id:
-                    by_type_batch[event_type][batch_id] += elapsed
+                network_intervals_by_type[span.name].append(interval)
+                network_active_seconds[span.name].append(duration)
+            elif kind == FlowMeshSpanKind.COMPUTE:
+                by_type[span.name].append(duration)
+                if span.batch_id:
+                    by_type_batch[span.name][span.batch_id] += span.end_time - (
+                        span.start_time
+                    )
 
-    workflow_duration = (
-        max(all_timestamps) - min(all_timestamps)
-        if len(all_timestamps) >= 2
-        else timedelta(0)
-    )
+    if all_starts and all_ends:
+        workflow_duration = max(all_ends) - min(all_starts)
+    else:
+        workflow_duration = timedelta(0)
     total_network = sum(
         (end - start for start, end in _merge_intervals(network_intervals)),
         timedelta(0),
@@ -328,7 +363,7 @@ def _obtain_breakdown(
     net_event_types = list(network_intervals_by_type.keys())
     network_summary = {
         "event_type": net_event_types,
-        "count": [len(network_gap_seconds[t]) for t in net_event_types],
+        "count": [len(network_active_seconds[t]) for t in net_event_types],
         "total_active_seconds": [
             sum(
                 (
@@ -340,13 +375,13 @@ def _obtain_breakdown(
             for t in net_event_types
         ],
         "avg_time_seconds": [
-            _avg_min_max(network_gap_seconds[t])[0] for t in net_event_types
+            _avg_min_max(network_active_seconds[t])[0] for t in net_event_types
         ],
         "min_time_seconds": [
-            _avg_min_max(network_gap_seconds[t])[1] for t in net_event_types
+            _avg_min_max(network_active_seconds[t])[1] for t in net_event_types
         ],
         "max_time_seconds": [
-            _avg_min_max(network_gap_seconds[t])[2] for t in net_event_types
+            _avg_min_max(network_active_seconds[t])[2] for t in net_event_types
         ],
     }
 
@@ -359,25 +394,18 @@ def _obtain_breakdown(
 
 
 def _compute_critical_path(
-    grouped: dict[str, list[dict[str, Any]]],
+    grouped: dict[str, list[Span]],
     dep_map: dict[str, list[str]],
+    per_data_id: list[TaskTiming],
 ) -> dict[str, Any] | None:
-    start_times: dict[str, datetime] = {}
+    by_id: dict[str, TaskTiming] = {t.data_id: t for t in per_data_id}
     finish_times: dict[str, datetime] = {}
-    for data_id, evts in grouped.items():
-        ts_values: list[datetime] = []
-        ready_times: list[datetime] = []
-        for e in evts:
-            parsed = _parse_ts(e.get("timestamp"))
-            if parsed is None:
-                continue
-            ts_values.append(parsed)
-            if e.get("event_type") == READY_EVENT_TYPE:
-                ready_times.append(parsed)
-        if not ts_values:
-            continue
-        start_times[data_id] = min(ts_values)
-        finish_times[data_id] = max(ready_times) if ready_times else max(ts_values)
+    for data_id, spans in grouped.items():
+        ready = _ready_finish(spans)
+        if ready is not None:
+            finish_times[data_id] = ready
+        elif data_id in by_id:
+            finish_times[data_id] = by_id[data_id].end_time
 
     if not finish_times:
         return None
@@ -397,23 +425,17 @@ def _compute_critical_path(
     actives: list[float] = []
     waits: list[float] = []
     cp_duration = timedelta(0)
-    for i, nid in enumerate(critical_path):
-        st = start_times[nid]
-        ft = finish_times[nid]
-        active = ft - st
-        wait = timedelta(0)
-        baseline_finish: datetime | None = None
-        if parents := dep_map.get(nid):
-            finishes = [finish_times[p] for p in parents if p in finish_times]
-            if finishes:
-                baseline_finish = max(finishes)
-        if baseline_finish is None and i > 0:
-            baseline_finish = finish_times.get(critical_path[i - 1])
-        if baseline_finish is not None and st > baseline_finish:
-            wait = st - baseline_finish
-        cp_duration += active + wait
-        actives.append(active.total_seconds())
-        waits.append(wait.total_seconds())
+    for nid in critical_path:
+        timing = by_id.get(nid)
+        if timing is None:
+            actives.append(0.0)
+            waits.append(0.0)
+            continue
+        active = timing.duration_seconds
+        wait = timing.queuing_delay_seconds
+        cp_duration += timedelta(seconds=active + wait)
+        actives.append(active)
+        waits.append(wait)
 
     cp_breakdown = _obtain_breakdown(
         {nid: grouped[nid] for nid in critical_path if nid in grouped}

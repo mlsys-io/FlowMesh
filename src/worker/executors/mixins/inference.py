@@ -330,56 +330,54 @@ class InferenceMixin(DataMixin):
         self, entry: InferenceEntry, *, has_images: bool = False
     ) -> PreparedInferenceEntry:
         task_id = entry.task_id
-        inference_cfg = entry.inference_cfg
-        append_system_prompt = entry.append_system_prompt
-        system_prompt = inference_cfg.get("system_prompt")
-        metadata_raw = entry.metadata_raw
-        prompts = entry.prompts
+        with self._span("prompt postprocessing", kind="compute", data_id=task_id):
+            inference_cfg = entry.inference_cfg
+            append_system_prompt = entry.append_system_prompt
+            system_prompt = inference_cfg.get("system_prompt")
+            metadata_raw = entry.metadata_raw
+            prompts = entry.prompts
 
-        apply_chat_template = bool(
-            inference_cfg.get("apply_chat_template", self._should_apply_chat_template())
-        )
-        chat_template_kwargs = self._extract_chat_template_kwargs(inference_cfg)
-        metadata_prompts: Sequence[MetadataPrompt]
-
-        if apply_chat_template:
-            metadata_prompts, rendered_prompts = self._apply_chat_template(
-                prompts,
-                system_prompt if append_system_prompt else None,
-                has_images=has_images,
-                chat_template_kwargs=chat_template_kwargs,
-            )
-        else:
-            if prompts and not isinstance(prompts[0], str):
-                raise ExecutionError(
-                    "Chat-style prompts require apply_chat_template=true and a "
-                    "tokenizer with a chat template."
+            apply_chat_template = bool(
+                inference_cfg.get(
+                    "apply_chat_template", self._should_apply_chat_template()
                 )
-            prompts_as_text = cast(list[str], prompts)
-            metadata_prompts = prompts_as_text
-            if system_prompt and append_system_prompt:
-                rendered_prompts = [
-                    f"{system_prompt}\n{prompt}" for prompt in prompts_as_text
-                ]
+            )
+            chat_template_kwargs = self._extract_chat_template_kwargs(inference_cfg)
+            metadata_prompts: Sequence[MetadataPrompt]
+
+            if apply_chat_template:
+                metadata_prompts, rendered_prompts = self._apply_chat_template(
+                    prompts,
+                    system_prompt if append_system_prompt else None,
+                    has_images=has_images,
+                    chat_template_kwargs=chat_template_kwargs,
+                )
             else:
-                rendered_prompts = prompts_as_text.copy()
+                if prompts and not isinstance(prompts[0], str):
+                    raise ExecutionError(
+                        "Chat-style prompts require apply_chat_template=true and a "
+                        "tokenizer with a chat template."
+                    )
+                prompts_as_text = cast(list[str], prompts)
+                metadata_prompts = prompts_as_text
+                if system_prompt and append_system_prompt:
+                    rendered_prompts = [
+                        f"{system_prompt}\n{prompt}" for prompt in prompts_as_text
+                    ]
+                else:
+                    rendered_prompts = prompts_as_text.copy()
 
-        metadata_rows = self._build_metadata_rows(metadata_raw, metadata_prompts)
+            metadata_rows = self._build_metadata_rows(metadata_raw, metadata_prompts)
 
-        self._log_event(
-            data_id=task_id,
-            event_type="prompt postprocessing",
-            event_data=f"Formed metadata for {len(metadata_rows)} prompts",
-        )
-        return PreparedInferenceEntry(
-            task_id=task_id,
-            prompts=rendered_prompts,
-            inference_cfg=inference_cfg,
-            data_cfg=entry.data_cfg,
-            metadata=metadata_rows,
-            images=entry.images,
-            image_group_sizes=entry.image_group_sizes,
-            image_embedding_path=entry.image_embedding_path,
-            tables=entry.tables,
-            applied_chat_template=apply_chat_template,
-        )
+            return PreparedInferenceEntry(
+                task_id=task_id,
+                prompts=rendered_prompts,
+                inference_cfg=inference_cfg,
+                data_cfg=entry.data_cfg,
+                metadata=metadata_rows,
+                images=entry.images,
+                image_group_sizes=entry.image_group_sizes,
+                image_embedding_path=entry.image_embedding_path,
+                tables=entry.tables,
+                applied_chat_template=apply_chat_template,
+            )
