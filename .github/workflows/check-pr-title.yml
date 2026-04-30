@@ -16,6 +16,7 @@ jobs:
       - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
+          cache-suffix: ${{ github.workflow }}
       - name: Validate PR title
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
