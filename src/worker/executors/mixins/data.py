@@ -42,6 +42,7 @@ from opentelemetry.trace import Span as OTelSpan
 from PIL import Image
 
 from shared.governance import data_key
+from shared.governance.spans import FlowMeshSpanKind
 from shared.tasks.specs import TaskSpecStrictBase
 from shared.utils.json import dedup_json, restore_json, safe_get
 from shared.utils.parsing import parse_int_env
@@ -168,7 +169,7 @@ class DataMixin:
             with get_tracer().start_as_current_span(
                 "task",
                 attributes=attributes_with_kind(
-                    "compute",
+                    FlowMeshSpanKind.COMPUTE,
                     data_id=task_id,
                     extra={
                         "batch_id": task_id,
@@ -187,7 +188,7 @@ class DataMixin:
         self,
         name: str,
         *,
-        kind: str = "compute",
+        kind: FlowMeshSpanKind = FlowMeshSpanKind.COMPUTE,
         data_id: str | None = None,
         attributes: dict[str, Any] | None = None,
     ) -> Iterator[OTelSpan]:
@@ -204,7 +205,7 @@ class DataMixin:
         self,
         name: str,
         *,
-        kind: str = "marker",
+        kind: FlowMeshSpanKind = FlowMeshSpanKind.MARKER,
         data_id: str | None = None,
         attributes: dict[str, Any] | None = None,
     ) -> None:
@@ -403,7 +404,7 @@ class DataMixin:
 
     def _fetch_data(self, data_id: str) -> dict[str, Any]:
         """Resolve an upstream payload. Cache → Redis → server, in that order."""
-        with self._span("read", kind="network", data_id=data_id) as read_span:
+        with self._span("read", kind=FlowMeshSpanKind.NETWORK, data_id=data_id) as read_span:
             cached = self._read_cache(data_id)
             if cached is not None:
                 self._instant("cache hit", data_id=data_id)
@@ -440,7 +441,7 @@ class DataMixin:
         except (TypeError, ValueError) as exc:
             raise ExecutionError(f"Failed to serialize data {data_id}: {exc}") from exc
 
-        with self._span("write", kind="network", data_id=data_id) as write_span:
+        with self._span("write", kind=FlowMeshSpanKind.NETWORK, data_id=data_id) as write_span:
             published = self._publish_to_redis(data_id, payload)
             self._write_cache(data_id, data)
             write_span.set_attribute("redis_cache", "hit" if published else "miss")
@@ -919,7 +920,7 @@ class DataMixin:
                     )
                 metadata_raw = list(raw_meta)
         elif dtype == "graph_template":
-            with self._span("upstream fetch", kind="network", data_id=task_id):
+            with self._span("upstream fetch", kind=FlowMeshSpanKind.NETWORK, data_id=task_id):
                 upstream_results = self._fetch_upstream_results_from_storage(spec)
             logger.debug(
                 "Task %s graph_template upstream keys: %s",
@@ -932,7 +933,7 @@ class DataMixin:
             template_cfg = data.get("template") or {}
             append_system_prompt = bool(template_cfg.get("append_system_prompt", False))
         elif dtype == "dataframe":
-            with self._span("upstream fetch", kind="network", data_id=task_id):
+            with self._span("upstream fetch", kind=FlowMeshSpanKind.NETWORK, data_id=task_id):
                 upstream_results = self._fetch_upstream_results_from_storage(spec)
             logger.debug(
                 "Task %s dataframe upstream keys: %s",
