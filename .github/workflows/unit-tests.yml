@@ -20,8 +20,7 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@v7
         with:
-          enable-cache: true
-          cache-suffix: ${{ github.workflow }}
+          version: "0.11.8"
 
       - name: Install dependencies
         run: uv sync --all-extras --frozen

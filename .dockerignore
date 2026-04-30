@@ -70,3 +70,4 @@ exp/
 templates/
 scripts/
 README.md
+.claude/
