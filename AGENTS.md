@@ -548,6 +548,17 @@ uv run flowmesh stack build flowmesh_ssh_cpu flowmesh_ssh_gpu
 Always rebuild the affected worker image after changing executor code; stale
 images silently mask code regressions.
 
+**E2E validation rebuild rule (mandatory).** Before any `flowmesh stack up` /
+`flowmesh workflow submit` round used to validate code changes, you MUST
+rebuild every image whose code was modified in this branch. Touched
+`src/server/...` → rebuild `server`. Touched `src/worker/...` →
+rebuild `flowmesh_worker_cpu` / `flowmesh_worker_gpu`. Touched `src/shared/...`
+→ rebuild **both** server and worker images (shared rides into both). The
+running stack pulls the image that existed when the container was created;
+neither `flowmesh stack up` nor `worker up` triggers a rebuild on its own.
+"It worked yesterday" is not evidence that the image matches today's code —
+treat any e2e run on a stack you didn't just rebuild for as untrusted output.
+
 ## Code Style
 
 - Python 3.12+ (see `[project]` in `pyproject.toml`).
