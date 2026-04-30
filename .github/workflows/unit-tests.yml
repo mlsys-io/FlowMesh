@@ -8,7 +8,7 @@ on:
 
 jobs:
   unit-tests:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -20,8 +20,8 @@ jobs:
         run: uv sync --all-extras --frozen
 
       - name: Run unit tests
-        # Skip the multiprocessing GPU-cleanup test — it requires a real CUDA
-        # device and isolated processes.
+        # Skip the multiprocessing GPU-cleanup test — the self-hosted
+        # runner container has no GPU access.
         run: >
           uv run pytest tests/
           --ignore=tests/worker/test_mp_executor_cleanup_gpu.py
