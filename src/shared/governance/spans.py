@@ -82,6 +82,7 @@ class Span(BaseModel):
         payload = json.loads(raw) if isinstance(raw, str) else raw
         ctx = payload.get("context") or {}
         status = payload.get("status") or {}
+        raw_attrs = payload.get("attributes") or {}
         return cls(
             name=str(payload.get("name") or ""),
             trace_id=_strip_hex_prefix(ctx.get("trace_id")) or "",
@@ -90,7 +91,7 @@ class Span(BaseModel):
             start_time=_parse_iso(payload.get("start_time"))
             or datetime.fromtimestamp(0),
             end_time=_parse_iso(payload.get("end_time")) or datetime.fromtimestamp(0),
-            attributes=dict(payload.get("attributes") or {}),
+            attributes=raw_attrs.copy(),
             status_code=str(status.get("status_code") or "UNSET"),
             status_message=(
                 str(status.get("description")) if status.get("description") else None

@@ -263,7 +263,7 @@ def _per_data_id_timings(
                 end_time=end,
                 duration_seconds=(end - start).total_seconds(),
                 queuing_delay_seconds=wait,
-                parent_data_ids=list(parents),
+                parent_data_ids=parents.copy(),
                 blocking_parent_data_id=blocking_parent,
             )
         )
