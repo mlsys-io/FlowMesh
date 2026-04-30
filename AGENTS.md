@@ -514,7 +514,7 @@ uv run scripts/dev/compile_protos.sh  # Regenerate proto stubs (only when proto 
 uv run pre-commit run --all-files
 ```
 
-Hooks: isort, black, ruff, codespell, mypy, sync_requirements,
+Hooks: gitleaks, isort, black, ruff, codespell, mypy, sync_requirements,
 check_env_examples (via `scripts/dev/check_env_examples.py`).
 
 ### Tests

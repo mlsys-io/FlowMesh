@@ -51,7 +51,7 @@ uv run pre-commit install --install-hooks -t pre-commit -t prepare-commit-msg -t
 ```
 
 This installs three hook stages:
-- **pre-commit** — runs isort, black, ruff, mypy, and codespell on staged files.
+- **pre-commit** — runs gitleaks, isort, black, ruff, mypy, and codespell on staged files.
 - **prepare-commit-msg** — automatically appends a
   [DCO sign-off](#signing-off-commits-dco) line to your commit message.
 - **commit-msg** — verifies the sign-off is present (safety net).
@@ -60,6 +60,7 @@ This installs three hook stages:
 
 | Tool | Purpose | Config |
 |------|---------|--------|
+| [gitleaks](https://github.com/gitleaks/gitleaks) | Committed-secret detection | (built-in rules) |
 | [isort](https://pycqa.github.io/isort/) | Import sorting | `pyproject.toml` `[tool.isort]` |
 | [Black](https://black.readthedocs.io/) | Code formatting | `pyproject.toml` `[tool.black]` |
 | [Ruff](https://docs.astral.sh/ruff/) | Linting | `pyproject.toml` `[tool.ruff]` |
