@@ -56,22 +56,13 @@ def _spans() -> list[dict[str, Any]]:
             batch_id="tsk-1",
         ),
         _span(
-            "write",
+            "dump to storage",
             data_id="tsk-1",
             start="2026-04-29T00:00:01+00:00",
             end="2026-04-29T00:00:02+00:00",
             kind="network",
             parent_id="0x1111111111111111",
             span_id="0x1111000000000002",
-        ),
-        _span(
-            "dump to storage",
-            data_id="tsk-1",
-            start="2026-04-29T00:00:02+00:00",
-            end="2026-04-29T00:00:02+00:00",
-            kind="marker",
-            parent_id="0x1111111111111111",
-            span_id="0x1111000000000003",
         ),
         _span(
             "task",
@@ -92,22 +83,13 @@ def _spans() -> list[dict[str, Any]]:
             batch_id="tsk-2",
         ),
         _span(
-            "write",
+            "dump to storage",
             data_id="tsk-2",
             start="2026-04-29T00:00:03+00:00",
             end="2026-04-29T00:00:04+00:00",
             kind="network",
             parent_id="0x2222222222222222",
             span_id="0x2222000000000002",
-        ),
-        _span(
-            "dump to storage",
-            data_id="tsk-2",
-            start="2026-04-29T00:00:04+00:00",
-            end="2026-04-29T00:00:04+00:00",
-            kind="marker",
-            parent_id="0x2222222222222222",
-            span_id="0x2222000000000003",
         ),
         _span(
             "task",
@@ -127,22 +109,13 @@ def _spans() -> list[dict[str, Any]]:
             span_id="0x3333000000000001",
         ),
         _span(
-            "write",
+            "dump to storage",
             data_id="tsk-3",
             start="2026-04-29T00:00:05.500000+00:00",
             end="2026-04-29T00:00:06+00:00",
             kind="network",
             parent_id="0x3333333333333333",
             span_id="0x3333000000000002",
-        ),
-        _span(
-            "dump to storage",
-            data_id="tsk-3",
-            start="2026-04-29T00:00:06+00:00",
-            end="2026-04-29T00:00:06+00:00",
-            kind="marker",
-            parent_id="0x3333333333333333",
-            span_id="0x3333000000000003",
         ),
     ]
 
@@ -200,7 +173,6 @@ def test_e2e_hardware_summary_lists_compute_spans() -> None:
     hw = summary.e2e_breakdown.hardware_summary
     types = set(hw.event_type)
     assert "model load" in types
-    assert "write" not in types
     assert "read" not in types
     assert "dump to storage" not in types
     assert "task" not in types
@@ -210,7 +182,7 @@ def test_e2e_network_summary_includes_transfers() -> None:
     summary = analyze(_spans(), _assets(), _lineage())
     net = summary.e2e_breakdown.network_summary
     types = set(net.event_type)
-    assert "write" in types
+    assert "dump to storage" in types
     assert "read" in types
 
 

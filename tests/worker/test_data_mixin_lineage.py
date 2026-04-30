@@ -55,7 +55,7 @@ def test_task_span_emits_root_with_compute_kind(tmp_path: Path, monkeypatch) -> 
 
     out_dir = tmp_path / "task"
     with mixin._task_span("tsk-1", "wfl-fbad6be5c4434181a2d394eac830dea1", out_dir):
-        mixin._instant("queuing for execution", data_id="tsk-1")
+        mixin._log_event("queuing for execution", data_id="tsk-1")
 
     spans = _spans_for_task(out_dir)
     names = [s["name"] for s in spans]
@@ -114,7 +114,7 @@ def test_supervisor_cache_round_trip(tmp_path: Path, monkeypatch) -> None:
     assert "tsk-up" in supervisor.store
 
 
-def test_cache_hit_emits_marker(tmp_path: Path, monkeypatch) -> None:
+def test_cache_hit_recorded_on_read_span(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("WORKER_CACHE_DIR", str(tmp_path / "wc"))
     supervisor = _FakeSupervisorData()
 
@@ -137,13 +137,15 @@ def test_cache_hit_emits_marker(tmp_path: Path, monkeypatch) -> None:
     assert fetched == payload
 
     spans = _spans_for_task(out_dir)
-    cache_hit_spans = [
+    read_spans = [
         s
         for s in spans
-        if s["name"] == "cache hit" and s["attributes"].get("data_id") == "tsk-up"
+        if s["name"] == "read" and s["attributes"].get("data_id") == "tsk-up"
     ]
-    assert cache_hit_spans, "expected a 'cache hit' marker span for tsk-up"
-    assert cache_hit_spans[0]["attributes"]["flowmesh.kind"] == "marker"
+    assert read_spans, "expected a 'read' span for tsk-up"
+    assert read_spans[0]["attributes"].get("source") == "cache"
+    assert read_spans[0]["attributes"].get("cache_hit") is True
+    assert read_spans[0]["attributes"]["flowmesh.kind"] == "network"
 
 
 def test_dump_to_governance_with_merged_children(tmp_path: Path, monkeypatch) -> None:
@@ -256,6 +258,6 @@ def test_write_data_tolerates_supervisor_publish_failure(
     assets = _read_jsonl(out_dir / "artifacts" / "logs" / "assets.jsonl")
     assert assets and assets[0]["data_id"] == "tsk-up"
     spans = _spans_for_task(out_dir)
-    write_spans = [s for s in spans if s["name"] == "write"]
-    assert write_spans
-    assert write_spans[0]["attributes"]["cache"] == "miss"
+    dump_spans = [s for s in spans if s["name"] == "dump to storage"]
+    assert dump_spans
+    assert dump_spans[0]["attributes"].get("cache_hit") is False
