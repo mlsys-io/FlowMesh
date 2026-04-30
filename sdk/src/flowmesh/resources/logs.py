@@ -6,7 +6,11 @@ from typing import Any, Literal
 
 import httpx
 
-from .._base_client import _make_url, _raise_for_stream_status
+from .._base_client import (
+    _make_url,
+    _raise_for_stream_status,
+    _raise_for_stream_status_async,
+)
 from ..exceptions import FlowMeshConnectionError
 from ._base import AsyncResource, SyncResource
 
@@ -63,8 +67,6 @@ class AsyncLogs(AsyncResource):
         url = _make_url(self._client.base_url, f"/workflows/{workflow_id}/logs/{kind}")
         try:
             async with self._client._http.stream("GET", url) as response:
-                from .._base_client import _raise_for_stream_status_async
-
                 await _raise_for_stream_status_async(response, "GET")
                 async for row in _aiter_jsonl_lines(response.aiter_lines()):
                     yield row

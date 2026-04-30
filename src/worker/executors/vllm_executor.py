@@ -1006,7 +1006,7 @@ Summary:"""
             "generation",
             kind=FlowMeshSpanKind.COMPUTE,
             attributes={
-                "task_ids": list(task_ids),
+                "task_ids": task_ids,
                 "prompt_count": len(self._batched_inputs),
             },
         ):
@@ -1020,7 +1020,7 @@ Summary:"""
         with self._span(
             "output postprocessing",
             kind=FlowMeshSpanKind.COMPUTE,
-            attributes={"task_ids": list(task_ids)},
+            attributes={"task_ids": task_ids},
         ):
             per_task_items: dict[str, list[dict[str, Any]]] = {}
             usage_by_task: dict[str, dict[str, int | float]] = {}
@@ -1182,7 +1182,7 @@ Summary:"""
         with self._span(
             "JSONL export",
             kind=FlowMeshSpanKind.COMPUTE,
-            attributes={"task_ids": list(task_ids)},
+            attributes={"task_ids": task_ids},
         ):
             self._maybe_export_jsonl(spec, task_id, result, out_dir)
 

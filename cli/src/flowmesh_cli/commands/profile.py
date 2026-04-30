@@ -1,6 +1,7 @@
 """`flowmesh profile fetch ...` — analyze a workflow's lineage."""
 
 from collections import defaultdict
+from enum import StrEnum
 from typing import Any
 
 import typer
@@ -26,6 +27,15 @@ from ..core.typer import get_typer
 
 app = get_typer(help="Profile a workflow's events / assets / lineage.")
 console = Console()
+
+
+class _ProfileView(StrEnum):
+    RICH = "rich"
+    CRITICAL_PATH = "critical-path"
+    E2E = "e2e"
+    QUEUING = "queuing"
+    DAG = "dag"
+    JSON = "json"
 
 
 def _to_summary(payload: dict[str, Any]) -> ProfileSummary:
@@ -260,39 +270,15 @@ def _print_dag(summary: ProfileSummary) -> None:
     console.print(_lineage_tree(summary))
 
 
-_FORMAT_HELP = (
-    "Output format: rich (default; everything), critical-path (cp), "
-    "e2e, queuing, dag, json"
-)
-_VIEW_ALIASES = {
-    "rich": "rich",
-    "all": "rich",
-    "default": "rich",
-    "critical-path": "critical-path",
-    "critical_path": "critical-path",
-    "cp": "critical-path",
-    "e2e": "e2e",
-    "compute": "e2e",
-    "summary": "e2e",
-    "queuing": "queuing",
-    "queue": "queuing",
-    "wait": "queuing",
-    "dag": "dag",
-    "lineage": "dag",
-    "graph": "dag",
-    "json": "json",
-}
-
-
 @app.command("fetch")
 def fetch(
     workflow_id: str = typer.Argument(..., help="Workflow identifier"),
-    fmt: str = typer.Option(
-        "rich",
+    fmt: _ProfileView = typer.Option(
+        _ProfileView.RICH,
         "--format",
         "-f",
-        help=_FORMAT_HELP,
-        case_sensitive=False,
+        help="Output view (one of: rich, critical-path, e2e, queuing, dag, json).",
+        case_sensitive=True,
     ),
 ) -> None:
     """Run the trace analyzer on a workflow and render the result."""
@@ -303,22 +289,14 @@ def fetch(
         logging.error(str(exc))
         raise typer.Exit(code=1)
 
-    view = _VIEW_ALIASES.get(fmt.lower())
-    if view is None:
-        logging.error(
-            f"Unknown format '{fmt}'; expected one of: "
-            "rich, critical-path, e2e, queuing, dag, json"
-        )
-        raise typer.Exit(code=2)
-
-    if view == "json":
+    if fmt is _ProfileView.JSON:
         console.print(RichJSON.from_data(payload))
         return
 
     summary = _to_summary(payload)
     _print_header(summary)
 
-    if view == "rich":
+    if fmt is _ProfileView.RICH:
         if summary.critical_path is not None:
             _print_critical_path(summary)
             console.print(Rule(style="dim"))
@@ -329,15 +307,15 @@ def fetch(
         console.print(Rule(style="dim"))
         _print_dag(summary)
         return
-    if view == "critical-path":
+    if fmt is _ProfileView.CRITICAL_PATH:
         _print_critical_path(summary)
         return
-    if view == "e2e":
+    if fmt is _ProfileView.E2E:
         _print_e2e(summary)
         return
-    if view == "queuing":
+    if fmt is _ProfileView.QUEUING:
         _print_queuing(summary)
         return
-    if view == "dag":
+    if fmt is _ProfileView.DAG:
         _print_dag(summary)
         return

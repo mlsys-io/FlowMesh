@@ -6,6 +6,7 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
+from fastapi import HTTPException
 from fastapi.responses import StreamingResponse
 
 from server.routers.v1 import logs as logs_router
@@ -146,8 +147,6 @@ async def test_get_workflow_lineage_skips_missing_files(tmp_path: Path) -> None:
 
 @pytest.mark.anyio
 async def test_get_workflow_lineage_unknown_kind(tmp_path: Path) -> None:
-    from fastapi import HTTPException
-
     with pytest.raises(HTTPException) as excinfo:
         await logs_router.get_workflow_lineage(
             workflow_id="wfl-1",
@@ -218,8 +217,6 @@ async def test_get_workflow_profile_runs_analyzer(tmp_path: Path) -> None:
 
 @pytest.mark.anyio
 async def test_workflow_not_found_raises_404(tmp_path: Path) -> None:
-    from fastapi import HTTPException
-
     registry = AsyncMock()
     registry.get_workflow_async.return_value = None
 
