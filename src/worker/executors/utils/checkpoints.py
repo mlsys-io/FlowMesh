@@ -163,7 +163,7 @@ def download_and_unpack(load_cfg: dict[str, Any], out_dir: Path) -> Path:
         with requests.get(url, headers=headers, stream=True, timeout=timeout) as resp:
             resp.raise_for_status()
             with temp_path.open("wb") as fh:
-                for chunk in resp.iter_content(chunk_size=1 << 16):
+                for chunk in resp.iter_content(chunk_size=64 * 1024):
                     if chunk:
                         fh.write(chunk)
     except requests.RequestException as exc:

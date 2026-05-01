@@ -51,7 +51,7 @@ def collect_hw(*, bandwidth_bytes_per_sec: float | None = None) -> WorkerHardwar
             except pynvml.NVMLError:
                 pass
             try:
-                cuda_raw = int(pynvml.nvmlSystemGetCudaDriverVersion())
+                cuda_raw = pynvml.nvmlSystemGetCudaDriverVersion()
                 cuda_version = f"{cuda_raw // 1000}.{(cuda_raw % 1000) // 10}"
             except pynvml.NVMLError:
                 pass
@@ -64,14 +64,14 @@ def collect_hw(*, bandwidth_bytes_per_sec: float | None = None) -> WorkerHardwar
                     handle = pynvml.nvmlDeviceGetHandleByIndex(idx)
                     name_raw = pynvml.nvmlDeviceGetName(handle)
                     uuid_raw = pynvml.nvmlDeviceGetUUID(handle)
-                    try:
-                        mem_total: int | None = int(
-                            pynvml.nvmlDeviceGetMemoryInfo(handle).total
-                        )
-                    except pynvml.NVMLError:
-                        mem_total = None
                 except pynvml.NVMLError:
                     continue
+                try:
+                    mem_total: int | None = int(
+                        pynvml.nvmlDeviceGetMemoryInfo(handle).total
+                    )
+                except pynvml.NVMLError:
+                    mem_total = None
                 gpus.append(
                     GpuInfo(
                         index=idx,

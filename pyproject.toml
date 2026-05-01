@@ -202,52 +202,18 @@ follow_untyped_imports = true
 skip = "*.lock,*.csv,*.tsv,*.jsonl"
 ignore-words-list = "pre-select"
 
-# bandit runs with no severity/confidence threshold; we skip individual rules
-# below with documented rationales rather than hiding findings via #nosec.
 [tool.bandit]
 skips = [
-    # B101: assert. Internal invariant checks; the worker / server are not
-    # shipped with -O so asserts run. Replacing with raise would clutter
-    # internal paths where the precondition cannot fail under normal control
-    # flow.
-    "B101",
-    # B102: exec. Used in worker sandboxes (agent code execution toolkit /
-    # Python executor) where running user-supplied code is the feature.
-    # Sandbox isolation lives at the container boundary, not in the call
-    # site.
-    "B102",
-    # B104: hardcoded 0.0.0.0 bind. Server / worker entrypoints intentionally
-    # listen on all interfaces inside their containers; network exposure is
-    # controlled by the container/orchestration layer.
-    "B104",
-    # B107: hardcoded password default. The flagged default is a placeholder
-    # for a config field that must be overridden in any non-test deployment;
-    # it is not used as a real credential.
-    "B107",
-    # B110: try/except/pass. Used in best-effort cleanup, optional metric
-    # collection, and shutdown paths where any failure is intentionally
-    # swallowed to avoid masking the original error.
-    "B110",
-    # B112: try/except/continue. Same reasoning as B110, in iteration
-    # contexts where one bad input must not abort the loop.
-    "B112",
-    # B311: pseudo-random generators. Used only for non-cryptographic
-    # purposes (sampling, jitter, tie-breaking). No security boundary
-    # depends on randomness here.
-    "B311",
-    # B307: eval. Confined to the agent Python executor toolkit, where
-    # evaluating user expressions is the feature. The guarantee is the
-    # sandbox container, not the call site.
-    "B307",
-    # B603: subprocess.run with a list argument. Allowed because each
-    # call site uses an argv list (no shell=True) with controlled
-    # arguments; we audit the individual call sites manually.
-    "B603",
-    # B615: huggingface_hub downloads without a pinned revision. Models /
-    # datasets are user-supplied workflow inputs; pinning is the user's
-    # call, not ours. The framework cannot meaningfully pin on their
-    # behalf.
-    "B615",
+    "B101",  # assert: internal invariants, not shipped with -O
+    "B102",  # exec: agent Python executor sandbox feature
+    "B104",  # 0.0.0.0 bind: containerized; exposure controlled at orchestration
+    "B107",  # password default: placeholder, not a real credential
+    "B110",  # try/except/pass: best-effort cleanup paths
+    "B112",  # try/except/continue: iteration over partially-bad inputs
+    "B307",  # eval: agent Python executor sandbox feature
+    "B311",  # random: non-cryptographic sampling / jitter / tie-breaking
+    "B603",  # subprocess.run with argv list: no shell=True, audited per-site
+    "B615",  # unpinned hf_hub downloads: user-supplied workflow inputs
 ]
 
 [tool.uv.sources]

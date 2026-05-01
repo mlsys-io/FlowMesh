@@ -48,6 +48,7 @@ class CodesnipToolkit(AsyncBaseToolkit):
     def __init__(self, config: ToolkitConfig | None = None) -> None:
         super().__init__(config)
         self.server_url = self.config.config.get("server_url")
+        self.timeout = self.config.config.get("timeout", 600)
 
     @register_tool
     async def run_code(self, code: str, language: str = "python") -> str:
@@ -67,7 +68,7 @@ class CodesnipToolkit(AsyncBaseToolkit):
             "language": language,
         }
         response = requests.post(
-            f"{self.server_url}/run_code", json=payload, timeout=60
+            f"{self.server_url}/run_code", json=payload, timeout=self.timeout
         )
         result = response.json()
         logger.info(
