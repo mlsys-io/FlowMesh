@@ -239,14 +239,6 @@ skips = [
     # evaluating user expressions is the feature. The guarantee is the
     # sandbox container, not the call site.
     "B307",
-    # B404: subprocess module imports. Remaining importers are the
-    # SFT/DPO/PPO trainer executors (torchrun launchers, deferred — replacing
-    # them needs a meaningful rewrite of the distributed-training entry
-    # path) and the model-archive packer (optional `pigz`/`tar`
-    # acceleration with a python-tarfile fallback). Auditing the imports
-    # themselves does not add signal beyond auditing the call sites
-    # (B603/B607), which we keep enabled.
-    "B404",
     # B603: subprocess.run with a list argument. Allowed because each
     # call site uses an argv list (no shell=True) with controlled
     # arguments; we audit the individual call sites manually.

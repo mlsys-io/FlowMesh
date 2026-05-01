@@ -571,9 +571,11 @@ images silently mask code regressions.
 ### Security Rules (bandit-enforced)
 
 CI runs `bandit` with no severity / confidence threshold. Every finding must
-either have a source-level fix or a documented skip in `[tool.bandit]` in
-`pyproject.toml`. Per-line `# nosec` is disallowed — silencing a finding
-without a written rationale defeats the audit.
+either have a source-level fix, a documented skip in `[tool.bandit]` in
+`pyproject.toml`, or a per-line `# nosec BXXX` paired with an inline TODO
+that names the planned fix. A bare `# nosec` with no rule code and no TODO
+is disallowed — silencing a finding without a written reason defeats the
+audit.
 
 When writing new code, follow these rules so bandit stays green:
 

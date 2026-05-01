@@ -64,8 +64,4 @@ jobs:
         with:
           version: "0.11.8"
       - name: Run bandit
-        # No severity / confidence threshold: every finding either has a
-        # source-level fix or a documented skip in pyproject.toml's
-        # [tool.bandit] section. New findings fail the job until they are
-        # explicitly classified.
         run: uvx bandit==1.9.4 -c pyproject.toml -r src/

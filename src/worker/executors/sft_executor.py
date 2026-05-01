@@ -11,7 +11,7 @@ import json
 import logging
 import os
 import shutil
-import subprocess
+import subprocess  # nosec B404 — TODO: replace torchrun shellout with in-process torch.distributed.run.main
 import tempfile
 import time
 from pathlib import Path

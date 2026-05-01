@@ -1,7 +1,7 @@
 import logging
 import os
 import shutil
-import subprocess
+import subprocess  # nosec B404 — TODO: drop optional pigz/tar acceleration in favor of pure python tarfile
 import tarfile
 import zipfile
 from dataclasses import dataclass, field
