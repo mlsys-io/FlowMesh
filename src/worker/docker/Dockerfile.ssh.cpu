@@ -8,9 +8,7 @@
 FROM debian:bookworm-slim
 
 LABEL org.opencontainers.image.title="FlowMesh SSH Session" \
-      org.opencontainers.image.description="Ephemeral SSH session container for FlowMesh SSH tasks" \
-      org.opencontainers.image.source="https://github.com/mlsys-io/FlowMesh" \
-      org.opencontainers.image.url="https://github.com/mlsys-io/FlowMesh"
+      org.opencontainers.image.description="Ephemeral SSH session container for FlowMesh SSH tasks"
 
 ARG TZ=UTC
 ENV TZ=${TZ} \

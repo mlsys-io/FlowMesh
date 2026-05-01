@@ -11,9 +11,7 @@ ARG UBUNTU_VERSION=24.04
 FROM nvidia/cuda:${CUDA_VERSION}-base-ubuntu${UBUNTU_VERSION}
 
 LABEL org.opencontainers.image.title="FlowMesh SSH Session (CUDA)" \
-      org.opencontainers.image.description="GPU-enabled ephemeral SSH session container for FlowMesh SSH tasks" \
-      org.opencontainers.image.source="https://github.com/mlsys-io/FlowMesh" \
-      org.opencontainers.image.url="https://github.com/mlsys-io/FlowMesh"
+      org.opencontainers.image.description="GPU-enabled ephemeral SSH session container for FlowMesh SSH tasks"
 
 ARG TZ=UTC
 ENV TZ=${TZ} \

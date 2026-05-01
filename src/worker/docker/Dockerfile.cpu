@@ -2,9 +2,7 @@
 FROM python:3.12-slim
 
 LABEL org.opencontainers.image.title="FlowMesh Worker (CPU)" \
-      org.opencontainers.image.description="CPU-only FlowMesh worker runtime" \
-      org.opencontainers.image.source="https://github.com/mlsys-io/FlowMesh" \
-      org.opencontainers.image.url="https://github.com/mlsys-io/FlowMesh"
+      org.opencontainers.image.description="CPU-only FlowMesh worker runtime"
 
 ARG TZ=Asia/Singapore
 ENV TZ=${TZ} \
@@ -38,10 +36,13 @@ RUN uv pip install --python /opt/py312/bin/python --system --requirement /tmp/re
 
 # Application code
 COPY src/worker ./worker
-COPY src/shared ./shared
+COPY src/shared/__init__.py ./shared/__init__.py
+COPY src/shared/all ./shared/all
+COPY src/shared/host_worker ./shared/host_worker
+COPY src/shared/guardian_worker ./shared/guardian_worker
 
 # Default worker env knobs
-ENV SUPERVISOR_GRPC_TARGET=flowmesh_server:50051 \
+ENV GUARDIAN_GRPC_TARGET=flowmesh_guardian:50051 \
     RESULTS_DIR=/app/worker/results \
     LOG_LEVEL=INFO \
     HEARTBEAT_INTERVAL_SEC=30
