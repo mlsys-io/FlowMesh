@@ -30,6 +30,7 @@ class ImageToolkit(AsyncBaseToolkit):
             "base_url": EnvUtils.get_env("UTU_IMAGE_LLM_BASE_URL"),
         }
         self.llm = SimplifiedAsyncOpenAI(**image_llm_config)  # type: ignore
+        self.timeout = self.config.config.get("timeout", 15)
 
     def _load_image(self, image_path: str) -> str:
         parsed = urlparse(image_path)
@@ -38,7 +39,7 @@ class ImageToolkit(AsyncBaseToolkit):
         if parsed.scheme in ("http", "https"):
             logger.debug(f"Fetching image from URL: {image_path}")
             try:
-                response = requests.get(image_path, timeout=15)
+                response = requests.get(image_path, timeout=self.timeout)
                 response.raise_for_status()
                 image = Image.open(BytesIO(response.content)).convert("RGB")
             except requests.exceptions.RequestException as e:

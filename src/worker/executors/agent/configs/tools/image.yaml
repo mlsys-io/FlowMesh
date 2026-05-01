@@ -1,7 +1,8 @@
 name: image
 mode: builtin
 activated_tools: null
-# config:
+config:
+  timeout: 15
 config_llm:
   model_provider:
     # dummy! We actually use `UTU_IMAGE_LLM_*`

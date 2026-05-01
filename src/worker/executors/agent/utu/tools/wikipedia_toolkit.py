@@ -46,6 +46,7 @@ class WikipediaSearchTool(AsyncBaseToolkit):
         }
         self.user_agent = self.config.config.get("user_agent", "uTu-agent")
         self.language = self.config.config.get("language", "en")
+        self.timeout = self.config.config.get("timeout", 30)
         self.content_type = self.config.config.get("content_type", "text")
         extract_format = self.config.config.get("extract_format", "WIKI")
         if extract_format not in extract_format_map:
@@ -122,7 +123,7 @@ class WikipediaSearchTool(AsyncBaseToolkit):
         }
 
         try:
-            response = requests.get(base_url, params=params, timeout=30)
+            response = requests.get(base_url, params=params, timeout=self.timeout)
             response.raise_for_status()
         except requests.RequestException as e:
             return f"Request error: {e}"

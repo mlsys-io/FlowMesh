@@ -1,6 +1,7 @@
 name: github
 mode: builtin
 activated_tools: null
-config: 
+config:
   github_token: "${oc.env:GITHUB_TOKEN}"
+  timeout: 30
 config_llm: null

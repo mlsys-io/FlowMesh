@@ -6,10 +6,15 @@ from urllib.parse import urlparse
 
 import requests
 
+from ..config import ToolkitConfig
 from .base import AsyncBaseToolkit, register_tool
 
 
 class GitHubToolkit(AsyncBaseToolkit):
+    def __init__(self, config: ToolkitConfig | None = None) -> None:
+        super().__init__(config)
+        self.timeout = self.config.config.get("timeout", 30)
+
     @register_tool
     async def get_repo_info(self, github_url) -> dict:
         """Get the info of the specified github repo
@@ -29,7 +34,7 @@ class GitHubToolkit(AsyncBaseToolkit):
             "X-GitHub-Api-Version": "2022-11-28",
         }
         try:
-            response = requests.get(api_url, headers=headers, timeout=30)
+            response = requests.get(api_url, headers=headers, timeout=self.timeout)
             response.raise_for_status()
             repo_data = response.json()
             assert (
