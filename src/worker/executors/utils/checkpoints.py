@@ -1,7 +1,7 @@
 import logging
 import os
 import shutil
-import subprocess  # nosec B404 — TODO: drop optional pigz/tar acceleration in favor of pure python tarfile
+import subprocess
 import tarfile
 import zipfile
 from dataclasses import dataclass, field
@@ -260,7 +260,7 @@ def archive_model_dir(model_dir: Path, compression_level: int | None = None) -> 
         if temp_tar.exists():
             temp_tar.unlink()
         try:
-            subprocess.run(
+            subprocess.run(  # nosec B603 — argv list, no shell=True, absolute path via shutil.which()
                 [
                     tar_binary,
                     "-C",
@@ -279,7 +279,9 @@ def archive_model_dir(model_dir: Path, compression_level: int | None = None) -> 
             if level is not None:
                 pigz_cmd.append(f"-{level}")
             pigz_cmd.append(temp_tar.as_posix())
-            subprocess.run(pigz_cmd, check=True)
+            subprocess.run(
+                pigz_cmd, check=True
+            )  # nosec B603 — argv list, no shell=True, absolute path via shutil.which()
 
             compressed_path = temp_tar.with_suffix(".tar.gz")
             compressed_path.rename(archive_path)

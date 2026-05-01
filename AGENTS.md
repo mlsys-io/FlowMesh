@@ -592,6 +592,12 @@ When writing new code, follow these rules so bandit stays green:
   anything that crosses a security boundary.
 - **B506 (yaml load)** — always use `yaml.safe_load`. `yaml.load(...,
   Loader=yaml.FullLoader)` is forbidden.
+- **B603 (subprocess call site)** — every `subprocess.run/call/Popen/...`
+  needs a per-line `# nosec B603` with a one-line written rationale (e.g.
+  `argv list, no shell=True, absolute path via shutil.which()`). The B404
+  blanket rule is project-skipped because B602 (`shell=True`) and B607
+  (partial path) catch the actually-dangerous patterns; B603 is enforced
+  per-site so every shellout is visible at the call line.
 - **B607 (subprocess with partial path)** — prefer the vendored SDK
   (`pynvml`, `docker-py`, `GitPython`) over shelling out via `nvidia-smi` /
   `docker` / `git`. If shelling out is unavoidable, the absolute path must
