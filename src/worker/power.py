@@ -218,10 +218,10 @@ class PowerMonitor:
             for idx in range(pynvml.nvmlDeviceGetCount()):
                 if visible is not None and idx not in visible:
                     continue
-                handle = self._nvml_handles.get(
-                    idx
-                ) or pynvml.nvmlDeviceGetHandleByIndex(idx)
-                self._nvml_handles[idx] = handle
+                handle = self._nvml_handles.get(idx)
+                if handle is None:
+                    handle = pynvml.nvmlDeviceGetHandleByIndex(idx)
+                    self._nvml_handles[idx] = handle
                 power = pynvml.nvmlDeviceGetPowerUsage(handle) / 1000.0
                 entries.append({"index": idx, "power_w": power})
         except pynvml.NVMLError:
