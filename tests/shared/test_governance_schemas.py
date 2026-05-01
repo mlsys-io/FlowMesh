@@ -20,12 +20,12 @@ def test_span_otel_round_trip() -> None:
     }
     span = Span.parse_otel_json(raw)
     assert span.name == "model load"
-    assert span.trace_id == "fbad6be5c4434181a2d394eac830dea1"
-    assert span.span_id == "a3f1e9d2c5b40678"
-    assert span.parent_span_id == "1b2c3d4e5f6a7b8c"
-    assert span.data_id == "tsk-1"
-    assert span.batch_id == "tsk-1"
-    assert span.flowmesh_kind == FlowMeshSpanKind.COMPUTE
+    assert span.context.trace_id == "fbad6be5c4434181a2d394eac830dea1"
+    assert span.context.span_id == "a3f1e9d2c5b40678"
+    assert span.parent_id == "1b2c3d4e5f6a7b8c"
+    assert span.attributes.data_id == "tsk-1"
+    assert span.attributes.batch_id == "tsk-1"
+    assert span.attributes.flowmesh_kind == FlowMeshSpanKind.COMPUTE
     assert span.duration_seconds == 54.0
 
 
@@ -41,7 +41,7 @@ def test_span_marker_zero_duration() -> None:
     }
     span = Span.parse_otel_json(raw)
     assert span.duration_seconds == 0.0
-    assert span.flowmesh_kind == FlowMeshSpanKind.MARKER
+    assert span.attributes.flowmesh_kind == FlowMeshSpanKind.MARKER
 
 
 def test_asset_row_defaults() -> None:

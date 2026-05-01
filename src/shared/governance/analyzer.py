@@ -115,7 +115,7 @@ def analyze(
     lineage_rows = [le for le in lineage if isinstance(le, dict)]
 
     asset_summaries = _asset_summaries(asset_rows)
-    data_ids = sorted({s.data_id for s in parsed if s.data_id})
+    data_ids = sorted({did for s in parsed if (did := s.attributes.data_id)})
     dep_map = _dep_map(lineage_rows)
     lineage_edges = [
         LineageEdge(
@@ -187,8 +187,8 @@ def _dep_map(lineage_rows: list[dict[str, Any]]) -> dict[str, list[str]]:
 def _group_spans(spans: list[Span]) -> dict[str, list[Span]]:
     grouped: dict[str, list[Span]] = defaultdict(list)
     for span in spans:
-        if span.data_id:
-            grouped[span.data_id].append(span)
+        if data_id := span.attributes.data_id:
+            grouped[data_id].append(span)
     for data_id, items in grouped.items():
         items.sort(key=lambda s: s.start_time)
     return dict(grouped)
@@ -201,7 +201,7 @@ def _ready_finish(spans: list[Span]) -> datetime | None:
 
 def _task_span(spans: list[Span]) -> Span | None:
     for span in spans:
-        if span.name == TASK_SPAN_NAME and span.parent_span_id is None:
+        if span.name == TASK_SPAN_NAME and span.parent_id is None:
             return span
     for span in spans:
         if span.name == TASK_SPAN_NAME:
@@ -297,7 +297,7 @@ def _obtain_breakdown(
 
     for spans in grouped.values():
         for span in spans:
-            kind = span.flowmesh_kind
+            kind = span.attributes.flowmesh_kind
             if kind == FlowMeshSpanKind.MARKER:
                 continue
             if span.name == TASK_SPAN_NAME:
@@ -314,8 +314,8 @@ def _obtain_breakdown(
                 network_active_seconds[span.name].append(duration)
             elif kind == FlowMeshSpanKind.COMPUTE:
                 by_type[span.name].append(duration)
-                if span.batch_id:
-                    by_type_batch[span.name][span.batch_id] += span.end_time - (
+                if batch_id := span.attributes.batch_id:
+                    by_type_batch[span.name][batch_id] += span.end_time - (
                         span.start_time
                     )
 
