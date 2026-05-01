@@ -9,7 +9,6 @@ import gc
 import json
 import logging
 import os
-import subprocess  # nosec B404 — TODO: replace torchrun shellout with in-process torch.distributed.run.main
 import tempfile
 import time
 from pathlib import Path
@@ -41,6 +40,7 @@ from .utils.checkpoints import (
     maybe_upload_artifacts,
 )
 from .utils.data_utils import resolve_jsonl_path
+from .utils.distributed import run_torchrun
 from .utils.huggingface import build_hf_load_kwargs, pick_torch_dtype
 
 logger = logging.getLogger("worker.dpo")
@@ -523,28 +523,17 @@ class DPOExecutor(TrainingMixin, Executor):
             json.dump(task.model_dump(mode="json", by_alias=True), fh)
 
         nproc = int(training_config.get("nproc_per_node", n_gpus))
-        cmd = [
-            "torchrun",
-            "--nproc_per_node",
-            str(nproc),
-            "-m",
-            "worker.executors.dpo_dist_entry",
-            task_file.as_posix(),
-            out_dir.as_posix(),
-        ]
-        env = os.environ.copy()
-        env[launcher_flag] = "1"
-        try:
-            repo_root = Path(__file__).resolve().parents[2]
-            env["PYTHONPATH"] = f"{repo_root.as_posix()}:" + env.get("PYTHONPATH", "")
-        except Exception:
-            pass
         logger.info(
-            "Spawning torchrun for DPO: %s (CUDA_VISIBLE_DEVICES=%s)",
-            " ".join(cmd),
-            env.get("CUDA_VISIBLE_DEVICES"),
+            "Launching torchrun for DPO (nproc=%d, CUDA_VISIBLE_DEVICES=%s)",
+            nproc,
+            os.environ.get("CUDA_VISIBLE_DEVICES"),
         )
-        subprocess.check_call(cmd, env=env)
+        run_torchrun(
+            nproc_per_node=nproc,
+            module="worker.executors.dpo_dist_entry",
+            module_args=[task_file.as_posix(), out_dir.as_posix()],
+            launcher_env_flag=launcher_flag,
+        )
 
     @staticmethod
     def _detect_gpu_count(training_config: dict[str, Any]) -> int:

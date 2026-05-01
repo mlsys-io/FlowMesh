@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """SFT executor powered by TRL's SFTTrainer/SFTConfig.
 
-This implementation launches single-GPU runs in-process and spawns multi-GPU
-tasks via ``torchrun``. DeepSpeed is used for multi-GPU orchestration when a
-DeepSpeed configuration is provided in the training spec.
+Single-GPU runs execute in-process. Multi-GPU runs go through
+``torch.distributed.run.main`` (the same entry point ``torchrun`` calls),
+or through the ``deepspeed`` CLI when a DeepSpeed configuration is supplied
+and the ``deepspeed`` binary is on PATH.
 """
 
 import gc
@@ -11,7 +12,7 @@ import json
 import logging
 import os
 import shutil
-import subprocess  # nosec B404 — TODO: replace torchrun shellout with in-process torch.distributed.run.main
+import subprocess  # nosec B404 — TODO: replace deepspeed CLI shellout with in-process deepspeed.launcher.runner
 import tempfile
 import time
 from pathlib import Path
@@ -39,6 +40,7 @@ from .utils.checkpoints import (
     maybe_upload_artifacts,
 )
 from .utils.data_utils import resolve_jsonl_path
+from .utils.distributed import run_torchrun
 from .utils.huggingface import build_hf_load_kwargs, pick_torch_dtype
 
 logger = logging.getLogger("worker.sft")
@@ -174,34 +176,34 @@ class SFTExecutor(TrainingMixin, Executor):
                         task_file.as_posix(),
                         out_dir.as_posix(),
                     ]
-                else:
-                    cmd = [
-                        "torchrun",
-                        "--nproc_per_node",
-                        str(nproc),
-                        "-m",
-                        "worker.executors.sft_dist_entry",
-                        task_file.as_posix(),
-                        out_dir.as_posix(),
-                    ]
-                env = os.environ.copy()
-                env[launcher_env_flag] = "1"
-                # Ensure repo root on PYTHONPATH so `worker.executors.*` is importable
-                try:
-                    repo_root = Path(__file__).resolve().parents[2]
-                    env["PYTHONPATH"] = f"{repo_root.as_posix()}:" + env.get(
-                        "PYTHONPATH", ""
+                    env = os.environ.copy()
+                    env[launcher_env_flag] = "1"
+                    try:
+                        repo_root = Path(__file__).resolve().parents[2]
+                        env["PYTHONPATH"] = f"{repo_root.as_posix()}:" + env.get(
+                            "PYTHONPATH", ""
+                        )
+                    except Exception:
+                        pass
+                    logger.info(
+                        "Spawning DeepSpeed for SFT: %s (CUDA_VISIBLE_DEVICES=%s)",
+                        " ".join(cmd),
+                        env.get("CUDA_VISIBLE_DEVICES"),
                     )
-                except Exception:
-                    pass
-                launcher_name = "DeepSpeed" if use_deepspeed_cli else "torchrun"
-                logger.info(
-                    "Spawning %s for SFT: %s (CUDA_VISIBLE_DEVICES=%s)",
-                    launcher_name,
-                    " ".join(cmd),
-                    env.get("CUDA_VISIBLE_DEVICES"),
-                )
-                subprocess.check_call(cmd, env=env)
+                    subprocess.check_call(cmd, env=env)
+                else:
+                    logger.info(
+                        "Launching torchrun for SFT "
+                        "(nproc=%d, CUDA_VISIBLE_DEVICES=%s)",
+                        nproc,
+                        os.environ.get("CUDA_VISIBLE_DEVICES"),
+                    )
+                    run_torchrun(
+                        nproc_per_node=nproc,
+                        module="worker.executors.sft_dist_entry",
+                        module_args=[task_file.as_posix(), out_dir.as_posix()],
+                        launcher_env_flag=launcher_env_flag,
+                    )
                 ipc_path = scratch_dir(out_dir) / "distributed_result.json"
                 if ipc_path.exists():
                     distributed_result = self.load_json(ipc_path)
