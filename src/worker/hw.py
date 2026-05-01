@@ -41,58 +41,25 @@ def collect_hw(*, bandwidth_bytes_per_sec: float | None = None) -> WorkerHardwar
     gpus: list[GpuInfo] = []
     try:
         pynvml.nvmlInit()
+        raw = pynvml.nvmlSystemGetDriverVersion()
+        driver_version = raw.decode() if isinstance(raw, bytes) else raw
+        cuda_raw = pynvml.nvmlSystemGetCudaDriverVersion()
+        cuda_version = f"{cuda_raw // 1000}.{(cuda_raw % 1000) // 10}"
+        for idx in range(pynvml.nvmlDeviceGetCount()):
+            handle = pynvml.nvmlDeviceGetHandleByIndex(idx)
+            name_raw = pynvml.nvmlDeviceGetName(handle)
+            uuid_raw = pynvml.nvmlDeviceGetUUID(handle)
+            mem_total = int(pynvml.nvmlDeviceGetMemoryInfo(handle).total)
+            gpus.append(
+                GpuInfo(
+                    index=idx,
+                    name=name_raw.decode() if isinstance(name_raw, bytes) else name_raw,
+                    uuid=uuid_raw.decode() if isinstance(uuid_raw, bytes) else uuid_raw,
+                    memory_total_bytes=mem_total,
+                )
+            )
     except pynvml.NVMLError:
         pass
-    else:
-        try:
-            try:
-                raw = pynvml.nvmlSystemGetDriverVersion()
-                driver_version = raw.decode() if isinstance(raw, bytes) else raw
-            except pynvml.NVMLError:
-                pass
-            try:
-                cuda_raw = pynvml.nvmlSystemGetCudaDriverVersion()
-                cuda_version = f"{cuda_raw // 1000}.{(cuda_raw % 1000) // 10}"
-            except pynvml.NVMLError:
-                pass
-            try:
-                count = pynvml.nvmlDeviceGetCount()
-            except pynvml.NVMLError:
-                count = 0
-            for idx in range(count):
-                try:
-                    handle = pynvml.nvmlDeviceGetHandleByIndex(idx)
-                    name_raw = pynvml.nvmlDeviceGetName(handle)
-                    uuid_raw = pynvml.nvmlDeviceGetUUID(handle)
-                except pynvml.NVMLError:
-                    continue
-                try:
-                    mem_total: int | None = int(
-                        pynvml.nvmlDeviceGetMemoryInfo(handle).total
-                    )
-                except pynvml.NVMLError:
-                    mem_total = None
-                gpus.append(
-                    GpuInfo(
-                        index=idx,
-                        name=(
-                            name_raw.decode()
-                            if isinstance(name_raw, bytes)
-                            else name_raw
-                        ),
-                        uuid=(
-                            uuid_raw.decode()
-                            if isinstance(uuid_raw, bytes)
-                            else uuid_raw
-                        ),
-                        memory_total_bytes=mem_total,
-                    )
-                )
-        finally:
-            try:
-                pynvml.nvmlShutdown()
-            except pynvml.NVMLError:
-                pass
     gpu = GpuPlatformInfo(
         driver_version=driver_version, cuda_version=cuda_version, gpus=gpus
     )
