@@ -213,26 +213,17 @@ class PowerMonitor:
         if not self._ensure_nvml():
             return []
 
-        try:
-            count = pynvml.nvmlDeviceGetCount()
-        except pynvml.NVMLError:
-            return []
-
         entries: list[dict[str, Any]] = []
-        for idx in range(count):
-            if visible is not None and idx not in visible:
-                continue
-            handle = self._nvml_handles.get(idx)
-            if handle is None:
-                try:
-                    handle = pynvml.nvmlDeviceGetHandleByIndex(idx)
-                except pynvml.NVMLError:
+        try:
+            for idx in range(pynvml.nvmlDeviceGetCount()):
+                if visible is not None and idx not in visible:
                     continue
+                handle = self._nvml_handles.get(
+                    idx
+                ) or pynvml.nvmlDeviceGetHandleByIndex(idx)
                 self._nvml_handles[idx] = handle
-            try:
-                milliwatts = pynvml.nvmlDeviceGetPowerUsage(handle)
-                power: float | None = milliwatts / 1000.0
-            except pynvml.NVMLError:
-                power = None
-            entries.append({"index": idx, "power_w": power})
+                power = pynvml.nvmlDeviceGetPowerUsage(handle) / 1000.0
+                entries.append({"index": idx, "power_w": power})
+        except pynvml.NVMLError:
+            pass
         return entries

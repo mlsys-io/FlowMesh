@@ -49,7 +49,7 @@ def collect_hw(*, bandwidth_bytes_per_sec: float | None = None) -> WorkerHardwar
             handle = pynvml.nvmlDeviceGetHandleByIndex(idx)
             name_raw = pynvml.nvmlDeviceGetName(handle)
             uuid_raw = pynvml.nvmlDeviceGetUUID(handle)
-            mem_total = int(pynvml.nvmlDeviceGetMemoryInfo(handle).total)
+            mem_total = pynvml.nvmlDeviceGetMemoryInfo(handle).total
             gpus.append(
                 GpuInfo(
                     index=idx,
