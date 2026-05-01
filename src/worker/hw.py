@@ -4,12 +4,12 @@
 Collects lightweight CPU/memory/GPU/network information for registration.
 """
 
+import logging
 import os
 import platform
-import re
 import socket
-import subprocess
 import sys
+from typing import Any
 
 from shared.tasks.worker_message import (
     CPUInfo,
@@ -20,22 +20,84 @@ from shared.tasks.worker_message import (
     WorkerHardware,
 )
 
+logger = logging.getLogger(__name__)
 
-def _run(cmd: list[str]) -> str:
+
+def _collect_gpu_info() -> GpuPlatformInfo:
     try:
-        out = subprocess.run(cmd, capture_output=True, text=True, check=False)
-        return out.stdout.strip() if out.returncode == 0 else ""
+        import pynvml
+    except ImportError:
+        return GpuPlatformInfo(driver_version=None, cuda_version=None, gpus=[])
+
+    try:
+        pynvml.nvmlInit()
+    except pynvml.NVMLError as exc:
+        logger.debug("NVML init failed; no GPU info collected: %s", exc)
+        return GpuPlatformInfo(driver_version=None, cuda_version=None, gpus=[])
+
+    try:
+        driver_version = _safe_str(pynvml.nvmlSystemGetDriverVersion)
+        cuda_version = _format_cuda_version(pynvml.nvmlSystemGetCudaDriverVersion)
+        gpus: list[GpuInfo] = []
+        try:
+            count = pynvml.nvmlDeviceGetCount()
+        except pynvml.NVMLError:
+            count = 0
+        for idx in range(count):
+            try:
+                handle = pynvml.nvmlDeviceGetHandleByIndex(idx)
+                name = _decode(pynvml.nvmlDeviceGetName(handle))
+                uuid = _decode(pynvml.nvmlDeviceGetUUID(handle))
+                mem_total: int | None
+                try:
+                    mem_total = int(pynvml.nvmlDeviceGetMemoryInfo(handle).total)
+                except pynvml.NVMLError:
+                    mem_total = None
+            except pynvml.NVMLError:
+                continue
+            gpus.append(
+                GpuInfo(
+                    index=idx,
+                    name=name,
+                    uuid=uuid,
+                    memory_total_bytes=mem_total,
+                )
+            )
+    finally:
+        try:
+            pynvml.nvmlShutdown()
+        except pynvml.NVMLError:
+            pass
+
+    return GpuPlatformInfo(
+        driver_version=driver_version, cuda_version=cuda_version, gpus=gpus
+    )
+
+
+def _safe_str(fn: Any) -> str | None:
+    try:
+        return _decode(fn())
     except Exception:
-        return ""
+        return None
+
+
+def _decode(value: bytes | str) -> str:
+    return value.decode() if isinstance(value, bytes) else value
+
+
+def _format_cuda_version(fn: Any) -> str | None:
+    try:
+        raw = int(fn())
+    except Exception:
+        return None
+    return f"{raw // 1000}.{(raw % 1000) // 10}"
 
 
 def collect_hw(*, bandwidth_bytes_per_sec: float | None = None) -> WorkerHardware:
-    # CPU
     cpu = CPUInfo(
         logical_cores=os.cpu_count() or 0,
         model=platform.processor() or platform.machine(),
     )
-    # Memory
     mem = MemoryInfo(total_bytes=None)
     if sys.platform.startswith("linux") and os.path.exists("/proc/meminfo"):
         with open("/proc/meminfo") as f:
@@ -43,56 +105,9 @@ def collect_hw(*, bandwidth_bytes_per_sec: float | None = None) -> WorkerHardwar
                 if line.startswith("MemTotal:"):
                     mem.total_bytes = int(line.split()[1]) * 1024
                     break
-    # GPU (NVIDIA)
-    full = _run(["nvidia-smi"])  # presence indicates NVIDIA stack
-    cuda = None
-    drv = None
-    m = re.search(r"CUDA Version:\s*([\w\.\-]+)", full)
-    cuda = m.group(1) if m else None
-    m = re.search(r"Driver Version:\s*([\w\.\-]+)", full)
-    drv = m.group(1) if m else None
-    lst = _run(["nvidia-smi", "-L"]) if full else ""
-    mem_listing = (
-        _run(
-            [
-                "nvidia-smi",
-                "--query-gpu=index,memory.total",
-                "--format=csv,noheader,nounits",
-            ]
-        )
-        if full
-        else ""
-    )
-    memory_map: dict[int, int | None] = {}
-    for line in mem_listing.splitlines():
-        parts = [segment.strip() for segment in line.split(",") if segment is not None]
-        if len(parts) < 2:
-            continue
-        try:
-            idx = int(parts[0])
-            mem_mb = float(parts[1])
-        except (ValueError, TypeError):
-            continue
-        if mem_mb <= 0:
-            memory_map[idx] = None
-            continue
-        memory_map[idx] = int(mem_mb * 1024 * 1024)
-    gpus: list[GpuInfo] = []
-    for line in lst.splitlines():
-        m = re.match(r"GPU\s+(\d+):\s+(.+?)\s+\(UUID:\s*([^\)]+)\)", line.strip())
-        if m:
-            idx = int(m.group(1))
-            gpus.append(
-                GpuInfo(
-                    index=idx,
-                    name=m.group(2),
-                    uuid=m.group(3),
-                    memory_total_bytes=memory_map.get(idx),
-                )
-            )
-    gpu = GpuPlatformInfo(driver_version=drv, cuda_version=cuda, gpus=gpus)
 
-    # Network
+    gpu = _collect_gpu_info()
+
     try:
         ip = socket.gethostbyname(socket.gethostname())
     except Exception:
