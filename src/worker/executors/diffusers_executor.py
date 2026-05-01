@@ -244,7 +244,9 @@ class DiffusersExecutor(DataMixin, Executor):
         configure_hf_library_logging()
         spec = self.require_spec(task, DiffusionSpecStrict)
         task_id = task.task_id.strip()
-        with self._task_span(task_id, task.workflow_id, out_dir):
+        with self._task_span(
+            task_id, task.workflow_id, out_dir, owner_id=task.owner_id
+        ):
             response = self._run_inner(task, spec, task_id, out_dir)
         maybe_upload_artifacts(task, out_dir, logger=logger)
         return response
@@ -346,7 +348,6 @@ class DiffusersExecutor(DataMixin, Executor):
         }
 
         self._dump_to_governance(
-            governance_spec=spec.governance,
             task_id=task_id,
             result=response,
             dependencies_by_task=dependencies_by_task,

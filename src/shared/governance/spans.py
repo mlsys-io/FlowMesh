@@ -1,11 +1,4 @@
-"""Pydantic models that parse OTel JSON spans into Python objects.
-
-Producers (the worker mixin) write spans via ``ReadableSpan.to_json()``.
-The OTel SDK's JSON serializer is internal — not the OTLP/JSON proto wire
-format — so no off-the-shelf Pydantic schema exists for it. Consumers
-(the analyzer, server endpoint, SDK) parse with :class:`Span.parse_otel_json`
-and work with strongly-typed access.
-"""
+"""Parsed OTel-shape span rows; producers emit via ``ReadableSpan.to_json()``."""
 
 import json
 from datetime import datetime
@@ -18,7 +11,7 @@ from shared.utils.time import parse_iso_datetime
 
 
 class FlowMeshSpanKind(StrEnum):
-    """Worker-side classification carried in ``attributes["flowmesh.kind"]``."""
+    """Producer-side kind in ``attributes["flowmesh.kind"]``."""
 
     COMPUTE = "compute"
     NETWORK = "network"
@@ -32,12 +25,7 @@ def _strip_hex_prefix(value: str | None) -> str | None:
 
 
 class Span(BaseModel):
-    """Parsed OTel JSON span row.
-
-    The OTel SDK serializes ids as ``0x<hex>`` strings and timestamps as
-    ISO8601. We strip the ``0x`` prefix on parse and expose ``start_time`` /
-    ``end_time`` as :class:`datetime` for arithmetic.
-    """
+    """Parsed OTel JSON span row; ids stripped of ``0x``, times as ``datetime``."""
 
     model_config = ConfigDict(extra="allow")
 

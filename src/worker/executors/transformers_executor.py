@@ -393,7 +393,9 @@ class HFTransformersExecutor(InferenceMixin, Executor):
                 f"{spec.__class__.__name__}"
             )
         task_id = task.task_id
-        with self._task_span(task_id, task.workflow_id, out_dir):
+        with self._task_span(
+            task_id, task.workflow_id, out_dir, owner_id=task.owner_id
+        ):
             result = self._run_body(task, spec, task_id, out_dir)
         maybe_upload_artifacts(task, out_dir, logger=logger)
         return result
@@ -488,7 +490,6 @@ class HFTransformersExecutor(InferenceMixin, Executor):
                 result["image_group_sizes"] = image_group_sizes
 
             self._dump_to_governance(
-                governance_spec=spec.governance,
                 task_id=task_id,
                 result=result,
                 dependencies_by_task=dependencies_by_task,
@@ -609,7 +610,6 @@ class HFTransformersExecutor(InferenceMixin, Executor):
             self._maybe_export_jsonl(spec, task_id, result, out_dir)
 
         self._dump_to_governance(
-            governance_spec=spec.governance,
             task_id=task_id,
             result=result,
             dependencies_by_task=dependencies_by_task,

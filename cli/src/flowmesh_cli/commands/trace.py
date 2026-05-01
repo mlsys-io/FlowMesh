@@ -1,4 +1,4 @@
-"""`flowmesh trace ...` — fetch raw trace rows or run the analyzer."""
+"""``flowmesh trace`` — fetch raw rows or run the analyzer."""
 
 import json
 from collections import defaultdict
@@ -8,6 +8,7 @@ from pathlib import Path
 import typer
 from flowmesh.exceptions import FlowMeshError
 from flowmesh.resources.trace import TraceKind
+from pydantic import BaseModel
 from rich.box import SIMPLE
 from rich.console import Console
 from rich.json import JSON as RichJSON
@@ -40,12 +41,76 @@ class _AnalyzeView(StrEnum):
     JSON = "json"
 
 
-def _compute_table(hw: HardwareSummary, title: str) -> Table:
-    """Render the per-event-type compute (GPU/CPU) time table.
+class _ComputeRow(BaseModel):
+    """One row of the compute-time table — a per-event-type breakdown."""
 
-    Schema field is `hardware_summary` for lumilake compatibility, but
-    "Compute time" is clearer in user-facing UI than "Hardware time".
-    """
+    event_type: str
+    count: int
+    total_seconds: float | None
+    avg_seconds: float
+    min_seconds: float
+    max_seconds: float
+
+
+class _NetworkRow(BaseModel):
+    """One row of the network-time table — a per-event-type breakdown."""
+
+    event_type: str
+    count: int
+    total_active_seconds: float
+    avg_seconds: float
+    min_seconds: float
+    max_seconds: float
+
+
+def _compute_rows(hw: HardwareSummary) -> list[_ComputeRow]:
+    """Reshape a ``HardwareSummary``'s parallel lists into validated rows."""
+    return [
+        _ComputeRow(
+            event_type=event_type,
+            count=count,
+            total_seconds=total,
+            avg_seconds=avg,
+            min_seconds=mn,
+            max_seconds=mx,
+        )
+        for event_type, count, total, avg, mn, mx in zip(
+            hw.event_type,
+            hw.count,
+            hw.total_hardware_time_seconds,
+            hw.avg_time_seconds,
+            hw.min_time_seconds,
+            hw.max_time_seconds,
+            strict=True,
+        )
+    ]
+
+
+def _network_rows(net: NetworkSummary) -> list[_NetworkRow]:
+    """Reshape a ``NetworkSummary``'s parallel lists into validated rows."""
+    return [
+        _NetworkRow(
+            event_type=event_type,
+            count=count,
+            total_active_seconds=total,
+            avg_seconds=avg,
+            min_seconds=mn,
+            max_seconds=mx,
+        )
+        for event_type, count, total, avg, mn, mx in zip(
+            net.event_type,
+            net.count,
+            net.total_active_seconds,
+            net.avg_time_seconds,
+            net.min_time_seconds,
+            net.max_time_seconds,
+            strict=True,
+        )
+    ]
+
+
+def _compute_table(hw: HardwareSummary, title: str) -> Table:
+    """Per-event-type compute-time table."""
     table = Table(title=title, box=SIMPLE, header_style="bold cyan", title_style="bold")
     table.add_column("event_type", style="cyan", no_wrap=True)
     table.add_column("n", justify="right")
@@ -53,26 +118,56 @@ def _compute_table(hw: HardwareSummary, title: str) -> Table:
     table.add_column("avg", justify="right", style="dim")
     table.add_column("min", justify="right", style="dim")
     table.add_column("max", justify="right", style="dim")
-    pairs = list(
-        zip(
-            hw.event_type,
-            hw.count,
-            hw.total_hardware_time_seconds,
-            hw.avg_time_seconds,
-            hw.min_time_seconds,
-            hw.max_time_seconds,
-        )
+    rows = sorted(
+        _compute_rows(hw),
+        key=lambda r: r.total_seconds if r.total_seconds is not None else 0.0,
+        reverse=True,
     )
-    pairs.sort(key=lambda r: (r[2] if r[2] is not None else 0.0), reverse=True)
-    max_total = max((p[2] or 0.0 for p in pairs), default=0.0)
-    for event_type, count, total, avg, mn, mx in pairs:
-        total_str = "" if total is None else f"{total:.3f}"
-        if total is not None and total > 0 and max_total > 0:
-            ratio = total / max_total
+    max_total = max(
+        (r.total_seconds or 0.0 for r in rows),
+        default=0.0,
+    )
+    for row in rows:
+        total_str = "" if row.total_seconds is None else f"{row.total_seconds:.3f}"
+        if row.total_seconds is not None and row.total_seconds > 0 and max_total > 0:
+            ratio = row.total_seconds / max_total
             color = "red" if ratio > 0.5 else "yellow" if ratio > 0.1 else "green"
             total_str = f"[{color}]{total_str}[/{color}]"
         table.add_row(
-            event_type, str(count), total_str, f"{avg:.3f}", f"{mn:.3f}", f"{mx:.3f}"
+            row.event_type,
+            str(row.count),
+            total_str,
+            f"{row.avg_seconds:.3f}",
+            f"{row.min_seconds:.3f}",
+            f"{row.max_seconds:.3f}",
+        )
+    return table
+
+
+def _network_table(net: NetworkSummary, title: str) -> Table:
+    """Per-event-type network-time table."""
+    table = Table(
+        title=title, box=SIMPLE, header_style="bold magenta", title_style="bold"
+    )
+    table.add_column("event_type", style="magenta", no_wrap=True)
+    table.add_column("n", justify="right")
+    table.add_column("active_sec", justify="right", style="bold")
+    table.add_column("avg", justify="right", style="dim")
+    table.add_column("min", justify="right", style="dim")
+    table.add_column("max", justify="right", style="dim")
+    rows = sorted(
+        _network_rows(net),
+        key=lambda r: r.total_active_seconds,
+        reverse=True,
+    )
+    for row in rows:
+        table.add_row(
+            row.event_type,
+            str(row.count),
+            f"{row.total_active_seconds:.3f}",
+            f"{row.avg_seconds:.3f}",
+            f"{row.min_seconds:.3f}",
+            f"{row.max_seconds:.3f}",
         )
     return table
 
@@ -80,7 +175,7 @@ def _compute_table(hw: HardwareSummary, title: str) -> Table:
 def _queuing_delay_table(
     timings: list[TaskTiming], cp_set: set[str], title: str
 ) -> Table:
-    """Render per-data_id queuing delay sorted by wait time descending."""
+    """Per-data_id queuing delay, sorted by wait time descending."""
     table = Table(
         title=title, box=SIMPLE, header_style="bold yellow", title_style="bold"
     )
@@ -109,45 +204,8 @@ def _queuing_delay_table(
     return table
 
 
-def _network_table(net: NetworkSummary, title: str) -> Table:
-    table = Table(
-        title=title, box=SIMPLE, header_style="bold magenta", title_style="bold"
-    )
-    table.add_column("event_type", style="magenta", no_wrap=True)
-    table.add_column("n", justify="right")
-    table.add_column("active_sec", justify="right", style="bold")
-    table.add_column("avg", justify="right", style="dim")
-    table.add_column("min", justify="right", style="dim")
-    table.add_column("max", justify="right", style="dim")
-    pairs = list(
-        zip(
-            net.event_type,
-            net.count,
-            net.total_active_seconds,
-            net.avg_time_seconds,
-            net.min_time_seconds,
-            net.max_time_seconds,
-        )
-    )
-    pairs.sort(key=lambda r: r[2], reverse=True)
-    for event_type, count, total, avg, mn, mx in pairs:
-        table.add_row(
-            event_type,
-            str(count),
-            f"{total:.3f}",
-            f"{avg:.3f}",
-            f"{mn:.3f}",
-            f"{mx:.3f}",
-        )
-    return table
-
-
 def _lineage_tree(summary: ProfileSummary) -> Tree:
-    """DAG rendered as a Rich tree rooted at sinks (leaves = upstream sources).
-
-    Cycles aren't possible in a lineage DAG; same data_id can appear under
-    multiple parents and we render it each time it appears.
-    """
+    """Lineage DAG as a Rich tree rooted at sinks."""
     children_of: dict[str, list[str]] = defaultdict(list)
     parents_of: dict[str, list[str]] = defaultdict(list)
     for edge in summary.lineage:
@@ -160,7 +218,6 @@ def _lineage_tree(summary: ProfileSummary) -> Tree:
     sinks = [d for d in summary.data_ids if d not in children_of]
 
     root = Tree("[bold]lineage DAG[/bold]")
-    seen_in_branch: set[str] = set()
 
     def _label(data_id: str) -> str:
         marker = " [bold red]◆ critical path[/bold red]" if data_id in cp_set else ""
@@ -178,7 +235,6 @@ def _lineage_tree(summary: ProfileSummary) -> Tree:
         return root.add("[dim](no events with timestamps)[/dim]")
     for sink in sinks:
         _walk(root, sink, frozenset({sink}))
-        seen_in_branch.add(sink)
     in_any_edge: set[str] = set(children_of) | set(parents_of)
     for orphan in summary.data_ids:
         if orphan not in in_any_edge:
@@ -201,7 +257,9 @@ def _critical_path_tree(summary: ProfileSummary) -> Tree:
     )
     awb = cp.active_wait_breakdown
     cursor = tree
-    for data_id, active, wait in zip(awb.data_id, awb.active_seconds, awb.wait_seconds):
+    for data_id, active, wait in zip(
+        awb.data_id, awb.active_seconds, awb.wait_seconds, strict=True
+    ):
         wait_part = f"  [yellow]wait {wait:.3f}s[/yellow]" if wait > 0 else ""
         cursor = cursor.add(
             f"[bold red]◆[/bold red] [cyan]{data_id}[/cyan]"

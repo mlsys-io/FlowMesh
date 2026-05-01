@@ -28,7 +28,9 @@ class DataRetrievalExecutor(DataMixin, Executor):
     def run(self, task: ExecutorTask, out_dir: Path) -> dict[str, Any]:
         spec = self.require_spec(task, DataRetrievalSpecStrict)
         task_id = task.task_id
-        with self._task_span(task_id, task.workflow_id, out_dir):
+        with self._task_span(
+            task_id, task.workflow_id, out_dir, owner_id=task.owner_id
+        ):
             data_cfg = spec.data
             if not isinstance(data_cfg, dict):
                 raise ExecutionError("spec.data must be a mapping for data_retrieval.")
@@ -51,7 +53,6 @@ class DataRetrievalExecutor(DataMixin, Executor):
             deps = self._extract_source_data_ids(spec)
             dependencies_by_task = {task_id: deps}
             self._dump_to_governance(
-                governance_spec=spec.governance,
                 task_id=task_id,
                 result=result,
                 dependencies_by_task=dependencies_by_task,

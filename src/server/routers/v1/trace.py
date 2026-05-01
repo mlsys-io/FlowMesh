@@ -1,13 +1,5 @@
-"""Workflow trace endpoints — fetch raw rows or run the analyzer.
+"""Workflow trace endpoints: stream rows or run the analyzer."""
 
-The worker emits per-task `spans.jsonl`, `assets.jsonl`, and `lineage.jsonl`
-under `out_dir/artifacts/logs/`; the artifact upload pipeline lands them at
-`{results_dir}/{task_id}/logs/<file>.jsonl` on the server. These endpoints
-read each task in a workflow and either stream the rows (`/trace/{kind}`)
-or feed them to the analyzer (`/trace/analyze`).
-"""
-
-import json
 from collections.abc import Iterable, Iterator
 from pathlib import Path
 from typing import Any
@@ -16,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
 
 from shared.governance import ProfileSummary, analyze
+from shared.utils.jsonl import encode_jsonl_bytes, read_jsonl
 
 from ...app_state import get_results_dir, get_workflow_registry
 from ...registries.workflow import WorkflowRegistry
@@ -34,26 +27,11 @@ def _logs_dir_for_task(results_dir: Path, task_id: str) -> Path:
     return result_file_path(results_dir, task_id).parent / "artifacts" / "logs"
 
 
-def _iter_jsonl(path: Path) -> Iterator[dict[str, Any]]:
-    if not path.exists() or not path.is_file():
-        return
-    with path.open(encoding="utf-8") as fh:
-        for line in fh:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                yield json.loads(line)
-            except json.JSONDecodeError:
-                continue
-
-
 def _iter_workflow_jsonl(
     results_dir: Path, task_ids: Iterable[str], filename: str
 ) -> Iterator[dict[str, Any]]:
     for task_id in task_ids:
-        path = _logs_dir_for_task(results_dir, task_id) / filename
-        yield from _iter_jsonl(path)
+        yield from read_jsonl(_logs_dir_for_task(results_dir, task_id) / filename)
 
 
 async def _resolve_task_ids(workflow_id: str, registry: WorkflowRegistry) -> list[str]:
@@ -66,18 +44,9 @@ async def _resolve_task_ids(workflow_id: str, registry: WorkflowRegistry) -> lis
     return workflow.task_ids
 
 
-def _stream_jsonl(rows: Iterator[dict[str, Any]]) -> Iterator[bytes]:
-    for row in rows:
-        yield (json.dumps(row, ensure_ascii=False) + "\n").encode("utf-8")
-
-
 @router.get(
     "/{workflow_id}/trace/analyze",
-    summary="Analyze a workflow's trace",
-    description=(
-        "Run the trace analyzer over the workflow's spans / assets / lineage "
-        "rows and return a structured `ProfileSummary`."
-    ),
+    summary="Run the trace analyzer; return ProfileSummary",
     response_model=ProfileSummary,
 )
 async def analyze_workflow_trace(
@@ -94,11 +63,7 @@ async def analyze_workflow_trace(
 
 @router.get(
     "/{workflow_id}/trace/{kind}",
-    summary="Stream workflow trace rows",
-    description=(
-        "Stream concatenated JSONL rows for `spans`, `assets`, or `lineage` "
-        "across every task in the workflow."
-    ),
+    summary="Stream JSONL rows (spans / assets / lineage)",
 )
 async def get_workflow_trace(
     workflow_id: str,
@@ -114,6 +79,6 @@ async def get_workflow_trace(
         )
     task_ids = await _resolve_task_ids(workflow_id, registry)
     return StreamingResponse(
-        _stream_jsonl(_iter_workflow_jsonl(results_dir, task_ids, filename)),
+        encode_jsonl_bytes(_iter_workflow_jsonl(results_dir, task_ids, filename)),
         media_type="application/x-ndjson",
     )

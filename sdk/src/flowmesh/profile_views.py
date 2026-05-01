@@ -1,44 +1,26 @@
-"""Stringification helpers for `ProfileSummary` in non-interactive contexts.
+"""Stringification / dataframe helpers for `ProfileSummary`.
 
 The SDK leaves rendering to the caller, but exposes a few convenience
 adapters so downstream Python tools (notebooks, lumilake, ad-hoc scripts)
 don't have to reimplement them.
-
-Dataframe helpers require pandas, which is not in the default
-`flowmesh-sdk` install. Install with the `dataframes` extra:
-``pip install "flowmesh-sdk[dataframes]"``.
 """
 
 from typing import Any
 
+import pandas as pd
+
 from shared.governance import ProfileSummary
-from shared.governance import to_mermaid as _to_mermaid
-
-try:
-    import pandas as pd
-
-    _PANDAS_OK = True
-except ImportError:
-    pd = None  # type: ignore[assignment]
-    _PANDAS_OK = False
-
-
-_PANDAS_HINT = (
-    "pandas is required for dataframe helpers; "
-    'install with `pip install "flowmesh-sdk[dataframes]"`'
-)
+from shared.governance import to_mermaid as render_mermaid
 
 
 def hardware_dataframe(
     summary: ProfileSummary, *, on_critical_path: bool = False
-) -> "pd.DataFrame":
+) -> pd.DataFrame:
     """Hardware-time table as a pandas DataFrame.
 
     Set `on_critical_path=True` to restrict to the critical path's
     hardware breakdown. Falls back to the e2e breakdown otherwise.
     """
-    if not _PANDAS_OK:
-        raise ImportError(_PANDAS_HINT)
     hw = (
         summary.critical_path.hardware_summary
         if on_critical_path and summary.critical_path is not None
@@ -61,10 +43,8 @@ def hardware_dataframe(
 
 def network_dataframe(
     summary: ProfileSummary, *, on_critical_path: bool = False
-) -> "pd.DataFrame":
+) -> pd.DataFrame:
     """Network-active-time table as a pandas DataFrame."""
-    if not _PANDAS_OK:
-        raise ImportError(_PANDAS_HINT)
     net = (
         summary.critical_path.network_summary
         if on_critical_path and summary.critical_path is not None
@@ -85,10 +65,8 @@ def network_dataframe(
     )
 
 
-def critical_path_dataframe(summary: ProfileSummary) -> "pd.DataFrame":
+def critical_path_dataframe(summary: ProfileSummary) -> pd.DataFrame:
     """Per-node active vs wait on the critical path."""
-    if not _PANDAS_OK:
-        raise ImportError(_PANDAS_HINT)
     if summary.critical_path is None:
         return pd.DataFrame(columns=["data_id", "active_seconds", "wait_seconds"])
     awb = summary.critical_path.active_wait_breakdown
@@ -105,4 +83,4 @@ def to_mermaid(summary: ProfileSummary | dict[str, Any]) -> str:
     """Lineage DAG as Mermaid `graph TD` source."""
     if isinstance(summary, dict):
         summary = ProfileSummary.model_validate(summary)
-    return _to_mermaid(summary)
+    return render_mermaid(summary)

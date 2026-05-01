@@ -1,20 +1,8 @@
 """Trace analyzer over (spans, assets, lineage) JSONL rows.
 
-Spans arrive in OTLP/JSON shape (one ``ReadableSpan.to_json()`` per line).
-``flowmesh.kind`` on each span attribute classifies it as ``compute`` /
-``network`` / ``marker``; the analyzer never has to maintain its own
-event-type whitelist.
-
-Per-data_id timing:
-
-- ``start_time`` / ``end_time`` come from the ``"task"`` root span emitted by
-  :meth:`worker.executors.mixins.data.DataMixin._task_span`.
-- The ``"dump to storage"`` span wraps the producer's storage write
-  (serialize → supervisor cache publish → on-disk → asset/lineage rows);
-  its ``end_time`` is the data-ready timestamp.
-- ``queuing_delay`` is the gap between a task's ``start_time`` and the latest
-  parent's ``"dump to storage"`` end_time. Surfaced for every data_id so
-  imbalance shows up off the critical path too.
+Per-data_id timing comes from the ``"task"`` root span; ``"dump to storage"``
+end_time is the data-ready timestamp; ``queuing_delay`` =
+task.start − max(parent.dump_to_storage.end).
 """
 
 from collections import defaultdict

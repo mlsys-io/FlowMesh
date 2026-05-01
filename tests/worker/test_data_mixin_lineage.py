@@ -64,12 +64,11 @@ def test_record_asset_and_lineage(tmp_path: Path) -> None:
 def test_write_data_emits_dump_span_and_rows(tmp_path: Path) -> None:
     mixin = _Mixin()
     out_dir = tmp_path / "task-up"
-    with mixin._task_span("tsk-up", "wfl-1", out_dir):
+    with mixin._task_span("tsk-up", "wfl-1", out_dir, owner_id="alice"):
         mixin._write_data(
             data_id="tsk-up",
             data={"items": [{"output": "ok"}]},
             source_data_ids=["tsk-source-a"],
-            governance_spec={"user_id": "alice"},
         )
 
     base = out_dir / "artifacts" / "logs"
@@ -93,7 +92,7 @@ def test_write_data_emits_dump_span_and_rows(tmp_path: Path) -> None:
 def test_dump_to_governance_with_merged_children(tmp_path: Path) -> None:
     mixin = _Mixin()
     out_dir = tmp_path / "task"
-    with mixin._task_span("tsk-parent", "wfl-1", out_dir):
+    with mixin._task_span("tsk-parent", "wfl-1", out_dir, owner_id="alice"):
         result = {
             "ok": True,
             "items": [{"output": "p"}],
@@ -108,7 +107,6 @@ def test_dump_to_governance_with_merged_children(tmp_path: Path) -> None:
             "tsk-c2": ["tsk-up-c"],
         }
         mixin._dump_to_governance(
-            governance_spec={"user_id": "alice"},
             task_id="tsk-parent",
             result=result,
             dependencies_by_task=deps,
@@ -121,6 +119,7 @@ def test_dump_to_governance_with_merged_children(tmp_path: Path) -> None:
         "tsk-c1",
         "tsk-c2",
     }
+    assert all(row["user_id"] == "alice" for row in assets)
 
     lineage = _read_jsonl(base / "lineage.jsonl")
     edges = {(row["data_id"], row["source_data_id"]) for row in lineage}

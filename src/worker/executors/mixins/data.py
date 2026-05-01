@@ -1,18 +1,4 @@
-"""Data mixin used by executors.
-
-Per-task lineage rides on OTel-shape spans: executor work goes inside
-``with self._span(...)`` blocks; moment-in-time checkpoints (e.g. a merged
-child's queue entry) emit zero-duration spans via ``self._log_event(...)``.
-Spans land in ``out_dir/artifacts/logs/spans.jsonl`` and ride the
-artifact-upload path to ``results/{task_id}/logs/spans.jsonl`` on the
-server. Asset and lineage rows go to sibling JSONL files.
-
-Cross-task data payloads are inlined by the dispatcher into
-``spec.upstreamResults`` directly (the server reads each upstream task's
-``results.json`` and merges it in), so the worker never fetches mid-task.
-Upstream task ids feed lineage rows; upstream results feed graph_template /
-dataframe consumers directly.
-"""
+"""Worker mixin: emit OTel-shape spans + asset/lineage JSONL during a task."""
 
 import contextvars
 import copy
@@ -102,6 +88,7 @@ class DataMixin:
         self._task_id: str | None = None
         self._task_out_dir: Path | None = None
         self._current_batch_id: str | None = None
+        self._task_user_id: str = ""
         self._event_lock = threading.Lock()
         self.io_executor = ThreadPoolExecutor(max_workers=32)
 
@@ -111,15 +98,7 @@ class DataMixin:
         return cls._TEMPLATE_TYPE_MAP.get(normalized)
 
     def _submit_in_context(self, fn: Any, *args: Any, **kwargs: Any) -> "Future[Any]":
-        """Submit to ``io_executor`` with the caller's ContextVars copied in.
-
-        ``ThreadPoolExecutor.submit`` runs the worker thread under a fresh
-        ``Context``, so OTel's parent-span ContextVar and our
-        ``_workflow_id_var`` are both invisible inside the submitted call —
-        sub-spans would orphan with random trace ids. Capturing the current
-        ``Context`` and dispatching via ``Context.run`` keeps the parent
-        relationship intact.
-        """
+        """``io_executor.submit`` that carries the caller's ContextVars across."""
         ctx = contextvars.copy_context()
         return self.io_executor.submit(ctx.run, fn, *args, **kwargs)
 
@@ -128,15 +107,21 @@ class DataMixin:
     # ------------------------------------------------------------------ #
     @contextmanager
     def _task_span(
-        self, task_id: str, workflow_id: str, out_dir: Path
+        self,
+        task_id: str,
+        workflow_id: str,
+        out_dir: Path,
+        *,
+        owner_id: str = "",
     ) -> Iterator[OTelSpan]:
-        """Open the root span for a task. Wraps the executor's run() body."""
+        """Root span for a task — wraps the executor's ``run()`` body."""
         out_path = Path(out_dir)
         spans_path = out_path / "artifacts" / "logs" / "spans.jsonl"
         spans_path.parent.mkdir(parents=True, exist_ok=True)
         self._task_id = task_id
         self._current_batch_id = task_id
         self._task_out_dir = out_path
+        self._task_user_id = owner_id
         token = set_workflow_id(workflow_id)
         set_active_spans_path(spans_path)
         try:
@@ -148,6 +133,7 @@ class DataMixin:
                     extra={
                         "batch_id": task_id,
                         "workflow_id": workflow_id,
+                        "user_id": owner_id,
                         "executor.name": getattr(self, "name", None),
                     },
                 ),
@@ -166,7 +152,7 @@ class DataMixin:
         data_id: str | None = None,
         attributes: dict[str, Any] | None = None,
     ) -> Iterator[OTelSpan]:
-        """Open a child span. Records start at __enter__ / end at __exit__."""
+        """Child span recording start at __enter__, end at __exit__."""
         attrs = attributes_with_kind(
             kind,
             data_id=data_id if data_id is not None else self._task_id,
@@ -245,20 +231,12 @@ class DataMixin:
                 },
             )
 
-    @staticmethod
-    def _user_id(governance_spec: dict[str, Any] | None) -> str:
-        if not governance_spec:
-            return ""
-        return str(governance_spec.get("user_id") or "")
-
     def _write_data(
         self,
         data_id: str,
         data: Any,
         source_data_ids: list[str],
-        governance_spec: dict[str, Any] | None,
     ) -> None:
-        user_id = self._user_id(governance_spec)
         with self._span(
             "dump to storage", kind=FlowMeshSpanKind.NETWORK, data_id=data_id
         ) as dump_span:
@@ -279,7 +257,7 @@ class DataMixin:
                 data_id=data_id,
                 asset_guid=asset_guid,
                 version=1,
-                user_id=user_id,
+                user_id=self._task_user_id,
             )
             if source_data_ids:
                 self._record_lineage(data_id=data_id, source_data_ids=source_data_ids)
@@ -523,13 +501,6 @@ class DataMixin:
         if not isinstance(context, dict):
             raise ExecutionError("spec._upstreamResults must be a mapping.")
         return context
-
-    @staticmethod
-    def _spec_governance_cfg(spec: TaskSpecStrictBase) -> dict[str, Any]:
-        governance = spec.governance or {}
-        if not isinstance(governance, dict):
-            raise ExecutionError("spec.governance must be a mapping.")
-        return governance
 
     def _collect_prompts_for_spec(
         self, spec: TaskSpecStrictBase, task_id: str, fetch_images: bool = False
@@ -983,12 +954,11 @@ class DataMixin:
 
     def _dump_to_governance(
         self,
-        governance_spec: dict[str, Any] | None,
         task_id: str,
         result: dict[str, Any],
         dependencies_by_task: dict[str, list[str]],
     ) -> None:
-        """Write parent + merged-child results to Redis and emit lineage rows."""
+        """Write parent + merged-child results and emit asset/lineage rows."""
         parent_deps = dependencies_by_task.get(task_id, [])
         children_payload = result.get("children", {})
 
@@ -1017,7 +987,6 @@ class DataMixin:
                 data_id=job["task_id"],
                 data=job["result"],
                 source_data_ids=job["deps"],
-                governance_spec=governance_spec,
             )
         else:
             logger.info(
@@ -1030,7 +999,6 @@ class DataMixin:
                     data_id=job["task_id"],
                     data=job["result"],
                     source_data_ids=job["deps"],
-                    governance_spec=governance_spec,
                 ): job
                 for job in collection_jobs
             }

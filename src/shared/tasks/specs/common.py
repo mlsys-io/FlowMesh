@@ -69,7 +69,6 @@ class TaskSpecStrictBase(StrictBaseModel):
     output: OutputSpec | None = None
     dependsOn: list[str] | None = None
     condition: ConditionSpec | None = None
-    governance: dict[str, Any] | None = None
     shard: ShardSpec | None = None
 
     # Server-injected stage context (reserve the user-facing key `_upstreamResults`)
@@ -97,7 +96,6 @@ class TaskSpecTemplateBase(TemplateBaseModel):
     output: OutputSpecTemplate | None = None
     dependsOn: list[str] | None = None
     condition: ConditionSpec | None = None
-    governance: dict[str, Any] | None = None
     shard: ShardSpecTemplate | None = None
 
     upstreamResults: dict[str, Any] | None = Field(

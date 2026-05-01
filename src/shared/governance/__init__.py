@@ -10,7 +10,6 @@ from .analyzer import (
     TaskTiming,
     analyze,
 )
-from .redis_keys import data_key, workflow_data_pattern
 from .render import to_mermaid
 from .schemas import AssetRow, LineageRow
 from .spans import FlowMeshSpanKind, Span
@@ -30,7 +29,5 @@ __all__ = [
     "Span",
     "TaskTiming",
     "analyze",
-    "data_key",
     "to_mermaid",
-    "workflow_data_pattern",
 ]

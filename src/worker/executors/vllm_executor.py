@@ -854,7 +854,9 @@ Summary:"""
         if not task_id:
             raise ExecutionError("task_id is required for inference execution")
 
-        with self._task_span(task_id, task.workflow_id, out_dir):
+        with self._task_span(
+            task_id, task.workflow_id, out_dir, owner_id=task.owner_id
+        ):
             result = self._run_body(task, spec, task_id, out_dir)
         maybe_upload_artifacts(task, out_dir, logger=logger)
         return result
@@ -1187,7 +1189,6 @@ Summary:"""
             self._maybe_export_jsonl(spec, task_id, result, out_dir)
 
         self._dump_to_governance(
-            governance_spec=spec.governance,
             task_id=task_id,
             result=result,
             dependencies_by_task=dependencies_by_task,

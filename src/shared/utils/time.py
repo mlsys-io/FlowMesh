@@ -6,9 +6,7 @@ def now_iso() -> str:
 
 
 def parse_iso_datetime(value: str | None) -> datetime.datetime | None:
-    """Parse an ISO 8601 timestamp string. ``None`` / empty returns ``None``;
-    invalid strings raise ``ValueError``. The ``Z`` suffix is normalized to
-    ``+00:00`` so ``datetime.fromisoformat`` accepts it on Python <3.11."""
+    """Parse ISO 8601 → ``datetime``; ``None`` if empty, raises on malformed."""
     if not value:
         return None
     return datetime.datetime.fromisoformat(value.replace("Z", "+00:00"))

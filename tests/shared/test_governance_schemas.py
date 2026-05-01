@@ -1,4 +1,4 @@
-from shared.governance import AssetRow, FlowMeshSpanKind, LineageRow, Span, data_key
+from shared.governance import AssetRow, FlowMeshSpanKind, LineageRow, Span
 
 
 def test_span_otel_round_trip() -> None:
@@ -62,7 +62,3 @@ def test_lineage_row_required_fields() -> None:
     )
     assert row.data_id == "tsk-2"
     assert row.source_data_id == "tsk-1"
-
-
-def test_data_key_format() -> None:
-    assert data_key("tsk-abc") == "flowmesh:data:tsk-abc"

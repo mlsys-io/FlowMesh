@@ -1,12 +1,12 @@
 """Workflow trace resource — fetch raw rows or run the analyzer."""
 
-import json
 from collections.abc import AsyncIterator, Iterator
 from enum import StrEnum
 
 import httpx
 
 from shared.governance import ProfileSummary
+from shared.utils.jsonl import aparse_jsonl_lines, parse_jsonl_lines
 
 from .._base_client import (
     _make_url,
@@ -25,24 +25,6 @@ class TraceKind(StrEnum):
     LINEAGE = "lineage"
 
 
-def _iter_jsonl_lines(lines: Iterator[str]) -> Iterator[dict]:
-    for line in lines:
-        line = line.strip()
-        if not line:
-            continue
-        yield json.loads(line)
-
-
-async def _aiter_jsonl_lines(
-    lines: AsyncIterator[str],
-) -> AsyncIterator[dict]:
-    async for line in lines:
-        line = line.strip()
-        if not line:
-            continue
-        yield json.loads(line)
-
-
 class Trace(SyncResource):
     """Synchronous workflow trace operations."""
 
@@ -52,7 +34,7 @@ class Trace(SyncResource):
         try:
             with self._client._http.stream("GET", url) as response:
                 _raise_for_stream_status(response, "GET")
-                yield from _iter_jsonl_lines(response.iter_lines())
+                yield from parse_jsonl_lines(response.iter_lines())
         except httpx.ConnectError as exc:
             raise FlowMeshConnectionError(f"Failed to connect to {url}: {exc}")
 
@@ -71,7 +53,7 @@ class AsyncTrace(AsyncResource):
         try:
             async with self._client._http.stream("GET", url) as response:
                 await _raise_for_stream_status_async(response, "GET")
-                async for row in _aiter_jsonl_lines(response.aiter_lines()):
+                async for row in aparse_jsonl_lines(response.aiter_lines()):
                     yield row
         except httpx.ConnectError as exc:
             raise FlowMeshConnectionError(f"Failed to connect to {url}: {exc}")
