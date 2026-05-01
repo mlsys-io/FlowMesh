@@ -195,7 +195,7 @@ module = [
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
-module = ["pynvml", "vllm_omni.*"]
+module = ["pynvml", "vllm_omni.*", "deepspeed.*"]
 follow_untyped_imports = true
 
 [tool.codespell]
