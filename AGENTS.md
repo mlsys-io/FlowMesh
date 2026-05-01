@@ -610,6 +610,39 @@ Skipped rules and the rationale for each are listed in `[tool.bandit]`.
 When the rationale stops being true (e.g. a sandbox stops being a sandbox),
 remove the skip and fix the call sites — don't widen the skip list silently.
 
+### Dependency CVE scanning (pip-audit)
+
+CI runs `pip-audit` against each generated requirements file
+(`src/server/requirements.txt`, `src/worker/requirements/requirements.txt`,
+`src/worker/requirements/requirements.gpu.txt`). The job lives in
+`.github/workflows/security.yml`.
+
+When pip-audit reports a new CVE, the only real fix is to bump the
+offending dep in `pyproject.toml`, then `uv lock` + `uv run
+scripts/dev/sync_requirements.py --write`. Silencing a finding via
+`--ignore-vuln` is a last resort; every silenced GHSA needs a written
+reason, same rule as bandit. The currently-ignored advisories and the
+upgrade blocker that justifies each are listed below.
+
+| GHSA | Package | Fix version | Why ignored |
+|------|---------|-------------|-------------|
+| GHSA-69w3-r845-3855 | transformers | 5.0.0rc3 | held by vllm/vllm-omni 0.18 compatibility |
+| GHSA-pf3h-qjgv-vcpr | vllm | 0.19.0 | held by transformers 4.57 + adjacent inference deps |
+| GHSA-pq5c-rjhq-qp7p | vllm | 0.19.0 | same |
+| GHSA-3mwp-wvh9-7528 | vllm | 0.19.0 | same |
+| GHSA-cfh3-3jmp-rvhc | pillow | 12.1.1 | gradio 5.50 caps pillow<12 (transitive via vllm-omni) |
+| GHSA-whj4-6x5x-4v2j | pillow | 12.2.0 | same cap |
+| GHSA-vfmq-68hx-4jfw | lxml | 6.1.0 | crawl4ai 0.8.6 caps lxml<6 |
+| GHSA-39mp-8hj3-5c49 | gradio | 6.7.0 | vllm-omni 0.18 pins gradio==5.50 |
+| GHSA-h3h8-3v2v-rg7m | gradio | 6.6.0 | same pin |
+| GHSA-jmh7-g254-2cq9 | gradio | 6.6.0 | same pin |
+| GHSA-pfjf-5gxr-995x | gradio | 6.6.0 | same pin |
+| GHSA-w8v5-vhqr-4h9v | diskcache | (none) | upstream unmaintained, no fixed version published |
+
+When a blocker lifts (e.g. transformers 5 ↔ vllm 0.19 line stabilizes),
+drop the corresponding `--ignore-vuln` flag from the workflow rather than
+extending the rationale to unrelated packages.
+
 ## Commit Conventions
 
 - Single-line subject in imperative mood; no body unless a non-obvious "why"
