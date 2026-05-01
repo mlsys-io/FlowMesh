@@ -61,11 +61,11 @@ def test_record_asset_and_lineage(tmp_path: Path) -> None:
     }
 
 
-def test_write_data_emits_dump_span_and_rows(tmp_path: Path) -> None:
+def test_record_output_emits_dump_span_and_rows(tmp_path: Path) -> None:
     mixin = _Mixin()
     out_dir = tmp_path / "task-up"
     with mixin._task_span("tsk-up", "wfl-1", out_dir, owner_id="alice"):
-        mixin._write_data(
+        mixin._record_output(
             data_id="tsk-up",
             data={"items": [{"output": "ok"}]},
             source_data_ids=["tsk-source-a"],

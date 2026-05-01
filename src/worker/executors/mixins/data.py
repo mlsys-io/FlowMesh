@@ -231,12 +231,14 @@ class DataMixin:
                 },
             )
 
-    def _write_data(
+    def _record_output(
         self,
         data_id: str,
         data: Any,
         source_data_ids: list[str],
     ) -> None:
+        """Emit asset + lineage rows; ``data`` is only serialized to size the
+        ``"dump to storage"`` span (runtime does not upload payloads)."""
         with self._span(
             "dump to storage", kind=FlowMeshSpanKind.NETWORK, data_id=data_id
         ) as dump_span:
@@ -983,19 +985,19 @@ class DataMixin:
 
         if len(collection_jobs) == 1:
             job = collection_jobs[0]
-            self._write_data(
+            self._record_output(
                 data_id=job["task_id"],
                 data=job["result"],
                 source_data_ids=job["deps"],
             )
         else:
             logger.info(
-                "Writing data for %d merged tasks in parallel",
+                "Recording lineage for %d merged tasks in parallel",
                 len(collection_jobs),
             )
             future_map = {
                 self._submit_in_context(
-                    self._write_data,
+                    self._record_output,
                     data_id=job["task_id"],
                     data=job["result"],
                     source_data_ids=job["deps"],

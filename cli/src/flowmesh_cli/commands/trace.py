@@ -18,8 +18,7 @@ from rich.table import Table
 from rich.tree import Tree
 
 from shared.governance import (
-    HardwareSummary,
-    NetworkSummary,
+    EventSummary,
     ProfileSummary,
     TaskTiming,
 )
@@ -41,32 +40,21 @@ class _AnalyzeView(StrEnum):
     JSON = "json"
 
 
-class _ComputeRow(BaseModel):
-    """One row of the compute-time table — a per-event-type breakdown."""
+class _EventRow(BaseModel):
+    """One row of an event-summary table — a per-event-type breakdown."""
 
     event_type: str
     count: int
-    total_seconds: float | None
+    total_seconds: float
     avg_seconds: float
     min_seconds: float
     max_seconds: float
 
 
-class _NetworkRow(BaseModel):
-    """One row of the network-time table — a per-event-type breakdown."""
-
-    event_type: str
-    count: int
-    total_active_seconds: float
-    avg_seconds: float
-    min_seconds: float
-    max_seconds: float
-
-
-def _compute_rows(hw: HardwareSummary) -> list[_ComputeRow]:
-    """Reshape a ``HardwareSummary``'s parallel lists into validated rows."""
+def _event_rows(summary: EventSummary) -> list[_EventRow]:
+    """Reshape an ``EventSummary``'s parallel lists into validated rows."""
     return [
-        _ComputeRow(
+        _EventRow(
             event_type=event_type,
             count=count,
             total_seconds=total,
@@ -75,42 +63,19 @@ def _compute_rows(hw: HardwareSummary) -> list[_ComputeRow]:
             max_seconds=mx,
         )
         for event_type, count, total, avg, mn, mx in zip(
-            hw.event_type,
-            hw.count,
-            hw.total_hardware_time_seconds,
-            hw.avg_time_seconds,
-            hw.min_time_seconds,
-            hw.max_time_seconds,
+            summary.event_type,
+            summary.count,
+            summary.total_seconds,
+            summary.avg_seconds,
+            summary.min_seconds,
+            summary.max_seconds,
             strict=True,
         )
     ]
 
 
-def _network_rows(net: NetworkSummary) -> list[_NetworkRow]:
-    """Reshape a ``NetworkSummary``'s parallel lists into validated rows."""
-    return [
-        _NetworkRow(
-            event_type=event_type,
-            count=count,
-            total_active_seconds=total,
-            avg_seconds=avg,
-            min_seconds=mn,
-            max_seconds=mx,
-        )
-        for event_type, count, total, avg, mn, mx in zip(
-            net.event_type,
-            net.count,
-            net.total_active_seconds,
-            net.avg_time_seconds,
-            net.min_time_seconds,
-            net.max_time_seconds,
-            strict=True,
-        )
-    ]
-
-
-def _compute_table(hw: HardwareSummary, title: str) -> Table:
-    """Per-event-type compute-time table."""
+def _compute_table(hw: EventSummary, title: str) -> Table:
+    """Per-event-type compute-time table; total cells colored by share of max."""
     table = Table(title=title, box=SIMPLE, header_style="bold cyan", title_style="bold")
     table.add_column("event_type", style="cyan", no_wrap=True)
     table.add_column("n", justify="right")
@@ -118,18 +83,11 @@ def _compute_table(hw: HardwareSummary, title: str) -> Table:
     table.add_column("avg", justify="right", style="dim")
     table.add_column("min", justify="right", style="dim")
     table.add_column("max", justify="right", style="dim")
-    rows = sorted(
-        _compute_rows(hw),
-        key=lambda r: r.total_seconds if r.total_seconds is not None else 0.0,
-        reverse=True,
-    )
-    max_total = max(
-        (r.total_seconds or 0.0 for r in rows),
-        default=0.0,
-    )
+    rows = sorted(_event_rows(hw), key=lambda r: r.total_seconds, reverse=True)
+    max_total = max((r.total_seconds for r in rows), default=0.0)
     for row in rows:
-        total_str = "" if row.total_seconds is None else f"{row.total_seconds:.3f}"
-        if row.total_seconds is not None and row.total_seconds > 0 and max_total > 0:
+        total_str = f"{row.total_seconds:.3f}"
+        if row.total_seconds > 0 and max_total > 0:
             ratio = row.total_seconds / max_total
             color = "red" if ratio > 0.5 else "yellow" if ratio > 0.1 else "green"
             total_str = f"[{color}]{total_str}[/{color}]"
@@ -144,7 +102,7 @@ def _compute_table(hw: HardwareSummary, title: str) -> Table:
     return table
 
 
-def _network_table(net: NetworkSummary, title: str) -> Table:
+def _network_table(net: EventSummary, title: str) -> Table:
     """Per-event-type network-time table."""
     table = Table(
         title=title, box=SIMPLE, header_style="bold magenta", title_style="bold"
@@ -155,16 +113,12 @@ def _network_table(net: NetworkSummary, title: str) -> Table:
     table.add_column("avg", justify="right", style="dim")
     table.add_column("min", justify="right", style="dim")
     table.add_column("max", justify="right", style="dim")
-    rows = sorted(
-        _network_rows(net),
-        key=lambda r: r.total_active_seconds,
-        reverse=True,
-    )
+    rows = sorted(_event_rows(net), key=lambda r: r.total_seconds, reverse=True)
     for row in rows:
         table.add_row(
             row.event_type,
             str(row.count),
-            f"{row.total_active_seconds:.3f}",
+            f"{row.total_seconds:.3f}",
             f"{row.avg_seconds:.3f}",
             f"{row.min_seconds:.3f}",
             f"{row.max_seconds:.3f}",

@@ -37,27 +37,25 @@ class LineageEdge(_ProfileBase):
     created_at: str | None = None
 
 
-class HardwareSummary(_ProfileBase):
+class EventSummary(_ProfileBase):
+    """Per-event-type duration aggregates as parallel lists.
+
+    For ``compute`` spans, ``total_seconds[i]`` is the per-batch sum (so
+    parallel spans within a batch collapse). For ``network`` spans it is the
+    merged-interval wall-clock time (so overlapping reads/writes collapse).
+    """
+
     event_type: list[str]
     count: list[int]
-    total_hardware_time_seconds: list[float | None]
-    avg_time_seconds: list[float]
-    min_time_seconds: list[float]
-    max_time_seconds: list[float]
-
-
-class NetworkSummary(_ProfileBase):
-    event_type: list[str]
-    count: list[int]
-    total_active_seconds: list[float]
-    avg_time_seconds: list[float]
-    min_time_seconds: list[float]
-    max_time_seconds: list[float]
+    total_seconds: list[float]
+    avg_seconds: list[float]
+    min_seconds: list[float]
+    max_seconds: list[float]
 
 
 class E2EBreakdown(_ProfileBase):
-    hardware_summary: HardwareSummary
-    network_summary: NetworkSummary
+    hardware_summary: EventSummary
+    network_summary: EventSummary
     workflow_duration_seconds: float
     total_network_seconds: float
 
@@ -82,8 +80,8 @@ class CriticalPathSummary(_ProfileBase):
     path: list[str]
     critical_path_seconds: float
     active_wait_breakdown: ActiveWaitBreakdown
-    hardware_summary: HardwareSummary
-    network_summary: NetworkSummary
+    hardware_summary: EventSummary
+    network_summary: EventSummary
     total_network_seconds: float
 
 
@@ -334,26 +332,20 @@ def _obtain_breakdown(
     hardware_summary = {
         "event_type": hw_event_types,
         "count": [len(by_type[t]) for t in hw_event_types],
-        "total_hardware_time_seconds": [
-            (
-                sum(
-                    (d for d in by_type_batch[t].values()), timedelta(0)
-                ).total_seconds()
-                if by_type_batch[t]
-                else None
-            )
+        "total_seconds": [
+            sum((d for d in by_type_batch[t].values()), timedelta(0)).total_seconds()
             for t in hw_event_types
         ],
-        "avg_time_seconds": [_avg_min_max(by_type[t])[0] for t in hw_event_types],
-        "min_time_seconds": [_avg_min_max(by_type[t])[1] for t in hw_event_types],
-        "max_time_seconds": [_avg_min_max(by_type[t])[2] for t in hw_event_types],
+        "avg_seconds": [_avg_min_max(by_type[t])[0] for t in hw_event_types],
+        "min_seconds": [_avg_min_max(by_type[t])[1] for t in hw_event_types],
+        "max_seconds": [_avg_min_max(by_type[t])[2] for t in hw_event_types],
     }
 
     net_event_types = list(network_intervals_by_type.keys())
     network_summary = {
         "event_type": net_event_types,
         "count": [len(network_active_seconds[t]) for t in net_event_types],
-        "total_active_seconds": [
+        "total_seconds": [
             sum(
                 (
                     end - start
@@ -363,13 +355,13 @@ def _obtain_breakdown(
             ).total_seconds()
             for t in net_event_types
         ],
-        "avg_time_seconds": [
+        "avg_seconds": [
             _avg_min_max(network_active_seconds[t])[0] for t in net_event_types
         ],
-        "min_time_seconds": [
+        "min_seconds": [
             _avg_min_max(network_active_seconds[t])[1] for t in net_event_types
         ],
-        "max_time_seconds": [
+        "max_seconds": [
             _avg_min_max(network_active_seconds[t])[2] for t in net_event_types
         ],
     }

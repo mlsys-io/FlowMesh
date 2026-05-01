@@ -9,60 +9,46 @@ from typing import Any
 
 import pandas as pd
 
-from shared.governance import ProfileSummary
+from shared.governance import EventSummary, ProfileSummary
 from shared.governance import to_mermaid as render_mermaid
+
+
+def _event_summary_dataframe(summary: EventSummary) -> pd.DataFrame:
+    df = pd.DataFrame(
+        {
+            "event_type": summary.event_type,
+            "count": summary.count,
+            "total_seconds": summary.total_seconds,
+            "avg_seconds": summary.avg_seconds,
+            "min_seconds": summary.min_seconds,
+            "max_seconds": summary.max_seconds,
+        }
+    )
+    return df.sort_values("total_seconds", ascending=False).reset_index(drop=True)
 
 
 def hardware_dataframe(
     summary: ProfileSummary, *, on_critical_path: bool = False
 ) -> pd.DataFrame:
-    """Hardware-time table as a pandas DataFrame.
-
-    Set `on_critical_path=True` to restrict to the critical path's
-    hardware breakdown. Falls back to the e2e breakdown otherwise.
-    """
+    """Compute-time breakdown as a DataFrame, restricted to the CP if requested."""
     hw = (
         summary.critical_path.hardware_summary
         if on_critical_path and summary.critical_path is not None
         else summary.e2e_breakdown.hardware_summary
     )
-    df = pd.DataFrame(
-        {
-            "event_type": hw.event_type,
-            "count": hw.count,
-            "total_hardware_time_seconds": hw.total_hardware_time_seconds,
-            "avg_time_seconds": hw.avg_time_seconds,
-            "min_time_seconds": hw.min_time_seconds,
-            "max_time_seconds": hw.max_time_seconds,
-        }
-    )
-    return df.sort_values(
-        "total_hardware_time_seconds", ascending=False, na_position="last"
-    ).reset_index(drop=True)
+    return _event_summary_dataframe(hw)
 
 
 def network_dataframe(
     summary: ProfileSummary, *, on_critical_path: bool = False
 ) -> pd.DataFrame:
-    """Network-active-time table as a pandas DataFrame."""
+    """Network-active-time breakdown as a DataFrame; restrict to CP if requested."""
     net = (
         summary.critical_path.network_summary
         if on_critical_path and summary.critical_path is not None
         else summary.e2e_breakdown.network_summary
     )
-    df = pd.DataFrame(
-        {
-            "event_type": net.event_type,
-            "count": net.count,
-            "total_active_seconds": net.total_active_seconds,
-            "avg_time_seconds": net.avg_time_seconds,
-            "min_time_seconds": net.min_time_seconds,
-            "max_time_seconds": net.max_time_seconds,
-        }
-    )
-    return df.sort_values("total_active_seconds", ascending=False).reset_index(
-        drop=True
-    )
+    return _event_summary_dataframe(net)
 
 
 def critical_path_dataframe(summary: ProfileSummary) -> pd.DataFrame:
