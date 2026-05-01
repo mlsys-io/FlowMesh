@@ -9,7 +9,8 @@ import os
 import platform
 import socket
 import sys
-from typing import Any
+
+import pynvml
 
 from shared.tasks.worker_message import (
     CPUInfo,
@@ -25,29 +26,36 @@ logger = logging.getLogger(__name__)
 
 def _collect_gpu_info() -> GpuPlatformInfo:
     try:
-        import pynvml
-    except ImportError:
-        return GpuPlatformInfo(driver_version=None, cuda_version=None, gpus=[])
-
-    try:
         pynvml.nvmlInit()
     except pynvml.NVMLError as exc:
         logger.debug("NVML init failed; no GPU info collected: %s", exc)
         return GpuPlatformInfo(driver_version=None, cuda_version=None, gpus=[])
 
     try:
-        driver_version = _safe_str(pynvml.nvmlSystemGetDriverVersion)
-        cuda_version = _format_cuda_version(pynvml.nvmlSystemGetCudaDriverVersion)
-        gpus: list[GpuInfo] = []
+        try:
+            driver_version_raw = pynvml.nvmlSystemGetDriverVersion()
+            driver_version: str | None = (
+                driver_version_raw.decode()
+                if isinstance(driver_version_raw, bytes)
+                else driver_version_raw
+            )
+        except pynvml.NVMLError:
+            driver_version = None
+        try:
+            cuda_raw = int(pynvml.nvmlSystemGetCudaDriverVersion())
+            cuda_version: str | None = f"{cuda_raw // 1000}.{(cuda_raw % 1000) // 10}"
+        except pynvml.NVMLError:
+            cuda_version = None
         try:
             count = pynvml.nvmlDeviceGetCount()
         except pynvml.NVMLError:
             count = 0
+        gpus: list[GpuInfo] = []
         for idx in range(count):
             try:
                 handle = pynvml.nvmlDeviceGetHandleByIndex(idx)
-                name = _decode(pynvml.nvmlDeviceGetName(handle))
-                uuid = _decode(pynvml.nvmlDeviceGetUUID(handle))
+                name_raw = pynvml.nvmlDeviceGetName(handle)
+                uuid_raw = pynvml.nvmlDeviceGetUUID(handle)
                 mem_total: int | None
                 try:
                     mem_total = int(pynvml.nvmlDeviceGetMemoryInfo(handle).total)
@@ -58,8 +66,8 @@ def _collect_gpu_info() -> GpuPlatformInfo:
             gpus.append(
                 GpuInfo(
                     index=idx,
-                    name=name,
-                    uuid=uuid,
+                    name=name_raw.decode() if isinstance(name_raw, bytes) else name_raw,
+                    uuid=uuid_raw.decode() if isinstance(uuid_raw, bytes) else uuid_raw,
                     memory_total_bytes=mem_total,
                 )
             )
@@ -72,25 +80,6 @@ def _collect_gpu_info() -> GpuPlatformInfo:
     return GpuPlatformInfo(
         driver_version=driver_version, cuda_version=cuda_version, gpus=gpus
     )
-
-
-def _safe_str(fn: Any) -> str | None:
-    try:
-        return _decode(fn())
-    except Exception:
-        return None
-
-
-def _decode(value: bytes | str) -> str:
-    return value.decode() if isinstance(value, bytes) else value
-
-
-def _format_cuda_version(fn: Any) -> str | None:
-    try:
-        raw = int(fn())
-    except Exception:
-        return None
-    return f"{raw // 1000}.{(raw % 1000) // 10}"
 
 
 def collect_hw(*, bandwidth_bytes_per_sec: float | None = None) -> WorkerHardware:

@@ -5,6 +5,8 @@ import os
 import time
 from typing import Any
 
+import pynvml
+
 from shared.utils.time import now_iso
 
 logger = logging.getLogger(__name__)
@@ -73,8 +75,7 @@ class PowerMonitor:
         self._visible_gpu_indices = _parse_cuda_visible_devices(
             os.environ.get("CUDA_VISIBLE_DEVICES")
         )
-        self._nvml: Any = None
-        self._nvml_init_attempted = False
+        self._nvml_initialized: bool | None = None
         self._nvml_handles: dict[int, Any] = {}
 
     def sample(self) -> dict[str, Any]:
@@ -192,29 +193,24 @@ class PowerMonitor:
         ) / dt  # convert microjoules to joules, then divide by seconds
         return watts
 
-    def _ensure_nvml(self) -> Any:
-        if self._nvml is not None or self._nvml_init_attempted:
-            return self._nvml
-        self._nvml_init_attempted = True
-        try:
-            import pynvml
-        except ImportError:
-            return None
+    def _ensure_nvml(self) -> bool:
+        if self._nvml_initialized is not None:
+            return self._nvml_initialized
         try:
             pynvml.nvmlInit()
         except pynvml.NVMLError as exc:
             logger.debug("NVML init failed; skipping GPU power sampling: %s", exc)
-            return None
-        self._nvml = pynvml
-        return pynvml
+            self._nvml_initialized = False
+            return False
+        self._nvml_initialized = True
+        return True
 
     def _read_gpu_power(self) -> list[dict[str, Any]]:
         visible = self._visible_gpu_indices
         if visible is not None and not visible:
             return []
 
-        pynvml = self._ensure_nvml()
-        if pynvml is None:
+        if not self._ensure_nvml():
             return []
 
         try:

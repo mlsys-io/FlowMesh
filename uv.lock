@@ -1791,7 +1791,6 @@ training = [
 ]
 training-gpu = [
     { name = "deepspeed" },
-    { name = "nvidia-ml-py" },
 ]
 worker-core = [
     { name = "colorama" },
@@ -1799,6 +1798,7 @@ worker-core = [
     { name = "docker" },
     { name = "grpcio" },
     { name = "httpx" },
+    { name = "nvidia-ml-py" },
     { name = "protobuf" },
     { name = "python-dotenv" },
     { name = "websocket-client" },
@@ -1851,7 +1851,7 @@ requires-dist = [
     { name = "mcp", marker = "extra == 'agent'", specifier = ">=1.20.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.19.1" },
     { name = "nvidia-ml-py", marker = "extra == 'dev'", specifier = ">=13.580.82" },
-    { name = "nvidia-ml-py", marker = "extra == 'training-gpu'", specifier = ">=13.580.82" },
+    { name = "nvidia-ml-py", marker = "extra == 'worker-core'", specifier = ">=13.580.82" },
     { name = "openai", marker = "extra == 'agent'", specifier = ">=2.9.0" },
     { name = "openai-agents", marker = "extra == 'agent'", specifier = ">=0.7.0" },
     { name = "opencv-python-headless", marker = "extra == 'agent'", specifier = ">=4.13.0.92" },
