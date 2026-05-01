@@ -11,8 +11,8 @@ Dataframe helpers require pandas, which is not in the default
 
 from typing import Any
 
-from shared.profile import ProfileSummary
-from shared.profile import to_mermaid as _to_mermaid
+from shared.governance import ProfileSummary
+from shared.governance import to_mermaid as _to_mermaid
 
 try:
     import pandas as pd

@@ -24,7 +24,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 
-from shared.governance.spans import FlowMeshSpanKind, Span
+from .spans import FlowMeshSpanKind, Span
 
 READY_SPAN_NAME = "dump to storage"
 TASK_SPAN_NAME = "task"

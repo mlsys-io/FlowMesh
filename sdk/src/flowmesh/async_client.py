@@ -4,13 +4,12 @@ import httpx
 
 from ._base_client import BaseAsyncClient, resolve_config
 from ._constants import DEFAULT_TIMEOUT
-from .resources.logs import AsyncLogs
 from .resources.nodes import AsyncNodes
-from .resources.profile import AsyncProfile
 from .resources.results import AsyncResults
 from .resources.ssh import AsyncSSH
 from .resources.system import AsyncSystem
 from .resources.tasks import AsyncTasks
+from .resources.trace import AsyncTrace
 from .resources.workers import AsyncWorkers
 from .resources.workflows import AsyncWorkflows
 
@@ -41,8 +40,7 @@ class AsyncFlowMesh(BaseAsyncClient):
     nodes: AsyncNodes
     ssh: AsyncSSH
     system: AsyncSystem
-    logs: AsyncLogs
-    profile: AsyncProfile
+    trace: AsyncTrace
 
     def __init__(
         self,
@@ -65,5 +63,4 @@ class AsyncFlowMesh(BaseAsyncClient):
         self.nodes = AsyncNodes(self)
         self.ssh = AsyncSSH(self)
         self.system = AsyncSystem(self)
-        self.logs = AsyncLogs(self)
-        self.profile = AsyncProfile(self)
+        self.trace = AsyncTrace(self)

@@ -1,4 +1,4 @@
-"""Tests for the workflow lineage / profile router."""
+"""Tests for the workflow trace router."""
 
 import json
 from pathlib import Path
@@ -9,7 +9,7 @@ import pytest
 from fastapi import HTTPException
 from fastapi.responses import StreamingResponse
 
-from server.routers.v1 import logs as logs_router
+from server.routers.v1 import trace as trace_router
 
 
 def _otel_span(
@@ -84,7 +84,7 @@ async def _collect_streamed_lines(response: StreamingResponse) -> list[str]:
 
 
 @pytest.mark.anyio
-async def test_get_workflow_lineage_concats_across_tasks(tmp_path: Path) -> None:
+async def test_get_workflow_trace_concats_across_tasks(tmp_path: Path) -> None:
     _seed_task_logs(
         tmp_path,
         "tsk-a",
@@ -116,7 +116,7 @@ async def test_get_workflow_lineage_concats_across_tasks(tmp_path: Path) -> None
         lineage=[{"data_id": "tsk-b", "source_data_id": "tsk-a"}],
     )
 
-    response = await logs_router.get_workflow_lineage(
+    response = await trace_router.get_workflow_trace(
         workflow_id="wfl-1",
         kind="spans",
         registry=_registry(["tsk-a", "tsk-b"]),
@@ -128,13 +128,13 @@ async def test_get_workflow_lineage_concats_across_tasks(tmp_path: Path) -> None
 
 
 @pytest.mark.anyio
-async def test_get_workflow_lineage_skips_missing_files(tmp_path: Path) -> None:
+async def test_get_workflow_trace_skips_missing_files(tmp_path: Path) -> None:
     _seed_task_logs(
         tmp_path,
         "tsk-a",
         assets=[{"data_id": "tsk-a", "asset_guid": "g-a", "version": 1}],
     )
-    response = await logs_router.get_workflow_lineage(
+    response = await trace_router.get_workflow_trace(
         workflow_id="wfl-1",
         kind="assets",
         registry=_registry(["tsk-a", "tsk-b-missing"]),
@@ -146,9 +146,9 @@ async def test_get_workflow_lineage_skips_missing_files(tmp_path: Path) -> None:
 
 
 @pytest.mark.anyio
-async def test_get_workflow_lineage_unknown_kind(tmp_path: Path) -> None:
+async def test_get_workflow_trace_unknown_kind(tmp_path: Path) -> None:
     with pytest.raises(HTTPException) as excinfo:
-        await logs_router.get_workflow_lineage(
+        await trace_router.get_workflow_trace(
             workflow_id="wfl-1",
             kind="bogus",
             registry=_registry(["tsk-a"]),
@@ -158,7 +158,7 @@ async def test_get_workflow_lineage_unknown_kind(tmp_path: Path) -> None:
 
 
 @pytest.mark.anyio
-async def test_get_workflow_profile_runs_analyzer(tmp_path: Path) -> None:
+async def test_analyze_workflow_trace_runs_analyzer(tmp_path: Path) -> None:
     _seed_task_logs(
         tmp_path,
         "tsk-a",
@@ -201,7 +201,7 @@ async def test_get_workflow_profile_runs_analyzer(tmp_path: Path) -> None:
         ],
     )
 
-    summary = await logs_router.get_workflow_profile(
+    summary = await trace_router.analyze_workflow_trace(
         workflow_id="wfl-1",
         registry=_registry(["tsk-a"]),
         results_dir=tmp_path,
@@ -221,7 +221,7 @@ async def test_workflow_not_found_raises_404(tmp_path: Path) -> None:
     registry.get_workflow_async.return_value = None
 
     with pytest.raises(HTTPException) as excinfo:
-        await logs_router.get_workflow_lineage(
+        await trace_router.get_workflow_trace(
             workflow_id="wfl-missing",
             kind="spans",
             registry=registry,

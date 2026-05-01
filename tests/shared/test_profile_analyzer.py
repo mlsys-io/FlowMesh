@@ -1,6 +1,6 @@
 from typing import Any
 
-from shared.profile import analyze, to_mermaid
+from shared.governance import analyze, to_mermaid
 
 
 def _span(

@@ -1,11 +1,13 @@
-"""`flowmesh profile fetch ...` — analyze a workflow's lineage."""
+"""`flowmesh trace ...` — fetch raw trace rows or run the analyzer."""
 
+import json
 from collections import defaultdict
 from enum import StrEnum
-from typing import Any
+from pathlib import Path
 
 import typer
 from flowmesh.exceptions import FlowMeshError
+from flowmesh.resources.trace import TraceKind
 from rich.box import SIMPLE
 from rich.console import Console
 from rich.json import JSON as RichJSON
@@ -14,7 +16,7 @@ from rich.rule import Rule
 from rich.table import Table
 from rich.tree import Tree
 
-from shared.profile import (
+from shared.governance import (
     HardwareSummary,
     NetworkSummary,
     ProfileSummary,
@@ -25,27 +27,17 @@ from ..core import logging
 from ..core.runtime import flowmesh_client_from_config
 from ..core.typer import get_typer
 
-app = get_typer(help="Profile a workflow's events / assets / lineage.")
+app = get_typer(help="Workflow trace: fetch raw rows or run the analyzer.")
 console = Console()
 
 
-class _ProfileView(StrEnum):
+class _AnalyzeView(StrEnum):
     RICH = "rich"
     CRITICAL_PATH = "critical-path"
     E2E = "e2e"
     QUEUING = "queuing"
     DAG = "dag"
     JSON = "json"
-
-
-def _to_summary(payload: dict[str, Any]) -> ProfileSummary:
-    return ProfileSummary.model_validate(payload)
-
-
-def _short(data_id: str) -> str:
-    if len(data_id) <= 16:
-        return data_id
-    return f"{data_id[:8]}…{data_id[-4:]}"
 
 
 def _compute_table(hw: HardwareSummary, title: str) -> Table:
@@ -191,7 +183,6 @@ def _lineage_tree(summary: ProfileSummary) -> Tree:
     for orphan in summary.data_ids:
         if orphan not in in_any_edge:
             root.add(_label(orphan))
-    _ = seen_in_branch  # kept for future filtering; unused now
     return root
 
 
@@ -229,7 +220,7 @@ def _print_header(summary: ProfileSummary) -> None:
         f"  events=[bold cyan]{summary.event_count}[/bold cyan]"
         f"  assets=[bold cyan]{len(summary.assets)}[/bold cyan]"
     )
-    console.print(Panel(headline, title="profile", border_style="cyan"))
+    console.print(Panel(headline, title="trace", border_style="cyan"))
 
 
 def _print_critical_path(summary: ProfileSummary) -> None:
@@ -272,9 +263,41 @@ def _print_dag(summary: ProfileSummary) -> None:
 
 @app.command("fetch")
 def fetch(
+    kind: TraceKind = typer.Argument(
+        ..., help="One of: spans, assets, lineage", metavar="KIND"
+    ),
     workflow_id: str = typer.Argument(..., help="Workflow identifier"),
-    fmt: _ProfileView = typer.Option(
-        _ProfileView.RICH,
+    output: Path | None = typer.Option(
+        None, "--out", "-o", help="Write rows to this JSONL file (default: stdout)"
+    ),
+) -> None:
+    """Fetch JSONL rows for a workflow's spans / assets / lineage."""
+    client = flowmesh_client_from_config()
+    try:
+        rows = client.trace.fetch(workflow_id, kind)
+    except FlowMeshError as exc:
+        logging.error(str(exc))
+        raise typer.Exit(code=1)
+
+    if output is None:
+        for row in rows:
+            logging.log(json.dumps(row, ensure_ascii=False))
+        return
+
+    output.parent.mkdir(parents=True, exist_ok=True)
+    count = 0
+    with output.open("w", encoding="utf-8") as fh:
+        for row in rows:
+            fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+            count += 1
+    logging.log(f"Wrote {count} {kind} rows to {output}")
+
+
+@app.command("analyze")
+def analyze(
+    workflow_id: str = typer.Argument(..., help="Workflow identifier"),
+    fmt: _AnalyzeView = typer.Option(
+        _AnalyzeView.RICH,
         "--format",
         "-f",
         help="Output view (one of: rich, critical-path, e2e, queuing, dag, json).",
@@ -284,19 +307,18 @@ def fetch(
     """Run the trace analyzer on a workflow and render the result."""
     client = flowmesh_client_from_config()
     try:
-        payload = client.profile.fetch(workflow_id)
+        summary = client.trace.analyze(workflow_id)
     except FlowMeshError as exc:
         logging.error(str(exc))
         raise typer.Exit(code=1)
 
-    if fmt is _ProfileView.JSON:
-        console.print(RichJSON.from_data(payload))
+    if fmt is _AnalyzeView.JSON:
+        console.print(RichJSON.from_data(summary.model_dump(mode="json")))
         return
 
-    summary = _to_summary(payload)
     _print_header(summary)
 
-    if fmt is _ProfileView.RICH:
+    if fmt is _AnalyzeView.RICH:
         if summary.critical_path is not None:
             _print_critical_path(summary)
             console.print(Rule(style="dim"))
@@ -307,15 +329,15 @@ def fetch(
         console.print(Rule(style="dim"))
         _print_dag(summary)
         return
-    if fmt is _ProfileView.CRITICAL_PATH:
+    if fmt is _AnalyzeView.CRITICAL_PATH:
         _print_critical_path(summary)
         return
-    if fmt is _ProfileView.E2E:
+    if fmt is _AnalyzeView.E2E:
         _print_e2e(summary)
         return
-    if fmt is _ProfileView.QUEUING:
+    if fmt is _AnalyzeView.QUEUING:
         _print_queuing(summary)
         return
-    if fmt is _ProfileView.DAG:
+    if fmt is _AnalyzeView.DAG:
         _print_dag(summary)
         return

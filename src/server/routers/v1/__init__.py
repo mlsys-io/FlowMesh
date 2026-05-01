@@ -1,23 +1,23 @@
 from . import (
-    logs,
     nodes,
     results,
     ssh,
     stack,
     system,
     tasks,
+    trace,
     workers,
     workflows,
 )
 
 __all__ = [
-    "logs",
     "nodes",
     "results",
     "ssh",
     "stack",
     "system",
     "tasks",
+    "trace",
     "workers",
     "workflows",
 ]

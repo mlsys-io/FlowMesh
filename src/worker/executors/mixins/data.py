@@ -1,18 +1,17 @@
 """Data mixin used by executors.
 
-Carries two responsibilities:
+Per-task lineage rides on OTel-shape spans: executor work goes inside
+``with self._span(...)`` blocks; moment-in-time checkpoints (e.g. a merged
+child's queue entry) emit zero-duration spans via ``self._log_event(...)``.
+Spans land in ``out_dir/artifacts/logs/spans.jsonl`` and ride the
+artifact-upload path to ``results/{task_id}/logs/spans.jsonl`` on the
+server. Asset and lineage rows go to sibling JSONL files.
 
-- Per-task lineage as OTel-shape spans — work done in the executor is wrapped
-  in ``with self._span(...)`` blocks; moment-in-time checkpoints (e.g. a
-  merged child's queue entry) emit zero-duration spans via
-  ``self._log_event(...)``. Spans land in ``out_dir/artifacts/logs/spans.jsonl``
-  and ride the artifact-upload path to ``results/{task_id}/logs/spans.jsonl``
-  on the server. Asset and lineage rows continue as separate JSONL files.
-
-- Cross-task data transport — reads upstream payloads through a per-worker
-  on-disk cache, falling back to ``GET /api/v1/results/{task_id}`` on the
-  server when the local cache misses. The producing task's HTTP results
-  upload is the source of truth.
+Cross-task data payloads are inlined by the dispatcher into
+``spec.upstreamResults`` directly (the server reads each upstream task's
+``results.json`` and merges it in), so the worker never fetches mid-task.
+Upstream task ids feed lineage rows; upstream results feed graph_template /
+dataframe consumers directly.
 """
 
 import contextvars
@@ -21,8 +20,6 @@ import datetime
 import io
 import json
 import logging
-import os
-import tempfile
 import threading
 import uuid
 from collections.abc import Iterator, Mapping, Sequence
@@ -30,7 +27,6 @@ from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from threading import Lock
 from typing import Any, cast
 from urllib.parse import urlparse
 
@@ -82,9 +78,6 @@ class InferenceEntry:
     tables: list[pd.DataFrame]
 
 
-_DEFAULT_WORKER_CACHE_DIR = Path(tempfile.gettempdir()) / "flowmesh_worker_cache"
-
-
 class DataMixin:
 
     _TEMPLATE_TYPE_MAP: dict[str, type] = {
@@ -110,14 +103,7 @@ class DataMixin:
         self._task_out_dir: Path | None = None
         self._current_batch_id: str | None = None
         self._event_lock = threading.Lock()
-        self._upstream_deps_cache: dict[str, dict[str, Any]] = {}
         self.io_executor = ThreadPoolExecutor(max_workers=32)
-
-        override = os.getenv("WORKER_CACHE_DIR", "").strip()
-        cache_root = Path(override) if override else _DEFAULT_WORKER_CACHE_DIR
-        self._data_cache_dir = cache_root / "data"
-        self._data_cache_dir.mkdir(parents=True, exist_ok=True)
-        self._cache_dir_lock = Lock()
 
     @classmethod
     def _resolve_param_type(cls, type_spec: str) -> type | None:
@@ -151,7 +137,6 @@ class DataMixin:
         self._task_id = task_id
         self._current_batch_id = task_id
         self._task_out_dir = out_path
-        self._upstream_deps_cache.clear()
         token = set_workflow_id(workflow_id)
         set_active_spans_path(spans_path)
         try:
@@ -260,86 +245,11 @@ class DataMixin:
                 },
             )
 
-    # ------------------------------------------------------------------ #
-    # Cross-task data transport: on-disk cache + server HTTP fallback    #
-    # ------------------------------------------------------------------ #
-    def _fetch_from_server(self, data_id: str) -> Any | None:
-        """Durable fallback: GET /api/v1/results/{task_id} from the server.
-
-        Returns None on 404; raises ExecutionError on transport / 5xx.
-        """
-        base_url = (os.getenv("FLOWMESH_BASE_URL") or "").rstrip("/")
-        if not base_url:
-            return None
-        url = f"{base_url}/api/v1/results/{data_id}"
-        headers: dict[str, str] = {}
-        api_key = os.getenv("FLOWMESH_API_KEY") or ""
-        if api_key:
-            headers["Authorization"] = f"Bearer {api_key}"
-        try:
-            response = requests.get(url, headers=headers, timeout=30)
-        except requests.RequestException as exc:
-            raise ExecutionError(
-                f"Failed to fetch upstream result {data_id} from server: {exc}"
-            ) from exc
-        if response.status_code == 404:
-            return None
-        if response.status_code >= 400:
-            raise ExecutionError(
-                f"Server returned {response.status_code} for result {data_id}: "
-                f"{response.text[:200]}"
-            )
-        try:
-            return response.json()
-        except ValueError as exc:
-            raise ExecutionError(
-                f"Server returned non-JSON for result {data_id}: {exc}"
-            ) from exc
-
     @staticmethod
     def _user_id(governance_spec: dict[str, Any] | None) -> str:
         if not governance_spec:
             return ""
         return str(governance_spec.get("user_id") or "")
-
-    def _cache_path_for(self, data_id: str) -> Path:
-        return self._data_cache_dir / f"{data_id}.json"
-
-    def _read_cache(self, data_id: str) -> Any | None:
-        path = self._cache_path_for(data_id)
-        with self._cache_dir_lock:
-            if not path.exists():
-                return None
-            with path.open(encoding="utf-8") as fh:
-                return json.load(fh)
-
-    def _write_cache(self, data_id: str, payload: Any) -> None:
-        path = self._cache_path_for(data_id)
-        with self._cache_dir_lock:
-            with path.open("w", encoding="utf-8") as fh:
-                json.dump(payload, fh, ensure_ascii=False, default=str)
-
-    def _fetch_data(self, data_id: str) -> dict[str, Any]:
-        """Resolve an upstream payload. On-disk cache → server, in that order."""
-        with self._span(
-            "read", kind=FlowMeshSpanKind.NETWORK, data_id=data_id
-        ) as read_span:
-            cached = self._read_cache(data_id)
-            if cached is not None:
-                read_span.set_attribute("source", "cache")
-                read_span.set_attribute("cache_hit", True)
-                return cached
-
-            payload = self._fetch_from_server(data_id)
-            if payload is None:
-                raise ExecutionError(
-                    f"Upstream data {data_id} not found in worker cache or "
-                    f"server results"
-                )
-            read_span.set_attribute("source", "server")
-            read_span.set_attribute("cache_hit", False)
-            self._write_cache(data_id, payload)
-            return payload
 
     def _write_data(
         self,
@@ -360,7 +270,6 @@ class DataMixin:
                     f"Failed to serialize data {data_id}: {exc}"
                 ) from exc
 
-            self._write_cache(data_id, data)
             dump_span.set_attribute("payload_bytes", len(payload.encode("utf-8")))
 
             asset_guid = (
@@ -834,31 +743,23 @@ class DataMixin:
                     )
                 metadata_raw = list(raw_meta)
         elif dtype == "graph_template":
-            with self._span(
-                "upstream fetch", kind=FlowMeshSpanKind.NETWORK, data_id=task_id
-            ):
-                upstream_results = self._fetch_upstream_results_from_storage(spec)
+            upstream_results = self._spec_upstream_results(spec)
             logger.debug(
                 "Task %s graph_template upstream keys: %s",
                 task_id,
                 list(upstream_results.keys()),
             )
-            spec.upstreamResults = upstream_results
             with self._span("build prompt from graph template", data_id=task_id):
                 prompts = build_prompts_from_graph_template(data, spec)
             template_cfg = data.get("template") or {}
             append_system_prompt = bool(template_cfg.get("append_system_prompt", False))
         elif dtype == "dataframe":
-            with self._span(
-                "upstream fetch", kind=FlowMeshSpanKind.NETWORK, data_id=task_id
-            ):
-                upstream_results = self._fetch_upstream_results_from_storage(spec)
+            upstream_results = self._spec_upstream_results(spec)
             logger.debug(
                 "Task %s dataframe upstream keys: %s",
                 task_id,
                 list(upstream_results.keys()),
             )
-            spec.upstreamResults = upstream_results
             df_columns_cfg = data.get("columns")
             if df_columns_cfg is None:
                 raise ExecutionError(
@@ -1045,46 +946,6 @@ class DataMixin:
             )
         payload["items"] = grouped_items
         return payload
-
-    def _fetch_upstream_results_from_storage(
-        self, spec: TaskSpecStrictBase
-    ) -> dict[str, Any]:
-        """Fetch upstream results — cache → Redis → server."""
-        upstream_refs = self._spec_upstream_results(spec)
-        if not upstream_refs:
-            return {}
-
-        task_ids_to_fetch: set[str] = set(
-            upstream_spec["task_id"] for upstream_spec in upstream_refs.values()
-        )
-        if len(task_ids_to_fetch) == 1:
-            task_id = task_ids_to_fetch.pop()
-            self._upstream_deps_cache[task_id] = self._fetch_data(task_id)
-        else:
-            logger.info(
-                "Fetching %d upstream results in parallel",
-                len(task_ids_to_fetch),
-            )
-            future_map = {
-                self._submit_in_context(self._fetch_data, task_id): task_id
-                for task_id in task_ids_to_fetch
-            }
-            for future in as_completed(future_map):
-                task_id = future_map[future]
-                try:
-                    self._upstream_deps_cache[task_id] = future.result()
-                except Exception as exc:
-                    raise ExecutionError(
-                        f"Failed to fetch upstream result for task {task_id}: {exc}"
-                    ) from exc
-
-        fetched_results = {
-            graph_node_name: upstream_spec
-            | {"result": self._upstream_deps_cache[upstream_spec["task_id"]]}
-            for graph_node_name, upstream_spec in upstream_refs.items()
-        }
-
-        return fetched_results
 
     def _maybe_apply_dataset_shard(self, dataset, spec: TaskSpecStrictBase):
         shard_cfg = spec.shard

@@ -1,8 +1,10 @@
 """Pydantic models that parse OTel JSON spans into Python objects.
 
 Producers (the worker mixin) write spans via ``ReadableSpan.to_json()``.
-Consumers (the analyzer, server endpoint, SDK) parse with
-:class:`Span.parse_otel_json` and work with strongly-typed access.
+The OTel SDK's JSON serializer is internal — not the OTLP/JSON proto wire
+format — so no off-the-shelf Pydantic schema exists for it. Consumers
+(the analyzer, server endpoint, SDK) parse with :class:`Span.parse_otel_json`
+and work with strongly-typed access.
 """
 
 import json
@@ -11,6 +13,8 @@ from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
+
+from shared.utils.time import parse_iso_datetime
 
 
 class FlowMeshSpanKind(StrEnum):
@@ -25,12 +29,6 @@ def _strip_hex_prefix(value: str | None) -> str | None:
     if value is None:
         return None
     return value[2:] if value.startswith("0x") else value
-
-
-def _parse_iso(value: str | None) -> datetime | None:
-    if not value:
-        return None
-    return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
 class Span(BaseModel):
@@ -88,9 +86,10 @@ class Span(BaseModel):
             trace_id=_strip_hex_prefix(ctx.get("trace_id")) or "",
             span_id=_strip_hex_prefix(ctx.get("span_id")) or "",
             parent_span_id=_strip_hex_prefix(payload.get("parent_id")),
-            start_time=_parse_iso(payload.get("start_time"))
+            start_time=parse_iso_datetime(payload.get("start_time"))
             or datetime.fromtimestamp(0),
-            end_time=_parse_iso(payload.get("end_time")) or datetime.fromtimestamp(0),
+            end_time=parse_iso_datetime(payload.get("end_time"))
+            or datetime.fromtimestamp(0),
             attributes=raw_attrs.copy(),
             status_code=str(status.get("status_code") or "UNSET"),
             status_message=(

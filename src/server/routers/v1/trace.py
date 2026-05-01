@@ -1,9 +1,10 @@
-"""Workflow-scoped lineage and profile endpoints.
+"""Workflow trace endpoints — fetch raw rows or run the analyzer.
 
 The worker emits per-task `spans.jsonl`, `assets.jsonl`, and `lineage.jsonl`
 under `out_dir/artifacts/logs/`; the artifact upload pipeline lands them at
 `{results_dir}/{task_id}/logs/<file>.jsonl` on the server. These endpoints
-read each task in a workflow and concatenate the rows.
+read each task in a workflow and either stream the rows (`/trace/{kind}`)
+or feed them to the analyzer (`/trace/analyze`).
 """
 
 import json
@@ -14,13 +15,13 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
 
-from shared.profile import ProfileSummary, analyze
+from shared.governance import ProfileSummary, analyze
 
 from ...app_state import get_results_dir, get_workflow_registry
 from ...registries.workflow import WorkflowRegistry
 from ...schemas.result import result_file_path
 
-router = APIRouter(prefix="/workflows", tags=["Logs"])
+router = APIRouter(prefix="/workflows", tags=["Trace"])
 
 _KIND_TO_FILENAME: dict[str, str] = {
     "spans": "spans.jsonl",
@@ -71,14 +72,35 @@ def _stream_jsonl(rows: Iterator[dict[str, Any]]) -> Iterator[bytes]:
 
 
 @router.get(
-    "/{workflow_id}/logs/{kind}",
-    summary="Stream workflow lineage rows",
+    "/{workflow_id}/trace/analyze",
+    summary="Analyze a workflow's trace",
+    description=(
+        "Run the trace analyzer over the workflow's spans / assets / lineage "
+        "rows and return a structured `ProfileSummary`."
+    ),
+    response_model=ProfileSummary,
+)
+async def analyze_workflow_trace(
+    workflow_id: str,
+    registry: WorkflowRegistry = Depends(get_workflow_registry),
+    results_dir: Path = Depends(get_results_dir),
+) -> ProfileSummary:
+    task_ids = await _resolve_task_ids(workflow_id, registry)
+    spans = list(_iter_workflow_jsonl(results_dir, task_ids, "spans.jsonl"))
+    assets = list(_iter_workflow_jsonl(results_dir, task_ids, "assets.jsonl"))
+    lineage = list(_iter_workflow_jsonl(results_dir, task_ids, "lineage.jsonl"))
+    return analyze(spans, assets, lineage, workflow_id=workflow_id)
+
+
+@router.get(
+    "/{workflow_id}/trace/{kind}",
+    summary="Stream workflow trace rows",
     description=(
         "Stream concatenated JSONL rows for `spans`, `assets`, or `lineage` "
         "across every task in the workflow."
     ),
 )
-async def get_workflow_lineage(
+async def get_workflow_trace(
     workflow_id: str,
     kind: str,
     registry: WorkflowRegistry = Depends(get_workflow_registry),
@@ -95,24 +117,3 @@ async def get_workflow_lineage(
         _stream_jsonl(_iter_workflow_jsonl(results_dir, task_ids, filename)),
         media_type="application/x-ndjson",
     )
-
-
-@router.get(
-    "/{workflow_id}/profile",
-    summary="Profile a workflow's lineage",
-    description=(
-        "Run the trace analyzer over the workflow's spans / assets / lineage "
-        "rows and return a structured `ProfileSummary`."
-    ),
-    response_model=ProfileSummary,
-)
-async def get_workflow_profile(
-    workflow_id: str,
-    registry: WorkflowRegistry = Depends(get_workflow_registry),
-    results_dir: Path = Depends(get_results_dir),
-) -> ProfileSummary:
-    task_ids = await _resolve_task_ids(workflow_id, registry)
-    spans = list(_iter_workflow_jsonl(results_dir, task_ids, "spans.jsonl"))
-    assets = list(_iter_workflow_jsonl(results_dir, task_ids, "assets.jsonl"))
-    lineage = list(_iter_workflow_jsonl(results_dir, task_ids, "lineage.jsonl"))
-    return analyze(spans, assets, lineage, workflow_id=workflow_id)

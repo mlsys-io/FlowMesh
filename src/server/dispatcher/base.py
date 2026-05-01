@@ -872,7 +872,19 @@ class Dispatcher:
                 continue
             if record.status != TaskStatus.DONE:
                 continue
-            results[name] = {"task_id": record.task_id}
+            try:
+                data = self._load_stage_result(record.task_id)
+            except StageReferenceNotReady as exc:
+                raise exc
+            except Exception as exc:
+                self._logger.debug(
+                    "Failed to load upstream result for %s (%s): %s",
+                    name,
+                    record.task_id,
+                    exc,
+                )
+                continue
+            results[name] = data
         return results
 
     def _resolve_upstream_task_ids(

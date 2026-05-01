@@ -5,8 +5,8 @@ GPU worker, and verifies that the new lineage transport works end-to-end:
 
 - Cross-task data flow goes through Redis (no HTTP gov calls in worker logs).
 - Each task's `logs/{spans,assets,lineage}.jsonl` arrives at the server.
-- `flowmesh logs fetch <kind>` returns rows.
-- `flowmesh profile fetch` returns a summary whose lineage edges match the DAG.
+- `flowmesh trace fetch <kind>` returns rows.
+- `flowmesh trace analyze` returns a summary whose lineage edges match the DAG.
 - Redis keys for cross-task payloads carry a TTL.
 
 Skipped unless `FLOWMESH_E2E=1`. Requires a live FlowMesh stack and an
@@ -80,7 +80,7 @@ def _submit_workflow() -> str:
 
 
 def _fetch_jsonl(workflow_id: str, kind: str) -> list[dict]:
-    result = _run(["logs", "fetch", kind, workflow_id])
+    result = _run(["trace", "fetch", kind, workflow_id])
     return [json.loads(line) for line in result.stdout.splitlines() if line.strip()]
 
 
@@ -108,7 +108,7 @@ def test_dag_inference_lineage_e2e(stack_up) -> None:
     assert "read" in span_names
 
     # Profile summary should agree with raw counts.
-    profile_result = _run(["profile", "fetch", workflow_id, "--format", "json"])
+    profile_result = _run(["trace", "analyze", workflow_id, "--format", "json"])
     summary = json.loads(profile_result.stdout)
     assert len(summary["assets"]) >= 1
     assert len(summary["lineage"]) == len(lineage)

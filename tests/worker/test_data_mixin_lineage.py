@@ -1,10 +1,8 @@
-"""DataMixin tests: spans, asset/lineage rows, on-disk cache + HTTP fallback."""
+"""DataMixin tests: span emission + asset/lineage row JSONL writes."""
 
 import json
 from pathlib import Path
 from typing import Any
-
-import pytest
 
 from worker.executors.mixins.data import DataMixin
 
@@ -21,8 +19,7 @@ def _spans_for_task(out_dir: Path) -> list[dict[str, Any]]:
     return _read_jsonl(out_dir / "artifacts" / "logs" / "spans.jsonl")
 
 
-def test_task_span_emits_root_with_compute_kind(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setenv("WORKER_CACHE_DIR", str(tmp_path / "wc"))
+def test_task_span_emits_root_with_compute_kind(tmp_path: Path) -> None:
     mixin = _Mixin()
 
     out_dir = tmp_path / "task"
@@ -41,8 +38,7 @@ def test_task_span_emits_root_with_compute_kind(tmp_path: Path, monkeypatch) -> 
     }
 
 
-def test_record_asset_and_lineage(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setenv("WORKER_CACHE_DIR", str(tmp_path / "wc"))
+def test_record_asset_and_lineage(tmp_path: Path) -> None:
     mixin = _Mixin()
     out_dir = tmp_path / "task"
     with mixin._task_span("tsk-1", "wfl-1", out_dir):
@@ -65,32 +61,36 @@ def test_record_asset_and_lineage(tmp_path: Path, monkeypatch) -> None:
     }
 
 
-def test_on_disk_cache_round_trip(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setenv("WORKER_CACHE_DIR", str(tmp_path / "wc"))
+def test_write_data_emits_dump_span_and_rows(tmp_path: Path) -> None:
     mixin = _Mixin()
+    out_dir = tmp_path / "task-up"
+    with mixin._task_span("tsk-up", "wfl-1", out_dir):
+        mixin._write_data(
+            data_id="tsk-up",
+            data={"items": [{"output": "ok"}]},
+            source_data_ids=["tsk-source-a"],
+            governance_spec={"user_id": "alice"},
+        )
 
-    payload = {"items": [{"output": "hello"}], "ok": True}
-    mixin._write_cache("tsk-up", payload)
+    base = out_dir / "artifacts" / "logs"
+    assets = _read_jsonl(base / "assets.jsonl")
+    assert assets and assets[0]["data_id"] == "tsk-up"
+    assert assets[0]["user_id"] == "alice"
 
-    out_dir = tmp_path / "task-down"
-    with mixin._task_span("tsk-down", "wfl-1", out_dir):
-        fetched = mixin._fetch_data("tsk-up")
-    assert fetched == payload
+    lineage = _read_jsonl(base / "lineage.jsonl")
+    assert len(lineage) == 1
+    assert lineage[0]["data_id"] == "tsk-up"
+    assert lineage[0]["source_data_id"] == "tsk-source-a"
 
     spans = _spans_for_task(out_dir)
-    read_spans = [
-        s
-        for s in spans
-        if s["name"] == "read" and s["attributes"].get("data_id") == "tsk-up"
-    ]
-    assert read_spans
-    assert read_spans[0]["attributes"].get("source") == "cache"
-    assert read_spans[0]["attributes"].get("cache_hit") is True
-    assert read_spans[0]["attributes"]["flowmesh.kind"] == "network"
+    dump = [s for s in spans if s["name"] == "dump to storage"]
+    assert dump
+    assert dump[0]["attributes"].get("data_id") == "tsk-up"
+    assert dump[0]["attributes"]["flowmesh.kind"] == "network"
+    assert dump[0]["attributes"].get("payload_bytes", 0) > 0
 
 
-def test_dump_to_governance_with_merged_children(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setenv("WORKER_CACHE_DIR", str(tmp_path / "wc"))
+def test_dump_to_governance_with_merged_children(tmp_path: Path) -> None:
     mixin = _Mixin()
     out_dir = tmp_path / "task"
     with mixin._task_span("tsk-parent", "wfl-1", out_dir):
@@ -129,48 +129,3 @@ def test_dump_to_governance_with_merged_children(tmp_path: Path, monkeypatch) ->
         ("tsk-c1", "tsk-up-b"),
         ("tsk-c2", "tsk-up-c"),
     }
-
-
-def test_fetch_data_falls_back_to_server_on_cache_miss(
-    tmp_path: Path, monkeypatch
-) -> None:
-    """Local cache misses fall back to the server's HTTP results endpoint."""
-    monkeypatch.setenv("WORKER_CACHE_DIR", str(tmp_path / "wc"))
-    monkeypatch.setenv("FLOWMESH_BASE_URL", "http://server.test")
-    mixin = _Mixin()
-
-    server_payload = {"items": [{"output": "from-server"}], "ok": True}
-    monkeypatch.setattr(
-        mixin,
-        "_fetch_from_server",
-        lambda data_id: server_payload if data_id == "tsk-missing" else None,
-    )
-
-    out_dir = tmp_path / "task-down"
-    with mixin._task_span("tsk-down", "wfl-1", out_dir):
-        fetched = mixin._fetch_data("tsk-missing")
-    assert fetched == server_payload
-
-    spans = _spans_for_task(out_dir)
-    read_spans = [
-        s
-        for s in spans
-        if s["name"] == "read" and s["attributes"].get("data_id") == "tsk-missing"
-    ]
-    assert read_spans
-    assert read_spans[0]["attributes"].get("source") == "server"
-    assert read_spans[0]["attributes"].get("cache_hit") is False
-    assert read_spans[0]["attributes"]["flowmesh.kind"] == "network"
-
-
-def test_fetch_data_missing_in_cache_and_server_raises(
-    tmp_path: Path, monkeypatch
-) -> None:
-    monkeypatch.setenv("WORKER_CACHE_DIR", str(tmp_path / "wc"))
-    mixin = _Mixin()
-    monkeypatch.setattr(mixin, "_fetch_from_server", lambda data_id: None)
-
-    with mixin._task_span("tsk-down", "wfl-1", tmp_path / "task-down"):
-        with pytest.raises(Exception) as excinfo:
-            mixin._fetch_data("tsk-missing")
-    assert "tsk-missing" in str(excinfo.value)

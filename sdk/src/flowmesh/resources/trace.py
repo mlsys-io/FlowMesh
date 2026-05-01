@@ -1,0 +1,84 @@
+"""Workflow trace resource — fetch raw rows or run the analyzer."""
+
+import json
+from collections.abc import AsyncIterator, Iterator
+from enum import StrEnum
+
+import httpx
+
+from shared.governance import ProfileSummary
+
+from .._base_client import (
+    _make_url,
+    _raise_for_stream_status,
+    _raise_for_stream_status_async,
+)
+from ..exceptions import FlowMeshConnectionError
+from ._base import AsyncResource, SyncResource
+
+
+class TraceKind(StrEnum):
+    """Trace row kind. Members serialize as their values."""
+
+    SPANS = "spans"
+    ASSETS = "assets"
+    LINEAGE = "lineage"
+
+
+def _iter_jsonl_lines(lines: Iterator[str]) -> Iterator[dict]:
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        yield json.loads(line)
+
+
+async def _aiter_jsonl_lines(
+    lines: AsyncIterator[str],
+) -> AsyncIterator[dict]:
+    async for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        yield json.loads(line)
+
+
+class Trace(SyncResource):
+    """Synchronous workflow trace operations."""
+
+    def fetch(self, workflow_id: str, kind: TraceKind) -> Iterator[dict]:
+        """Yield JSONL rows for `spans`, `assets`, or `lineage`."""
+        url = _make_url(self._client.base_url, f"/workflows/{workflow_id}/trace/{kind}")
+        try:
+            with self._client._http.stream("GET", url) as response:
+                _raise_for_stream_status(response, "GET")
+                yield from _iter_jsonl_lines(response.iter_lines())
+        except httpx.ConnectError as exc:
+            raise FlowMeshConnectionError(f"Failed to connect to {url}: {exc}")
+
+    def analyze(self, workflow_id: str) -> ProfileSummary:
+        """Run the trace analyzer and return a parsed `ProfileSummary`."""
+        return ProfileSummary.model_validate(
+            self._client._request("GET", f"/workflows/{workflow_id}/trace/analyze")
+        )
+
+
+class AsyncTrace(AsyncResource):
+    """Asynchronous workflow trace operations."""
+
+    async def fetch(self, workflow_id: str, kind: TraceKind) -> AsyncIterator[dict]:
+        url = _make_url(self._client.base_url, f"/workflows/{workflow_id}/trace/{kind}")
+        try:
+            async with self._client._http.stream("GET", url) as response:
+                await _raise_for_stream_status_async(response, "GET")
+                async for row in _aiter_jsonl_lines(response.aiter_lines()):
+                    yield row
+        except httpx.ConnectError as exc:
+            raise FlowMeshConnectionError(f"Failed to connect to {url}: {exc}")
+
+    async def analyze(self, workflow_id: str) -> ProfileSummary:
+        return ProfileSummary.model_validate(
+            await self._client._request(
+                "GET", f"/workflows/{workflow_id}/trace/analyze"
+            )
+        )
