@@ -1,0 +1,129 @@
+# docker/ci.compose.yml — CI integration test stack (single-host, no GPU)
+#
+# Brings up a fully isolated FlowMesh environment for each CI run.
+# All services live in an internal Docker network; no state persists between runs.
+#
+# Supervisor spawns the CPU worker via Docker (with Docker socket mounted),
+# so the worker gets a proper token and can register correctly.
+#
+# NOTE: No ports are exposed in this base file.  Add ports via an overlay:
+#   - Fixed (GitHub Actions / bare docker compose):  docker/ci.ports.fixed.yml
+#   - Dynamic (local dev, run_local.sh):              generated at runtime
+#
+# Usage (from repo root):
+#   docker build -f src/worker/docker/Dockerfile.cpu -t ci/flowmesh_worker:latest-cpu .
+#   docker compose -p ci-$RUN_ID -f docker/ci.compose.yml -f docker/ci.ports.fixed.yml up -d --build
+#   docker compose -p ci-$RUN_ID -f docker/ci.compose.yml -f docker/ci.ports.fixed.yml down -v
+
+services:
+  redis_control:
+    image: redis:7-alpine
+    command: ["redis-server", "--loglevel", "warning"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 2s
+      retries: 10
+    networks: [ci-net]
+
+  redis_telemetry:
+    image: redis:7-alpine
+    command: ["redis-server", "--loglevel", "warning"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 2s
+      retries: 10
+    networks: [ci-net]
+
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_USER: flowmesh
+      POSTGRES_PASSWORD: flowmesh
+      POSTGRES_DB: flowmesh
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U flowmesh"]
+      interval: 3s
+      timeout: 2s
+      retries: 10
+    networks: [ci-net]
+
+  host:
+    build:
+      context: ..
+      dockerfile: src/host/Dockerfile
+    depends_on:
+      redis_control:
+        condition: service_healthy
+      redis_telemetry:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    environment:
+      REDIS_URL: "redis://redis_control:6379/0"
+      REDIS_CONTROL_URL: "redis://redis_control:6379/0"
+      REDIS_TELEMETRY_URL: "redis://redis_telemetry:6379/0"
+      DATABASE_URL: "postgresql+asyncpg://flowmesh:flowmesh@postgres:5432/flowmesh"
+      HOST_RUN_MIGRATIONS: "true"
+      API_KEY_HMAC_SECRET: "ci-hmac-secret"
+      BOOTSTRAP_ORG_ID: "ci-org"
+      BOOTSTRAP_ADMIN_EXTERNAL_ID: "ci-admin"
+      BOOTSTRAP_ADMIN_API_KEY: "flm-ci-00000000000000000000000000000000"
+      ORCHESTRATOR_DISPATCH_MODE: "adaptive"
+      ORCHESTRATOR_WORKER_SELECTION: "first_fit"
+      ENABLE_ELASTIC_SCALING: "false"
+      LOG_LEVEL: "INFO"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8000/healthz"]
+      interval: 5s
+      timeout: 3s
+      start_period: 20s
+      retries: 12
+    networks: [ci-net]
+
+  supervisor:
+    build:
+      context: ..
+      dockerfile: src/server/Dockerfile
+    depends_on:
+      host:
+        condition: service_healthy
+      redis_control:
+        condition: service_healthy
+      redis_telemetry:
+        condition: service_healthy
+    environment:
+      FLOWMESH_BASE_URL: "http://host:8000"
+      FLOWMESH_API_KEY: "flm-ci-00000000000000000000000000000000"
+      REDIS_CONTROL_URL: "redis://redis_control:6379/0"
+      REDIS_TELEMETRY_URL: "redis://redis_telemetry:6379/0"
+      SUPERVISOR_NAMESPACE: "ci"
+      SUPERVISOR_CLUSTER: "ci-cluster"
+      SUPERVISOR_ALIAS: "ci-supervisor"
+      LOG_LEVEL: "INFO"
+      # Worker spawning via Docker
+      FLOWMESH_REGISTRY: "ci"
+      FLOWMESH_VERSION: "latest"
+      WORKER_CONFIG_PATH: "/etc/supervisor/worker_config.yaml"
+      WORKER_EXECUTOR_IDLE_CLEANUP_SEC: "0"
+      # Workers are spawned on the compose network (WORKER_DOCKER_NETWORK) so
+      # they must reach supervisor by service name, not localhost.
+      SUPERVISOR_HOST: "supervisor"
+      # Pass HuggingFace token through so workers can download gated models.
+      # Set HF_TOKEN in the runner environment (or as a GitHub Actions secret).
+      HF_TOKEN:
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./ci.worker_config.yaml:/etc/supervisor/worker_config.yaml:ro
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8001/healthz"]
+      interval: 5s
+      timeout: 3s
+      start_period: 15s
+      retries: 10
+    networks: [ci-net]
+
+networks:
+  ci-net:
+    # Isolated per-run network; named via project (-p ci-$RUN_ID)

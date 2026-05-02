@@ -1,0 +1,11 @@
+default_worker_config:
+  hb_interval: 30
+
+workers:
+  - provider: docker
+    init_on_start: true
+    worker_config:
+      worker_alias: ci-worker-gpu
+      worker_type: gpu
+      cuda_devices: [0]
+      enable_ssh: true
