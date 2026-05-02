@@ -1,12 +1,22 @@
 """Model validation and round-trip tests for SDK Pydantic models."""
 
+from datetime import UTC, datetime
+
 import pytest
 from flowmesh.models import (
+    ActiveWaitBreakdown,
+    AssetSummary,
+    CriticalPathSummary,
+    E2EBreakdown,
+    EventSummary,
+    LineageEdge,
     LogQueryResponse,
     Node,
     NodeWorkerInfo,
     OkResponse,
+    ProfileSummary,
     TaskInfo,
+    TaskTiming,
     TaskUsage,
     WorkerHardware,
     WorkerInfo,
@@ -17,6 +27,14 @@ from flowmesh.models import (
 from flowmesh.models.ssh import SSHConnectionInfo
 from pydantic import BaseModel
 
+from server.governance.analyzer import ActiveWaitBreakdown as SrvActiveWaitBreakdown
+from server.governance.analyzer import AssetSummary as SrvAssetSummary
+from server.governance.analyzer import CriticalPathSummary as SrvCriticalPathSummary
+from server.governance.analyzer import E2EBreakdown as SrvE2EBreakdown
+from server.governance.analyzer import EventSummary as SrvEventSummary
+from server.governance.analyzer import LineageEdge as SrvLineageEdge
+from server.governance.analyzer import ProfileSummary as SrvProfileSummary
+from server.governance.analyzer import TaskTiming as SrvTaskTiming
 from server.registries.node import Node as SrvNode
 from server.registries.worker import Worker as SrvWorker
 from server.registries.worker import WorkerInfo as SrvWorkerInfo
@@ -308,3 +326,165 @@ class TestMiscModels:
         )
         r = SSHConnectionInfo.model_validate(_dump(server))
         assert r.access_mode == "proxy"
+
+
+# ------------------------------------------------------------------ #
+# Trace analyzer payload — server-side fixtures
+# ------------------------------------------------------------------ #
+
+_SRV_EVENT_SUMMARY = SrvEventSummary(
+    event_type=["model load", "generation"],
+    count=[1, 2],
+    total_seconds=[53.39, 1.23],
+    avg_seconds=[53.39, 0.62],
+    min_seconds=[53.39, 0.39],
+    max_seconds=[53.39, 0.84],
+)
+
+_SRV_NETWORK_SUMMARY = SrvEventSummary(
+    event_type=["dump to storage"],
+    count=[2],
+    total_seconds=[0.001],
+    avg_seconds=[0.001],
+    min_seconds=[0.000],
+    max_seconds=[0.001],
+)
+
+_SRV_TASK_TIMING = SrvTaskTiming(
+    data_id="tsk-a",
+    start_time=datetime(2026, 4, 30, 14, 0, 1, tzinfo=UTC),
+    end_time=datetime(2026, 4, 30, 14, 0, 55, tzinfo=UTC),
+    duration_seconds=54.0,
+    queuing_delay_seconds=0.5,
+    parent_data_ids=["tsk-up-a"],
+    blocking_parent_data_id="tsk-up-a",
+)
+
+_SRV_ACTIVE_WAIT = SrvActiveWaitBreakdown(
+    data_id=["tsk-a", "tsk-b"],
+    active_seconds=[54.0, 0.84],
+    wait_seconds=[0.0, 0.5],
+)
+
+_SRV_E2E = SrvE2EBreakdown(
+    hardware_summary=_SRV_EVENT_SUMMARY,
+    network_summary=_SRV_NETWORK_SUMMARY,
+    workflow_duration_seconds=55.05,
+    total_network_seconds=0.001,
+)
+
+_SRV_CP = SrvCriticalPathSummary(
+    path=["tsk-a", "tsk-b"],
+    critical_path_seconds=55.05,
+    active_wait_breakdown=_SRV_ACTIVE_WAIT,
+    hardware_summary=_SRV_EVENT_SUMMARY,
+    network_summary=_SRV_NETWORK_SUMMARY,
+    total_network_seconds=0.001,
+)
+
+_SRV_PROFILE = SrvProfileSummary(
+    workflow_id="wfl-abc",
+    event_count=18,
+    data_ids=["tsk-a", "tsk-b"],
+    assets=[
+        SrvAssetSummary(
+            asset_guid="g-1",
+            latest_data_id="tsk-a",
+            latest_version=1,
+            user_id="alice",
+            versions=1,
+            created_at="2026-04-30T14:00:55Z",
+        )
+    ],
+    lineage=[
+        SrvLineageEdge(
+            data_id="tsk-b",
+            source_data_id="tsk-a",
+            created_at="2026-04-30T14:00:55Z",
+        )
+    ],
+    e2e_breakdown=_SRV_E2E,
+    per_data_id=[_SRV_TASK_TIMING],
+    critical_path=_SRV_CP,
+)
+
+
+class TestTraceModels:
+    def test_asset_summary(self) -> None:
+        server = _SRV_PROFILE.assets[0]
+        r = AssetSummary.model_validate(_dump(server))
+        assert r.asset_guid == "g-1"
+        assert r.latest_data_id == "tsk-a"
+        assert r.latest_version == 1
+        assert r.user_id == "alice"
+        assert r.versions == 1
+
+    def test_lineage_edge(self) -> None:
+        server = _SRV_PROFILE.lineage[0]
+        r = LineageEdge.model_validate(_dump(server))
+        assert r.data_id == "tsk-b"
+        assert r.source_data_id == "tsk-a"
+
+    def test_event_summary_parallel_lists_align(self) -> None:
+        r = EventSummary.model_validate(_dump(_SRV_EVENT_SUMMARY))
+        n = len(r.event_type)
+        assert n == 2
+        assert all(
+            len(field) == n
+            for field in (
+                r.count,
+                r.total_seconds,
+                r.avg_seconds,
+                r.min_seconds,
+                r.max_seconds,
+            )
+        )
+        assert r.event_type[0] == "model load"
+        assert r.total_seconds[0] == pytest.approx(53.39)
+
+    def test_e2e_breakdown(self) -> None:
+        r = E2EBreakdown.model_validate(_dump(_SRV_E2E))
+        assert r.workflow_duration_seconds == pytest.approx(55.05)
+        assert "model load" in r.hardware_summary.event_type
+        assert "dump to storage" in r.network_summary.event_type
+
+    def test_active_wait_breakdown(self) -> None:
+        r = ActiveWaitBreakdown.model_validate(_dump(_SRV_ACTIVE_WAIT))
+        assert r.data_id == ["tsk-a", "tsk-b"]
+        assert r.wait_seconds[1] == pytest.approx(0.5)
+
+    def test_task_timing_datetime_round_trip(self) -> None:
+        r = TaskTiming.model_validate(_dump(_SRV_TASK_TIMING))
+        assert r.data_id == "tsk-a"
+        assert r.start_time == _SRV_TASK_TIMING.start_time
+        assert r.end_time == _SRV_TASK_TIMING.end_time
+        assert r.queuing_delay_seconds == pytest.approx(0.5)
+        assert r.blocking_parent_data_id == "tsk-up-a"
+
+    def test_critical_path_summary(self) -> None:
+        r = CriticalPathSummary.model_validate(_dump(_SRV_CP))
+        assert r.path == ["tsk-a", "tsk-b"]
+        assert r.critical_path_seconds == pytest.approx(55.05)
+        assert r.active_wait_breakdown.data_id == ["tsk-a", "tsk-b"]
+
+    def test_profile_summary(self) -> None:
+        r = ProfileSummary.model_validate(_dump(_SRV_PROFILE))
+        assert r.workflow_id == "wfl-abc"
+        assert r.event_count == 18
+        assert r.data_ids == ["tsk-a", "tsk-b"]
+        assert len(r.assets) == 1
+        assert len(r.lineage) == 1
+        assert r.e2e_breakdown.workflow_duration_seconds == pytest.approx(55.05)
+        assert r.critical_path is not None
+        assert r.critical_path.path == ["tsk-a", "tsk-b"]
+
+    def test_profile_summary_critical_path_optional(self) -> None:
+        server = _SRV_PROFILE.model_copy(update={"critical_path": None})
+        r = ProfileSummary.model_validate(_dump(server))
+        assert r.critical_path is None
+
+    def test_profile_summary_rejects_extra_fields(self) -> None:
+        payload = _dump(_SRV_PROFILE)
+        payload["unexpected"] = 1
+        with pytest.raises(Exception):
+            ProfileSummary.model_validate(payload)
