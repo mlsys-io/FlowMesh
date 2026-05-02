@@ -449,7 +449,7 @@ def _upload_dir_to_http(
         except Exception as exc:
             if not skip_errors:
                 raise ExecutionError(
-                    f"{file_kind.capitalize()} upload failed for {file_path}: {exc}"
+                    f"{file_kind} upload failed for {file_path}: {exc}"
                 ) from exc
             if logger:
                 logger.warning("Failed to upload %s %s: %s", file_kind, rel_name, exc)

@@ -306,13 +306,6 @@ class DataMixin(GovernanceMixin):
             raise ExecutionError("spec.inference must be a mapping.")
         return inference
 
-    @staticmethod
-    def _spec_upstream_results(spec: TaskSpecStrictBase) -> dict[str, Any]:
-        context = spec.upstreamResults or {}
-        if not isinstance(context, dict):
-            raise ExecutionError("spec._upstreamResults must be a mapping.")
-        return context
-
     def _collect_prompts_for_spec(
         self, spec: TaskSpecStrictBase, task_id: str, fetch_images: bool = False
     ) -> InferenceEntry:

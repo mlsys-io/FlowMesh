@@ -1,8 +1,6 @@
 """Trace analyzer response payload types as seen by the SDK.
 
-These mirror the wire shape returned by ``GET /workflows/{id}/trace/analyze``.
-The server's authoritative pydantic models live at
-``src/server/governance/analyzer.py``; this is the SDK-side client view.
+These describe the wire shape returned by ``GET /traces/{workflow_id}/analyze``.
 """
 
 from datetime import datetime

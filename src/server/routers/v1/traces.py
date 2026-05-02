@@ -14,7 +14,7 @@ from ...governance import ProfileSummary, analyze
 from ...registries.workflow import WorkflowRegistry
 from ...schemas.result import result_file_path
 
-router = APIRouter(prefix="/trace", tags=["Trace"])
+router = APIRouter(prefix="/traces", tags=["Traces"])
 
 _KIND_TO_FILENAME: dict[str, str] = {
     "spans": "spans.jsonl",

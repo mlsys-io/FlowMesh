@@ -1869,7 +1869,7 @@ requires-dist = [
     { name = "pymupdf", marker = "extra == 'agent'", specifier = ">=1.26.7" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.4.2" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=1.3.0" },
-    { name = "python-dotenv", marker = "extra == 'worker-core'", specifier = ">=1.1.1" },
+    { name = "python-dotenv", marker = "extra == 'worker-core'", specifier = ">=1.2.2" },
     { name = "python-multipart", marker = "extra == 'server'", specifier = ">=0.0.26" },
     { name = "pyyaml", marker = "extra == 'server'", specifier = ">=6.0.2" },
     { name = "qdrant-client", marker = "extra == 'rag'", specifier = ">=1.15.1" },

@@ -61,9 +61,7 @@ class GovernanceMixin:
         self._current_batch_id = task_id
         self._task_out_dir = Path(out_dir)
         self._task_owner_id = owner_id
-        logs_dir = self._lineage_dir()
-        assert logs_dir is not None  # _task_out_dir was just set
-        spans_path = logs_dir / "spans.jsonl"
+        spans_path = self._lineage_dir() / "spans.jsonl"
         spans_path.parent.mkdir(parents=True, exist_ok=True)
         with task_trace_context(workflow_id, spans_path):
             with get_tracer().start_as_current_span(
@@ -119,15 +117,17 @@ class GovernanceMixin:
     # ------------------------------------------------------------------ #
     # Asset / lineage rows — keep their own JSONL files                  #
     # ------------------------------------------------------------------ #
-    def _lineage_dir(self) -> Path | None:
+    def _lineage_dir(self) -> Path:
+        """Per-task ``logs/`` directory; requires an active ``_task_span``."""
         if self._task_out_dir is None:
-            return None
+            raise ExecutionError(
+                "Lineage directory accessed before _task_span entered; "
+                "wrap executor work in `with self._task_span(...)`."
+            )
         return self._task_out_dir / "logs"
 
     def _append_jsonl(self, filename: str, row: dict[str, Any]) -> None:
         target_dir = self._lineage_dir()
-        if target_dir is None:
-            return
         target_dir.mkdir(parents=True, exist_ok=True)
         line = json.dumps(row, ensure_ascii=False, default=str)
         path = target_dir / filename
@@ -208,12 +208,19 @@ class GovernanceMixin:
             len(source_data_ids),
         )
 
+    @staticmethod
+    def _spec_upstream_results(spec: TaskSpecStrictBase) -> dict[str, Any]:
+        """Validated ``spec._upstreamResults`` (server-injected stage context)."""
+        context = spec.upstreamResults or {}
+        if not isinstance(context, dict):
+            raise ExecutionError("spec._upstreamResults must be a mapping.")
+        return context
+
     def _extract_source_data_ids(self, spec: TaskSpecStrictBase) -> list[str]:
         """Extract upstream task/data IDs from ``_upstreamResults`` for lineage."""
-        upstream_refs = spec.upstreamResults or {}
         seen: set[str] = set()
         ids: list[str] = []
-        for upstream in upstream_refs.values():
+        for upstream in self._spec_upstream_results(spec).values():
             if not isinstance(upstream, dict):
                 continue
             candidate = upstream.get("task_id") or upstream.get("data_id")
