@@ -250,7 +250,7 @@ async def test_upload_task_trace_writes_named_file(
     target = tmp_path / "tsk-up" / "logs" / f"{trace_type}.jsonl"
     assert target.is_file()
     assert target.read_bytes() == payload
-    assert response.path == str(target)
+    assert response.path == target.as_posix()
 
 
 @pytest.mark.anyio

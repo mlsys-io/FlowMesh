@@ -407,38 +407,31 @@ def build_artifact_context(spec: TaskSpecStrictBase, out_dir: Path) -> dict[str,
     return {"base_dir": base_dir, "base_url": base_url}
 
 
-_TRACE_TYPES: tuple[str, ...] = ("spans", "assets", "lineage")
-
-
-def _upload_dir_to_http(
+def maybe_upload_artifacts(
     task: TaskReference,
     out_dir: Path,
-    source_subdir: str,
-    *,
-    file_kind: str = "artifact",
     logger: logging.Logger | None = None,
     skip_errors: bool = False,
 ) -> list[str]:
-    """Upload every file under ``out_dir/<source_subdir>/`` to
-    ``<destination>/{task_id}/files`` when the task has an HTTP destination;
-    no-op otherwise. The multipart filename is the path relative to
-    ``source_subdir``."""
+    """Upload files under `out_dir/artifacts/` when the task has an HTTP
+    destination; no-op otherwise. Each file's multipart filename is its
+    path relative to `out_dir/artifacts/`. Returns uploaded rel-paths."""
     if not task.task_id:
-        raise ExecutionError(f"Task id missing; cannot upload {file_kind}s")
+        raise ExecutionError("Task id missing; cannot upload artifacts")
     out_dir = Path(out_dir).resolve()
-    source_dir = out_dir / source_subdir
+    artifacts_dir = out_dir / "artifacts"
     destination = get_http_destination(task.spec)
-    if destination is None or not source_dir.is_dir():
+    if destination is None or not artifacts_dir.is_dir():
         return []
 
     base_url = destination.url.rstrip("/")
     upload_url = f"{base_url}/{task.task_id}/files"
     uploaded: list[str] = []
 
-    for file_path in sorted(source_dir.rglob("*")):
+    for file_path in sorted(artifacts_dir.rglob("*")):
         if not file_path.is_file():
             continue
-        rel_name = file_path.relative_to(source_dir).as_posix()
+        rel_name = file_path.relative_to(artifacts_dir).as_posix()
         try:
             with file_path.open("rb") as fh:
                 response = requests.request(
@@ -452,53 +445,18 @@ def _upload_dir_to_http(
         except Exception as exc:
             if not skip_errors:
                 raise ExecutionError(
-                    f"{file_kind} upload failed for {file_path}: {exc}"
+                    f"Artifact upload failed for {file_path}: {exc}"
                 ) from exc
             if logger:
-                logger.warning("Failed to upload %s %s: %s", file_kind, rel_name, exc)
+                logger.warning("Failed to upload artifact %s: %s", rel_name, exc)
             continue
         if logger:
             logger.info(
-                "Uploaded %s %s (%d bytes)",
-                file_kind,
-                rel_name,
-                file_path.stat().st_size,
+                "Uploaded artifact %s (%d bytes)", rel_name, file_path.stat().st_size
             )
         uploaded.append(rel_name)
 
     return uploaded
-
-
-def maybe_upload_artifacts(
-    task: TaskReference,
-    out_dir: Path,
-    logger: logging.Logger | None = None,
-    skip_errors: bool = False,
-) -> list[str]:
-    """Upload files under ``out_dir/artifacts/`` when the task has an HTTP
-    destination; no-op otherwise. Each file's multipart filename is its
-    path relative to ``out_dir/artifacts/``. Returns uploaded rel-paths."""
-    return _upload_dir_to_http(
-        task,
-        out_dir,
-        "artifacts",
-        file_kind="artifact",
-        logger=logger,
-        skip_errors=skip_errors,
-    )
-
-
-def _traces_base_url(results_url: str) -> str | None:
-    """Sibling URL for the per-task trace upload endpoint.
-
-    The destination ``url`` is the artifact base — by convention it ends with
-    ``/results``. Strip that suffix and append ``/traces``. Returns ``None``
-    when the suffix is missing so callers can skip uploads cleanly.
-    """
-    trimmed = results_url.rstrip("/")
-    if not trimmed.endswith("/results"):
-        return None
-    return trimmed[: -len("/results")] + "/traces"
 
 
 def maybe_upload_traces(
@@ -507,45 +465,32 @@ def maybe_upload_traces(
     logger: logging.Logger | None = None,
     skip_errors: bool = False,
 ) -> list[str]:
-    """Upload trace JSONL files under ``out_dir/logs/`` to
-    ``<traces-base>/{task_id}/{trace_type}`` when the task has an HTTP
-    destination; no-op otherwise. Returns uploaded trace types."""
+    """Upload trace JSONL files under `out_dir/logs/` to
+    `<api-base>/traces/{task_id}/{trace_type}` when the task has an HTTP
+    destination; no-op otherwise. The destination's `/results` artifact base
+    is swapped for `/traces`. Returns uploaded trace types."""
     if not task.task_id:
         raise ExecutionError("Task id missing; cannot upload traces")
     out_dir = Path(out_dir).resolve()
-    source_dir = out_dir / "logs"
+    logs_dir = out_dir / "logs"
     destination = get_http_destination(task.spec)
-    if destination is None or not source_dir.is_dir():
+    if destination is None or not logs_dir.is_dir():
         return []
 
-    traces_base = _traces_base_url(destination.url)
-    if traces_base is None:
-        if logger:
-            logger.warning(
-                "Skipping trace upload: destination URL %r does not end with "
-                "'/results'; cannot derive traces endpoint.",
-                destination.url,
-            )
-        return []
-
+    upload_base = destination.url.rstrip("/").removesuffix("/results") + "/traces"
     uploaded: list[str] = []
-    for trace_type in _TRACE_TYPES:
-        file_path = source_dir / f"{trace_type}.jsonl"
+
+    for trace_type in ("spans", "assets", "lineage"):
+        file_path = logs_dir / f"{trace_type}.jsonl"
         if not file_path.is_file():
             continue
-        upload_url = f"{traces_base}/{task.task_id}/{trace_type}"
+        upload_url = f"{upload_base}/{task.task_id}/{trace_type}"
         try:
             with file_path.open("rb") as fh:
                 response = requests.request(
                     destination.method,
                     upload_url,
-                    files={
-                        "file": (
-                            file_path.name,
-                            fh,
-                            "application/octet-stream",
-                        )
-                    },
+                    files={"file": (file_path.name, fh, "application/octet-stream")},
                     headers=destination.headers,
                     timeout=destination.timeout,
                 )
@@ -553,16 +498,14 @@ def maybe_upload_traces(
         except Exception as exc:
             if not skip_errors:
                 raise ExecutionError(
-                    f"trace upload failed for {file_path}: {exc}"
+                    f"Trace upload failed for {file_path}: {exc}"
                 ) from exc
             if logger:
                 logger.warning("Failed to upload trace %s: %s", trace_type, exc)
             continue
         if logger:
             logger.info(
-                "Uploaded trace %s (%d bytes)",
-                trace_type,
-                file_path.stat().st_size,
+                "Uploaded trace %s (%d bytes)", trace_type, file_path.stat().st_size
             )
         uploaded.append(trace_type)
 

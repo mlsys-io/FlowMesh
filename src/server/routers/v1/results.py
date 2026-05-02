@@ -38,7 +38,6 @@ router = APIRouter(prefix="/results", tags=["Results"])
 
 
 def _resolve_artifact_path(filename: str) -> Path:
-    """Resolve an upload's relative path to ``<task>/artifacts/...``."""
     sanitized = Path(filename)
     if (
         sanitized.is_absolute()

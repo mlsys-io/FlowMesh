@@ -112,4 +112,4 @@ async def upload_task_trace(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to store trace: {exc}",
         ) from exc
-    return PathResponse(ok=True, path=str(target_path))
+    return PathResponse(ok=True, path=target_path.as_posix())
