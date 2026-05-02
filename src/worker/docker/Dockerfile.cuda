@@ -9,7 +9,9 @@ FROM builder AS build_context
 # Runtime stage pulls only the CUDA runtime bits
 FROM nvidia/cuda:${CUDA_VERSION}-devel-ubuntu${UBUNTU_VERSION}
 LABEL org.opencontainers.image.title="FlowMesh Worker (CUDA)" \
-      org.opencontainers.image.description="GPU-enabled FlowMesh worker runtime"
+      org.opencontainers.image.description="GPU-enabled FlowMesh worker runtime" \
+      org.opencontainers.image.source="https://github.com/mlsys-io/FlowMesh" \
+      org.opencontainers.image.url="https://github.com/mlsys-io/FlowMesh"
 ARG TZ
 ARG CUDA_VERSION
 ARG TORCH_CUDA_ARCH_LIST
@@ -48,8 +50,13 @@ ENV PATH=/opt/py312/bin:$PATH
 
 # Install Python dependencies (CPU + GPU stacks)
 COPY src/worker/requirements/requirements.txt /tmp/requirements.txt
+COPY src/worker/requirements/requirements.gpu.txt /tmp/requirements.gpu.txt
 RUN uv pip install --python /opt/py312/bin/python --system --requirement /tmp/requirements.txt \
- && rm -f /tmp/requirements.txt
+ && uv pip install --python /opt/py312/bin/python --system --requirement /tmp/requirements.gpu.txt \
+ && rm -f /tmp/requirements.txt /tmp/requirements.gpu.txt
+
+# Verify GPU dependencies are importable at build time
+RUN python -c "import torch; from transformers import AutoModelForCausalLM; print('torch:', torch.__version__, 'cuda:', torch.cuda.is_available())"
 
 # Non-root runtime user + HF cache
 RUN useradd -m -u 10001 appuser \
@@ -60,13 +67,10 @@ WORKDIR /app
 
 # Application code
 COPY src/worker ./worker
-COPY src/shared/__init__.py ./shared/__init__.py
-COPY src/shared/all ./shared/all
-COPY src/shared/host_worker ./shared/host_worker
-COPY src/shared/guardian_worker ./shared/guardian_worker
+COPY src/shared ./shared
 
 # Default worker env knobs
-ENV GUARDIAN_GRPC_TARGET=flowmesh_guardian:50051 \
+ENV SUPERVISOR_GRPC_TARGET=flowmesh_server:50051 \
     RESULTS_DIR=/app/worker/results \
     LOG_LEVEL=INFO \
     HEARTBEAT_INTERVAL_SEC=30 \
