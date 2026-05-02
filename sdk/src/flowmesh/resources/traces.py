@@ -12,24 +12,24 @@ from .._base_client import (
     _raise_for_stream_status_async,
 )
 from ..exceptions import FlowMeshConnectionError
-from ..models.trace import ProfileSummary
+from ..models.traces import ProfileSummary
 from ._base import AsyncResource, SyncResource
 
 
-class TraceKind(StrEnum):
-    """Trace row kind. Members serialize as their values."""
+class TraceType(StrEnum):
+    """Trace row type. Members serialize as their values."""
 
     SPANS = "spans"
     ASSETS = "assets"
     LINEAGE = "lineage"
 
 
-class Trace(SyncResource):
+class Traces(SyncResource):
     """Synchronous workflow trace operations."""
 
-    def fetch(self, workflow_id: str, kind: TraceKind) -> Iterator[dict]:
+    def fetch(self, workflow_id: str, trace_type: TraceType) -> Iterator[dict]:
         """Yield JSONL rows for `spans`, `assets`, or `lineage`."""
-        url = _make_url(self._client.base_url, f"/traces/{workflow_id}/{kind}")
+        url = _make_url(self._client.base_url, f"/traces/{workflow_id}/{trace_type}")
         try:
             with self._client._http.stream("GET", url) as response:
                 _raise_for_stream_status(response, "GET")
@@ -51,11 +51,13 @@ class Trace(SyncResource):
         )
 
 
-class AsyncTrace(AsyncResource):
+class AsyncTraces(AsyncResource):
     """Asynchronous workflow trace operations."""
 
-    async def fetch(self, workflow_id: str, kind: TraceKind) -> AsyncIterator[dict]:
-        url = _make_url(self._client.base_url, f"/traces/{workflow_id}/{kind}")
+    async def fetch(
+        self, workflow_id: str, trace_type: TraceType
+    ) -> AsyncIterator[dict]:
+        url = _make_url(self._client.base_url, f"/traces/{workflow_id}/{trace_type}")
         try:
             async with self._client._http.stream("GET", url) as response:
                 await _raise_for_stream_status_async(response, "GET")

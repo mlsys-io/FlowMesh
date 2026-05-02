@@ -32,7 +32,7 @@ def test_task_span_emits_root_with_compute_kind(tmp_path: Path) -> None:
     assert "queuing for execution" in names
     task_row = next(s for s in spans if s["name"] == "task")
     assert task_row["attributes"]["data_id"] == "tsk-1"
-    assert task_row["attributes"]["flowmesh.kind"] == "compute"
+    assert task_row["attributes"]["flowmesh.type"] == "compute"
     assert {s["context"]["trace_id"] for s in spans} == {
         "0xfbad6be5c4434181a2d394eac830dea1"
     }
@@ -85,7 +85,7 @@ def test_record_output_emits_dump_span_and_rows(tmp_path: Path) -> None:
     dump = [s for s in spans if s["name"] == "dump to storage"]
     assert dump
     assert dump[0]["attributes"].get("data_id") == "tsk-up"
-    assert dump[0]["attributes"]["flowmesh.kind"] == "network"
+    assert dump[0]["attributes"]["flowmesh.type"] == "network"
     assert dump[0]["attributes"].get("payload_bytes", 0) > 0
 
 

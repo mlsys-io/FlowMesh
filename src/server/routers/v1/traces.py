@@ -16,7 +16,7 @@ from ...schemas.result import result_file_path
 
 router = APIRouter(prefix="/traces", tags=["Traces"])
 
-_KIND_TO_FILENAME: dict[str, str] = {
+_TYPE_TO_FILENAME: dict[str, str] = {
     "spans": "spans.jsonl",
     "assets": "assets.jsonl",
     "lineage": "lineage.jsonl",
@@ -63,20 +63,20 @@ async def analyze_workflow_trace(
 
 
 @router.get(
-    "/{workflow_id}/{kind}",
+    "/{workflow_id}/{trace_type}",
     summary="Stream JSONL rows (spans / assets / lineage)",
 )
 async def get_workflow_trace(
     workflow_id: str,
-    kind: str,
+    trace_type: str,
     registry: WorkflowRegistry = Depends(get_workflow_registry),
     results_dir: Path = Depends(get_results_dir),
 ) -> StreamingResponse:
-    filename = _KIND_TO_FILENAME.get(kind)
+    filename = _TYPE_TO_FILENAME.get(trace_type)
     if filename is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"unknown kind '{kind}'; expected spans, assets, or lineage",
+            detail=f"unknown type '{trace_type}'; expected spans, assets, or lineage",
         )
     task_ids = await _resolve_task_ids(workflow_id, registry)
     return StreamingResponse(

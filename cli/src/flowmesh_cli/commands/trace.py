@@ -7,12 +7,12 @@ from pathlib import Path
 
 import typer
 from flowmesh.exceptions import FlowMeshError
-from flowmesh.models.trace import (
+from flowmesh.models.traces import (
     EventSummary,
     ProfileSummary,
     TaskTiming,
 )
-from flowmesh.resources.traces import TraceKind
+from flowmesh.resources.traces import TraceType
 from pydantic import BaseModel
 from rich.box import SIMPLE
 from rich.console import Console
@@ -66,10 +66,10 @@ def _event_rows(summary: EventSummary) -> list[_EventRow]:
             count=count,
             total_seconds=total,
             avg_seconds=avg,
-            min_seconds=mn,
-            max_seconds=mx,
+            min_seconds=min,
+            max_seconds=max,
         )
-        for event_type, count, total, avg, mn, mx in zip(
+        for event_type, count, total, avg, min, max in zip(
             summary.event_type,
             summary.count,
             summary.total_seconds,
@@ -301,8 +301,8 @@ def _print_lineage(summary: ProfileSummary) -> None:
 
 @app.command("fetch")
 def fetch(
-    kind: TraceKind = typer.Argument(
-        ..., help="One of: spans, assets, lineage", metavar="KIND"
+    trace_type: TraceType = typer.Argument(
+        ..., help="One of: spans, assets, lineage", metavar="TYPE"
     ),
     workflow_id: str = typer.Argument(..., help="Workflow identifier"),
     output: Path | None = typer.Option(
@@ -312,7 +312,7 @@ def fetch(
     """Fetch JSONL rows for a workflow's spans / assets / lineage."""
     client = flowmesh_client_from_config()
     try:
-        rows = client.trace.fetch(workflow_id, kind)
+        rows = client.traces.fetch(workflow_id, trace_type)
     except FlowMeshError as exc:
         logging.error(str(exc))
         raise typer.Exit(code=1)
@@ -328,7 +328,7 @@ def fetch(
         for row in rows:
             fh.write(json.dumps(row, ensure_ascii=False) + "\n")
             count += 1
-    logging.log(f"Wrote {count} {kind} rows to {output}")
+    logging.log(f"Wrote {count} {trace_type} rows to {output}")
 
 
 @app.command("analyze")
@@ -350,7 +350,7 @@ def analyze(
 
     client = flowmesh_client_from_config()
     try:
-        summary = client.trace.analyze(workflow_id)
+        summary = client.traces.analyze(workflow_id)
     except FlowMeshError as exc:
         logging.error(str(exc))
         raise typer.Exit(code=1)

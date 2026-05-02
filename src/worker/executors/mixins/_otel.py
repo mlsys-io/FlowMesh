@@ -30,7 +30,7 @@ from opentelemetry.sdk.trace.export import (
 )
 from opentelemetry.sdk.trace.id_generator import IdGenerator, RandomIdGenerator
 
-from shared.governance.spans import FlowMeshSpanKind
+from shared.schemas.spans import SpanType
 from shared.utils.ids import PREFIX_WORKFLOW
 
 _HEX_ONLY = re.compile(r"[^0-9a-f]")
@@ -147,13 +147,13 @@ def task_trace_context(workflow_id: str, spans_path: Path) -> Iterator[None]:
         _workflow_id_var.reset(token)
 
 
-def attributes_with_kind(
-    flowmesh_kind: FlowMeshSpanKind,
+def attributes_with_type(
+    span_type: SpanType,
     *,
     data_id: str | None,
     extra: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    attrs: dict[str, Any] = {"flowmesh.kind": flowmesh_kind.value}
+    attrs: dict[str, Any] = {"flowmesh.type": span_type.value}
     if data_id is not None:
         attrs["data_id"] = data_id
     if extra:

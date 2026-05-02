@@ -9,12 +9,12 @@ def _span(
     data_id: str,
     start: str,
     end: str,
-    kind: str,
+    span_type: str,
     parent_id: str | None = None,
     span_id: str = "0xa3f1e9d2c5b40678",
     batch_id: str | None = None,
 ) -> dict[str, Any]:
-    attributes: dict[str, Any] = {"data_id": data_id, "flowmesh.kind": kind}
+    attributes: dict[str, Any] = {"data_id": data_id, "flowmesh.type": span_type}
     if batch_id:
         attributes["batch_id"] = batch_id
     return {
@@ -42,7 +42,7 @@ def _spans() -> list[dict[str, Any]]:
             data_id="tsk-1",
             start="2026-04-29T00:00:00+00:00",
             end="2026-04-29T00:00:02+00:00",
-            kind="compute",
+            span_type="compute",
             span_id="0x1111111111111111",
         ),
         _span(
@@ -50,7 +50,7 @@ def _spans() -> list[dict[str, Any]]:
             data_id="tsk-1",
             start="2026-04-29T00:00:00+00:00",
             end="2026-04-29T00:00:01+00:00",
-            kind="compute",
+            span_type="compute",
             parent_id="0x1111111111111111",
             span_id="0x1111000000000001",
             batch_id="tsk-1",
@@ -60,7 +60,7 @@ def _spans() -> list[dict[str, Any]]:
             data_id="tsk-1",
             start="2026-04-29T00:00:01+00:00",
             end="2026-04-29T00:00:02+00:00",
-            kind="network",
+            span_type="network",
             parent_id="0x1111111111111111",
             span_id="0x1111000000000002",
         ),
@@ -69,7 +69,7 @@ def _spans() -> list[dict[str, Any]]:
             data_id="tsk-2",
             start="2026-04-29T00:00:00+00:00",
             end="2026-04-29T00:00:04+00:00",
-            kind="compute",
+            span_type="compute",
             span_id="0x2222222222222222",
         ),
         _span(
@@ -77,7 +77,7 @@ def _spans() -> list[dict[str, Any]]:
             data_id="tsk-2",
             start="2026-04-29T00:00:00+00:00",
             end="2026-04-29T00:00:03+00:00",
-            kind="compute",
+            span_type="compute",
             parent_id="0x2222222222222222",
             span_id="0x2222000000000001",
             batch_id="tsk-2",
@@ -87,7 +87,7 @@ def _spans() -> list[dict[str, Any]]:
             data_id="tsk-2",
             start="2026-04-29T00:00:03+00:00",
             end="2026-04-29T00:00:04+00:00",
-            kind="network",
+            span_type="network",
             parent_id="0x2222222222222222",
             span_id="0x2222000000000002",
         ),
@@ -96,7 +96,7 @@ def _spans() -> list[dict[str, Any]]:
             data_id="tsk-3",
             start="2026-04-29T00:00:05+00:00",
             end="2026-04-29T00:00:06+00:00",
-            kind="compute",
+            span_type="compute",
             span_id="0x3333333333333333",
         ),
         _span(
@@ -104,7 +104,7 @@ def _spans() -> list[dict[str, Any]]:
             data_id="tsk-3",
             start="2026-04-29T00:00:05+00:00",
             end="2026-04-29T00:00:05.500000+00:00",
-            kind="network",
+            span_type="network",
             parent_id="0x3333333333333333",
             span_id="0x3333000000000001",
         ),
@@ -113,7 +113,7 @@ def _spans() -> list[dict[str, Any]]:
             data_id="tsk-3",
             start="2026-04-29T00:00:05.500000+00:00",
             end="2026-04-29T00:00:06+00:00",
-            kind="network",
+            span_type="network",
             parent_id="0x3333333333333333",
             span_id="0x3333000000000002",
         ),

@@ -9,7 +9,7 @@ from .resources.results import Results
 from .resources.ssh import SSH
 from .resources.system import System
 from .resources.tasks import Tasks
-from .resources.traces import Trace
+from .resources.traces import Traces
 from .resources.workers import Workers
 from .resources.workflows import Workflows
 
@@ -50,7 +50,7 @@ class FlowMesh(BaseClient):
     nodes: Nodes
     ssh: SSH
     system: System
-    trace: Trace
+    traces: Traces
 
     def __init__(
         self,
@@ -73,4 +73,4 @@ class FlowMesh(BaseClient):
         self.nodes = Nodes(self)
         self.ssh = SSH(self)
         self.system = System(self)
-        self.trace = Trace(self)
+        self.traces = Traces(self)

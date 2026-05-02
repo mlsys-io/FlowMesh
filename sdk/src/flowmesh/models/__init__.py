@@ -20,7 +20,7 @@ from .nodes import (
 )
 from .results import PathResponse
 from .tasks import HardwareUsage, TaskInfo, TaskUsage
-from .trace import (
+from .traces import (
     ActiveWaitBreakdown,
     AssetSummary,
     CriticalPathSummary,

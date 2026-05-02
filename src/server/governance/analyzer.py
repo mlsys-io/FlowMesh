@@ -2,7 +2,7 @@
 
 Per-data_id timing comes from the ``"task"`` root span; ``"dump to storage"``
 end_time is the data-ready timestamp; ``queuing_delay`` =
-task.start − max(parent.dump_to_storage.end).
+task.start - max(parent.dump_to_storage.end).
 """
 
 from collections import defaultdict
@@ -12,10 +12,10 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 
-from shared.governance.spans import (
+from shared.schemas.spans import (
     READY_SPAN_NAME,
     TASK_SPAN_NAME,
-    FlowMeshSpanKind,
+    SpanType,
 )
 
 from .spans import Span
@@ -338,8 +338,8 @@ def _obtain_breakdown(
 
     for spans in grouped.values():
         for span in spans:
-            kind = span.attributes.flowmesh_kind
-            if kind == FlowMeshSpanKind.MARKER:
+            span_type = span.attributes.flowmesh_type
+            if span_type == SpanType.MARKER:
                 continue
             if span.name == TASK_SPAN_NAME:
                 all_starts.append(span.start_time)
@@ -348,12 +348,12 @@ def _obtain_breakdown(
 
             duration = span.duration_seconds
 
-            if kind == FlowMeshSpanKind.NETWORK:
+            if span_type == SpanType.NETWORK:
                 interval = (span.start_time, span.end_time)
                 network_intervals.append(interval)
                 network_intervals_by_type[span.name].append(interval)
                 network_active_seconds[span.name].append(duration)
-            elif kind == FlowMeshSpanKind.COMPUTE:
+            elif span_type == SpanType.COMPUTE:
                 by_type[span.name].append(duration)
                 if batch_id := span.attributes.batch_id:
                     by_type_batch[span.name][batch_id] += span.end_time - (

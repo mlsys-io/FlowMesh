@@ -1,4 +1,4 @@
-"""Wire-contract names + kind enum for the OTel-shape span rows in ``spans.jsonl``.
+"""Wire-contract names + type enum for the OTel-shape span rows in ``spans.jsonl``.
 
 Both the worker (producer, ``src/worker/executors/mixins/governance.py``) and
 the server analyzer (consumer, ``src/server/governance/analyzer.py``) read
@@ -9,8 +9,8 @@ these. Pydantic parsing models for span rows live server-side at
 from enum import StrEnum
 
 
-class FlowMeshSpanKind(StrEnum):
-    """Producer-side kind in ``attributes["flowmesh.kind"]``."""
+class SpanType(StrEnum):
+    """Producer-side type in ``attributes["flowmesh.type"]``."""
 
     COMPUTE = "compute"
     NETWORK = "network"

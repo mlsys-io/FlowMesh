@@ -10,7 +10,7 @@ from typing import Any
 
 import pandas as pd
 
-from .models.trace import EventSummary, ProfileSummary
+from .models.traces import EventSummary, ProfileSummary
 
 _MERMAID_SAFE = re.compile(r"[^A-Za-z0-9_]+")
 

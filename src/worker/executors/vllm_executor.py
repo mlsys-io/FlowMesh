@@ -66,7 +66,7 @@ except Exception:
         _HAS_VLLM = False
         StructuredOutputsParams = None  # type: ignore
 
-from shared.governance.spans import FlowMeshSpanKind
+from shared.schemas.spans import SpanType
 from shared.tasks.specs import InferenceSpecStrict
 from worker.config import WorkerConfig
 from worker.lifecycle import Lifecycle
@@ -433,7 +433,7 @@ Summary:"""
                 try:
                     with self._span(
                         "model load",
-                        kind=FlowMeshSpanKind.COMPUTE,
+                        span_type=SpanType.COMPUTE,
                         attributes={
                             "task_ids": list(task_ids or ()),
                             "tensor_parallel_size": tp_value,
@@ -1011,7 +1011,7 @@ Summary:"""
         t0 = time.time()
         with self._span(
             "generation",
-            kind=FlowMeshSpanKind.COMPUTE,
+            span_type=SpanType.COMPUTE,
             attributes={
                 "task_ids": task_ids,
                 "prompt_count": len(self._batched_inputs),
@@ -1026,7 +1026,7 @@ Summary:"""
 
         with self._span(
             "output postprocessing",
-            kind=FlowMeshSpanKind.COMPUTE,
+            span_type=SpanType.COMPUTE,
             attributes={"task_ids": task_ids},
         ):
             per_task_items: dict[str, list[dict[str, Any]]] = {}
@@ -1188,7 +1188,7 @@ Summary:"""
 
         with self._span(
             "JSONL export",
-            kind=FlowMeshSpanKind.COMPUTE,
+            span_type=SpanType.COMPUTE,
             attributes={"task_ids": task_ids},
         ):
             self._maybe_export_jsonl(spec, task_id, result, out_dir)

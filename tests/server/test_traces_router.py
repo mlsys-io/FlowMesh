@@ -1,4 +1,4 @@
-"""Tests for the workflow trace router."""
+"""Tests for the workflow traces router."""
 
 import json
 from pathlib import Path
@@ -9,7 +9,7 @@ import pytest
 from fastapi import HTTPException
 from fastapi.responses import StreamingResponse
 
-from server.routers.v1 import traces as trace_router
+from server.routers.v1 import traces as traces_router
 
 
 def _otel_span(
@@ -18,12 +18,12 @@ def _otel_span(
     data_id: str,
     start: str,
     end: str,
-    kind: str,
+    span_type: str,
     span_id: str = "0xa3f1e9d2c5b40678",
     parent_id: str | None = None,
     batch_id: str | None = None,
 ) -> dict[str, Any]:
-    attributes: dict[str, Any] = {"data_id": data_id, "flowmesh.kind": kind}
+    attributes: dict[str, Any] = {"data_id": data_id, "flowmesh.type": span_type}
     if batch_id:
         attributes["batch_id"] = batch_id
     return {
@@ -94,7 +94,7 @@ async def test_get_workflow_trace_concats_across_tasks(tmp_path: Path) -> None:
                 data_id="tsk-a",
                 start="2026-04-29T00:00:00+00:00",
                 end="2026-04-29T00:00:01+00:00",
-                kind="network",
+                span_type="network",
                 span_id="0xaaaa000000000001",
             )
         ],
@@ -109,16 +109,16 @@ async def test_get_workflow_trace_concats_across_tasks(tmp_path: Path) -> None:
                 data_id="tsk-a",
                 start="2026-04-29T00:00:01+00:00",
                 end="2026-04-29T00:00:02+00:00",
-                kind="network",
+                span_type="network",
                 span_id="0xbbbb000000000001",
             )
         ],
         lineage=[{"data_id": "tsk-b", "source_data_id": "tsk-a"}],
     )
 
-    response = await trace_router.get_workflow_trace(
+    response = await traces_router.get_workflow_trace(
         workflow_id="wfl-1",
-        kind="spans",
+        trace_type="spans",
         registry=_registry(["tsk-a", "tsk-b"]),
         results_dir=tmp_path,
     )
@@ -134,9 +134,9 @@ async def test_get_workflow_trace_skips_missing_files(tmp_path: Path) -> None:
         "tsk-a",
         assets=[{"data_id": "tsk-a", "asset_guid": "g-a", "version": 1}],
     )
-    response = await trace_router.get_workflow_trace(
+    response = await traces_router.get_workflow_trace(
         workflow_id="wfl-1",
-        kind="assets",
+        trace_type="assets",
         registry=_registry(["tsk-a", "tsk-b-missing"]),
         results_dir=tmp_path,
     )
@@ -146,11 +146,11 @@ async def test_get_workflow_trace_skips_missing_files(tmp_path: Path) -> None:
 
 
 @pytest.mark.anyio
-async def test_get_workflow_trace_unknown_kind(tmp_path: Path) -> None:
+async def test_get_workflow_trace_unknown_type(tmp_path: Path) -> None:
     with pytest.raises(HTTPException) as excinfo:
-        await trace_router.get_workflow_trace(
+        await traces_router.get_workflow_trace(
             workflow_id="wfl-1",
-            kind="bogus",
+            trace_type="bogus",
             registry=_registry(["tsk-a"]),
             results_dir=tmp_path,
         )
@@ -168,7 +168,7 @@ async def test_analyze_workflow_trace_runs_analyzer(tmp_path: Path) -> None:
                 data_id="tsk-a",
                 start="2026-04-29T00:00:00+00:00",
                 end="2026-04-29T00:00:01+00:00",
-                kind="compute",
+                span_type="compute",
                 span_id="0xaaaa000000000001",
             ),
             _otel_span(
@@ -176,7 +176,7 @@ async def test_analyze_workflow_trace_runs_analyzer(tmp_path: Path) -> None:
                 data_id="tsk-a",
                 start="2026-04-29T00:00:00.500000+00:00",
                 end="2026-04-29T00:00:01+00:00",
-                kind="network",
+                span_type="network",
                 parent_id="0xaaaa000000000001",
                 span_id="0xaaaa000000000002",
             ),
@@ -185,7 +185,7 @@ async def test_analyze_workflow_trace_runs_analyzer(tmp_path: Path) -> None:
                 data_id="tsk-a",
                 start="2026-04-29T00:00:01+00:00",
                 end="2026-04-29T00:00:01+00:00",
-                kind="marker",
+                span_type="marker",
                 parent_id="0xaaaa000000000001",
                 span_id="0xaaaa000000000003",
             ),
@@ -201,7 +201,7 @@ async def test_analyze_workflow_trace_runs_analyzer(tmp_path: Path) -> None:
         ],
     )
 
-    summary = await trace_router.analyze_workflow_trace(
+    summary = await traces_router.analyze_workflow_trace(
         workflow_id="wfl-1",
         registry=_registry(["tsk-a"]),
         results_dir=tmp_path,
@@ -221,9 +221,9 @@ async def test_workflow_not_found_raises_404(tmp_path: Path) -> None:
     registry.get_workflow_async.return_value = None
 
     with pytest.raises(HTTPException) as excinfo:
-        await trace_router.get_workflow_trace(
+        await traces_router.get_workflow_trace(
             workflow_id="wfl-missing",
-            kind="spans",
+            trace_type="spans",
             registry=registry,
             results_dir=tmp_path,
         )

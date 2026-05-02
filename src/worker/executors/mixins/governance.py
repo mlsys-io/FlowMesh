@@ -13,16 +13,16 @@ from typing import Any
 
 from opentelemetry.trace import Span as OTelSpan
 
-from shared.governance.spans import (
+from shared.schemas.spans import (
     READY_SPAN_NAME,
     TASK_SPAN_NAME,
-    FlowMeshSpanKind,
+    SpanType,
 )
 from shared.tasks.specs import TaskSpecStrictBase
 from shared.utils.time import now_iso
 
 from ..base_executor import ExecutionError
-from ._otel import attributes_with_kind, get_tracer, task_trace_context
+from ._otel import attributes_with_type, get_tracer, task_trace_context
 
 logger = logging.getLogger(__name__)
 
@@ -66,8 +66,8 @@ class GovernanceMixin:
         with task_trace_context(workflow_id, spans_path):
             with get_tracer().start_as_current_span(
                 TASK_SPAN_NAME,
-                attributes=attributes_with_kind(
-                    FlowMeshSpanKind.COMPUTE,
+                attributes=attributes_with_type(
+                    SpanType.COMPUTE,
                     data_id=task_id,
                     extra={
                         "batch_id": task_id,
@@ -84,13 +84,13 @@ class GovernanceMixin:
         self,
         name: str,
         *,
-        kind: FlowMeshSpanKind = FlowMeshSpanKind.COMPUTE,
+        span_type: SpanType = SpanType.COMPUTE,
         data_id: str | None = None,
         attributes: dict[str, Any] | None = None,
     ) -> Iterator[OTelSpan]:
         """Child span recording start at __enter__, end at __exit__."""
-        attrs = attributes_with_kind(
-            kind,
+        attrs = attributes_with_type(
+            span_type,
             data_id=data_id if data_id is not None else self._task_id,
             extra={"batch_id": self._current_batch_id, **(attributes or {})},
         )
@@ -101,13 +101,13 @@ class GovernanceMixin:
         self,
         name: str,
         *,
-        kind: FlowMeshSpanKind = FlowMeshSpanKind.MARKER,
+        span_type: SpanType = SpanType.MARKER,
         data_id: str | None = None,
         attributes: dict[str, Any] | None = None,
     ) -> None:
         """Record a moment-in-time checkpoint as a zero-duration span."""
-        attrs = attributes_with_kind(
-            kind,
+        attrs = attributes_with_type(
+            span_type,
             data_id=data_id if data_id is not None else self._task_id,
             extra={"batch_id": self._current_batch_id, **(attributes or {})},
         )
@@ -178,7 +178,7 @@ class GovernanceMixin:
         """Emit asset + lineage rows; ``data`` is only serialized to size the
         ``"dump to storage"`` span (runtime does not upload payloads)."""
         with self._span(
-            READY_SPAN_NAME, kind=FlowMeshSpanKind.NETWORK, data_id=data_id
+            READY_SPAN_NAME, span_type=SpanType.NETWORK, data_id=data_id
         ) as dump_span:
             try:
                 payload = json.dumps(data, ensure_ascii=False, default=str)

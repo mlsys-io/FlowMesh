@@ -2,8 +2,8 @@
 
 Producers (workers) emit one ``ReadableSpan.to_json()`` row per line; the
 analyzer reads them as :class:`Span` instances. The shared wire-contract enum
-:class:`shared.governance.spans.FlowMeshSpanKind` lives in
-``src/shared/governance/spans.py`` because workers also need it.
+:class:`shared.schemas.spans.SpanType` lives in
+``src/shared/schemas/spans.py`` because workers also need it.
 """
 
 from datetime import datetime
@@ -11,7 +11,7 @@ from typing import Annotated, Any
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field
 
-from shared.governance.spans import FlowMeshSpanKind
+from shared.schemas.spans import SpanType
 
 
 def _strip_hex_prefix(value: Any) -> Any:
@@ -47,7 +47,7 @@ class SpanAttributes(BaseModel):
     model_config = ConfigDict(extra="allow", populate_by_name=True)
     data_id: str | None = None
     batch_id: str | None = None
-    flowmesh_kind: FlowMeshSpanKind | None = Field(default=None, alias="flowmesh.kind")
+    flowmesh_type: SpanType | None = Field(default=None, alias="flowmesh.type")
 
 
 class Span(BaseModel):

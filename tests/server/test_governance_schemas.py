@@ -1,5 +1,5 @@
 from server.governance import Span
-from shared.governance import FlowMeshSpanKind
+from shared.schemas.spans import SpanType
 
 
 def test_span_otel_round_trip() -> None:
@@ -16,7 +16,7 @@ def test_span_otel_round_trip() -> None:
         "attributes": {
             "data_id": "tsk-1",
             "batch_id": "tsk-1",
-            "flowmesh.kind": "compute",
+            "flowmesh.type": "compute",
         },
     }
     span = Span.parse_otel_json(raw)
@@ -26,7 +26,7 @@ def test_span_otel_round_trip() -> None:
     assert span.parent_id == "1b2c3d4e5f6a7b8c"
     assert span.attributes.data_id == "tsk-1"
     assert span.attributes.batch_id == "tsk-1"
-    assert span.attributes.flowmesh_kind == FlowMeshSpanKind.COMPUTE
+    assert span.attributes.flowmesh_type == SpanType.COMPUTE
     assert span.duration_seconds == 54.0
 
 
@@ -38,8 +38,8 @@ def test_span_marker_zero_duration() -> None:
         "start_time": "2026-04-30T14:00:01.500000Z",
         "end_time": "2026-04-30T14:00:01.500000Z",
         "status": {"status_code": "OK"},
-        "attributes": {"data_id": "tsk-2", "flowmesh.kind": "marker"},
+        "attributes": {"data_id": "tsk-2", "flowmesh.type": "marker"},
     }
     span = Span.parse_otel_json(raw)
     assert span.duration_seconds == 0.0
-    assert span.attributes.flowmesh_kind == FlowMeshSpanKind.MARKER
+    assert span.attributes.flowmesh_type == SpanType.MARKER

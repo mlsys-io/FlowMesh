@@ -56,7 +56,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from shared.governance.spans import FlowMeshSpanKind
+from shared.schemas.spans import SpanType
 from shared.tasks.specs import (
     EmbeddingSpecStrict,
     InferenceSpecStrict,
@@ -411,7 +411,7 @@ class HFTransformersExecutor(InferenceMixin, Executor):
         task_id: str,
         out_dir: Path,
     ) -> dict[str, Any]:
-        with self._span("model load", kind=FlowMeshSpanKind.COMPUTE):
+        with self._span("model load", span_type=SpanType.COMPUTE):
             self._ensure_model(spec)
 
         deps = self._extract_source_data_ids(spec)
@@ -531,7 +531,7 @@ class HFTransformersExecutor(InferenceMixin, Executor):
         t0 = time.time()
         with self._span(
             "generation",
-            kind=FlowMeshSpanKind.COMPUTE,
+            span_type=SpanType.COMPUTE,
             attributes={"prompt_count": len(self._prompts)},
         ):
             with torch.no_grad():
