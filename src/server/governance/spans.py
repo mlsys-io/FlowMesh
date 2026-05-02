@@ -2,8 +2,8 @@
 
 Producers (workers) emit one ``ReadableSpan.to_json()`` row per line; the
 analyzer reads them as :class:`Span` instances. The shared wire-contract enum
-:class:`shared.schemas.spans.SpanType` lives in
-``src/shared/schemas/spans.py`` because workers also need it.
+:class:`shared.schemas.governance.SpanType` lives in
+``src/shared/schemas/governance.py`` because workers also need it.
 """
 
 from datetime import datetime
@@ -11,7 +11,7 @@ from typing import Annotated, Any
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field
 
-from shared.schemas.spans import SpanType
+from shared.schemas.governance import SpanType
 
 
 def _strip_hex_prefix(value: Any) -> Any:

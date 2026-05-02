@@ -56,7 +56,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from shared.schemas.spans import SpanType
+from shared.schemas.governance import SpanType
 from shared.tasks.specs import (
     EmbeddingSpecStrict,
     InferenceSpecStrict,

@@ -12,7 +12,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 
-from shared.schemas.spans import (
+from shared.schemas.governance import (
     READY_SPAN_NAME,
     TASK_SPAN_NAME,
     SpanType,

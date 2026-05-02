@@ -10,7 +10,7 @@ import pandas as pd
 import torch
 from PIL import Image
 
-from shared.schemas.spans import SpanType
+from shared.schemas.governance import SpanType
 from shared.tasks.specs import InferenceSpecStrict
 from shared.utils.json import to_json_serializable
 

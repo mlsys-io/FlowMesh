@@ -30,7 +30,7 @@ from opentelemetry.sdk.trace.export import (
 )
 from opentelemetry.sdk.trace.id_generator import IdGenerator, RandomIdGenerator
 
-from shared.schemas.spans import SpanType
+from shared.schemas.governance import SpanType
 from shared.utils.ids import PREFIX_WORKFLOW
 
 _HEX_ONLY = re.compile(r"[^0-9a-f]")

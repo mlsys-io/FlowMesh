@@ -13,7 +13,7 @@ from typing import Any
 
 from opentelemetry.trace import Span as OTelSpan
 
-from shared.schemas.spans import (
+from shared.schemas.governance import (
     READY_SPAN_NAME,
     TASK_SPAN_NAME,
     SpanType,

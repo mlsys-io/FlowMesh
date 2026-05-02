@@ -66,7 +66,7 @@ except Exception:
         _HAS_VLLM = False
         StructuredOutputsParams = None  # type: ignore
 
-from shared.schemas.spans import SpanType
+from shared.schemas.governance import SpanType
 from shared.tasks.specs import InferenceSpecStrict
 from worker.config import WorkerConfig
 from worker.lifecycle import Lifecycle

@@ -1,5 +1,5 @@
 from server.governance import Span
-from shared.schemas.spans import SpanType
+from shared.schemas.governance import SpanType
 
 
 def test_span_otel_round_trip() -> None:
