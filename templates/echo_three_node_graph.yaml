@@ -50,11 +50,3 @@ spec:
                 path: "result.items[0].output"
               - node: "echo-b"
                 path: "result.items[0].output"
-
-  output:
-    destination:
-      type: "http"
-    artifacts:
-      - "results.json"
-      - "logs"
-      - "artifacts"
