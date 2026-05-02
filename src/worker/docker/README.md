@@ -12,7 +12,7 @@ docker build -f src/worker/docker/Dockerfile.ssh.gpu -t yourrepo/flowmesh_ssh:la
 
 # Run (CPU)
 docker run --rm \
-  -e GUARDIAN_GRPC_TARGET="host.docker.internal:50051" \
+  -e SUPERVISOR_GRPC_TARGET="host.docker.internal:50051" \
   -e WORKER_HB_FILE="/tmp/flowmesh_worker_health/worker.hb" \
   -e RESULTS_DIR=/app/results \
   -v /var/run/docker.sock:/var/run/docker.sock \
@@ -21,7 +21,7 @@ docker run --rm \
 
 # Run (GPU; host must have NVIDIA Container Toolkit)
 docker run --rm --gpus all \
-  -e GUARDIAN_GRPC_TARGET="host.docker.internal:50051" \
+  -e SUPERVISOR_GRPC_TARGET="host.docker.internal:50051" \
   -e WORKER_HB_FILE="/tmp/flowmesh_worker_health/worker.hb" \
   -e RESULTS_DIR=/app/results \
   -v /var/run/docker.sock:/var/run/docker.sock \
@@ -30,14 +30,14 @@ docker run --rm --gpus all \
 
 ## TLS CA injection
 
-If the guardian uses TLS, pass the internal CA via env:
+If the server uses TLS, pass the internal CA via env:
 
 ```
-scripts/dev/generate_guardian_tls_certs.sh <guardian-host>
-export GUARDIAN_GRPC_TLS_CA_B64="$(base64 -w 0 secrets/tls/guardian/guardian-ca.pem)"
+scripts/dev/generate_server_tls_certs.sh <server-host>
+export SERVER_GRPC_TLS_CA_B64="$(base64 -w 0 secrets/tls/server/server-ca.pem)"
 docker run --rm \
-  -e GUARDIAN_GRPC_TLS_CA_B64 \
-  -e GUARDIAN_GRPC_TARGET="host.docker.internal:50051" \
+  -e SERVER_GRPC_TLS_CA_B64 \
+  -e SUPERVISOR_GRPC_TARGET="host.docker.internal:50051" \
   yourrepo/flowmesh_worker:cpu-latest
 ```
 
