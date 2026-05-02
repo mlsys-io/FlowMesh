@@ -1,12 +1,13 @@
 """Tests for the workflow traces router."""
 
 import json
+from io import BytesIO
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
-from fastapi import HTTPException
+from fastapi import HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 
 from server.routers.v1 import traces as traces_router
@@ -228,3 +229,50 @@ async def test_workflow_not_found_raises_404(tmp_path: Path) -> None:
             results_dir=tmp_path,
         )
     assert excinfo.value.status_code == 404
+
+
+def _upload(content: bytes, filename: str = "ignored.jsonl") -> UploadFile:
+    return UploadFile(file=BytesIO(content), filename=filename)
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("trace_type", ["spans", "assets", "lineage"])
+async def test_upload_task_trace_writes_named_file(
+    tmp_path: Path, trace_type: str
+) -> None:
+    payload = b'{"name":"task"}\n'
+    response = await traces_router.upload_task_trace(
+        task_id="tsk-up",
+        trace_type=trace_type,
+        file=_upload(payload),
+        results_dir=tmp_path,
+    )
+    target = tmp_path / "tsk-up" / "logs" / f"{trace_type}.jsonl"
+    assert target.is_file()
+    assert target.read_bytes() == payload
+    assert response.path == str(target)
+
+
+@pytest.mark.anyio
+async def test_upload_task_trace_ignores_client_filename(tmp_path: Path) -> None:
+    """Server filename comes from {trace_type}, never from the multipart name."""
+    await traces_router.upload_task_trace(
+        task_id="tsk-x",
+        trace_type="spans",
+        file=_upload(b"row\n", filename="../../escape.jsonl"),
+        results_dir=tmp_path,
+    )
+    assert (tmp_path / "tsk-x" / "logs" / "spans.jsonl").is_file()
+    assert not (tmp_path / "escape.jsonl").exists()
+
+
+@pytest.mark.anyio
+async def test_upload_task_trace_unknown_type_400(tmp_path: Path) -> None:
+    with pytest.raises(HTTPException) as excinfo:
+        await traces_router.upload_task_trace(
+            task_id="tsk-x",
+            trace_type="bogus",
+            file=_upload(b""),
+            results_dir=tmp_path,
+        )
+    assert excinfo.value.status_code == 400
