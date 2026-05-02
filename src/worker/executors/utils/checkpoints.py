@@ -466,7 +466,7 @@ def maybe_upload_traces(
     skip_errors: bool = False,
 ) -> list[str]:
     """Upload trace JSONL files under `out_dir/logs/` to
-    `<api-base>/traces/{task_id}/{trace_type}` when the task has an HTTP
+    `<api-base>/traces/tasks/{task_id}/{trace_type}` when the task has an HTTP
     destination; no-op otherwise. The destination's `/results` artifact base
     is swapped for `/traces`. Returns uploaded trace types."""
     if not task.task_id:
@@ -484,7 +484,7 @@ def maybe_upload_traces(
         file_path = logs_dir / f"{trace_type}.jsonl"
         if not file_path.is_file():
             continue
-        upload_url = f"{upload_base}/{task.task_id}/{trace_type}"
+        upload_url = f"{upload_base}/tasks/{task.task_id}/{trace_type}"
         try:
             with file_path.open("rb") as fh:
                 response = requests.request(

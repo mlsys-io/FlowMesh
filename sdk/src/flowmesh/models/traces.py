@@ -1,6 +1,7 @@
 """Trace analyzer response payload types as seen by the SDK.
 
-These describe the wire shape returned by ``GET /traces/{workflow_id}/analyze``.
+These describe the wire shape returned by
+``GET /traces/workflows/analyze/{workflow_id}``.
 """
 
 from datetime import datetime

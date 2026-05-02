@@ -29,7 +29,9 @@ class Traces(SyncResource):
 
     def fetch(self, workflow_id: str, trace_type: TraceType) -> Iterator[dict]:
         """Yield JSONL rows for `spans`, `assets`, or `lineage`."""
-        url = _make_url(self._client.base_url, f"/traces/{workflow_id}/{trace_type}")
+        url = _make_url(
+            self._client.base_url, f"/traces/workflows/{workflow_id}/{trace_type}"
+        )
         try:
             with self._client._http.stream("GET", url) as response:
                 _raise_for_stream_status(response, "GET")
@@ -47,7 +49,7 @@ class Traces(SyncResource):
     def analyze(self, workflow_id: str) -> ProfileSummary:
         """Run the trace analyzer and return a parsed `ProfileSummary`."""
         return ProfileSummary.model_validate(
-            self._client._request("GET", f"/traces/{workflow_id}/analyze")
+            self._client._request("GET", f"/traces/workflows/analyze/{workflow_id}")
         )
 
 
@@ -57,7 +59,9 @@ class AsyncTraces(AsyncResource):
     async def fetch(
         self, workflow_id: str, trace_type: TraceType
     ) -> AsyncIterator[dict]:
-        url = _make_url(self._client.base_url, f"/traces/{workflow_id}/{trace_type}")
+        url = _make_url(
+            self._client.base_url, f"/traces/workflows/{workflow_id}/{trace_type}"
+        )
         try:
             async with self._client._http.stream("GET", url) as response:
                 await _raise_for_stream_status_async(response, "GET")
@@ -74,5 +78,7 @@ class AsyncTraces(AsyncResource):
 
     async def analyze(self, workflow_id: str) -> ProfileSummary:
         return ProfileSummary.model_validate(
-            await self._client._request("GET", f"/traces/{workflow_id}/analyze")
+            await self._client._request(
+                "GET", f"/traces/workflows/analyze/{workflow_id}"
+            )
         )

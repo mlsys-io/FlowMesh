@@ -361,26 +361,22 @@ def analyze(
 
     _print_header(summary)
 
-    if fmt is _AnalyzeView.RICH:
-        if summary.critical_path is not None:
+    match fmt:
+        case _AnalyzeView.RICH:
+            if summary.critical_path is not None:
+                _print_critical_path(summary)
+                console.print(Rule(style="dim"))
+            _print_e2e(summary)
+            if summary.per_data_id:
+                console.print(Rule(style="dim"))
+                _print_queuing(summary)
+            console.print(Rule(style="dim"))
+            _print_lineage(summary)
+        case _AnalyzeView.CRITICAL_PATH:
             _print_critical_path(summary)
-            console.print(Rule(style="dim"))
-        _print_e2e(summary)
-        if summary.per_data_id:
-            console.print(Rule(style="dim"))
+        case _AnalyzeView.END_TO_END:
+            _print_e2e(summary)
+        case _AnalyzeView.QUEUING:
             _print_queuing(summary)
-        console.print(Rule(style="dim"))
-        _print_lineage(summary)
-        return
-    if fmt is _AnalyzeView.CRITICAL_PATH:
-        _print_critical_path(summary)
-        return
-    if fmt is _AnalyzeView.END_TO_END:
-        _print_e2e(summary)
-        return
-    if fmt is _AnalyzeView.QUEUING:
-        _print_queuing(summary)
-        return
-    if fmt is _AnalyzeView.LINEAGE:
-        _print_lineage(summary)
-        return
+        case _AnalyzeView.LINEAGE:
+            _print_lineage(summary)

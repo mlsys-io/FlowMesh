@@ -47,7 +47,7 @@ async def _resolve_task_ids(workflow_id: str, registry: WorkflowRegistry) -> lis
 
 
 @router.get(
-    "/{workflow_id}/analyze",
+    "/workflows/analyze/{workflow_id}",
     summary="Run the trace analyzer; return ProfileSummary",
     response_model=ProfileSummary,
 )
@@ -64,7 +64,7 @@ async def analyze_workflow_trace(
 
 
 @router.get(
-    "/{workflow_id}/{trace_type}",
+    "/workflows/{workflow_id}/{trace_type}",
     summary="Stream JSONL rows (spans / assets / lineage)",
 )
 async def get_workflow_trace(
@@ -87,7 +87,7 @@ async def get_workflow_trace(
 
 
 @router.post(
-    "/{task_id}/{trace_type}",
+    "/tasks/{task_id}/{trace_type}",
     summary="Upload a per-task trace JSONL file (spans / assets / lineage)",
 )
 async def upload_task_trace(
