@@ -407,31 +407,35 @@ def build_artifact_context(spec: TaskSpecStrictBase, out_dir: Path) -> dict[str,
     return {"base_dir": base_dir, "base_url": base_url}
 
 
-def maybe_upload_artifacts(
+def _upload_dir_to_http(
     task: TaskReference,
     out_dir: Path,
+    source_subdir: str,
+    *,
+    rel_name_prefix: str = "",
+    file_kind: str = "artifact",
     logger: logging.Logger | None = None,
     skip_errors: bool = False,
 ) -> list[str]:
-    """Upload files under `out_dir/artifacts/` when the task has an HTTP
-    destination; no-op otherwise. Each file's multipart filename is its
-    path relative to `out_dir/artifacts/`. Returns uploaded rel-paths."""
+    """Upload every file under ``out_dir/<source_subdir>/`` when the task has
+    an HTTP destination; no-op otherwise. The multipart filename is
+    ``rel_name_prefix + <path-relative-to-source-subdir>``."""
     if not task.task_id:
-        raise ExecutionError("Task id missing; cannot upload artifacts")
+        raise ExecutionError(f"Task id missing; cannot upload {file_kind}s")
     out_dir = Path(out_dir).resolve()
-    artifacts_dir = out_dir / "artifacts"
+    source_dir = out_dir / source_subdir
     destination = get_http_destination(task.spec)
-    if destination is None or not artifacts_dir.is_dir():
+    if destination is None or not source_dir.is_dir():
         return []
 
     base_url = destination.url.rstrip("/")
     upload_url = f"{base_url}/{task.task_id}/files"
     uploaded: list[str] = []
 
-    for file_path in sorted(artifacts_dir.rglob("*")):
+    for file_path in sorted(source_dir.rglob("*")):
         if not file_path.is_file():
             continue
-        rel_name = file_path.relative_to(artifacts_dir).as_posix()
+        rel_name = rel_name_prefix + file_path.relative_to(source_dir).as_posix()
         try:
             with file_path.open("rb") as fh:
                 response = requests.request(
@@ -445,15 +449,57 @@ def maybe_upload_artifacts(
         except Exception as exc:
             if not skip_errors:
                 raise ExecutionError(
-                    f"Artifact upload failed for {file_path}: {exc}"
+                    f"{file_kind.capitalize()} upload failed for {file_path}: {exc}"
                 ) from exc
             if logger:
-                logger.warning("Failed to upload artifact %s: %s", rel_name, exc)
+                logger.warning("Failed to upload %s %s: %s", file_kind, rel_name, exc)
             continue
         if logger:
             logger.info(
-                "Uploaded artifact %s (%d bytes)", rel_name, file_path.stat().st_size
+                "Uploaded %s %s (%d bytes)",
+                file_kind,
+                rel_name,
+                file_path.stat().st_size,
             )
         uploaded.append(rel_name)
 
     return uploaded
+
+
+def maybe_upload_artifacts(
+    task: TaskReference,
+    out_dir: Path,
+    logger: logging.Logger | None = None,
+    skip_errors: bool = False,
+) -> list[str]:
+    """Upload files under ``out_dir/artifacts/`` when the task has an HTTP
+    destination; no-op otherwise. Each file's multipart filename is its
+    path relative to ``out_dir/artifacts/``. Returns uploaded rel-paths."""
+    return _upload_dir_to_http(
+        task,
+        out_dir,
+        "artifacts",
+        file_kind="artifact",
+        logger=logger,
+        skip_errors=skip_errors,
+    )
+
+
+def maybe_upload_traces(
+    task: TaskReference,
+    out_dir: Path,
+    logger: logging.Logger | None = None,
+    skip_errors: bool = False,
+) -> list[str]:
+    """Upload trace JSONL files under ``out_dir/logs/`` when the task has an
+    HTTP destination; no-op otherwise. Multipart filenames are prefixed with
+    ``logs/`` so the server lands them at ``<task>/logs/<file>``."""
+    return _upload_dir_to_http(
+        task,
+        out_dir,
+        "logs",
+        rel_name_prefix="logs/",
+        file_kind="trace",
+        logger=logger,
+        skip_errors=skip_errors,
+    )

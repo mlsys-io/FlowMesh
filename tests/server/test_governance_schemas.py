@@ -1,4 +1,5 @@
-from shared.governance import AssetRow, FlowMeshSpanKind, LineageRow, Span
+from server.governance import Span
+from shared.governance import FlowMeshSpanKind
 
 
 def test_span_otel_round_trip() -> None:
@@ -42,23 +43,3 @@ def test_span_marker_zero_duration() -> None:
     span = Span.parse_otel_json(raw)
     assert span.duration_seconds == 0.0
     assert span.attributes.flowmesh_kind == FlowMeshSpanKind.MARKER
-
-
-def test_asset_row_defaults() -> None:
-    row = AssetRow(
-        data_id="tsk-1",
-        asset_guid="guid-1",
-        created_at="2026-04-29T00:00:00+00:00",
-    )
-    assert row.version == 1
-    assert row.user_id == ""
-
-
-def test_lineage_row_required_fields() -> None:
-    row = LineageRow(
-        data_id="tsk-2",
-        source_data_id="tsk-1",
-        created_at="2026-04-29T00:00:00+00:00",
-    )
-    assert row.data_id == "tsk-2"
-    assert row.source_data_id == "tsk-1"

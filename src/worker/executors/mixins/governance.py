@@ -13,39 +13,33 @@ from typing import Any
 
 from opentelemetry.trace import Span as OTelSpan
 
-from shared.governance.spans import FlowMeshSpanKind
+from shared.governance.spans import (
+    READY_SPAN_NAME,
+    TASK_SPAN_NAME,
+    FlowMeshSpanKind,
+)
 from shared.tasks.specs import TaskSpecStrictBase
-from shared.utils.json import dedup_json
 from shared.utils.time import now_iso
 
 from ..base_executor import ExecutionError
-from ._otel import (
-    attributes_with_kind,
-    get_tracer,
-    reset_workflow_id,
-    set_active_spans_path,
-    set_workflow_id,
-)
+from ._otel import attributes_with_kind, get_tracer, task_trace_context
 
 logger = logging.getLogger(__name__)
 
 
 class GovernanceMixin:
-    """OTel span emission + asset / lineage JSONL row writes.
-
-    Inherited by ``DataMixin`` so every executor that mixes in data prep also
-    gets the trace + lineage surface."""
+    """OTel span emission + asset / lineage JSONL row writes."""
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self._task_id: str | None = None
         self._task_out_dir: Path | None = None
         self._current_batch_id: str | None = None
-        self._task_user_id: str = ""
+        self._task_owner_id: str = ""
         self._event_lock = threading.Lock()
         self.io_executor = ThreadPoolExecutor(max_workers=32)
 
-    def _submit_in_context(self, fn: Any, *args: Any, **kwargs: Any) -> "Future[Any]":
+    def _submit_in_context(self, fn: Any, *args: Any, **kwargs: Any) -> Future[Any]:
         """``io_executor.submit`` that carries the caller's ContextVars across."""
         ctx = contextvars.copy_context()
         return self.io_executor.submit(ctx.run, fn, *args, **kwargs)
@@ -63,18 +57,17 @@ class GovernanceMixin:
         owner_id: str = "",
     ) -> Iterator[OTelSpan]:
         """Root span for a task — wraps the executor's ``run()`` body."""
-        out_path = Path(out_dir)
-        spans_path = out_path / "artifacts" / "logs" / "spans.jsonl"
-        spans_path.parent.mkdir(parents=True, exist_ok=True)
         self._task_id = task_id
         self._current_batch_id = task_id
-        self._task_out_dir = out_path
-        self._task_user_id = owner_id
-        token = set_workflow_id(workflow_id)
-        set_active_spans_path(spans_path)
-        try:
+        self._task_out_dir = Path(out_dir)
+        self._task_owner_id = owner_id
+        logs_dir = self._lineage_dir()
+        assert logs_dir is not None  # _task_out_dir was just set
+        spans_path = logs_dir / "spans.jsonl"
+        spans_path.parent.mkdir(parents=True, exist_ok=True)
+        with task_trace_context(workflow_id, spans_path):
             with get_tracer().start_as_current_span(
-                "task",
+                TASK_SPAN_NAME,
                 attributes=attributes_with_kind(
                     FlowMeshSpanKind.COMPUTE,
                     data_id=task_id,
@@ -87,9 +80,6 @@ class GovernanceMixin:
                 ),
             ) as span:
                 yield span
-        finally:
-            set_active_spans_path(None)
-            reset_workflow_id(token)
 
     @contextmanager
     def _span(
@@ -132,7 +122,7 @@ class GovernanceMixin:
     def _lineage_dir(self) -> Path | None:
         if self._task_out_dir is None:
             return None
-        return self._task_out_dir / "artifacts" / "logs"
+        return self._task_out_dir / "logs"
 
     def _append_jsonl(self, filename: str, row: dict[str, Any]) -> None:
         target_dir = self._lineage_dir()
@@ -188,17 +178,17 @@ class GovernanceMixin:
         """Emit asset + lineage rows; ``data`` is only serialized to size the
         ``"dump to storage"`` span (runtime does not upload payloads)."""
         with self._span(
-            "dump to storage", kind=FlowMeshSpanKind.NETWORK, data_id=data_id
+            READY_SPAN_NAME, kind=FlowMeshSpanKind.NETWORK, data_id=data_id
         ) as dump_span:
-            deduped = dedup_json(data)
             try:
-                payload = json.dumps(deduped, ensure_ascii=False, default=str)
+                payload = json.dumps(data, ensure_ascii=False, default=str)
             except (TypeError, ValueError) as exc:
                 raise ExecutionError(
                     f"Failed to serialize data {data_id}: {exc}"
                 ) from exc
 
-            dump_span.set_attribute("payload_bytes", len(payload.encode("utf-8")))
+            payload_bytes = len(payload.encode("utf-8"))
+            dump_span.set_attribute("payload_bytes", payload_bytes)
 
             asset_guid = (
                 source_data_ids[0] if len(source_data_ids) == 1 else str(uuid.uuid4())
@@ -207,35 +197,34 @@ class GovernanceMixin:
                 data_id=data_id,
                 asset_guid=asset_guid,
                 version=1,
-                user_id=self._task_user_id,
+                user_id=self._task_owner_id,
             )
             if source_data_ids:
                 self._record_lineage(data_id=data_id, source_data_ids=source_data_ids)
         logger.info(
             "Wrote lineage for %s (size: %d bytes, sources: %d)",
             data_id,
-            len(payload.encode("utf-8")),
+            payload_bytes,
             len(source_data_ids),
         )
 
     def _extract_source_data_ids(self, spec: TaskSpecStrictBase) -> list[str]:
-        """Extract upstream task/data IDs from _upstreamResults for lineage."""
-        upstream_refs = self._spec_upstream_results(spec)  # type: ignore[attr-defined]
+        """Extract upstream task/data IDs from ``_upstreamResults`` for lineage."""
+        upstream_refs = spec.upstreamResults or {}
+        seen: set[str] = set()
         ids: list[str] = []
         for upstream in upstream_refs.values():
             if not isinstance(upstream, dict):
                 continue
             candidate = upstream.get("task_id") or upstream.get("data_id")
-            if candidate:
-                ids.append(str(candidate))
-        seen: set[str] = set()
-        deduped: list[str] = []
-        for ident in ids:
-            if ident in seen:
+            if candidate is None:
                 continue
-            seen.add(ident)
-            deduped.append(ident)
-        return deduped
+            sid = str(candidate)
+            if sid in seen:
+                continue
+            seen.add(sid)
+            ids.append(sid)
+        return ids
 
     def _dump_to_governance(
         self,

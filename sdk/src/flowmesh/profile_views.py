@@ -5,12 +5,19 @@ adapters so downstream Python tools (notebooks, lumilake, ad-hoc scripts)
 don't have to reimplement them.
 """
 
+import re
 from typing import Any
 
 import pandas as pd
 
-from shared.governance import EventSummary, ProfileSummary
-from shared.governance import to_mermaid as render_mermaid
+from .models.trace import EventSummary, ProfileSummary
+
+_MERMAID_SAFE = re.compile(r"[^A-Za-z0-9_]+")
+
+
+def _mermaid_node_id(value: str) -> str:
+    cleaned = _MERMAID_SAFE.sub("_", value).strip("_")
+    return cleaned or "node"
 
 
 def _event_summary_dataframe(summary: EventSummary) -> pd.DataFrame:
@@ -66,7 +73,24 @@ def critical_path_dataframe(summary: ProfileSummary) -> pd.DataFrame:
 
 
 def to_mermaid(summary: ProfileSummary | dict[str, Any]) -> str:
-    """Lineage DAG as Mermaid `graph TD` source."""
+    """Lineage DAG as Mermaid ``graph TD`` source."""
     if isinstance(summary, dict):
         summary = ProfileSummary.model_validate(summary)
-    return render_mermaid(summary)
+    lines = ["graph TD"]
+    seen: set[str] = set()
+    for edge in summary.lineage:
+        src = _mermaid_node_id(edge.source_data_id)
+        dst = _mermaid_node_id(edge.data_id)
+        if src not in seen:
+            lines.append(f'    {src}["{edge.source_data_id}"]')
+            seen.add(src)
+        if dst not in seen:
+            lines.append(f'    {dst}["{edge.data_id}"]')
+            seen.add(dst)
+        lines.append(f"    {src} --> {dst}")
+    for data_id in summary.data_ids:
+        node = _mermaid_node_id(data_id)
+        if node not in seen:
+            lines.append(f'    {node}["{data_id}"]')
+            seen.add(node)
+    return "\n".join(lines)

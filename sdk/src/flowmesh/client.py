@@ -9,7 +9,7 @@ from .resources.results import Results
 from .resources.ssh import SSH
 from .resources.system import System
 from .resources.tasks import Tasks
-from .resources.trace import Trace
+from .resources.traces import Trace
 from .resources.workers import Workers
 from .resources.workflows import Workflows
 

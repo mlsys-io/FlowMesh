@@ -1,7 +1,7 @@
 """OpenTelemetry tracing wiring for worker executors.
 
 Sets up a single process-wide ``TracerProvider`` with a JSONL exporter that
-appends ``ReadableSpan.to_json()`` to ``<out_dir>/artifacts/logs/spans.jsonl``
+appends ``ReadableSpan.to_json()`` to ``<out_dir>/logs/spans.jsonl``
 for whichever task is currently executing. The current path is held in a
 module-level slot updated by ``_task_span`` on enter / exit; the worker is
 single-threaded for executor work so there's no contention.
@@ -14,7 +14,8 @@ automatically.
 
 import re
 import threading
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import contextmanager
 from contextvars import ContextVar
 from pathlib import Path
 from typing import Any
@@ -30,6 +31,7 @@ from opentelemetry.sdk.trace.export import (
 from opentelemetry.sdk.trace.id_generator import IdGenerator, RandomIdGenerator
 
 from shared.governance.spans import FlowMeshSpanKind
+from shared.utils.ids import PREFIX_WORKFLOW
 
 _HEX_ONLY = re.compile(r"[^0-9a-f]")
 _TRACER_NAME = "flowmesh.worker"
@@ -48,9 +50,7 @@ def workflow_to_trace_id_int(workflow_id: str) -> int:
     Strips the ``wfl-`` prefix before hex extraction so the prefix's ``f``
     doesn't shift the bit pattern.
     """
-    body = workflow_id.lower()
-    if body.startswith("wfl-"):
-        body = body[len("wfl-") :]
+    body = workflow_id.lower().removeprefix(f"{PREFIX_WORKFLOW}-")
     hex_only = _HEX_ONLY.sub("", body)
     if not hex_only:
         return 0
@@ -125,19 +125,26 @@ def get_tracer():
     return trace.get_tracer(_TRACER_NAME)
 
 
-def set_active_spans_path(path: Path | None) -> None:
-    """Set the destination spans.jsonl for the currently running task."""
+def _set_active_spans_path(path: Path | None) -> None:
     global _current_spans_path
     _current_spans_path = path
 
 
-def set_workflow_id(workflow_id: str | None):
-    """Pin trace_id derivation. Returns a token to reset() later."""
-    return _workflow_id_var.set(workflow_id)
+@contextmanager
+def task_trace_context(workflow_id: str, spans_path: Path) -> Iterator[None]:
+    """Bind trace_id and span exporter destination for the duration of a task.
 
-
-def reset_workflow_id(token) -> None:
-    _workflow_id_var.reset(token)
+    Pins trace_id derivation to ``workflow_id`` and routes the JSONL exporter
+    to ``spans_path`` while the block is active. Restores the previous state
+    on exit.
+    """
+    token = _workflow_id_var.set(workflow_id)
+    _set_active_spans_path(spans_path)
+    try:
+        yield
+    finally:
+        _set_active_spans_path(None)
+        _workflow_id_var.reset(token)
 
 
 def attributes_with_kind(

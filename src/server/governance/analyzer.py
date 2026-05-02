@@ -12,10 +12,13 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 
-from .spans import FlowMeshSpanKind, Span
+from shared.governance.spans import (
+    READY_SPAN_NAME,
+    TASK_SPAN_NAME,
+    FlowMeshSpanKind,
+)
 
-READY_SPAN_NAME = "dump to storage"
-TASK_SPAN_NAME = "task"
+from .spans import Span
 
 
 class _ProfileBase(BaseModel):
@@ -102,6 +105,14 @@ def analyze(
     lineage: Iterable[dict[str, Any]],
     workflow_id: str | None = None,
 ) -> ProfileSummary:
+    """Build a :class:`ProfileSummary` from raw JSONL rows for a single workflow.
+
+    ``spans`` rows are parsed via :class:`Span`; malformed entries are dropped.
+    ``assets`` and ``lineage`` rows are passed straight through as dicts. The
+    returned summary contains the asset rollup, full DAG edges, an end-to-end
+    breakdown, per-data_id timings (with queuing delay + blocking parent),
+    and a critical-path subset.
+    """
     parsed: list[Span] = []
     for raw in spans:
         if not isinstance(raw, dict):
@@ -151,6 +162,11 @@ def analyze(
 
 
 def _asset_summaries(rows: list[dict[str, Any]]) -> list[AssetSummary]:
+    """Group asset rows by ``asset_guid`` and emit one summary per asset.
+
+    Each summary points at the highest-version row (``latest_*``) and reports
+    the total version count.
+    """
     asset_versions: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in rows:
         guid = str(row.get("asset_guid") or "")
@@ -175,6 +191,7 @@ def _asset_summaries(rows: list[dict[str, Any]]) -> list[AssetSummary]:
 
 
 def _dep_map(lineage_rows: list[dict[str, Any]]) -> dict[str, list[str]]:
+    """Build a ``data_id -> [source_data_id, ...]`` adjacency from lineage edges."""
     dep_map: dict[str, list[str]] = defaultdict(list)
     for row in lineage_rows:
         target = str(row.get("data_id") or "")
@@ -185,6 +202,10 @@ def _dep_map(lineage_rows: list[dict[str, Any]]) -> dict[str, list[str]]:
 
 
 def _group_spans(spans: list[Span]) -> dict[str, list[Span]]:
+    """Bucket spans by ``attributes.data_id`` and sort each bucket by start time.
+
+    Spans without a ``data_id`` (e.g. third-party telemetry) are dropped here.
+    """
     grouped: dict[str, list[Span]] = defaultdict(list)
     for span in spans:
         if data_id := span.attributes.data_id:
@@ -195,11 +216,14 @@ def _group_spans(spans: list[Span]) -> dict[str, list[Span]]:
 
 
 def _ready_finish(spans: list[Span]) -> datetime | None:
+    """Latest ``"dump to storage"`` span ``end_time`` — the data-ready boundary
+    for a task. ``None`` if no such span exists (e.g. failed task)."""
     ready_times = [s.end_time for s in spans if s.name == READY_SPAN_NAME]
     return max(ready_times) if ready_times else None
 
 
 def _task_span(spans: list[Span]) -> Span | None:
+    """Pick the root ``"task"`` span, preferring one without a parent."""
     for span in spans:
         if span.name == TASK_SPAN_NAME and span.parent_id is None:
             return span
@@ -214,6 +238,12 @@ def _per_data_id_timings(
     dep_map: dict[str, list[str]],
     data_ids: list[str],
 ) -> list[TaskTiming]:
+    """Per-data_id start/end timestamps + queuing delay against parents.
+
+    ``queuing_delay = task.start - max(parent.dump_to_storage.end)``. Falls
+    back to ``min(span.start) / max(span.end)`` when a data_id has no root
+    ``"task"`` span (e.g. merged children that only emit per-task markers).
+    """
     finish_ts: dict[str, datetime] = {}
     for data_id, spans in grouped.items():
         ready = _ready_finish(spans)
@@ -259,6 +289,8 @@ def _per_data_id_timings(
 def _merge_intervals(
     intervals: list[tuple[datetime, datetime]],
 ) -> list[tuple[datetime, datetime]]:
+    """Collapse overlapping ``(start, end)`` intervals so concurrent network
+    spans count once toward total active time."""
     if not intervals:
         return []
     sorted_ivl = sorted(intervals, key=lambda x: x[0])
@@ -275,6 +307,7 @@ def _merge_intervals(
 
 
 def _avg_min_max(values: list[float]) -> tuple[float, float, float]:
+    """``(avg, min, max)`` over ``values``; zeros when empty."""
     if not values:
         return 0.0, 0.0, 0.0
     return sum(values) / len(values), min(values), max(values)
@@ -283,6 +316,14 @@ def _avg_min_max(values: list[float]) -> tuple[float, float, float]:
 def _obtain_breakdown(
     grouped: dict[str, list[Span]],
 ) -> dict[str, Any]:
+    """Aggregate per-event-type compute / network / wall stats over a span set.
+
+    Compute totals are summed per ``batch_id`` then across batches (parallel
+    spans within a batch collapse). Network totals use merged-interval
+    wall-clock so concurrent reads/writes count once. The ``"task"`` root
+    span and ``MARKER`` kind spans are excluded from event-type aggregates;
+    ``"task"`` start/end bound ``workflow_duration_seconds``.
+    """
     by_type: dict[str, list[float]] = defaultdict(list)
     by_type_batch: dict[str, dict[str, timedelta]] = defaultdict(
         lambda: defaultdict(timedelta)
@@ -379,6 +420,15 @@ def _compute_critical_path(
     dep_map: dict[str, list[str]],
     per_data_id: list[TaskTiming],
 ) -> dict[str, Any] | None:
+    """Walk back from the latest-finishing data_id, picking the slowest parent
+    at each hop, to surface the bottleneck chain.
+
+    ``critical_path_seconds`` is the sum of active + wait along the chain.
+    The CP-restricted breakdown also pulls in spans from any merge-parent
+    ``batch_id`` referenced by CP nodes — otherwise shared work (model load,
+    generation) emitted under the merge parent's data_id would be missed
+    when a merged-child branch is on the path.
+    """
     by_id: dict[str, TaskTiming] = {t.data_id: t for t in per_data_id}
     finish_times: dict[str, datetime] = {}
     for data_id, spans in grouped.items():
@@ -418,8 +468,18 @@ def _compute_critical_path(
         actives.append(active)
         waits.append(wait)
 
+    # Expand CP membership through merged-execution batch_ids so the breakdown
+    # captures shared work (model load, generation) emitted under the merge
+    # parent's data_id when a merged-child branch lands on the path.
+    cp_data_ids: set[str] = set(critical_path)
+    for nid in critical_path:
+        for span in grouped.get(nid, []):
+            batch_id = span.attributes.batch_id
+            if batch_id and batch_id != nid and batch_id in grouped:
+                cp_data_ids.add(batch_id)
+
     cp_breakdown = _obtain_breakdown(
-        {nid: grouped[nid] for nid in critical_path if nid in grouped}
+        {nid: grouped[nid] for nid in cp_data_ids if nid in grouped}
     )
     cp_breakdown.pop("workflow_duration_seconds", None)
 

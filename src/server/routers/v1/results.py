@@ -38,6 +38,12 @@ router = APIRouter(prefix="/results", tags=["Results"])
 
 
 def _resolve_artifact_path(filename: str) -> Path:
+    """Resolve an upload's relative path to ``<task>/{section}/...``.
+
+    Filenames prefixed with ``logs/`` land under ``<task>/logs/`` (used by the
+    worker for span / asset / lineage trace artifacts). Everything else lands
+    under ``<task>/artifacts/`` as before.
+    """
     sanitized = Path(filename)
     if (
         sanitized.is_absolute()
@@ -47,6 +53,9 @@ def _resolve_artifact_path(filename: str) -> Path:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="invalid filename"
         )
+    parts = sanitized.parts
+    if parts[0] == LOGS_DIR:
+        return sanitized
     return Path(ARTIFACTS_DIR) / sanitized
 
 

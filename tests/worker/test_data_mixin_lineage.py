@@ -16,7 +16,7 @@ def _read_jsonl(path: Path) -> list[dict[str, Any]]:
 
 
 def _spans_for_task(out_dir: Path) -> list[dict[str, Any]]:
-    return _read_jsonl(out_dir / "artifacts" / "logs" / "spans.jsonl")
+    return _read_jsonl(out_dir / "logs" / "spans.jsonl")
 
 
 def test_task_span_emits_root_with_compute_kind(tmp_path: Path) -> None:
@@ -47,7 +47,7 @@ def test_record_asset_and_lineage(tmp_path: Path) -> None:
         )
         mixin._record_lineage("tsk-1", ["upstream-a", "upstream-b"])
 
-    base = out_dir / "artifacts" / "logs"
+    base = out_dir / "logs"
     assets = _read_jsonl(base / "assets.jsonl")
     assert len(assets) == 1
     assert assets[0]["asset_guid"] == "g-1"
@@ -71,7 +71,7 @@ def test_record_output_emits_dump_span_and_rows(tmp_path: Path) -> None:
             source_data_ids=["tsk-source-a"],
         )
 
-    base = out_dir / "artifacts" / "logs"
+    base = out_dir / "logs"
     assets = _read_jsonl(base / "assets.jsonl")
     assert assets and assets[0]["data_id"] == "tsk-up"
     assert assets[0]["user_id"] == "alice"
@@ -112,7 +112,7 @@ def test_dump_to_governance_with_merged_children(tmp_path: Path) -> None:
             dependencies_by_task=deps,
         )
 
-    base = out_dir / "artifacts" / "logs"
+    base = out_dir / "logs"
     assets = _read_jsonl(base / "assets.jsonl")
     assert {row["data_id"] for row in assets} == {
         "tsk-parent",

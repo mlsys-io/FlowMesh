@@ -372,7 +372,7 @@ if IS_ROOT_NODE:
     app.include_router(v1.results.router, prefix=v1_prefix)
     app.include_router(v1.ssh.router, prefix=v1_prefix)
     app.include_router(v1.system.router, prefix=v1_prefix)
-    app.include_router(v1.trace.router, prefix=v1_prefix)
+    app.include_router(v1.traces.router, prefix=v1_prefix)
 
 # Routers — supervisor (any node with worker management)
 if config.worker_management.enabled:

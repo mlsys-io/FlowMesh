@@ -20,6 +20,16 @@ from .nodes import (
 )
 from .results import PathResponse
 from .tasks import HardwareUsage, TaskInfo, TaskUsage
+from .trace import (
+    ActiveWaitBreakdown,
+    AssetSummary,
+    CriticalPathSummary,
+    E2EBreakdown,
+    EventSummary,
+    LineageEdge,
+    ProfileSummary,
+    TaskTiming,
+)
 from .workers import (
     CPUInfo,
     GpuInfo,
@@ -41,11 +51,17 @@ from .workflows import (
 )
 
 __all__ = [
+    "ActiveWaitBreakdown",
+    "AssetSummary",
     "CPUInfo",
+    "CriticalPathSummary",
+    "E2EBreakdown",
+    "EventSummary",
     "GpuInfo",
     "GpuPlatformInfo",
     "HardwareUsage",
     "HostInfo",
+    "LineageEdge",
     "LogEntry",
     "LogEvent",
     "LogLevel",
@@ -58,9 +74,11 @@ __all__ = [
     "Node",
     "NodeRegisterResponse",
     "NodeWorkerInfo",
+    "ProfileSummary",
     "StorageInfo",
     "TaskInfo",
     "TaskStatus",
+    "TaskTiming",
     "TaskType",
     "TaskUsage",
     "Worker",

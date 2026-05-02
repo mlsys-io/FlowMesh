@@ -7,7 +7,12 @@ from pathlib import Path
 
 import typer
 from flowmesh.exceptions import FlowMeshError
-from flowmesh.resources.trace import TraceKind
+from flowmesh.models.trace import (
+    EventSummary,
+    ProfileSummary,
+    TaskTiming,
+)
+from flowmesh.resources.traces import TraceKind
 from pydantic import BaseModel
 from rich.box import SIMPLE
 from rich.console import Console
@@ -16,12 +21,6 @@ from rich.panel import Panel
 from rich.rule import Rule
 from rich.table import Table
 from rich.tree import Tree
-
-from shared.governance import (
-    EventSummary,
-    ProfileSummary,
-    TaskTiming,
-)
 
 from ..core import logging
 from ..core.runtime import flowmesh_client_from_config
@@ -34,10 +33,18 @@ console = Console()
 class _AnalyzeView(StrEnum):
     RICH = "rich"
     CRITICAL_PATH = "critical-path"
+    CP = "cp"
+    END_TO_END = "end-to-end"
     E2E = "e2e"
     QUEUING = "queuing"
-    DAG = "dag"
+    LINEAGE = "lineage"
     JSON = "json"
+
+
+_ANALYZE_VIEW_ALIAS: dict[_AnalyzeView, _AnalyzeView] = {
+    _AnalyzeView.CP: _AnalyzeView.CRITICAL_PATH,
+    _AnalyzeView.E2E: _AnalyzeView.END_TO_END,
+}
 
 
 class _EventRow(BaseModel):
@@ -126,6 +133,14 @@ def _network_table(net: EventSummary, title: str) -> Table:
     return table
 
 
+def _short_data_id(value: str) -> str:
+    """Compact a ``tsk-<uuid>`` for narrow tables: keep the first 8 hex chars."""
+    if not value:
+        return value
+    body = value[len("tsk-") :] if value.startswith("tsk-") else value
+    return f"tsk-{body[:8]}" if body else value
+
+
 def _queuing_delay_table(
     timings: list[TaskTiming], cp_set: set[str], title: str
 ) -> Table:
@@ -137,19 +152,21 @@ def _queuing_delay_table(
     table.add_column("duration_sec", justify="right", style="green")
     table.add_column("wait_sec", justify="right", style="bold yellow")
     table.add_column("blocked_by", style="cyan", no_wrap=True)
-    table.add_column("", no_wrap=True)
+    table.add_column("cp", justify="center", no_wrap=True)
     rows = sorted(
         timings,
         key=lambda t: (t.queuing_delay_seconds, t.duration_seconds),
         reverse=True,
     )
     for t in rows:
-        blocker = t.blocking_parent_data_id or "—"
-        cp_marker = (
-            "[bold red]◆ critical path[/bold red]" if t.data_id in cp_set else ""
+        blocker = (
+            _short_data_id(t.blocking_parent_data_id)
+            if t.blocking_parent_data_id
+            else "—"
         )
+        cp_marker = "[bold red]◆[/bold red]" if t.data_id in cp_set else ""
         table.add_row(
-            t.data_id,
+            _short_data_id(t.data_id),
             f"{t.duration_seconds:.3f}",
             f"{t.queuing_delay_seconds:.3f}",
             blocker,
@@ -224,15 +241,24 @@ def _critical_path_tree(summary: ProfileSummary) -> Tree:
 
 def _print_header(summary: ProfileSummary) -> None:
     e2e = summary.e2e_breakdown
-    headline = (
-        f"[bold]workflow:[/bold] {summary.workflow_id or '(unnamed)'}\n"
-        f"wall=[bold green]{e2e.workflow_duration_seconds:.3f}s[/bold green]"
-        f"  network=[bold magenta]{e2e.total_network_seconds:.3f}s[/bold magenta]"
-        f"  data_ids=[bold cyan]{len(summary.data_ids)}[/bold cyan]"
-        f"  events=[bold cyan]{summary.event_count}[/bold cyan]"
-        f"  assets=[bold cyan]{len(summary.assets)}[/bold cyan]"
-    )
-    console.print(Panel(headline, title="trace", border_style="cyan"))
+    cp = summary.critical_path
+    lines = [
+        f"[bold]workflow:[/bold] {summary.workflow_id or '(unnamed)'}",
+        (
+            f"e2e=[bold green]{e2e.workflow_duration_seconds:.3f}s[/bold green]"
+            f"  network=[bold magenta]{e2e.total_network_seconds:.3f}s[/bold magenta]"
+            f"  data_ids=[bold cyan]{len(summary.data_ids)}[/bold cyan]"
+            f"  events=[bold cyan]{summary.event_count}[/bold cyan]"
+            f"  assets=[bold cyan]{len(summary.assets)}[/bold cyan]"
+        ),
+    ]
+    if cp is not None:
+        lines.append(
+            f"cp=[bold green]{cp.critical_path_seconds:.3f}s[/bold green]"
+            f"  network=[bold magenta]{cp.total_network_seconds:.3f}s[/bold magenta]"
+            f"  length=[bold cyan]{len(cp.path)}[/bold cyan]"
+        )
+    console.print(Panel("\n".join(lines), title="trace", border_style="cyan"))
 
 
 def _print_critical_path(summary: ProfileSummary) -> None:
@@ -269,7 +295,7 @@ def _print_queuing(summary: ProfileSummary) -> None:
     )
 
 
-def _print_dag(summary: ProfileSummary) -> None:
+def _print_lineage(summary: ProfileSummary) -> None:
     console.print(_lineage_tree(summary))
 
 
@@ -312,11 +338,16 @@ def analyze(
         _AnalyzeView.RICH,
         "--format",
         "-f",
-        help="Output view (one of: rich, critical-path, e2e, queuing, dag, json).",
+        help=(
+            "Output view: rich, critical-path (cp), end-to-end (e2e), "
+            "queuing, lineage, json."
+        ),
         case_sensitive=True,
     ),
 ) -> None:
     """Run the trace analyzer on a workflow and render the result."""
+    fmt = _ANALYZE_VIEW_ALIAS.get(fmt, fmt)
+
     client = flowmesh_client_from_config()
     try:
         summary = client.trace.analyze(workflow_id)
@@ -339,17 +370,17 @@ def analyze(
             console.print(Rule(style="dim"))
             _print_queuing(summary)
         console.print(Rule(style="dim"))
-        _print_dag(summary)
+        _print_lineage(summary)
         return
     if fmt is _AnalyzeView.CRITICAL_PATH:
         _print_critical_path(summary)
         return
-    if fmt is _AnalyzeView.E2E:
+    if fmt is _AnalyzeView.END_TO_END:
         _print_e2e(summary)
         return
     if fmt is _AnalyzeView.QUEUING:
         _print_queuing(summary)
         return
-    if fmt is _AnalyzeView.DAG:
-        _print_dag(summary)
+    if fmt is _AnalyzeView.LINEAGE:
+        _print_lineage(summary)
         return

@@ -68,7 +68,11 @@ from ..utils.logging import configure_hf_library_logging
 from .base_executor import ExecutionError, Executor, ExecutorTask
 from .mixins.data import InferenceEntry
 from .mixins.inference import InferenceMixin
-from .utils.checkpoints import artifact_ref, maybe_upload_artifacts
+from .utils.checkpoints import (
+    artifact_ref,
+    maybe_upload_artifacts,
+    maybe_upload_traces,
+)
 
 try:
     import torch
@@ -396,13 +400,13 @@ class HFTransformersExecutor(InferenceMixin, Executor):
         with self._task_span(
             task_id, task.workflow_id, out_dir, owner_id=task.owner_id
         ):
-            result = self._run_body(task, spec, task_id, out_dir)
+            result = self._run_inner(spec, task_id, out_dir)
         maybe_upload_artifacts(task, out_dir, logger=logger)
+        maybe_upload_traces(task, out_dir, logger=logger)
         return result
 
-    def _run_body(
+    def _run_inner(
         self,
-        task: ExecutorTask,
         spec: "InferenceSpecStrict | EmbeddingSpecStrict",
         task_id: str,
         out_dir: Path,

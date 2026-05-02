@@ -1,10 +1,12 @@
-"""Parsed OTel-shape span rows; producers emit via ``ReadableSpan.to_json()``."""
+"""Wire-contract names + kind enum for the OTel-shape span rows in ``spans.jsonl``.
 
-from datetime import datetime
+Both the worker (producer, ``src/worker/executors/mixins/governance.py``) and
+the server analyzer (consumer, ``src/server/governance/analyzer.py``) read
+these. Pydantic parsing models for span rows live server-side at
+``src/server/governance/spans.py``.
+"""
+
 from enum import StrEnum
-from typing import Annotated, Any
-
-from pydantic import BaseModel, BeforeValidator, ConfigDict, Field
 
 
 class FlowMeshSpanKind(StrEnum):
@@ -15,61 +17,8 @@ class FlowMeshSpanKind(StrEnum):
     MARKER = "marker"
 
 
-def _strip_hex_prefix(value: Any) -> Any:
-    """Trim the leading ``0x`` from OTel hex ids; pass non-strings through."""
-    if isinstance(value, str) and value.startswith("0x"):
-        return value[2:]
-    return value
-
-
-HexId = Annotated[str, BeforeValidator(_strip_hex_prefix)]
-OptionalHexId = Annotated[str | None, BeforeValidator(_strip_hex_prefix)]
-
-
-class SpanContext(BaseModel):
-    """The ``context`` sub-object of ``ReadableSpan.to_json()``."""
-
-    model_config = ConfigDict(extra="allow")
-    trace_id: HexId
-    span_id: HexId
-
-
-class SpanStatus(BaseModel):
-    """The ``status`` sub-object of ``ReadableSpan.to_json()``."""
-
-    model_config = ConfigDict(extra="allow")
-    status_code: str = "UNSET"
-    description: str | None = None
-
-
-class SpanAttributes(BaseModel):
-    """FlowMesh-required span attributes; arbitrary extras are preserved."""
-
-    model_config = ConfigDict(extra="allow", populate_by_name=True)
-    data_id: str | None = None
-    batch_id: str | None = None
-    flowmesh_kind: FlowMeshSpanKind | None = Field(default=None, alias="flowmesh.kind")
-
-
-class Span(BaseModel):
-    """Parsed OTel JSON span row; ids stripped of ``0x``, times as ``datetime``."""
-
-    model_config = ConfigDict(extra="allow")
-
-    name: str
-    context: SpanContext
-    parent_id: OptionalHexId = None
-    start_time: datetime
-    end_time: datetime
-    status: SpanStatus = Field(default_factory=SpanStatus)
-    attributes: SpanAttributes = Field(default_factory=SpanAttributes)
-
-    @property
-    def duration_seconds(self) -> float:
-        return (self.end_time - self.start_time).total_seconds()
-
-    @classmethod
-    def parse_otel_json(cls, raw: str | dict[str, Any]) -> "Span":
-        if isinstance(raw, str):
-            return cls.model_validate_json(raw)
-        return cls.model_validate(raw)
+# Wire-contract span names. The worker emits these (`_task_span` opens a
+# ``"task"`` span; ``_record_output`` opens a ``"dump to storage"`` span);
+# the analyzer reads them to identify the root span and the data-ready boundary.
+TASK_SPAN_NAME = "task"
+READY_SPAN_NAME = "dump to storage"

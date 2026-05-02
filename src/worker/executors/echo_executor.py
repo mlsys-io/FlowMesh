@@ -1,3 +1,4 @@
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -5,7 +6,10 @@ from shared.tasks.specs import EchoSpecStrict
 
 from .base_executor import ExecutionError, Executor, ExecutorTask
 from .mixins.data import DataMixin
+from .utils.checkpoints import maybe_upload_traces
 from .utils.graph_templates import _evaluate_expr
+
+logger = logging.getLogger(__name__)
 
 type EchoItem = str | dict[str, str]
 
@@ -90,4 +94,5 @@ class EchoExecutor(DataMixin, Executor):
                 result=payload,
                 dependencies_by_task=dependencies_by_task,
             )
+        maybe_upload_traces(task, out_dir, logger=logger)
         return payload

@@ -1,6 +1,6 @@
 from typing import Any
 
-from shared.governance import analyze, to_mermaid
+from server.governance import analyze
 
 
 def _span(
@@ -205,15 +205,6 @@ def test_per_data_id_queuing_delays() -> None:
     assert per_id["tsk-3"].queuing_delay_seconds == 1.0
     assert per_id["tsk-3"].blocking_parent_data_id == "tsk-2"
     assert per_id["tsk-3"].duration_seconds == 1.0
-
-
-def test_to_mermaid_includes_edges() -> None:
-    summary = analyze(_spans(), _assets(), _lineage())
-    rendered = to_mermaid(summary)
-    assert rendered.startswith("graph TD")
-    assert "tsk_1" in rendered
-    assert "tsk_3" in rendered
-    assert "-->" in rendered
 
 
 def test_analyze_handles_empty_spans() -> None:

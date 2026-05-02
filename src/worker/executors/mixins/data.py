@@ -50,6 +50,12 @@ class InferenceEntry:
 
 
 class DataMixin(GovernanceMixin):
+    """Data prep helpers (prompts, images, params, dataset shards).
+
+    Inherits :class:`GovernanceMixin` so every data-prep executor also gets
+    the trace + lineage emission surface (``_task_span`` / ``_span`` /
+    ``_log_event`` / ``_record_output`` / ``_dump_to_governance``).
+    """
 
     _TEMPLATE_TYPE_MAP: dict[str, type] = {
         "str": str,

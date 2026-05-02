@@ -9,7 +9,7 @@ from .resources.results import AsyncResults
 from .resources.ssh import AsyncSSH
 from .resources.system import AsyncSystem
 from .resources.tasks import AsyncTasks
-from .resources.trace import AsyncTrace
+from .resources.traces import AsyncTrace
 from .resources.workers import AsyncWorkers
 from .resources.workflows import AsyncWorkflows
 

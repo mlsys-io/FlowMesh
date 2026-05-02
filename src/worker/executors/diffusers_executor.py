@@ -21,7 +21,11 @@ from worker.lifecycle import Lifecycle
 from ..utils.logging import configure_hf_library_logging
 from .base_executor import ExecutionError, Executor, ExecutorTask
 from .mixins.data import DataMixin
-from .utils.checkpoints import artifact_ref, maybe_upload_artifacts
+from .utils.checkpoints import (
+    artifact_ref,
+    maybe_upload_artifacts,
+    maybe_upload_traces,
+)
 
 try:
     import torch
@@ -247,13 +251,13 @@ class DiffusersExecutor(DataMixin, Executor):
         with self._task_span(
             task_id, task.workflow_id, out_dir, owner_id=task.owner_id
         ):
-            response = self._run_inner(task, spec, task_id, out_dir)
+            response = self._run_inner(spec, task_id, out_dir)
         maybe_upload_artifacts(task, out_dir, logger=logger)
+        maybe_upload_traces(task, out_dir, logger=logger)
         return response
 
     def _run_inner(
         self,
-        task: ExecutorTask,
         spec: DiffusionSpecStrict,
         task_id: str,
         out_dir: Path,

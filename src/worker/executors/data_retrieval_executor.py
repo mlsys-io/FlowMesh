@@ -16,7 +16,11 @@ from ..connectors import PostgreSQLConnector, S3Connector
 from ..utils.serialization import serialize_dataframe
 from .base_executor import ExecutionError, Executor, ExecutorTask
 from .mixins.data import DataMixin
-from .utils.checkpoints import artifact_ref, maybe_upload_artifacts
+from .utils.checkpoints import (
+    artifact_ref,
+    maybe_upload_artifacts,
+    maybe_upload_traces,
+)
 from .utils.graph_templates import _render_template, _resolve_columns
 
 logger = logging.getLogger(__name__)
@@ -59,6 +63,7 @@ class DataRetrievalExecutor(DataMixin, Executor):
             )
 
         maybe_upload_artifacts(task, out_dir, logger=logger)
+        maybe_upload_traces(task, out_dir, logger=logger)
         return result
 
     def _run_sql(

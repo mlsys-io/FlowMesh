@@ -74,7 +74,11 @@ from worker.lifecycle import Lifecycle
 from .base_executor import ExecutionError, Executor, ExecutorTask
 from .mixins.data import InferenceEntry
 from .mixins.inference import InferenceMixin, PreparedInferenceEntry
-from .utils.checkpoints import maybe_upload_artifacts, resolve_checkpoint_load
+from .utils.checkpoints import (
+    maybe_upload_artifacts,
+    maybe_upload_traces,
+    resolve_checkpoint_load,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -857,17 +861,18 @@ Summary:"""
         with self._task_span(
             task_id, task.workflow_id, out_dir, owner_id=task.owner_id
         ):
-            result = self._run_body(task, spec, task_id, out_dir)
+            result = self._run_inner(task, spec, out_dir)
         maybe_upload_artifacts(task, out_dir, logger=logger)
+        maybe_upload_traces(task, out_dir, logger=logger)
         return result
 
-    def _run_body(
+    def _run_inner(
         self,
         task: ExecutorTask,
         spec: InferenceSpecStrict,
-        task_id: str,
         out_dir: Path,
     ) -> dict[str, Any]:
+        task_id = task.task_id.strip()
         merge_children = task.merged_children or []
         entries: list[PreparedInferenceEntry] = []
         collection_jobs: list[dict[str, Any]] = [

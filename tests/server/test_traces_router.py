@@ -9,7 +9,7 @@ import pytest
 from fastapi import HTTPException
 from fastapi.responses import StreamingResponse
 
-from server.routers.v1 import trace as trace_router
+from server.routers.v1 import traces as trace_router
 
 
 def _otel_span(
@@ -47,7 +47,7 @@ def _seed_task_logs(
     assets: list[dict[str, Any]] | None = None,
     lineage: list[dict[str, Any]] | None = None,
 ) -> None:
-    logs_dir = base / task_id / "artifacts" / "logs"
+    logs_dir = base / task_id / "logs"
     logs_dir.mkdir(parents=True)
     if spans is not None:
         (logs_dir / "spans.jsonl").write_text(

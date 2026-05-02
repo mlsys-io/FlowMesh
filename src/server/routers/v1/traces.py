@@ -1,4 +1,4 @@
-"""Workflow trace endpoints: stream rows or run the analyzer."""
+"""Workflow trace endpoints — stream spans/assets/lineage rows or run the analyzer."""
 
 from collections.abc import Iterable, Iterator
 from pathlib import Path
@@ -7,14 +7,14 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
 
-from shared.governance import ProfileSummary, analyze
-from shared.utils.jsonl import encode_jsonl_bytes, read_jsonl
+from shared.utils.json import encode_jsonl_bytes, read_jsonl
 
 from ...app_state import get_results_dir, get_workflow_registry
+from ...governance import ProfileSummary, analyze
 from ...registries.workflow import WorkflowRegistry
 from ...schemas.result import result_file_path
 
-router = APIRouter(prefix="/workflows", tags=["Trace"])
+router = APIRouter(prefix="/trace", tags=["Trace"])
 
 _KIND_TO_FILENAME: dict[str, str] = {
     "spans": "spans.jsonl",
@@ -24,7 +24,8 @@ _KIND_TO_FILENAME: dict[str, str] = {
 
 
 def _logs_dir_for_task(results_dir: Path, task_id: str) -> Path:
-    return result_file_path(results_dir, task_id).parent / "artifacts" / "logs"
+    """Per-task ``logs/`` directory holding the trace JSONL artifacts."""
+    return result_file_path(results_dir, task_id).parent / "logs"
 
 
 def _iter_workflow_jsonl(
@@ -45,7 +46,7 @@ async def _resolve_task_ids(workflow_id: str, registry: WorkflowRegistry) -> lis
 
 
 @router.get(
-    "/{workflow_id}/trace/analyze",
+    "/{workflow_id}/analyze",
     summary="Run the trace analyzer; return ProfileSummary",
     response_model=ProfileSummary,
 )
@@ -62,7 +63,7 @@ async def analyze_workflow_trace(
 
 
 @router.get(
-    "/{workflow_id}/trace/{kind}",
+    "/{workflow_id}/{kind}",
     summary="Stream JSONL rows (spans / assets / lineage)",
 )
 async def get_workflow_trace(

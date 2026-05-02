@@ -5,15 +5,14 @@ from enum import StrEnum
 
 import httpx
 
-from shared.governance import ProfileSummary
-from shared.utils.jsonl import aparse_jsonl_lines, parse_jsonl_lines
-
 from .._base_client import (
     _make_url,
     _raise_for_stream_status,
     _raise_for_stream_status_async,
 )
+from .._jsonl import aparse_jsonl_lines, parse_jsonl_lines
 from ..exceptions import FlowMeshConnectionError
+from ..models.trace import ProfileSummary
 from ._base import AsyncResource, SyncResource
 
 
@@ -30,7 +29,7 @@ class Trace(SyncResource):
 
     def fetch(self, workflow_id: str, kind: TraceKind) -> Iterator[dict]:
         """Yield JSONL rows for `spans`, `assets`, or `lineage`."""
-        url = _make_url(self._client.base_url, f"/workflows/{workflow_id}/trace/{kind}")
+        url = _make_url(self._client.base_url, f"/trace/{workflow_id}/{kind}")
         try:
             with self._client._http.stream("GET", url) as response:
                 _raise_for_stream_status(response, "GET")
@@ -41,7 +40,7 @@ class Trace(SyncResource):
     def analyze(self, workflow_id: str) -> ProfileSummary:
         """Run the trace analyzer and return a parsed `ProfileSummary`."""
         return ProfileSummary.model_validate(
-            self._client._request("GET", f"/workflows/{workflow_id}/trace/analyze")
+            self._client._request("GET", f"/trace/{workflow_id}/analyze")
         )
 
 
@@ -49,7 +48,7 @@ class AsyncTrace(AsyncResource):
     """Asynchronous workflow trace operations."""
 
     async def fetch(self, workflow_id: str, kind: TraceKind) -> AsyncIterator[dict]:
-        url = _make_url(self._client.base_url, f"/workflows/{workflow_id}/trace/{kind}")
+        url = _make_url(self._client.base_url, f"/trace/{workflow_id}/{kind}")
         try:
             async with self._client._http.stream("GET", url) as response:
                 await _raise_for_stream_status_async(response, "GET")
@@ -60,7 +59,5 @@ class AsyncTrace(AsyncResource):
 
     async def analyze(self, workflow_id: str) -> ProfileSummary:
         return ProfileSummary.model_validate(
-            await self._client._request(
-                "GET", f"/workflows/{workflow_id}/trace/analyze"
-            )
+            await self._client._request("GET", f"/trace/{workflow_id}/analyze")
         )
