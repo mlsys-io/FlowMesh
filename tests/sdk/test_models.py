@@ -180,6 +180,82 @@ _SRV_WORKER_INFO = SrvWorkerInfo(
     stale=False,
 )
 
+_SRV_EVENT_SUMMARY = SrvEventSummary(
+    event_type=["model load", "generation"],
+    count=[1, 2],
+    total_seconds=[53.39, 1.23],
+    avg_seconds=[53.39, 0.62],
+    min_seconds=[53.39, 0.39],
+    max_seconds=[53.39, 0.84],
+)
+
+_SRV_NETWORK_SUMMARY = SrvEventSummary(
+    event_type=["dump to storage"],
+    count=[2],
+    total_seconds=[0.001],
+    avg_seconds=[0.001],
+    min_seconds=[0.000],
+    max_seconds=[0.001],
+)
+
+_SRV_TASK_TIMING = SrvTaskTiming(
+    data_id="tsk-a",
+    start_time=datetime(2026, 4, 30, 14, 0, 1, tzinfo=UTC),
+    end_time=datetime(2026, 4, 30, 14, 0, 55, tzinfo=UTC),
+    duration_seconds=54.0,
+    queuing_delay_seconds=0.5,
+    parent_data_ids=["tsk-up-a"],
+    blocking_parent_data_id="tsk-up-a",
+)
+
+_SRV_ACTIVE_WAIT = SrvActiveWaitBreakdown(
+    data_id=["tsk-a", "tsk-b"],
+    active_seconds=[54.0, 0.84],
+    wait_seconds=[0.0, 0.5],
+)
+
+_SRV_E2E = SrvE2EBreakdown(
+    hardware_summary=_SRV_EVENT_SUMMARY,
+    network_summary=_SRV_NETWORK_SUMMARY,
+    workflow_duration_seconds=55.05,
+    total_network_seconds=0.001,
+)
+
+_SRV_CP = SrvCriticalPathSummary(
+    path=["tsk-a", "tsk-b"],
+    critical_path_seconds=55.05,
+    active_wait_breakdown=_SRV_ACTIVE_WAIT,
+    hardware_summary=_SRV_EVENT_SUMMARY,
+    network_summary=_SRV_NETWORK_SUMMARY,
+    total_network_seconds=0.001,
+)
+
+_SRV_PROFILE = SrvProfileSummary(
+    workflow_id="wfl-abc",
+    event_count=18,
+    data_ids=["tsk-a", "tsk-b"],
+    assets=[
+        SrvAssetSummary(
+            asset_guid="g-1",
+            latest_data_id="tsk-a",
+            latest_version=1,
+            user_id="alice",
+            versions=1,
+            created_at="2026-04-30T14:00:55Z",
+        )
+    ],
+    lineage=[
+        SrvLineageEdge(
+            data_id="tsk-b",
+            source_data_id="tsk-a",
+            created_at="2026-04-30T14:00:55Z",
+        )
+    ],
+    e2e_breakdown=_SRV_E2E,
+    per_data_id=[_SRV_TASK_TIMING],
+    critical_path=_SRV_CP,
+)
+
 # ------------------------------------------------------------------ #
 # Helpers
 # ------------------------------------------------------------------ #
@@ -326,87 +402,6 @@ class TestMiscModels:
         )
         r = SSHConnectionInfo.model_validate(_dump(server))
         assert r.access_mode == "proxy"
-
-
-# ------------------------------------------------------------------ #
-# Trace analyzer payload — server-side fixtures
-# ------------------------------------------------------------------ #
-
-_SRV_EVENT_SUMMARY = SrvEventSummary(
-    event_type=["model load", "generation"],
-    count=[1, 2],
-    total_seconds=[53.39, 1.23],
-    avg_seconds=[53.39, 0.62],
-    min_seconds=[53.39, 0.39],
-    max_seconds=[53.39, 0.84],
-)
-
-_SRV_NETWORK_SUMMARY = SrvEventSummary(
-    event_type=["dump to storage"],
-    count=[2],
-    total_seconds=[0.001],
-    avg_seconds=[0.001],
-    min_seconds=[0.000],
-    max_seconds=[0.001],
-)
-
-_SRV_TASK_TIMING = SrvTaskTiming(
-    data_id="tsk-a",
-    start_time=datetime(2026, 4, 30, 14, 0, 1, tzinfo=UTC),
-    end_time=datetime(2026, 4, 30, 14, 0, 55, tzinfo=UTC),
-    duration_seconds=54.0,
-    queuing_delay_seconds=0.5,
-    parent_data_ids=["tsk-up-a"],
-    blocking_parent_data_id="tsk-up-a",
-)
-
-_SRV_ACTIVE_WAIT = SrvActiveWaitBreakdown(
-    data_id=["tsk-a", "tsk-b"],
-    active_seconds=[54.0, 0.84],
-    wait_seconds=[0.0, 0.5],
-)
-
-_SRV_E2E = SrvE2EBreakdown(
-    hardware_summary=_SRV_EVENT_SUMMARY,
-    network_summary=_SRV_NETWORK_SUMMARY,
-    workflow_duration_seconds=55.05,
-    total_network_seconds=0.001,
-)
-
-_SRV_CP = SrvCriticalPathSummary(
-    path=["tsk-a", "tsk-b"],
-    critical_path_seconds=55.05,
-    active_wait_breakdown=_SRV_ACTIVE_WAIT,
-    hardware_summary=_SRV_EVENT_SUMMARY,
-    network_summary=_SRV_NETWORK_SUMMARY,
-    total_network_seconds=0.001,
-)
-
-_SRV_PROFILE = SrvProfileSummary(
-    workflow_id="wfl-abc",
-    event_count=18,
-    data_ids=["tsk-a", "tsk-b"],
-    assets=[
-        SrvAssetSummary(
-            asset_guid="g-1",
-            latest_data_id="tsk-a",
-            latest_version=1,
-            user_id="alice",
-            versions=1,
-            created_at="2026-04-30T14:00:55Z",
-        )
-    ],
-    lineage=[
-        SrvLineageEdge(
-            data_id="tsk-b",
-            source_data_id="tsk-a",
-            created_at="2026-04-30T14:00:55Z",
-        )
-    ],
-    e2e_breakdown=_SRV_E2E,
-    per_data_id=[_SRV_TASK_TIMING],
-    critical_path=_SRV_CP,
-)
 
 
 class TestTraceModels:
