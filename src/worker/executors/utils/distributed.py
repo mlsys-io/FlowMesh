@@ -1,19 +1,14 @@
-"""In-process replacements for the ``torchrun`` and ``deepspeed`` launchers.
+"""Distributed launcher helpers used by the training executors.
 
-The training executors (SFT / DPO / PPO) launch multi-GPU runs by re-spawning
-themselves through ``torchrun -m worker.executors.<X>_dist_entry ...`` or
-``deepspeed --num_gpus N --module ...``. Going through either CLI requires
-``import subprocess`` (B404) at the executor module level and an implicit
-dependency on the binary being on ``$PATH``.
+Exposes :func:`run_torchrun` and :func:`run_deepspeed`, which invoke
+``torch.distributed.run.main`` and ``deepspeed.launcher.runner.main`` directly
+— the same entry points the ``torchrun`` and ``deepspeed`` console scripts
+call. Worker ranks are spawned by torch's elastic agent / DeepSpeed's
+launcher; this module just shapes the argv and scopes the launcher env.
 
-``torch.distributed.run.main`` and ``deepspeed.launcher.runner.main`` are the
-*canonical* entry points the two CLIs invoke — the ``torchrun`` console script
-in PyTorch is registered as ``torch.distributed.run:main``, and the
-``deepspeed`` console script is literally
-``from deepspeed.launcher.runner import main; main()``. Calling them in-process
-is the documented in-process equivalent; worker ranks are still spawned by
-torch's elastic agent / DeepSpeed's launcher under the hood, so the runtime
-semantics are unchanged.
+:func:`deepspeed_available` reports whether the DeepSpeed package can be
+imported in the current environment, so callers can fall back to torchrun
+when DeepSpeed is absent (CPU worker image) or unusable (no CUDA toolchain).
 """
 
 import importlib.util
@@ -25,7 +20,7 @@ from pathlib import Path
 from torch.distributed.run import main as _torchrun_main
 
 # .../src/worker/executors/utils/distributed.py → parents[3] = .../src
-_REPO_ROOT = Path(__file__).resolve().parents[3]
+_SRC_DIR = Path(__file__).resolve().parents[3]
 
 
 @contextmanager
@@ -43,7 +38,7 @@ def _scoped_env(updates: dict[str, str]) -> Iterator[None]:
 
 
 def _launch_env(launcher_env_flag: str) -> dict[str, str]:
-    pythonpath = _REPO_ROOT.as_posix()
+    pythonpath = _SRC_DIR.as_posix()
     existing = os.environ.get("PYTHONPATH", "")
     if existing:
         pythonpath = f"{pythonpath}{os.pathsep}{existing}"
@@ -59,19 +54,18 @@ def run_torchrun(
 ) -> None:
     """Run ``torchrun --nproc_per_node N -m <module> <args>`` in-process.
 
-    ``PYTHONPATH`` is prefixed with ``src/`` so the spawned ranks can import
-    ``worker.executors.*``; ``launcher_env_flag`` is set to ``"1"`` so the
-    entry module can detect it is running inside the launched ranks and not
-    re-recurse into another launch. Both env mutations are scoped to the
-    launch call — the caller's environment is restored on return (and on
-    exception), so reusing the executor instance for a second task does not
-    see the launcher flag pre-set.
+    The launcher prepends the source root to ``PYTHONPATH`` so spawned ranks
+    can import ``worker.executors.*``, and sets ``launcher_env_flag`` to
+    ``"1"`` so the entry module can detect it is running inside the launched
+    ranks and skip a second spawn. Both env mutations are scoped to the
+    launch call — the caller's environment is restored on return and on
+    exception.
 
-    ``--tee 3`` (stdout+stderr bitmask) keeps the rank streams on the
-    parent's console *and* writes per-rank log files under the elastic
-    agent's log dir. Without it the elastic agent silently swallows rank
-    output and a rank-side crash is reported as an opaque
-    ``ChildFailedError`` with ``error_file: <N/A>``.
+    ``--tee 3`` (stdout+stderr bitmask) is passed so the rank streams reach
+    the parent's console and per-rank log files are written under the
+    elastic agent's log dir; without it the elastic agent swallows rank
+    output and a rank-side crash surfaces as an opaque ``ChildFailedError``
+    with ``error_file: <N/A>``.
     """
     with _scoped_env(_launch_env(launcher_env_flag)):
         _torchrun_main(
@@ -88,17 +82,14 @@ def run_torchrun(
 
 
 def deepspeed_available() -> bool:
-    """Whether ``deepspeed.launcher.runner`` is importable in this environment.
+    """Return whether ``deepspeed.launcher.runner`` is importable here.
 
-    The CPU worker image does not ship DeepSpeed (it is a ``training-gpu``
-    extra), so callers must guard ``run_deepspeed`` with this check the same
-    way the previous implementation guarded ``shutil.which("deepspeed")``.
-
-    Any exception raised while resolving the spec is treated as "not
-    available" — DeepSpeed's package init eagerly probes CUDA op builders, so
-    a CUDA-less host (e.g. a CPU CI runner with the GPU extra installed)
-    raises ``MissingCUDAException`` here. Returning ``False`` in that case is
-    the right answer: ``run_deepspeed`` would also fail on the same import.
+    Use this to guard :func:`run_deepspeed` calls — DeepSpeed is a
+    ``training-gpu`` extra and is absent from the CPU worker image. Any
+    exception raised while resolving the spec is treated as "not available";
+    DeepSpeed's package init eagerly probes CUDA op builders and raises
+    ``MissingCUDAException`` on a CUDA-less host, which is indistinguishable
+    from "not usable here".
     """
     try:
         return importlib.util.find_spec("deepspeed.launcher.runner") is not None
@@ -115,9 +106,13 @@ def run_deepspeed(
 ) -> None:
     """Run ``deepspeed --num_gpus N --module <module> <args>`` in-process.
 
-    Same env-scoping contract as :func:`run_torchrun`. Imported lazily so the
-    CPU worker image (which does not install DeepSpeed) does not pay the
-    import cost or fail at module load time.
+    The launcher prepends the source root to ``PYTHONPATH`` so spawned ranks
+    can import ``worker.executors.*``, and sets ``launcher_env_flag`` to
+    ``"1"`` so the entry module can detect it is running inside the launched
+    ranks. Both env mutations are scoped to the launch call — the caller's
+    environment is restored on return and on exception. The DeepSpeed
+    launcher is imported lazily so the CPU worker image (which omits the
+    DeepSpeed dependency) is unaffected.
     """
     from deepspeed.launcher.runner import main as _deepspeed_main
 
