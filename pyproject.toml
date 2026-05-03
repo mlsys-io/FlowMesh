@@ -212,7 +212,7 @@ skips = [
     "B112",  # try/except/continue: iteration over partially-bad inputs
     "B307",  # eval: agent Python executor sandbox feature
     "B311",  # random: non-cryptographic sampling / jitter / tie-breaking
-    "B404",  # subprocess module import: actual unsafe patterns caught by B602/B607
+    "B404",  # subprocess module import: actual unsafe patterns caught by B602/B603/B607
     "B615",  # unpinned hf_hub downloads: user-supplied workflow inputs
 ]
 

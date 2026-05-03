@@ -6,6 +6,7 @@ import json
 import sys
 from pathlib import Path
 
+from shared.tasks.worker_message import WorkerTaskMessage
 from worker.config import WorkerConfig
 from worker.utils.manifest import scratch_dir
 
@@ -26,7 +27,7 @@ def main(argv: list[str]) -> int:
     args = parser.parse_args(argv[1:])
 
     with args.task_json.open("r", encoding="utf-8") as fh:
-        task = json.load(fh)
+        task = WorkerTaskMessage.model_validate(json.load(fh))
     executor = PPOExecutor(WorkerConfig.from_env())
     try:
         result = executor.run(task, args.out_dir)

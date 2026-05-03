@@ -12,6 +12,7 @@ import json
 import sys
 from pathlib import Path
 
+from shared.tasks.worker_message import WorkerTaskMessage
 from worker.config import WorkerConfig
 from worker.utils.manifest import scratch_dir
 
@@ -36,8 +37,8 @@ def main(argv: list[str]) -> int:
 
     task_path = args.task_json
     out_dir = args.out_dir
-    with task_path.open("r") as fh:
-        task = json.load(fh)
+    with task_path.open("r", encoding="utf-8") as fh:
+        task = WorkerTaskMessage.model_validate(json.load(fh))
     ex = SFTExecutor(WorkerConfig.from_env())
     try:
         result = ex.run(task, out_dir)

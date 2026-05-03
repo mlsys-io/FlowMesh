@@ -66,12 +66,20 @@ def run_torchrun(
     launch call — the caller's environment is restored on return (and on
     exception), so reusing the executor instance for a second task does not
     see the launcher flag pre-set.
+
+    ``--tee 3`` (stdout+stderr bitmask) keeps the rank streams on the
+    parent's console *and* writes per-rank log files under the elastic
+    agent's log dir. Without it the elastic agent silently swallows rank
+    output and a rank-side crash is reported as an opaque
+    ``ChildFailedError`` with ``error_file: <N/A>``.
     """
     with _scoped_env(_launch_env(launcher_env_flag)):
         _torchrun_main(
             [
                 "--nproc_per_node",
                 str(nproc_per_node),
+                "--tee",
+                "3",
                 "-m",
                 module,
                 *module_args,

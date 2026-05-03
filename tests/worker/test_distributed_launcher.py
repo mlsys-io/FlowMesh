@@ -1,5 +1,6 @@
 """Tests for ``worker.executors.utils.distributed`` launchers."""
 
+import json
 import os
 import sys
 from pathlib import Path
@@ -8,6 +9,10 @@ from unittest.mock import patch
 
 import pytest
 
+from shared.tasks import TaskType
+from shared.tasks.specs import EchoSpecStrict
+from shared.tasks.worker_message import WorkerTaskMessage
+from tests.worker.factories import make_worker_task_message
 from worker.executors.utils import distributed
 
 
@@ -34,9 +39,14 @@ def test_run_torchrun_passes_argv(captured_env: dict[str, str | None]) -> None:
         launcher_env_flag="KV_TEST_LAUNCHER",
     )
 
+    # ``--tee 3`` is required so rank stdout/stderr surface on the parent
+    # console and land in the elastic per-rank log dir; without it a rank
+    # crash is reported only as an opaque ChildFailedError.
     assert captured_env["argv"] == [
         "--nproc_per_node",
         "4",
+        "--tee",
+        "3",
         "-m",
         "worker.executors.sft_dist_entry",
         "/tmp/task.json",
@@ -228,3 +238,41 @@ def test_deepspeed_available_when_find_spec_raises() -> None:
 
     with patch("importlib.util.find_spec", side_effect=_boom):
         assert distributed.deepspeed_available() is False
+
+
+def test_task_spec_dump_load_round_trip(tmp_path: Path) -> None:
+    """The on-disk task_spec.json must survive the executor → dist_entry hop.
+
+    The training executors persist their ``WorkerTaskMessage`` via
+    ``json.dump(task.model_dump(mode="json", by_alias=True), fh)``; the
+    matching ``*_dist_entry`` rehydrates it via
+    ``WorkerTaskMessage.model_validate(json.load(fh))``. ``WorkerTaskMessage``
+    has a ``model_serializer`` that dedups string values in ``mode="json"``
+    and a ``model_validator(mode="before")`` that restores the deduped form,
+    so the round-trip works only when both sides go through the model.
+    """
+    # Spec doesn't matter for the contract — just needs to be a valid pydantic
+    # spec; reuse echo to avoid pulling in TRL/torch in the import path.
+    original = make_worker_task_message(
+        EchoSpecStrict(taskType=TaskType.ECHO, data={"items": ["a", "b"]}),
+        api_version="flowmesh/v1",
+        kind="EchoTask",
+        task_id="tsk-roundtrip",
+        workflow_id="wfl-roundtrip",
+        owner_id="usr-roundtrip",
+    )
+
+    task_file = tmp_path / "task_spec.json"
+    with task_file.open("w", encoding="utf-8") as fh:
+        json.dump(original.model_dump(mode="json", by_alias=True), fh)
+
+    with task_file.open("r", encoding="utf-8") as fh:
+        rehydrated = WorkerTaskMessage.model_validate(json.load(fh))
+
+    assert rehydrated.task_id == "tsk-roundtrip"
+    assert rehydrated.workflow_id == "wfl-roundtrip"
+    assert rehydrated.owner_id == "usr-roundtrip"
+    # ``task.spec`` must be reachable — this is what each *_dist_entry feeds
+    # into ``executor.run`` via ``self.require_spec(task, ...)``.
+    assert rehydrated.spec is not None
+    assert rehydrated.task.kind == "EchoTask"
