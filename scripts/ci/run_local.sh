@@ -5,7 +5,8 @@
 # pushing to GitHub.  Requires: docker, docker compose v2, uv.
 #
 # Fully isolated from any running FlowMesh services:
-#   - Host and supervisor ports are dynamically assigned (no fixed 8000/50051)
+#   - Server HTTP port is dynamically assigned (no fixed 8000)
+#   - gRPC port 50051 is fixed (workers cannot follow a dynamic port)
 #   - Worker container name is scoped to the process PID
 #   - Each run gets its own Docker network via compose project name
 #
@@ -14,7 +15,7 @@
 #
 # Options:
 #   --gpu               Run the GPU smoke test instead of the CPU integration test
-#   --task-yaml PATH    Override the workflow YAML submitted to the host
+#   --task-yaml PATH    Override the workflow YAML submitted to the server
 #   --timeout SEC       Override E2E wait timeout (default: 120, GPU default: 300)
 #   --no-clean          Skip the pre-run docker prune step
 #   --no-build          Skip rebuilding the worker image (use cached)
@@ -40,13 +41,12 @@ DO_TEARDOWN=true
 WORKER_IMAGE_CPU="ci/flowmesh_worker:latest-cpu"
 WORKER_IMAGE_GPU="ci/flowmesh_worker:latest-gpu"
 
-# Populated in section 0; referenced in teardown.
 WORKER_NAME=""
 _WORKER_CFG=""
 _COMPOSE_OVERRIDE=""
-HOST_URL="http://localhost:8000"   # overwritten after dc up
+HOST_URL="http://localhost:8000"
 
-# ── Argument parsing ───────────────────────────────────────────────────────────────────────────────────────
+# ── Argument parsing ──────────────────────────────────────────────────────────────────────────────────────
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --gpu)         GPU=true;           shift ;;
@@ -77,23 +77,22 @@ if $GPU; then
   COMPOSE_FILES+=(-f "$DOCKER_DIR/ci.worker.gpu.yml")
 fi
 
-dc() { docker compose -p "$PROJECT" "${COMPOSE_FILES[@]}" "$@"; }
+dc() { COMPOSE_PROJECT_NAME="$PROJECT" docker compose -p "$PROJECT" "${COMPOSE_FILES[@]}" "$@"; }
 
 # ── Teardown (trap runs on any exit) ──────────────────────────────────────────────────────────────────
 _teardown() {
   local code=$?
   if ! $DO_TEARDOWN; then
     warn "Skipping teardown (--keep).  To clean up manually:"
-    echo "  docker compose -p $PROJECT ${COMPOSE_FILES[*]} down -v --remove-orphans"
+    echo "  COMPOSE_PROJECT_NAME=$PROJECT docker compose -p $PROJECT ${COMPOSE_FILES[*]} down -v --remove-orphans"
     return
   fi
 
   log "Tearing down..."
 
-  # Always dump service logs before removal — essential for diagnosing failures.
   echo
-  log "Supervisor logs (last 40 lines):"
-  dc logs supervisor --tail=40 2>/dev/null || true
+  log "Server logs (last 40 lines):"
+  dc logs server --tail=40 2>/dev/null || true
   echo
 
   if [[ -n "$WORKER_NAME" ]]; then
@@ -102,21 +101,16 @@ _teardown() {
     echo
   fi
 
-  # Ask supervisor to stop managed workers gracefully.
-  dc exec -T supervisor \
-    curl -sf -X DELETE http://localhost:8001/api/v1/workers \
+  dc exec -T server \
+    curl -sf -X DELETE http://localhost:8000/api/v1/workers \
     -H "Authorization: Bearer $API_KEY" 2>/dev/null || true
   sleep 3
 
   docker rm -f "$WORKER_NAME" 2>/dev/null || true
   dc down -v --remove-orphans 2>/dev/null || true
 
-  # Worker image is intentionally kept: the next build overwrites the tag in-place,
-  # so there is always exactly one cached image available for --no-build runs.
   docker image prune -f >/dev/null
   docker volume prune -f >/dev/null
-
-  # Clean up isolation temp files.
   rm -f "${_WORKER_CFG:-}" "${_COMPOSE_OVERRIDE:-}" 2>/dev/null || true
 
   if [[ $code -eq 0 ]]; then
@@ -133,7 +127,6 @@ if $GPU; then
   WORKER_IMAGE="$WORKER_IMAGE_GPU"
   WORKER_DOCKERFILE="src/worker/docker/Dockerfile.cuda"
   [[ -z "$TIMEOUT" ]] && TIMEOUT=300
-  # If --task-yaml was given, run only that one; otherwise run the full GPU suite.
   if [[ -n "$TASK_YAML" ]]; then
     GPU_TASK_YAMLS=("$TASK_YAML")
   else
@@ -159,8 +152,6 @@ fi
 cd "$REPO_ROOT"
 
 # ── 0b. Create isolation artifacts ───────────────────────────────────────────────────────────────────────────────────────────────────────────
-# Worker config: project-scoped alias prevents container name clashes when a
-# second local CI run or a dev worker with the same name is already running.
 _WORKER_CFG="$(mktemp /tmp/ci-worker-cfg-XXXXXX.yml)"
 if $GPU; then
   sed "s/ci-worker-gpu/$WORKER_NAME/g" \
@@ -179,23 +170,18 @@ workers:
 EOF
 fi
 
-# Compose override: host port is dynamic (avoids silently hitting a production
-# host on 8000).  Supervisor gRPC stays on fixed 50051 — workers are spawned with
-# SUPERVISOR_GRPC_TARGET=localhost:50051 and cannot follow a random port.
-# If 50051 is already taken, dc up fails loudly at startup.
+# Compose override: HTTP port is dynamic, gRPC port stays fixed at 50051.
+# Workers receive SUPERVISOR_GRPC_TARGET=server:50051 (set via SERVER_HOST
+# in ci.compose.yml) and cannot follow a dynamic port.
 _COMPOSE_OVERRIDE="$(mktemp /tmp/ci-compose-override-XXXXXX.yml)"
 cat > "$_COMPOSE_OVERRIDE" <<EOF
 services:
-  host:
+  server:
     ports:
       - "127.0.0.1::8000"
-  supervisor:
-    ports:
       - "50051:50051"
     volumes:
-      - $_WORKER_CFG:/etc/supervisor/worker_config.yaml:ro
-    environment:
-      WORKER_DOCKER_NETWORK: ${PROJECT}_ci-net
+      - $_WORKER_CFG:/etc/flowmesh/worker_config.yaml:ro
 EOF
 COMPOSE_FILES+=(-f "$_COMPOSE_OVERRIDE")
 
@@ -213,11 +199,9 @@ echo
 # ── 1. Pre-clean ────────────────────────────────────────────────────────────────────────────────────────────────────────
 if $DO_CLEAN; then
   log "Pre-cleaning stale containers and build cache..."
-  # Remove leftover worker containers from previous crashed runs of this script.
   docker ps -a --format '{{.Names}}' \
     | grep -E '^ci-worker-(cpu|gpu)-[0-9]+$' \
     | xargs -r docker rm -f 2>/dev/null || true
-  # Tear down any stale ci-local-* compose stacks (e.g. from a disconnected SSH session).
   docker ps -a --format '{{.Labels}}' \
     | grep -oP 'com\.docker\.compose\.project=ci-local-\d+' \
     | sort -u \
@@ -241,61 +225,41 @@ if $DO_BUILD; then
 else
   if ! docker image inspect "$WORKER_IMAGE" >/dev/null 2>&1; then
     fail "--no-build specified but image '$WORKER_IMAGE' not found locally."
-    fail "Run without --no-build first, or: docker build -f $WORKER_DOCKERFILE -t $WORKER_IMAGE ."
     exit 1
   fi
   log "Using cached worker image: $WORKER_IMAGE"
 fi
 
-# ── 3. Build & start services ────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-# --wait blocks until every healthcheck passes.
-log "Starting services (redis × 2, postgres, host, supervisor)..."
+# ── 3. Build & start services ────────────────────────────────────────────────────────────────────────────────────────────────────────────
+log "Starting services (redis × 2, server)..."
 if ! DOCKER_BUILDKIT=1 dc up -d --build --wait; then
-  fail "Services failed to start — supervisor logs:"
-  dc logs supervisor --tail=60 2>/dev/null || true
+  fail "Services failed to start — server logs:"
+  dc logs server --tail=60 2>/dev/null || true
   exit 1
 fi
 ok "All services healthy"
 
 # ── 4. Resolve the dynamically assigned host port ─────────────────────────────────────────────────────────────────────────────────────
-# docker compose port returns 0.0.0.0:0 for 127.0.0.1-only bindings; use docker port instead.
-HOST_PORT=$(docker port "$(dc ps -q host)" 8000/tcp \
+HOST_PORT=$(docker port "$(dc ps -q server)" 8000/tcp \
   | grep '127.0.0.1:' | awk -F: '{print $NF}' | head -1)
 HOST_URL="http://localhost:$HOST_PORT"
-log "Host bound to $HOST_URL"
+log "Server HTTP bound to $HOST_URL"
 
 curl -sf "$HOST_URL/healthz" >/dev/null \
-  || { fail "Host not reachable at $HOST_URL"; dc logs host --tail=40; exit 1; }
-ok "Host healthy at $HOST_URL"
+  || { fail "Server not reachable at $HOST_URL"; dc logs server --tail=40; exit 1; }
+ok "Server healthy at $HOST_URL"
 
-# ── 5. Confirm supervisor ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-# Supervisor has start_period:15s; retry up to ~45s to let it fully start.
-SUPERVISOR_OK=false
-for i in $(seq 1 9); do
-  if dc exec -T supervisor curl -sf http://localhost:8001/healthz >/dev/null 2>&1; then
-    SUPERVISOR_OK=true; break
-  fi
-  echo "  supervisor attempt $i/9"
-  sleep 5
-done
-if ! $SUPERVISOR_OK; then
-  fail "Supervisor never became healthy"
-  dc logs supervisor --tail=40 || true
-  exit 1
-fi
-ok "Supervisor healthy"
-
-# ── 6. Debug snapshot ────────────────────────────────────────────────────────────────────────────────────────────────────────────
+# ── 5. Debug snapshot ────────────────────────────────────────────────────────────────────────────────────────────────────────────
 echo
 log "Container state:"
 dc ps
 echo
-log "Supervisor logs (last 20 lines):"
-dc logs supervisor --tail=20
+log "Server logs (last 20 lines):"
+dc logs server --tail=20
 echo
 
-# ── 7. Wait for worker to register ───────────────────────────────────────────────────────────────────────────────────────────────────────────
-log "Waiting for worker to register with host..."
+# ── 6. Wait for worker to register ───────────────────────────────────────────────────────────────────────────────────────────────────────────
+log "Waiting for worker to register with server..."
 REGISTERED=false
 for i in $(seq 1 24); do
   RESP=$(curl -sf \
@@ -310,14 +274,14 @@ for i in $(seq 1 24); do
 done
 
 if ! $REGISTERED; then
-  fail "Worker never registered.  Supervisor + worker logs:"
-  dc logs supervisor --tail=40 || true
+  fail "Worker never registered.  Server + worker logs:"
+  dc logs server --tail=40 || true
   docker logs "$WORKER_NAME" 2>&1 | tail -40 || true
   exit 1
 fi
 ok "Worker registered"
 
-# ── 8. Run E2E smoke test(s) ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+# ── 7. Run E2E smoke test(s) ────────────────────────────────────────────────────────────────────────────────────────────────────────────
 echo
 log "Running E2E smoke test(s)..."
 log "  HOST=$HOST_URL"
@@ -338,7 +302,7 @@ for _YAML in "${YAML_LIST[@]}"; do
       pytest tests/integration/test_e2e.py -v -s
 done
 
-# ── 9. Verify worker execution evidence ───────────────────────────────────────────────────────────────────────────────────────────────────────
+# ── 8. Verify worker execution evidence ───────────────────────────────────────────────────────────────────────────────────────────────────────
 echo
 log "Verifying worker execution evidence..."
 LOG_FILE="/tmp/flowmesh-local-worker-$$.log"
