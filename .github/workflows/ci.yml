@@ -48,7 +48,10 @@ jobs:
 
       - name: Build & start services
         run: |
-          docker compose -p "$PROJECT" -f docker/ci.compose.yml up -d --build
+          docker compose -p "$PROJECT" \
+            -f docker/ci.compose.yml \
+            -f docker/ci.ports.fixed.yml \
+            up -d --build
         env:
           DOCKER_BUILDKIT: "1"
           COMPOSE_PROJECT_NAME: ${{ env.PROJECT }}
@@ -226,6 +229,7 @@ jobs:
           docker compose -p "$PROJECT" \
             -f docker/ci.compose.yml \
             -f docker/ci.worker.gpu.yml \
+            -f docker/ci.ports.fixed.yml \
             up -d --build
         env:
           DOCKER_BUILDKIT: "1"

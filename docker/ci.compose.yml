@@ -4,12 +4,13 @@
 # FlowMesh uses a single server container (HTTP API port 8000 + gRPC
 # supervisor port 50051); no separate host or database service needed.
 #
-# The server spawns worker containers via Docker (socket mounted) and
-# attaches them to WORKER_DOCKER_NETWORK so they can resolve "server".
+# Workers are spawned by the server's Docker adapter with network_mode: host.
+# They connect to gRPC at localhost:50051 and HTTP at http://localhost:8000.
+# Ports 8000 and 50051 MUST therefore be bound on the Docker host machine.
 #
 # NOTE: No ports are exposed in this base file.  Add ports via an overlay:
 #   - Fixed (GitHub Actions / bare docker compose):  docker/ci.ports.fixed.yml
-#   - Dynamic (local dev, run_local.sh):              generated at runtime
+#   - Fixed local (run_local.sh):                    generated at runtime
 
 services:
   redis_control:
@@ -45,11 +46,9 @@ services:
       REDIS_CONTROL_URL: "redis://redis_control:6379/0"
       REDIS_TELEMETRY_URL: "redis://redis_telemetry:6379/0"
       FLOWMESH_API_KEY: "flm-ci-00000000000000000000000000000000"
-      # FLOWMESH_BASE_URL lets the server know its own HTTP address so it
-      # can embed the correct URL in tokens passed to spawned workers.
-      FLOWMESH_BASE_URL: "http://server:8000"
-      # SERVER_HOST tells the server its own gRPC hostname so spawned
-      # workers receive SUPERVISOR_GRPC_TARGET=server:50051.
+      # Workers run with network_mode: host, so FLOWMESH_BASE_URL must be
+      # reachable from the Docker host (not the compose overlay network).
+      FLOWMESH_BASE_URL: "http://localhost:8000"
       SERVER_HOST: "server"
       NODE_NAMESPACE: "ci"
       NODE_CLUSTER: "ci-cluster"
@@ -60,9 +59,6 @@ services:
       FLOWMESH_REGISTRY: "ci"
       FLOWMESH_VERSION: "latest"
       WORKER_CONFIG_PATH: "/etc/flowmesh/worker_config.yaml"
-      # Attach spawned workers to this compose network so they can
-      # resolve "server" by hostname.  Set via COMPOSE_PROJECT_NAME.
-      WORKER_DOCKER_NETWORK: "${COMPOSE_PROJECT_NAME}_ci-net"
       # Pass HuggingFace token through so workers can download gated models.
       HF_TOKEN:
     volumes:

@@ -5,10 +5,14 @@
 # pushing to GitHub.  Requires: docker, docker compose v2, uv.
 #
 # Fully isolated from any running FlowMesh services:
-#   - Server HTTP port is dynamically assigned (no fixed 8000)
+#   - Server HTTP port is fixed at 8000 (workers need a known address)
 #   - gRPC port 50051 is fixed (workers cannot follow a dynamic port)
 #   - Worker container name is scoped to the process PID
 #   - Each run gets its own Docker network via compose project name
+#
+# IMPORTANT: Ports 8000 and 50051 must be free on your machine.
+# Workers are spawned with network_mode: host and connect to these
+# ports on localhost to reach the server container.
 #
 # Usage:
 #   ./scripts/ci/run_local.sh [OPTIONS]
@@ -24,11 +28,11 @@
 
 set -euo pipefail
 
-# ── Paths ─────────────────────────────────────────────────────────────────────────────────────
+# ── Paths ─────────────────────────────────────────────────────────────────────
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 DOCKER_DIR="$REPO_ROOT/docker"
 
-# ── Defaults ────────────────────────────────────────────────────────────────────────────────────────
+# ── Defaults ──────────────────────────────────────────────────────────────────
 PROJECT="ci-local-$$"
 API_KEY="flm-ci-00000000000000000000000000000000"
 GPU=false
@@ -46,7 +50,7 @@ _WORKER_CFG=""
 _COMPOSE_OVERRIDE=""
 HOST_URL="http://localhost:8000"
 
-# ── Argument parsing ──────────────────────────────────────────────────────────────────────────────────────
+# ── Argument parsing ───────────────────────────────────────────────────────────
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --gpu)         GPU=true;           shift ;;
@@ -55,12 +59,12 @@ while [[ $# -gt 0 ]]; do
     --no-clean)    DO_CLEAN=false;    shift ;;
     --no-build)    DO_BUILD=false;    shift ;;
     --keep)        DO_TEARDOWN=false; shift ;;
-    -h|--help)     sed -n '2,23p' "$0"; exit 0 ;;
+    -h|--help)     sed -n '2,25p' "$0"; exit 0 ;;
     *) echo "Unknown option: $1" >&2; exit 1 ;;
   esac
 done
 
-# ── Colors ──────────────────────────────────────────────────────────────────────────────────────
+# ── Colors ────────────────────────────────────────────────────────────────────
 if [[ -t 1 ]]; then
   _B='\033[0;34m' _G='\033[0;32m' _Y='\033[1;33m' _R='\033[0;31m' _N='\033[0m'
 else
@@ -71,7 +75,7 @@ ok()   { echo -e "${_G}[ok]${_N}  $*"; }
 warn() { echo -e "${_Y}[warn]${_N} $*"; }
 fail() { echo -e "${_R}[FAIL]${_N} $*" >&2; }
 
-# ── Compose helpers ────────────────────────────────────────────────────────────────────────────────────────
+# ── Compose helpers ───────────────────────────────────────────────────────────
 COMPOSE_FILES=(-f "$DOCKER_DIR/ci.compose.yml")
 if $GPU; then
   COMPOSE_FILES+=(-f "$DOCKER_DIR/ci.worker.gpu.yml")
@@ -79,7 +83,7 @@ fi
 
 dc() { COMPOSE_PROJECT_NAME="$PROJECT" docker compose -p "$PROJECT" "${COMPOSE_FILES[@]}" "$@"; }
 
-# ── Teardown (trap runs on any exit) ──────────────────────────────────────────────────────────────────
+# ── Teardown (trap runs on any exit) ──────────────────────────────────────────
 _teardown() {
   local code=$?
   if ! $DO_TEARDOWN; then
@@ -121,7 +125,7 @@ _teardown() {
 }
 trap _teardown EXIT
 
-# ── 0. Resolve defaults ──────────────────────────────────────────────────────────────────────────────────────────────────────
+# ── 0. Resolve defaults ───────────────────────────────────────────────────────
 if $GPU; then
   WORKER_NAME="ci-worker-gpu-$$"
   WORKER_IMAGE="$WORKER_IMAGE_GPU"
@@ -151,7 +155,7 @@ fi
 
 cd "$REPO_ROOT"
 
-# ── 0b. Create isolation artifacts ───────────────────────────────────────────────────────────────────────────────────────────────────────────
+# ── 0b. Create isolation artifacts ────────────────────────────────────────────
 _WORKER_CFG="$(mktemp /tmp/ci-worker-cfg-XXXXXX.yml)"
 if $GPU; then
   sed "s/ci-worker-gpu/$WORKER_NAME/g" \
@@ -170,15 +174,16 @@ workers:
 EOF
 fi
 
-# Compose override: HTTP port is dynamic, gRPC port stays fixed at 50051.
-# Workers receive SUPERVISOR_GRPC_TARGET=server:50051 (set via SERVER_HOST
-# in ci.compose.yml) and cannot follow a dynamic port.
+# Compose override: both ports are fixed so workers (network_mode: host)
+# can reach localhost:8000 (HTTP) and localhost:50051 (gRPC).
+# FLOWMESH_BASE_URL in ci.compose.yml is http://localhost:8000 — this
+# must match the HTTP port binding below.
 _COMPOSE_OVERRIDE="$(mktemp /tmp/ci-compose-override-XXXXXX.yml)"
 cat > "$_COMPOSE_OVERRIDE" <<EOF
 services:
   server:
     ports:
-      - "127.0.0.1::8000"
+      - "127.0.0.1:8000:8000"
       - "50051:50051"
     volumes:
       - $_WORKER_CFG:/etc/flowmesh/worker_config.yaml:ro
@@ -196,7 +201,7 @@ fi
 log "Timeout  : ${TIMEOUT}s"
 echo
 
-# ── 1. Pre-clean ────────────────────────────────────────────────────────────────────────────────────────────────────────
+# ── 1. Pre-clean ──────────────────────────────────────────────────────────────
 if $DO_CLEAN; then
   log "Pre-cleaning stale containers and build cache..."
   docker ps -a --format '{{.Names}}' \
@@ -214,7 +219,7 @@ if $DO_CLEAN; then
     || true
 fi
 
-# ── 2. Build worker image ────────────────────────────────────────────────────────────────────────────────────────────────────────────
+# ── 2. Build worker image ─────────────────────────────────────────────────────
 if $DO_BUILD; then
   log "Building worker image ($WORKER_IMAGE)..."
   DOCKER_BUILDKIT=1 docker build \
@@ -230,7 +235,7 @@ else
   log "Using cached worker image: $WORKER_IMAGE"
 fi
 
-# ── 3. Build & start services ────────────────────────────────────────────────────────────────────────────────────────────────────────────
+# ── 3. Build & start services ─────────────────────────────────────────────────
 log "Starting services (redis × 2, server)..."
 if ! DOCKER_BUILDKIT=1 dc up -d --build --wait; then
   fail "Services failed to start — server logs:"
@@ -239,17 +244,13 @@ if ! DOCKER_BUILDKIT=1 dc up -d --build --wait; then
 fi
 ok "All services healthy"
 
-# ── 4. Resolve the dynamically assigned host port ─────────────────────────────────────────────────────────────────────────────────────
-HOST_PORT=$(docker port "$(dc ps -q server)" 8000/tcp \
-  | grep '127.0.0.1:' | awk -F: '{print $NF}' | head -1)
-HOST_URL="http://localhost:$HOST_PORT"
-log "Server HTTP bound to $HOST_URL"
-
+# ── 4. Verify server is reachable on fixed port ───────────────────────────────
+log "Server HTTP at $HOST_URL"
 curl -sf "$HOST_URL/healthz" >/dev/null \
   || { fail "Server not reachable at $HOST_URL"; dc logs server --tail=40; exit 1; }
 ok "Server healthy at $HOST_URL"
 
-# ── 5. Debug snapshot ────────────────────────────────────────────────────────────────────────────────────────────────────────────
+# ── 5. Debug snapshot ─────────────────────────────────────────────────────────
 echo
 log "Container state:"
 dc ps
@@ -258,7 +259,7 @@ log "Server logs (last 20 lines):"
 dc logs server --tail=20
 echo
 
-# ── 6. Wait for worker to register ───────────────────────────────────────────────────────────────────────────────────────────────────────────
+# ── 6. Wait for worker to register ───────────────────────────────────────────
 log "Waiting for worker to register with server..."
 REGISTERED=false
 for i in $(seq 1 24); do
@@ -281,7 +282,7 @@ if ! $REGISTERED; then
 fi
 ok "Worker registered"
 
-# ── 7. Run E2E smoke test(s) ────────────────────────────────────────────────────────────────────────────────────────────────────────────
+# ── 7. Run E2E smoke test(s) ──────────────────────────────────────────────────
 echo
 log "Running E2E smoke test(s)..."
 log "  HOST=$HOST_URL"
@@ -302,7 +303,7 @@ for _YAML in "${YAML_LIST[@]}"; do
       pytest tests/integration/test_e2e.py -v -s
 done
 
-# ── 8. Verify worker execution evidence ───────────────────────────────────────────────────────────────────────────────────────────────────────
+# ── 8. Verify worker execution evidence ──────────────────────────────────────
 echo
 log "Verifying worker execution evidence..."
 LOG_FILE="/tmp/flowmesh-local-worker-$$.log"
