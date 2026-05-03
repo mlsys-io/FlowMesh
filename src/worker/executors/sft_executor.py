@@ -155,7 +155,7 @@ class SFTExecutor(TrainingMixin, Executor):
                 launcher_dir.mkdir(parents=True, exist_ok=True)
                 task_file = launcher_dir / "task_spec.json"
                 with task_file.open("w", encoding="utf-8") as fh:
-                    json.dump(task.model_dump(mode="json", by_alias=True), fh)
+                    fh.write(task.model_dump_json(by_alias=True))
 
                 nproc = int(training_cfg.get("nproc_per_node", n_gpus))
                 use_deepspeed = deepspeed_intent and deepspeed_available()
