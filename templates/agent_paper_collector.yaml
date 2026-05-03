@@ -34,6 +34,6 @@ spec:
       type: "local"
       path: "paper_collector"  # Worker uses RESULTS_DIR
     artifacts:
-      - "responses.json"           # FlowMesh standard output format
+      - "results.json"             # FlowMesh standard output format
       - "agent_output.txt"         # Agent execution log
       - "paper_summary.md"         # Paper search results

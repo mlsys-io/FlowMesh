@@ -295,11 +295,11 @@ async def download_task_logs(
 def _rewrite_jsonl_export_paths(
     task_id: str, base_dir: Path, artifact_path: Path
 ) -> None:
-    responses_path = base_dir / "responses.json"
-    if not responses_path.exists():
+    results_path = base_dir / RESULTS_NAME
+    if not results_path.exists():
         return
     try:
-        payload = json.loads(responses_path.read_text(encoding="utf-8"))
+        payload = json.loads(results_path.read_text(encoding="utf-8"))
     except Exception:
         return
 
@@ -334,7 +334,7 @@ def _rewrite_jsonl_export_paths(
 
     if updated:
         try:
-            responses_path.write_text(
+            results_path.write_text(
                 json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
             )
         except Exception:

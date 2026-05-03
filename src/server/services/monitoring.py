@@ -42,7 +42,7 @@ from ..task.metadata import extract_model_dataset_names
 from ..task.models import TaskStatus, TaskUsage
 from ..task.runtime import TaskRuntime
 from ..utils.logging import log_node_event, log_worker_event
-from ..utils.manifest import sync_manifest
+from ..utils.manifest import RESULTS_NAME, sync_manifest
 from ..utils.time import now_iso
 from .metrics import MetricsRecorder
 from .ssh_forward import SshForwardService
@@ -135,7 +135,7 @@ class EventMonitor:
             if child_id == parent_task_id:
                 continue
             dst_dir = result_file_path(self._results_dir, child_id).parent
-            if dst_dir.exists() and (dst_dir / "responses.json").exists():
+            if dst_dir.exists() and (dst_dir / RESULTS_NAME).exists():
                 continue
             try:
                 if dst_dir.exists():
@@ -197,7 +197,10 @@ class EventMonitor:
             case "TASK_SUCCEEDED":
                 self._unregister_forward_task(event.task_id)
                 self._metrics.record_task_event(event)
-                _, merged_children, usages = self._runtime.mark_succeeded(
+                merged_children = self._runtime.get_merged_children(event.task_id)
+                if merged_children:
+                    self.mirror_task_results(event.task_id, merged_children)
+                _, _, usages = self._runtime.mark_succeeded(
                     event.task_id, event.worker_id, payload, event.ts
                 )
                 self._schedule_emit_usage(usages)
@@ -254,8 +257,6 @@ class EventMonitor:
                         )
                     except Exception:
                         pass
-                if merged_children:
-                    self.mirror_task_results(event.task_id, merged_children)
                 self._maybe_close_workflow_log_stream(event.task_id)
             case "TASK_FAILED":
                 record = self._runtime.get_record(event.task_id)

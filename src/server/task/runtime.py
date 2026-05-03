@@ -983,6 +983,11 @@ class TaskRuntime:
         with self._lock:
             return self._tasks.get(task_id)
 
+    def get_merged_children(self, task_id: str) -> list[str]:
+        """Read the merged-children list without consuming it."""
+        with self._cv:
+            return self._merge_children_map.get(task_id, [])
+
     def describe_task(self, task_id: str) -> TaskInfo | None:
         with self._lock:
             record = self._tasks.get(task_id)

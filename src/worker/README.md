@@ -76,7 +76,7 @@ At startup the worker:
 
 ## Output directories
 - Every task receives a dedicated subdirectory under `RESULTS_DIR`.
-- Executors write their JSON summary to `<task_id>/responses.json`.
+- Executors write their JSON summary to `<task_id>/results.json`.
 - Training executors produce checkpoints and, when HTTP uploads are enabled,
   create `final_model.tar.gz` or `final_lora.tar.gz`.
 

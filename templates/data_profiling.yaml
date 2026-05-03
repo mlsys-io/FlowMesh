@@ -35,4 +35,4 @@ spec:
     destination:
       type: "http"
     artifacts:
-      - "responses.json"
+      - "results.json"

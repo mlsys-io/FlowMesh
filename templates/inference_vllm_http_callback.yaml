@@ -53,4 +53,4 @@ spec:
         Authorization: "Bearer replace-with-server-token"
         Content-Type: "application/json"
     artifacts:
-      - "responses.json"       # still persisted locally under RESULTS_DIR/<task_id>/
+      - "results.json"         # still persisted locally under RESULTS_DIR/<task_id>/
