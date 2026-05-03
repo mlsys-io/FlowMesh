@@ -8,7 +8,7 @@
 #   - Server HTTP port is fixed at 8000 (workers need a known address)
 #   - gRPC port 50051 is fixed (workers cannot follow a dynamic port)
 #   - Worker container name is scoped to the process PID
-#   - Each run gets its own Docker network via compose project name
+#   - Each run gets its own Docker network and results directory
 #
 # IMPORTANT: Ports 8000 and 50051 must be free on your machine.
 # Workers are spawned with network_mode: host and connect to these
@@ -48,6 +48,7 @@ WORKER_IMAGE_GPU="ci/flowmesh_worker:latest-gpu"
 WORKER_NAME=""
 _WORKER_CFG=""
 _COMPOSE_OVERRIDE=""
+_RESULTS_DIR=""
 HOST_URL="http://localhost:8000"
 
 # ── Argument parsing ───────────────────────────────────────────────────────────
@@ -116,6 +117,7 @@ _teardown() {
   docker image prune -f >/dev/null
   docker volume prune -f >/dev/null
   rm -f "${_WORKER_CFG:-}" "${_COMPOSE_OVERRIDE:-}" 2>/dev/null || true
+  rm -rf "${_RESULTS_DIR:-}" 2>/dev/null || true
 
   if [[ $code -eq 0 ]]; then
     ok "Local CI run PASSED"
@@ -174,14 +176,21 @@ workers:
 EOF
 fi
 
-# Compose override: both ports are fixed so workers (network_mode: host)
-# can reach localhost:8000 (HTTP) and localhost:50051 (gRPC).
-# FLOWMESH_BASE_URL in ci.compose.yml is http://localhost:8000 — this
-# must match the HTTP port binding below.
+# Per-run results dir: absolute host path so workers (UID 10001) can write
+# without depending on _VolumeInitializer / busybox chown.
+_RESULTS_DIR="/tmp/flowmesh-ci-results-${PROJECT}"
+mkdir -p "$_RESULTS_DIR"
+chmod 777 "$_RESULTS_DIR"
+
+# Compose override: fixed ports + per-run RESULTS_DIR override.
+# RESULTS_DIR in ci.compose.yml defaults to /tmp/flowmesh-ci-results (CI);
+# here we use a PID-scoped path so parallel local runs don't collide.
 _COMPOSE_OVERRIDE="$(mktemp /tmp/ci-compose-override-XXXXXX.yml)"
 cat > "$_COMPOSE_OVERRIDE" <<EOF
 services:
   server:
+    environment:
+      RESULTS_DIR: "$_RESULTS_DIR"
     ports:
       - "127.0.0.1:8000:8000"
       - "50051:50051"
@@ -190,15 +199,16 @@ services:
 EOF
 COMPOSE_FILES+=(-f "$_COMPOSE_OVERRIDE")
 
-log "Project  : $PROJECT"
-log "Worker   : $WORKER_NAME"
-log "GPU mode : $GPU"
+log "Project     : $PROJECT"
+log "Worker      : $WORKER_NAME"
+log "GPU mode    : $GPU"
+log "Results dir : $_RESULTS_DIR"
 if $GPU; then
-  for _y in "${GPU_TASK_YAMLS[@]}"; do log "YAML     : $_y"; done
+  for _y in "${GPU_TASK_YAMLS[@]}"; do log "YAML        : $_y"; done
 else
-  log "YAML     : $TASK_YAML"
+  log "YAML        : $TASK_YAML"
 fi
-log "Timeout  : ${TIMEOUT}s"
+log "Timeout     : ${TIMEOUT}s"
 echo
 
 # ── 1. Pre-clean ──────────────────────────────────────────────────────────────

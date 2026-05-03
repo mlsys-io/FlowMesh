@@ -8,6 +8,10 @@
 # They connect to gRPC at localhost:50051 and HTTP at http://localhost:8000.
 # Ports 8000 and 50051 MUST therefore be bound on the Docker host machine.
 #
+# RESULTS_DIR is set to an absolute host path so workers can write results
+# without relying on the _VolumeInitializer busybox chown mechanism.
+# Caller must create /tmp/flowmesh-ci-results with chmod 777 before 'up'.
+#
 # NOTE: No ports are exposed in this base file.  Add ports via an overlay:
 #   - Fixed (GitHub Actions / bare docker compose):  docker/ci.ports.fixed.yml
 #   - Fixed local (run_local.sh):                    generated at runtime
@@ -59,6 +63,10 @@ services:
       FLOWMESH_REGISTRY: "ci"
       FLOWMESH_VERSION: "latest"
       WORKER_CONFIG_PATH: "/etc/flowmesh/worker_config.yaml"
+      # Absolute host path for worker results (chmod 777 before 'up').
+      # Using an absolute path bypasses the _VolumeInitializer busybox chown
+      # so workers (UID 10001) can write without depending on image pulls.
+      RESULTS_DIR: "/tmp/flowmesh-ci-results"
       # Pass HuggingFace token through so workers can download gated models.
       HF_TOKEN:
     volumes:

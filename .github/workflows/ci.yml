@@ -39,6 +39,11 @@ jobs:
           df -h /
           docker system df
 
+      - name: Create worker results directory
+        run: |
+          mkdir -p /tmp/flowmesh-ci-results
+          chmod 777 /tmp/flowmesh-ci-results
+
       - name: Build worker image
         run: |
           DOCKER_BUILDKIT=1 docker build \
@@ -161,6 +166,7 @@ jobs:
           docker rm -f ci-worker-cpu 2>/dev/null || true
           docker compose -p "$PROJECT" -f docker/ci.compose.yml down -v --remove-orphans
           docker rmi ci/flowmesh_worker:latest-cpu 2>/dev/null || true
+          rm -rf /tmp/flowmesh-ci-results 2>/dev/null || true
           docker image prune -f
           docker volume prune -f
           echo "=== Disk after teardown ==="
@@ -196,6 +202,11 @@ jobs:
           echo "=== Disk after pre-clean ==="
           df -h /
           docker system df
+
+      - name: Create worker results directory
+        run: |
+          mkdir -p /tmp/flowmesh-ci-results
+          chmod 777 /tmp/flowmesh-ci-results
 
       - name: Build GPU worker builder image (cached by content hash)
         run: |
@@ -446,6 +457,7 @@ jobs:
             | grep "^flowmesh-builder:" \
             | grep -v ":${CURRENT_HASH}$" \
             | xargs -r docker rmi 2>/dev/null || true
+          rm -rf /tmp/flowmesh-ci-results 2>/dev/null || true
           docker image prune -f
           docker volume prune -f
           echo "=== Disk after teardown ==="
