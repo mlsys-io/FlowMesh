@@ -13,9 +13,7 @@
 # is not used by that script.
 
 services:
-  host:
+  server:
     ports:
       - "8000:8000"
-  supervisor:
-    ports:
       - "50051:50051"
