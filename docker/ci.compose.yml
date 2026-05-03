@@ -12,12 +12,6 @@
 # without relying on the _VolumeInitializer busybox chown mechanism.
 # Caller must create /tmp/flowmesh-ci-results with chmod 777 before 'up'.
 #
-# HF_CACHE_DIR should be set to the host's ~/.cache/huggingface so that
-# model weights survive 'docker volume prune' between runs.  When set,
-# _mount_hf_cache uses a bind mount (absolute path bypasses
-# _VolumeInitializer).  If unset the adapter falls back to the named
-# volume flowmesh_server_hf_cache (fine for one-off runs).
-#
 # NOTE: No ports are exposed in this base file.  Add ports via an overlay:
 #   - Fixed (GitHub Actions / bare docker compose):  docker/ci.ports.fixed.yml
 #   - Fixed local (run_local.sh):                    generated at runtime
@@ -73,10 +67,6 @@ services:
       # Using an absolute path bypasses the _VolumeInitializer busybox chown
       # so workers (UID 10001) can write without depending on image pulls.
       RESULTS_DIR: "/tmp/flowmesh-ci-results"
-      # Host HF cache dir — pass from compose runtime env so model weights
-      # persist across runs and survive 'docker volume prune'.
-      # Unset → adapter falls back to named volume flowmesh_server_hf_cache.
-      HF_CACHE_DIR:
       # Pass HuggingFace token through so workers can download gated models.
       HF_TOKEN:
     volumes:

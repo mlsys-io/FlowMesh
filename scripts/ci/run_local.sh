@@ -20,7 +20,7 @@
 # Options:
 #   --gpu               Run the GPU smoke test instead of the CPU integration test
 #   --task-yaml PATH    Override the workflow YAML submitted to the server
-#   --timeout SEC       Override E2E wait timeout (default: 120, GPU default: 300)
+#   --timeout SEC       Override E2E wait timeout (default: 120, GPU default: 600)
 #   --no-clean          Skip the pre-run docker prune step
 #   --no-build          Skip rebuilding the worker image (use cached)
 #   --keep              Do not tear down services after the run
@@ -49,7 +49,6 @@ WORKER_NAME=""
 _WORKER_CFG=""
 _COMPOSE_OVERRIDE=""
 _RESULTS_DIR=""
-_HF_CACHE_DIR=""
 HOST_URL="http://localhost:8000"
 
 # ── Argument parsing ───────────────────────────────────────────────────────────
@@ -119,7 +118,6 @@ _teardown() {
   docker volume prune -f >/dev/null
   rm -f "${_WORKER_CFG:-}" "${_COMPOSE_OVERRIDE:-}" 2>/dev/null || true
   rm -rf "${_RESULTS_DIR:-}" 2>/dev/null || true
-  # _HF_CACHE_DIR is a persistent host path — intentionally NOT deleted.
 
   if [[ $code -eq 0 ]]; then
     ok "Local CI run PASSED"
@@ -134,7 +132,7 @@ if $GPU; then
   WORKER_NAME="ci-worker-gpu-$$"
   WORKER_IMAGE="$WORKER_IMAGE_GPU"
   WORKER_DOCKERFILE="src/worker/docker/Dockerfile.cuda"
-  [[ -z "$TIMEOUT" ]] && TIMEOUT=300
+  [[ -z "$TIMEOUT" ]] && TIMEOUT=600
   if [[ -n "$TASK_YAML" ]]; then
     GPU_TASK_YAMLS=("$TASK_YAML")
   else
@@ -184,22 +182,15 @@ _RESULTS_DIR="/tmp/flowmesh-ci-results-${PROJECT}"
 mkdir -p "$_RESULTS_DIR"
 chmod 777 "$_RESULTS_DIR"
 
-# HF model cache: bind-mount the host path so downloaded model weights survive
-# 'docker volume prune' between runs.  The server passes HF_CACHE_DIR to each
-# spawned worker; _mount_hf_cache uses a bind-mount for absolute paths
-# (bypasses _VolumeInitializer).  Falls back to named volume if unset.
-_HF_CACHE_DIR="${HF_CACHE_DIR:-${HOME}/.cache/huggingface}"
-mkdir -p "$_HF_CACHE_DIR"
-chmod 777 "$_HF_CACHE_DIR"
-
-# Compose override: fixed ports + per-run RESULTS_DIR + persistent HF cache.
+# Compose override: fixed ports + per-run RESULTS_DIR override.
+# RESULTS_DIR in ci.compose.yml defaults to /tmp/flowmesh-ci-results (CI);
+# here we use a PID-scoped path so parallel local runs don't collide.
 _COMPOSE_OVERRIDE="$(mktemp /tmp/ci-compose-override-XXXXXX.yml)"
 cat > "$_COMPOSE_OVERRIDE" <<EOF
 services:
   server:
     environment:
       RESULTS_DIR: "$_RESULTS_DIR"
-      HF_CACHE_DIR: "$_HF_CACHE_DIR"
     ports:
       - "127.0.0.1:8000:8000"
       - "50051:50051"
@@ -212,7 +203,6 @@ log "Project     : $PROJECT"
 log "Worker      : $WORKER_NAME"
 log "GPU mode    : $GPU"
 log "Results dir : $_RESULTS_DIR"
-log "HF cache    : $_HF_CACHE_DIR"
 if $GPU; then
   for _y in "${GPU_TASK_YAMLS[@]}"; do log "YAML        : $_y"; done
 else
