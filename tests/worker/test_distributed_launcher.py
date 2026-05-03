@@ -15,6 +15,12 @@ from shared.tasks.worker_message import WorkerTaskMessage
 from tests.worker.factories import make_worker_task_message
 from worker.executors.utils import distributed
 
+# Arbitrary env-var name passed to the launcher's ``launcher_env_flag``
+# argument. The production callers use ``KV_SFT_DISTRIBUTED`` /
+# ``KV_DPO_DISTRIBUTED`` / ``KV_PPO_DISTRIBUTED``; the tests just need a
+# unique placeholder that won't collide with the runtime env.
+_TEST_LAUNCHER_FLAG = "FLOWMESH_TEST_LAUNCHER_FLAG"
+
 
 @pytest.fixture
 def captured_env():
@@ -25,7 +31,7 @@ def captured_env():
     def _fake_main(argv: list[str]) -> None:
         captured["argv"] = argv  # type: ignore[assignment]
         captured["PYTHONPATH"] = os.environ.get("PYTHONPATH")
-        captured["FLAG"] = os.environ.get("KV_TEST_LAUNCHER")
+        captured["FLAG"] = os.environ.get(_TEST_LAUNCHER_FLAG)
 
     with patch.object(distributed, "_torchrun_main", side_effect=_fake_main):
         yield captured
@@ -36,7 +42,7 @@ def test_run_torchrun_passes_argv(captured_env: dict[str, str | None]) -> None:
         nproc_per_node=4,
         module="worker.executors.sft_dist_entry",
         module_args=["/tmp/task.json", "/tmp/out"],
-        launcher_env_flag="KV_TEST_LAUNCHER",
+        launcher_env_flag=_TEST_LAUNCHER_FLAG,
     )
 
     # ``--tee 3`` is required so rank stdout/stderr surface on the parent
@@ -59,7 +65,7 @@ def test_run_torchrun_sets_launcher_flag(captured_env: dict[str, str | None]) ->
         nproc_per_node=2,
         module="worker.executors.dpo_dist_entry",
         module_args=["a", "b"],
-        launcher_env_flag="KV_TEST_LAUNCHER",
+        launcher_env_flag=_TEST_LAUNCHER_FLAG,
     )
 
     assert captured_env["FLAG"] == "1"
@@ -75,7 +81,7 @@ def test_run_torchrun_prepends_repo_root_to_pythonpath(
             nproc_per_node=1,
             module="worker.executors.sft_dist_entry",
             module_args=[],
-            launcher_env_flag="KV_TEST_LAUNCHER",
+            launcher_env_flag=_TEST_LAUNCHER_FLAG,
         )
 
     pythonpath = captured_env["PYTHONPATH"]
@@ -96,7 +102,7 @@ def test_run_torchrun_pythonpath_when_unset(
             nproc_per_node=1,
             module="worker.executors.sft_dist_entry",
             module_args=[],
-            launcher_env_flag="KV_TEST_LAUNCHER",
+            launcher_env_flag=_TEST_LAUNCHER_FLAG,
         )
 
     assert captured_env["PYTHONPATH"] == src_root
@@ -106,17 +112,17 @@ def test_run_torchrun_restores_env_on_success(
     captured_env: dict[str, str | None],
 ) -> None:
     with patch.dict(os.environ, {"PYTHONPATH": "/before"}, clear=False):
-        os.environ.pop("KV_TEST_LAUNCHER", None)
+        os.environ.pop(_TEST_LAUNCHER_FLAG, None)
 
         distributed.run_torchrun(
             nproc_per_node=1,
             module="worker.executors.sft_dist_entry",
             module_args=[],
-            launcher_env_flag="KV_TEST_LAUNCHER",
+            launcher_env_flag=_TEST_LAUNCHER_FLAG,
         )
 
         assert os.environ["PYTHONPATH"] == "/before"
-        assert "KV_TEST_LAUNCHER" not in os.environ
+        assert _TEST_LAUNCHER_FLAG not in os.environ
 
 
 def test_run_torchrun_restores_env_on_exception() -> None:
@@ -125,18 +131,18 @@ def test_run_torchrun_restores_env_on_exception() -> None:
 
     with patch.object(distributed, "_torchrun_main", side_effect=_boom):
         with patch.dict(os.environ, {"PYTHONPATH": "/before"}, clear=False):
-            os.environ.pop("KV_TEST_LAUNCHER", None)
+            os.environ.pop(_TEST_LAUNCHER_FLAG, None)
 
             with pytest.raises(RuntimeError, match="torchrun crashed"):
                 distributed.run_torchrun(
                     nproc_per_node=1,
                     module="worker.executors.sft_dist_entry",
                     module_args=[],
-                    launcher_env_flag="KV_TEST_LAUNCHER",
+                    launcher_env_flag=_TEST_LAUNCHER_FLAG,
                 )
 
             assert os.environ["PYTHONPATH"] == "/before"
-            assert "KV_TEST_LAUNCHER" not in os.environ
+            assert _TEST_LAUNCHER_FLAG not in os.environ
 
 
 @pytest.fixture
@@ -149,7 +155,7 @@ def fake_deepspeed():
     def _fake_main(argv: list[str]) -> None:
         captured["argv"] = argv
         captured["PYTHONPATH"] = os.environ.get("PYTHONPATH")
-        captured["FLAG"] = os.environ.get("KV_TEST_LAUNCHER")
+        captured["FLAG"] = os.environ.get(_TEST_LAUNCHER_FLAG)
 
     runner = ModuleType("deepspeed.launcher.runner")
     runner.main = _fake_main  # type: ignore[attr-defined]
@@ -181,7 +187,7 @@ def test_run_deepspeed_passes_argv(fake_deepspeed: dict[str, object]) -> None:
         num_gpus=4,
         module="worker.executors.sft_dist_entry",
         module_args=["/tmp/task.json", "/tmp/out"],
-        launcher_env_flag="KV_TEST_LAUNCHER",
+        launcher_env_flag=_TEST_LAUNCHER_FLAG,
     )
 
     assert fake_deepspeed["argv"] == [
@@ -198,13 +204,13 @@ def test_run_deepspeed_scopes_env(fake_deepspeed: dict[str, object]) -> None:
     src_root = Path(distributed.__file__).resolve().parents[3].as_posix()
 
     with patch.dict(os.environ, {"PYTHONPATH": "/before"}, clear=False):
-        os.environ.pop("KV_TEST_LAUNCHER", None)
+        os.environ.pop(_TEST_LAUNCHER_FLAG, None)
 
         distributed.run_deepspeed(
             num_gpus=2,
             module="worker.executors.sft_dist_entry",
             module_args=[],
-            launcher_env_flag="KV_TEST_LAUNCHER",
+            launcher_env_flag=_TEST_LAUNCHER_FLAG,
         )
 
         assert fake_deepspeed["FLAG"] == "1"
@@ -214,7 +220,7 @@ def test_run_deepspeed_scopes_env(fake_deepspeed: dict[str, object]) -> None:
         assert parts[0] == src_root
         assert "/before" in parts
         assert os.environ["PYTHONPATH"] == "/before"
-        assert "KV_TEST_LAUNCHER" not in os.environ
+        assert _TEST_LAUNCHER_FLAG not in os.environ
 
 
 def test_deepspeed_available_when_spec_resolves() -> None:
