@@ -200,7 +200,7 @@ class EventMonitor:
                 merged_children = self._runtime.get_merged_children(event.task_id)
                 if merged_children:
                     self.mirror_task_results(event.task_id, merged_children)
-                _, _, usages = self._runtime.mark_succeeded(
+                usages = self._runtime.mark_succeeded(
                     event.task_id, event.worker_id, payload, event.ts
                 )
                 self._schedule_emit_usage(usages)
