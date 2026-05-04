@@ -7,7 +7,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
-from flowmesh.config import FlowMeshConfig
+from flowmesh.config import DEFAULT_CONFIG_PATH, FlowMeshConfig
+from flowmesh.exceptions import ConfigInvalidError, ConfigNotFoundError
 
 from .docker import DockerError, ensure_docker_available
 from .env import validate_env_file
@@ -86,27 +87,22 @@ def run_doctor_checks(
         errors, warnings = validate_env_values(schema, env_values)
         report.extend_errors(errors)
         report.extend_warnings(warnings)
-    validate_login_information(report)
+    validate_config_file(report)
     validate_docker_availability(report)
     validate_gpu_visibility(report)
     return report
 
 
-def validate_login_information(report: DoctorReport) -> None:
-    """Validate that the shared CLI config exists and looks usable."""
+def validate_config_file(report: DoctorReport) -> None:
+    """Validate the presence and basic correctness of the config file."""
     try:
-        config = FlowMeshConfig.from_file()
-    except Exception as exc:
-        report.error(
-            "Invalid config file: "
-            f"{exc}. "
-            "Please run `flowmesh login <url> --api-key <key>`."
-        )
-        return
-    if config.base_url:
-        report.note(f"Logged in to {config.base_url}.")
+        FlowMeshConfig.from_file(DEFAULT_CONFIG_PATH)
+    except ConfigNotFoundError as exc:
+        report.warning(str(exc))
+    except ConfigInvalidError as exc:
+        report.error(str(exc))
     else:
-        report.error("Missing base_url in config. Please re-login.")
+        report.note(f"Config file found at {DEFAULT_CONFIG_PATH}")
 
 
 def validate_docker_availability(report: DoctorReport) -> None:

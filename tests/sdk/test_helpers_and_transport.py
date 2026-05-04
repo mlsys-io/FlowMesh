@@ -85,8 +85,8 @@ def test_run_doctor_checks_preserves_cross_category_order(
         lambda schema, env: (["schema error"], ["schema warning"]),
     )
     monkeypatch.setattr(
-        "flowmesh_stack.doctor.validate_login_information",
-        lambda report: report.note("logged in"),
+        "flowmesh_stack.doctor.validate_config_file",
+        lambda report: report.note("config file valid"),
     )
     monkeypatch.setattr(
         "flowmesh_stack.doctor.validate_docker_availability",
@@ -105,7 +105,7 @@ def test_run_doctor_checks_preserves_cross_category_order(
         DoctorFinding("error", "env error"),
         DoctorFinding("error", "schema error"),
         DoctorFinding("warning", "schema warning"),
-        DoctorFinding("note", "logged in"),
+        DoctorFinding("note", "config file valid"),
         DoctorFinding("error", "docker down"),
         DoctorFinding("warning", "gpu missing"),
     ]
