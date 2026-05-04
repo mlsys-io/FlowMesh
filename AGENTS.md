@@ -11,14 +11,17 @@ and artifacts.
 
 ## Where to read what
 
-- **[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)** — topology diagram,
+- **@docs/ARCHITECTURE.md** — topology diagram,
   components (server / supervisor / worker), communication protocols,
   object IDs, task state machine, directory map, runtime behavior
   (task merging, stage stickiness, context reuse, log streams), plugin
   hooks. Read before any cross-component change.
-- **[`docs/CODE_STYLE.md`](docs/CODE_STYLE.md)** — Python rules,
+- **@docs/CODE_STYLE.md** — Python rules,
   docstring conventions, bandit security rules and `# nosec` policy,
   pip-audit policy. Read before writing any source code.
+- **@CONTRIBUTING.md** — setup, pre-commit hooks,
+  testing, dependency-pin workflow, **commit and PR title conventions**,
+  DCO sign-off. Read before committing or opening a PR.
 - **[`docs/API.md`](docs/API.md)** — common server REST endpoints
   (workflows, tasks, results, workers, nodes, SSH, system) and cursor
   pagination contract. Read before calling the server directly or
@@ -36,14 +39,12 @@ and artifacts.
 - **[`docs/ENV.md`](docs/ENV.md)** — curated server / worker /
   supervisor env var tables (the knobs you actually tune). Full schema
   in `cli/stack/src/flowmesh_cli_stack/env_schema.py`.
-- **[`docs/PLUGINS.md`](docs/PLUGINS.md)** — `IdentityProvider` /
-  `SubmissionGuard` / `UsageSink` hook contract, loader semantics
-  (`FLOWMESH_PLUGINS`), and a worked example.
-- **[`CONTRIBUTING.md`](CONTRIBUTING.md)** — setup, pre-commit hooks,
-  testing, dependency-pin workflow, **commit and PR title conventions**,
-  DCO sign-off. Read before committing or opening a PR.
+- **[`docs/PLUGINS.md`](docs/PLUGINS.md)** — plugin extension contract,
+  loader semantics (`FLOWMESH_PLUGINS`), and a worked example.
 
 Concrete examples and runnable workflows live in `templates/`.
+When code, APIs, CLI commands, SDK methods, env vars, workflow formats, or
+runtime behavior change, update the corresponding docs in the same PR.
 
 ## Reminders
 

@@ -17,6 +17,7 @@ flowmesh worker   {list, info}
 flowmesh node     {list, info, worker {list, start, stop}}
 flowmesh ssh      {connect, run, proxy, connections}
 flowmesh result   {fetch, download}
+flowmesh trace    {fetch, analyze}
 flowmesh system   {metrics}
 flowmesh stack    {build, push, pull, pullall, up, down, restart, ps, logs}
 flowmesh stack worker {up, start, stop, down, list, pull}
@@ -28,8 +29,10 @@ Submit a workflow and watch it:
 
 ```bash
 flowmesh workflow submit templates/echo_local.yaml
-flowmesh workflow watch <wfl-id>          # blocks until DONE / FAILED
-flowmesh workflow logs <wfl-id> --follow  # SSE log stream
+flowmesh workflow watch <wfl-id>              # blocks until DONE / FAILED
+flowmesh workflow logs show <wfl-id>          # recent log entries
+flowmesh workflow logs stream <wfl-id>        # SSE log stream
+flowmesh workflow logs download <wfl-id> -o logs/
 ```
 
 List, filter, paginate:
@@ -45,6 +48,17 @@ Pull results / artifacts:
 flowmesh result fetch <tsk-id>                                  # JSON result
 flowmesh result download <tsk-id> --include all -o bundle.tgz   # tar.gz bundle
 ```
+
+Fetch or analyze workflow traces:
+
+```bash
+flowmesh trace fetch spans <wfl-id> -o spans.jsonl
+flowmesh trace analyze <wfl-id> --format critical-path
+```
+
+`trace fetch` accepts `spans`, `assets`, or `lineage`. `trace analyze
+--format` accepts `rich`, `critical-path` (`cp`), `end-to-end` (`e2e`),
+`queuing`, `lineage`, or `json`.
 
 ## Local stack lifecycle
 

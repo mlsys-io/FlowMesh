@@ -39,6 +39,14 @@ Workflow and task statuses (used in payloads and filters):
 | GET | `/api/v1/results/{task_id}/files/{filename}` | Download artifact. |
 | GET | `/api/v1/results/{task_id}/logs` | Download archived `logs.jsonl`. |
 
+## Traces
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/v1/traces/workflows/{workflow_id}/{trace_type}` | Fetch workflow trace JSONL rows. `trace_type` is `spans`, `assets`, or `lineage`. |
+| GET | `/api/v1/traces/workflows/analyze/{workflow_id}` | Run the trace analyzer and return a profile summary. |
+| POST | `/api/v1/traces/tasks/{task_id}/{trace_type}` | Upload a per-task trace JSONL file. `trace_type` is `spans`, `assets`, or `lineage`. |
+
 ## Workers and nodes
 
 | Method | Path | Description |

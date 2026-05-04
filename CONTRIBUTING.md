@@ -56,9 +56,9 @@ This installs three hook stages:
   [DCO sign-off](#signing-off-commits-dco) line to your commit message.
 - **commit-msg** — verifies the sign-off is present (safety net).
 
-## Commit and PR title conventions
+## Commit message and PR title conventions
 
-- Allowed prefixes (enforced for **PR titles** by
+- Allowed prefixes for commit messages and PR titles (enforced for **PR titles** by
   `scripts/ci/check_pr_title.py`): `feat:`, `fix:`, `refactor:`,
   `chore:`, `test:`, `perf:`, `docs:`. Use `docs:` for doc-only PRs —
   those skip the code-related CI jobs (lint, tests, security,
@@ -67,7 +67,7 @@ This installs three hook stages:
   *before* the type for breaking changes: `[BREAKING] feat: ...`.
 - Single-line subject in imperative mood; body only when the *why* isn't
   obvious from the diff.
-- Sign off (`--signoff`) is required for commits from coding agents.
+- Sign off (`--signoff`) is required for every commit.
 - One logical change per commit. Don't batch unrelated changes.
 
 ## Code Style

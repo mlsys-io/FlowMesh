@@ -66,7 +66,7 @@ src/
     auth/                 OSS no-op auth shim; delegates to IDENTITY_PROVIDERS chain
     db/                   SQLAlchemy session factory + migrations (no-op in OSS)
     dispatcher/           Dispatch loop, worker selector, stage stickiness, context reuse
-    hooks/                IdentityProvider / SubmissionGuard / UsageSink ABCs + registries
+    hooks/                Plugin extension ABCs + registries
     main.py               Entrypoint, FLOWMESH_PLUGINS loader, EventMonitor wiring
     registries/           Worker / Node registries (Redis-backed)
     routers/v1/           workflows, tasks, results, workers, nodes, ssh, stack, system
@@ -124,7 +124,6 @@ scripts/dev/            compile_protos, sync_requirements, check_env_examples
 
 ## Plugin extension points
 
-The server has three pluggable hooks (`IdentityProvider`,
-`SubmissionGuard`, `UsageSink`) loaded via the `FLOWMESH_PLUGINS` env
-var. Full contract, loader semantics, and a worked example live in
+Server extension points are loaded via the `FLOWMESH_PLUGINS` env var.
+Full contract, loader semantics, and a worked example live in
 [`docs/PLUGINS.md`](PLUGINS.md).
