@@ -80,7 +80,6 @@ spec:
   output:
     destination:
       type: "local"
-      path: "./runs/mistral_ppo_training"
     artifacts:
       - "results.json"
       - "trained_model/"  # Only saved if save_model: true

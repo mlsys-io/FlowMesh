@@ -54,7 +54,6 @@ spec:
   output:
     destination:
       type: "local"
-      path: "./inference_vllm_tiny"
     artifacts:
       - "results.json"
       - "logs"

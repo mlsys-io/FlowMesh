@@ -59,7 +59,6 @@ spec:
   output:
     destination:
       type: "local"
-      path: "./cpu_inference_tf_llama"
     artifacts:
       - "results.json"
       - "logs"

@@ -80,7 +80,6 @@ spec:
   output:
     destination:
       type: "local"
-      path: "./ppo_training_llama"
     artifacts:
       - "results.json"
       - "logs"

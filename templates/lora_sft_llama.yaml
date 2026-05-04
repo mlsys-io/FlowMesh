@@ -68,7 +68,6 @@ spec:
   output:
     destination:
       type: "local"
-      path: "./lora_sft_llama"
     artifacts:
       - "results.json"
       - "logs"

@@ -50,7 +50,6 @@ spec:
   output:
     destination:
       type: "local"
-      path: "./rag_query_qdrant"
     artifacts:
       - "results.json"
       - "logs"

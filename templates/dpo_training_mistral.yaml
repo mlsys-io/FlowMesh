@@ -65,7 +65,6 @@ spec:
   output:
     destination:
       type: "local"
-      path: "./runs/dpo_training_mistral"
     artifacts:
       - results.json
       - trained_model/

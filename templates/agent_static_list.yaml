@@ -34,7 +34,6 @@ spec:
   output:
     destination:
       type: "local"
-      path: "agent_multi_task"
     artifacts:
       - "results.json"
       - "batch_logs/"

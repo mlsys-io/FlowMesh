@@ -47,7 +47,6 @@ spec:
   output:
     destination:
       type: "local"
-      path: "./inference_vllm_chat"
     artifacts:
       - "results.json"
       - "logs"

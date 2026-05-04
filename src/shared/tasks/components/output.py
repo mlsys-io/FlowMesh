@@ -8,7 +8,6 @@ from ..placeholders import TemplateFloat
 
 class OutputDestinationLocal(StrictBaseModel):
     type: Literal["local"] = "local"
-    path: str | None = None
 
 
 class OutputDestinationHTTP(StrictBaseModel):
@@ -32,7 +31,6 @@ class OutputSpec(StrictBaseModel):
 
 class OutputDestinationLocalTemplate(TemplateBaseModel):
     type: Literal["local"] = "local"
-    path: str | None = None
 
 
 class OutputDestinationHTTPTemplate(TemplateBaseModel):

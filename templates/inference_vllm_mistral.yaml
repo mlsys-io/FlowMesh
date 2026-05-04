@@ -54,7 +54,6 @@ spec:
   output:
     destination:
       type: "local"
-      path: "./mistral_7b_infer"
     artifacts:
       - "results.json"
       - "logs"

@@ -26,7 +26,6 @@ spec:
   output:
     destination:
       type: "local"
-      path: "agent_output"
     artifacts:
       - "results.json"
       - "agent_output.txt"

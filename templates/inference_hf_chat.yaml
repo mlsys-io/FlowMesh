@@ -69,7 +69,6 @@ spec:
   output:
     destination:
       type: "local"
-      path: "./inference_hf_chat"
     artifacts:
       - "results.json"
       - "artifacts"

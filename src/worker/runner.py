@@ -115,34 +115,11 @@ class Runner:
         self.lifecycle.stop()
         self._cancel_active_executor()
 
-    def _resolve_output_dir(self, task_id: str, spec: TaskSpecStrictBase) -> Path:
-        """Pick the destination directory for task outputs.
-
-        Priority: spec.output.destination.path -> default RESULTS_DIR.
-        Relative paths under spec are resolved against the configured RESULTS_DIR
-        so users can safely provide per-task subfolders.
-        """
-        output = spec.output
-        if output is None or output.destination is None:
-            dest_type = "local"
-            dest_path = None
-        else:
-            dest = output.destination
-            dest_type = dest.type
-            dest_path = dest.path if dest.type == "local" else None
-
-        if dest_type == "local" and dest_path:
-            chosen = Path(dest_path)
-            if not chosen.is_absolute():
-                chosen = self.results_dir / chosen
-        else:
-            chosen = self.results_dir / task_id
-
-        # Ensure each task still gets an isolated directory
-        if chosen.name != task_id:
-            chosen = chosen / task_id
-        prepare_output_dir(chosen)
-        return chosen
+    def _resolve_output_dir(self, task_id: str) -> Path:
+        """Prepare and return the canonical output directory for a task's results."""
+        out_dir = self.results_dir / task_id
+        prepare_output_dir(out_dir)
+        return out_dir
 
     def _write_results(
         self,
@@ -164,9 +141,10 @@ class Runner:
             child_info = child_lookup.get(child_id)
             if child_info is None:
                 continue
-            child_spec = child_info.spec
-            child_out_dir = self._resolve_output_dir(child_id, child_spec)
-            self._write_single_result(child_id, child_spec, child_out_dir, child_result)
+            child_out_dir = self._resolve_output_dir(child_id)
+            self._write_single_result(
+                child_id, child_info.spec, child_out_dir, child_result
+            )
 
     def _write_single_result(
         self,
@@ -468,7 +446,7 @@ class Runner:
                 task_log_emitter: TaskLogEmitter | None = None
                 log_handler_attached: bool = False
                 prev_root_log_level: int | None = None
-                out_dir = self._resolve_output_dir(task_id, spec)
+                out_dir = self._resolve_output_dir(task_id)
                 self.lifecycle.set_busy(task_id)
                 # Set task start time in case of early failure
                 start_iso = now_iso()
@@ -632,7 +610,7 @@ class Runner:
                     task_refs.append(
                         {"task_id": child_id, "workflow_id": child_workflow_id}
                     )
-                    child_out_dir = self._resolve_output_dir(child_id, entry.spec)
+                    child_out_dir = self._resolve_output_dir(child_id)
                     log_paths[child_id] = self._get_log_path(child_out_dir)
                     if entry.owner_id != msg.owner_id:
                         owner_mismatch = True

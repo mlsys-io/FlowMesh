@@ -32,7 +32,6 @@ spec:
   output:
     destination:
       type: "local"
-      path: "./hf_tiny_demo"
     artifacts:
       - "results.json"
       - "logs"

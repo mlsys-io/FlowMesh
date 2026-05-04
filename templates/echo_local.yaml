@@ -21,7 +21,6 @@ spec:
   output:
     destination:
       type: "local"
-      path: "./echo_demo"
     artifacts:
       - "results.json"
       - "logs"

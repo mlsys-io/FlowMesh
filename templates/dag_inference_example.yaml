@@ -60,6 +60,5 @@ spec:
   output:
     destination:
       type: "local"
-      path: "./"
     artifacts:
       - "results.json"

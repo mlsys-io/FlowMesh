@@ -20,7 +20,7 @@ def _task(
             timeoutSec=30,
         )
     elif dest_type == "local":
-        destination = SimpleNamespace(type="local", path=None)
+        destination = SimpleNamespace(type="local")
     else:
         destination = None
     spec = SimpleNamespace(output=SimpleNamespace(destination=destination))

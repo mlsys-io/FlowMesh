@@ -55,7 +55,6 @@ spec:
   output:
     destination:
       type: "local"
-      path: "./sft_llama_1b"
     artifacts:
       - "results.json"
       - "logs"
