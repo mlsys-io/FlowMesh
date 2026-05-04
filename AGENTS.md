@@ -11,15 +11,15 @@ and artifacts.
 
 ## Where to read what
 
-- **@docs/ARCHITECTURE.md** — topology diagram,
+- **[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)** — topology diagram,
   components (server / supervisor / worker), communication protocols,
   object IDs, task state machine, directory map, runtime behavior
   (task merging, stage stickiness, context reuse, log streams), plugin
   hooks. Read before any cross-component change.
-- **@docs/CODE_STYLE.md** — Python rules,
+- **[`docs/CODE_STYLE.md`](docs/CODE_STYLE.md)** — Python rules,
   docstring conventions, bandit security rules and `# nosec` policy,
   pip-audit policy. Read before writing any source code.
-- **@CONTRIBUTING.md** — setup, pre-commit hooks,
+- **[`CONTRIBUTING.md`](CONTRIBUTING.md)** — setup, pre-commit hooks,
   testing, dependency-pin workflow, **commit and PR title conventions**,
   DCO sign-off. Read before committing or opening a PR.
 - **[`docs/API.md`](docs/API.md)** — common server REST endpoints
@@ -72,3 +72,9 @@ that come up most often, surfaced here so you can't miss them.
 
 Use `CONTRIBUTING.md` for setup, hooks, tests, dependency pins, and
 commit rules. Use `docs/CLI.md` for local stack and workflow commands.
+
+## Auto-loaded references
+
+@docs/ARCHITECTURE.md
+@docs/CODE_STYLE.md
+@CONTRIBUTING.md
