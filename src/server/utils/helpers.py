@@ -10,9 +10,10 @@ from logging.handlers import RotatingFileHandler
 from typing import Any
 
 import aiohttp
-import docker
 import requests
 from redis.client import PubSub
+
+import docker
 
 _logger: logging.Logger | None = None
 _docker_client: docker.DockerClient | None = None

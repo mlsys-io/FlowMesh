@@ -113,7 +113,9 @@ try:
     from transformers import PreTrainedModel, PreTrainedTokenizerBase
 except ImportError:
     try:
-        from transformers.modeling_utils import PreTrainedModel  # type: ignore[assignment]
+        from transformers.modeling_utils import (
+            PreTrainedModel,  # type: ignore[assignment]
+        )
         from transformers.tokenization_utils_base import (  # type: ignore[assignment]
             PreTrainedTokenizerBase,
         )

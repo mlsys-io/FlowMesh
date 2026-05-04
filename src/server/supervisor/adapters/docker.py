@@ -7,12 +7,12 @@ from collections import Counter
 from enum import StrEnum
 from typing import Any
 
-from docker import DockerClient
 from docker.errors import NotFound
 from docker.models.containers import Container
 from docker.types import DeviceRequest
 from pydantic import BaseModel, Field
 
+from docker import DockerClient
 from shared.utils.docker import sanitize_container_name
 
 from ... import env

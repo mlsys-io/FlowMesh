@@ -167,9 +167,7 @@ def _poll_task(task_id: str) -> dict[str, Any]:
             error = task.get("error") or ""
             log_text = _dump_task_logs(task_id)
             if _EXECUTOR_UNAVAILABLE_RE.search(error):
-                pytest.skip(
-                    f"[e2e] Executor not available on this worker: {error}"
-                )
+                pytest.skip(f"[e2e] Executor not available on this worker: {error}")
             # max_attempts_exceeded means the host retried until giving up.
             # Inspect logs for the root cause; skip if the executor was
             # unavailable (e.g. Docker socket missing for SSH executor).

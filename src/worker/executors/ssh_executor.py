@@ -50,19 +50,21 @@ from .base_executor import (
 )
 
 try:
-    import docker
-    from docker import DockerClient
     from docker.models.containers import Container
     from docker.types import DeviceRequest
+
+    import docker
+    from docker import DockerClient
 
     _HAS_DOCKER = True
 except Exception:
     _HAS_DOCKER = False
     if TYPE_CHECKING:
-        import docker
-        from docker import DockerClient
         from docker.models.containers import Container
         from docker.types import DeviceRequest
+
+        import docker
+        from docker import DockerClient
     else:
         docker = None
         DockerClient = Any
