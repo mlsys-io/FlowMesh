@@ -65,8 +65,8 @@ This installs three hook stages:
   env/requirements sync).
 - Optional scope: `feat(server): ...`. Optional `[BREAKING]` prefix
   *before* the type for breaking changes: `[BREAKING] feat: ...`.
-- Single-line subject in imperative mood; body only when the *why* isn't
-  obvious from the diff.
+- For commit messages, the subject should be a short sentence about the key changes;
+  add body only when the reason for the changes need elaboration.
 - Sign off (`--signoff`) is required for every commit.
 - One logical change per commit. Don't batch unrelated changes.
 
