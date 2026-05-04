@@ -10,7 +10,7 @@ FlowMesh server.
 ## Top-level groups
 
 ```
-flowmesh info | health | logout
+flowmesh info | health | init | deinit | config
 flowmesh workflow {submit, validate, list, info, watch, cancel, logs}
 flowmesh task     {list, info, watch, stop, logs}
 flowmesh worker   {list, info}

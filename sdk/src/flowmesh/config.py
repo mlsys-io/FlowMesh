@@ -38,8 +38,7 @@ class FlowMeshConfig:
     def from_env(cls) -> Self:
         """Load configuration from environment variables.
 
-        Reads ``FLOWMESH_BASE_URL``, ``FLOWMESH_API_KEY``, and
-        optionally ``FLOWMESH_PRINCIPAL_ID``.
+        Reads ``FLOWMESH_BASE_URL`` and ``FLOWMESH_API_KEY``
         """
         base_url = os.getenv("FLOWMESH_BASE_URL", "").strip()
         if not base_url:

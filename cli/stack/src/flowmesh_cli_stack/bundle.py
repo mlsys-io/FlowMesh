@@ -149,7 +149,6 @@ if [ ! -f "$ENV_FILE" ]; then
 fi
 echo "Configure $ENV_FILE before executing FlowMesh."
 echo "Then run:"
-echo "  flowmesh login"
 echo "  flowmesh stack pull"
 echo "  flowmesh stack up"
 echo "To stop services:"
