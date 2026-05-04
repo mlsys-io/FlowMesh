@@ -18,7 +18,7 @@ RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime \
  && echo $TZ > /etc/timezone \
  && apt-get update \
  && apt-get install -y --no-install-recommends \
-      ca-certificates curl git tini tzdata \
+      ca-certificates curl git tini tzdata pigz \
  && rm -rf /var/lib/apt/lists/*
 
 # Create isolated venv and install uv for dependency resolution

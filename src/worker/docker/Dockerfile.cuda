@@ -29,7 +29,7 @@ RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime \
  && echo $TZ > /etc/timezone \
  && apt-get update \
  && apt-get install -y --no-install-recommends \
-      ca-certificates curl git gnupg2 software-properties-common tini tzdata \
+      ca-certificates curl git gnupg2 software-properties-common tini tzdata pigz \
       libnuma1 libibverbs1 \
  && dpkg-reconfigure -f noninteractive tzdata \
  && rm -rf /var/lib/apt/lists/*
