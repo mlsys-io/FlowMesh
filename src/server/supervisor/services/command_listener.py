@@ -312,9 +312,7 @@ class CommandListener:
             info = asyncio.run_coroutine_threadsafe(
                 self._wm.create_worker(init_config), loop
             ).result(timeout=600.0)
-            return CommandResponse.ok(
-                cmd, data={"worker_name": info.name, "worker": info.model_dump()}
-            )
+            return CommandResponse.ok(cmd, data=info.model_dump())
         except Exception as exc:
             return CommandResponse.error(cmd, f"Failed to create worker: {exc}")
 

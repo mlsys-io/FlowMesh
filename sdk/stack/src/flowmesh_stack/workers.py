@@ -66,7 +66,12 @@ def create_workers(
     config_paths: list[Path] | None = None,
     config_raw: list[str] | None = None,
 ) -> list[tuple[str, dict[str, Any]]]:
-    """Create node workers from configs or built-in cpu/gpu presets."""
+    """Create node workers from configs or built-in cpu/gpu presets.
+
+    When ``kind`` is "gpu", if ``count`` is equal to 1, a single worker with the
+    specified GPU targets will be created. If ``count`` is greater than 1, one worker
+    will be created per GPU target, and the number of targets must match ``count``.
+    """
     payloads = _payloads_for_worker_create(
         kind=kind,
         count=count,
@@ -164,6 +169,8 @@ def _payloads_for_worker_create(
     config_paths: list[Path] | None,
     config_raw: list[str] | None,
 ) -> list[tuple[str, str]]:
+    if count < 1:
+        raise FlowMeshError("Worker count must be at least 1.")
     if config_paths is not None or config_raw is not None:
         payloads: list[tuple[str, str]] = []
         for config_path in config_paths or []:
@@ -177,8 +184,6 @@ def _payloads_for_worker_create(
         return payloads
 
     if kind == "cpu":
-        if count < 1:
-            raise FlowMeshError("CPU worker count must be >= 1")
         return [
             (
                 json.dumps(
@@ -197,11 +202,20 @@ def _payloads_for_worker_create(
         ]
 
     if kind == "gpu":
-        gpu_payloads: list[tuple[str, str]] = []
-        for gpu_id in detect_gpu_targets(targets):
-            if not gpu_id.isdigit():
-                raise FlowMeshError(f"Invalid GPU id '{gpu_id}'")
-            gpu_payloads.append(
+        raw_gpu_ids = detect_gpu_targets(targets)
+        gpu_ids: list[int] = []
+        for raw_gpu_id in raw_gpu_ids:
+            if not raw_gpu_id.isdigit():
+                raise FlowMeshError(f"Invalid GPU id '{raw_gpu_id}'")
+            gpu_ids.append(int(raw_gpu_id))
+
+        if count > 1:
+            if count != len(gpu_ids):
+                raise FlowMeshError(
+                    f"GPU worker count {count} does not match "
+                    f"detected GPU targets: {gpu_ids}"
+                )
+            gpu_payloads = [
                 (
                     json.dumps(
                         {
@@ -209,14 +223,34 @@ def _payloads_for_worker_create(
                             "init_on_start": True,
                             "worker_config": {
                                 "worker_type": "gpu",
-                                "cuda_devices": [int(gpu_id)],
+                                "cuda_devices": [gpu_id],
                                 "worker_alias": f"worker_gpu_{gpu_id}",
                             },
                         }
                     ),
                     f"GPU worker for GPU {gpu_id}",
                 )
-            )
+                for gpu_id in gpu_ids
+            ]
+        else:
+            worker_suffix = "all" if targets == "all" else "_".join(raw_gpu_ids)
+            gpu_payloads = [
+                (
+                    json.dumps(
+                        {
+                            "provider": "docker",
+                            "init_on_start": True,
+                            "worker_config": {
+                                "worker_type": "gpu",
+                                "cuda_devices": gpu_ids,
+                                "worker_alias": f"worker_gpu_{worker_suffix}",
+                            },
+                        }
+                    ),
+                    f"GPU worker for GPUs {', '.join(raw_gpu_ids)}",
+                )
+            ]
+
         if not gpu_payloads:
             raise FlowMeshError("No GPUs detected or specified.")
         return gpu_payloads

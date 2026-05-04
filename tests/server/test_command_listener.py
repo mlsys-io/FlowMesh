@@ -92,7 +92,7 @@ class TestHandleCreateWorkerCmd:
 
         assert resp.success
         assert resp.data is not None
-        assert resp.data["worker_name"] == "w-test"
+        assert resp.data["name"] == "w-test"
         init_config = self.cl._wm.create_worker.call_args[0][0]
         assert init_config.provider == "docker"
         assert init_config.worker_config["worker_alias"] == "my-worker"
