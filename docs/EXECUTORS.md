@@ -1,0 +1,39 @@
+# Task types and executor registry
+
+The worker resolves `spec.taskType` against an executor registry in
+`src/worker/runner.py`. Built-in executors:
+
+| `taskType` | Executor | Use case |
+|-----------|----------|----------|
+| `echo` | `EchoExecutor` | Echo input back as result (smoke tests) |
+| `inference` | `VLLMExecutor` / `TransformersExecutor` | LLM inference |
+| `diffusion` | `DiffusersExecutor` | Image / video diffusion models |
+| `omni_text2{audio,image,speech,general}` | `Omni*Executor` | Multimodal generation |
+| `training` | `SFTExecutor` / `LoRASFTExecutor` / `DPOExecutor` / `PPOExecutor` | Fine-tuning |
+| `rag` | `RAGExecutor` | Retrieval-augmented generation |
+| `agent` | `AgentExecutor` | Tool-using LLM agent (utu / youtu-agent backend) |
+| `data_profiling` | `DataProfilingExecutor` | DataFrame profiling |
+| `data_retrieval` | `DataRetrievalExecutor` | DataFrame loading from sources |
+| `ssh` | `SSHExecutor` | Interactive SSH session or non-interactive container job |
+
+Helper utilities live in `src/worker/executors/utils/` (`artifacts`,
+`checkpoints`, `data_utils`, `distributed`, `graph_templates`,
+`huggingface`, `safe_eval`). Cross-cutting behavior is in
+`src/worker/executors/mixins/` (`data`, `governance`, `inference`,
+`training`).
+
+## Agent executor (utu / youtu-agent)
+
+`AgentExecutor` requires the following env vars to run; the executor
+asserts them at import time, so a worker without them fails the task
+immediately:
+
+- `UTU_LLM_TYPE` — provider kind (e.g. `chat.completions`).
+- `UTU_LLM_MODEL` — model identifier.
+- `UTU_LLM_BASE_URL` — LLM endpoint base URL.
+- `UTU_LLM_API_KEY` — LLM API key.
+
+Optional, for the search tools:
+
+- `SERPER_API_KEY`
+- `JINA_API_KEY`

@@ -56,7 +56,26 @@ This installs three hook stages:
   [DCO sign-off](#signing-off-commits-dco) line to your commit message.
 - **commit-msg** — verifies the sign-off is present (safety net).
 
+## Commit and PR title conventions
+
+- Allowed prefixes (enforced for **PR titles** by
+  `scripts/ci/check_pr_title.py`): `feat:`, `fix:`, `refactor:`,
+  `chore:`, `test:`, `perf:`, `docs:`. Use `docs:` for doc-only PRs —
+  those skip the code-related CI jobs (lint, tests, security,
+  env/requirements sync).
+- Optional scope: `feat(server): ...`. Optional `[BREAKING]` prefix
+  *before* the type for breaking changes: `[BREAKING] feat: ...`.
+- Single-line subject in imperative mood; body only when the *why* isn't
+  obvious from the diff.
+- Sign off (`--signoff`) is required for commits from coding agents.
+- One logical change per commit. Don't batch unrelated changes.
+
 ## Code Style
+
+See [`docs/CODE_STYLE.md`](docs/CODE_STYLE.md) for the project's Python
+rules, docstring conventions, bandit security rules, and pip-audit
+policy. The tools below run automatically via pre-commit; running them
+manually is rarely necessary.
 
 | Tool | Purpose | Config |
 |------|---------|--------|
@@ -91,7 +110,7 @@ If your change touches shared schemas or proto definitions, verify downstream co
 Dependency versions live in two places with different styles:
 
 - **`pyproject.toml`** — `>=X.Y.Z` lower bounds. Expresses a compatibility floor; lets uv resolve the current acceptable version.
-- **`src/worker/requirements/requirements{,.gpu}.txt`** — exact `==X.Y.Z` pins. These feed the worker Docker images (`uv pip install --requirement …`), which need deterministic, reproducible installs.
+- **`src/worker/requirements/requirements{,.gpu}.txt`** — exact `==X.Y.Z` pins for deterministic, reproducible environment of worker environment.
 
 The requirements files are **auto-generated** from `pyproject.toml` + `uv.lock` by `scripts/dev/sync_requirements.py`. Do not edit them by hand.
 
@@ -123,5 +142,7 @@ git push --force-with-lease
 
 ## Project Layout
 
-FlowMesh follows a multi-tier architecture (Server / Worker) with
-shared schemas, SDK, and CLI packages.
+FlowMesh follows a multi-tier architecture (Server / Worker) with shared
+schemas, SDK, and CLI packages. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
+for the topology diagram, communication protocols, directory map, and
+runtime behavior (task merging, stickiness, context reuse, etc.).

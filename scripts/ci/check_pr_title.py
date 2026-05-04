@@ -9,7 +9,7 @@ if not pr_title:
     print("❌ PR title is empty.")
     sys.exit(1)
 
-ALLOWED_TYPES = ["feat", "fix", "refactor", "chore", "test", "perf"]
+ALLOWED_TYPES = ["feat", "fix", "refactor", "chore", "test", "perf", "docs"]
 
 # Strip optional [1/N] progress prefix
 progress_match = re.match(r"^\[\d+/[\dNn]+\]\s*(.+)$", pr_title, re.IGNORECASE)
@@ -25,7 +25,7 @@ else:
     core_title = pr_title
     is_breaking = False
 
-# Validate type: feat, fix, refactor, chore, test, perf
+# Validate type: feat, fix, refactor, chore, test, perf, docs
 types_re = "|".join(re.escape(t) for t in ALLOWED_TYPES)
 type_match = re.match(rf"^({types_re}):\s+.+$", core_title, re.IGNORECASE)
 if not type_match:
