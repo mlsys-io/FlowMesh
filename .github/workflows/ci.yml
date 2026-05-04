@@ -5,6 +5,9 @@ on:
     branches: [main]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -21,10 +24,14 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
+        with:
+          persist-credentials: false
 
       - name: Set project name
-        run: echo "PROJECT=ci-${{ github.run_id }}-integ" >> "$GITHUB_ENV"
+        env:
+          RUN_ID: ${{ github.run_id }}
+        run: echo "PROJECT=ci-${RUN_ID}-integ" >> "$GITHUB_ENV"
 
       - name: Pre-clean stale worker containers and disk
         run: |
@@ -103,6 +110,8 @@ jobs:
           exit 1
 
       - name: Run E2E smoke test (echo task)
+        env:
+          WORKSPACE: ${{ github.workspace }}
         run: |
           docker run --rm \
             --network "${PROJECT}_ci-net" \
@@ -110,19 +119,21 @@ jobs:
             -e FLOWMESH_API_KEY="${FLOWMESH_API_KEY}" \
             -e TASK_YAML="/templates/echo_local.yaml" \
             -e E2E_TIMEOUT_SEC="120" \
-            -v "${{ github.workspace }}/tests:/tests:ro" \
-            -v "${{ github.workspace }}/templates:/templates:ro" \
+            -v "$WORKSPACE/tests:/tests:ro" \
+            -v "$WORKSPACE/templates:/templates:ro" \
             python:3.11-slim \
             sh -c "pip install requests pytest -q && pytest /tests/integration/test_e2e.py -v"
 
       - name: Verify CPU worker actually executed the task
+        env:
+          RUN_ID: ${{ github.run_id }}
         run: |
           echo "=== CPU worker logs (full) ==="
-          docker logs ci-worker-cpu 2>&1 | tee /tmp/worker-cpu-${{ github.run_id }}.log || true
+          docker logs ci-worker-cpu 2>&1 | tee "/tmp/worker-cpu-${RUN_ID}.log" || true
 
           echo ""
           echo "=== Execution evidence check ==="
-          LOG=/tmp/worker-cpu-${{ github.run_id }}.log
+          LOG="/tmp/worker-cpu-${RUN_ID}.log"
           if grep -qiE "executor|running task|dispatched|echo|succeeded|TASK_SUCCEEDED|done" "$LOG"; then
             echo "✓ Worker executed and completed the task"
           else
@@ -136,13 +147,15 @@ jobs:
 
       - name: Collect logs on failure
         if: failure()
+        env:
+          RUN_ID: ${{ github.run_id }}
         run: |
           docker compose -p "$PROJECT" -f docker/ci.compose.yml logs --no-color \
-            > /tmp/ci-logs-${{ github.run_id }}.txt 2>&1 || true
+            > "/tmp/ci-logs-${RUN_ID}.txt" 2>&1 || true
 
       - name: Upload logs on failure
         if: failure()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
         with:
           name: ci-logs-integ-${{ github.run_id }}
           path: /tmp/ci-logs-${{ github.run_id }}.txt
@@ -182,10 +195,14 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
+        with:
+          persist-credentials: false
 
       - name: Set project name
-        run: echo "PROJECT=ci-${{ github.run_id }}-gpu" >> "$GITHUB_ENV"
+        env:
+          RUN_ID: ${{ github.run_id }}
+        run: echo "PROJECT=ci-${RUN_ID}-gpu" >> "$GITHUB_ENV"
 
       - name: Pre-clean stale worker containers and disk
         run: |
@@ -274,6 +291,8 @@ jobs:
           exit 1
 
       - name: "E2E: vLLM inference (TinyLlama-1.1B)"
+        env:
+          WORKSPACE: ${{ github.workspace }}
         run: |
           docker run --rm \
             --network "${PROJECT}_ci-net" \
@@ -281,12 +300,14 @@ jobs:
             -e FLOWMESH_API_KEY="${FLOWMESH_API_KEY}" \
             -e TASK_YAML="/templates/inference_vllm_tiny.yaml" \
             -e E2E_TIMEOUT_SEC="600" \
-            -v "${{ github.workspace }}/tests:/tests:ro" \
-            -v "${{ github.workspace }}/templates:/templates:ro" \
+            -v "$WORKSPACE/tests:/tests:ro" \
+            -v "$WORKSPACE/templates:/templates:ro" \
             python:3.11-slim \
             sh -c "pip install requests pytest -q && pytest /tests/integration/test_e2e.py -v"
 
       - name: "E2E: 3-node fan-in graph DAG (echo executor)"
+        env:
+          WORKSPACE: ${{ github.workspace }}
         run: |
           docker run --rm \
             --network "${PROJECT}_ci-net" \
@@ -294,12 +315,14 @@ jobs:
             -e FLOWMESH_API_KEY="${FLOWMESH_API_KEY}" \
             -e TASK_YAML="/templates/echo_three_node_graph.yaml" \
             -e E2E_TIMEOUT_SEC="120" \
-            -v "${{ github.workspace }}/tests:/tests:ro" \
-            -v "${{ github.workspace }}/templates:/templates:ro" \
+            -v "$WORKSPACE/tests:/tests:ro" \
+            -v "$WORKSPACE/templates:/templates:ro" \
             python:3.11-slim \
             sh -c "pip install requests pytest -q && pytest /tests/integration/test_e2e.py -v"
 
       - name: "E2E: parallel DAG with synthesis (vLLM, graph_template)"
+        env:
+          WORKSPACE: ${{ github.workspace }}
         run: |
           docker run --rm \
             --network "${PROJECT}_ci-net" \
@@ -307,12 +330,14 @@ jobs:
             -e FLOWMESH_API_KEY="${FLOWMESH_API_KEY}" \
             -e TASK_YAML="/templates/dag_inference_example.yaml" \
             -e E2E_TIMEOUT_SEC="600" \
-            -v "${{ github.workspace }}/tests:/tests:ro" \
-            -v "${{ github.workspace }}/templates:/templates:ro" \
+            -v "$WORKSPACE/tests:/tests:ro" \
+            -v "$WORKSPACE/templates:/templates:ro" \
             python:3.11-slim \
             sh -c "pip install requests pytest -q && pytest /tests/integration/test_e2e.py -v"
 
       - name: "E2E: conditional task skip (echo executor)"
+        env:
+          WORKSPACE: ${{ github.workspace }}
         run: |
           docker run --rm \
             --network "${PROJECT}_ci-net" \
@@ -320,12 +345,14 @@ jobs:
             -e FLOWMESH_API_KEY="${FLOWMESH_API_KEY}" \
             -e TASK_YAML="/templates/conditional_echo_test.yaml" \
             -e E2E_TIMEOUT_SEC="120" \
-            -v "${{ github.workspace }}/tests:/tests:ro" \
-            -v "${{ github.workspace }}/templates:/templates:ro" \
+            -v "$WORKSPACE/tests:/tests:ro" \
+            -v "$WORKSPACE/templates:/templates:ro" \
             python:3.11-slim \
             sh -c "pip install requests pytest -q && pytest /tests/integration/test_e2e.py -v"
 
       - name: "E2E: HF Transformers inference (tiny-gpt2)"
+        env:
+          WORKSPACE: ${{ github.workspace }}
         run: |
           docker run --rm \
             --network "${PROJECT}_ci-net" \
@@ -333,12 +360,14 @@ jobs:
             -e FLOWMESH_API_KEY="${FLOWMESH_API_KEY}" \
             -e TASK_YAML="/templates/inference_hf_tiny.yaml" \
             -e E2E_TIMEOUT_SEC="300" \
-            -v "${{ github.workspace }}/tests:/tests:ro" \
-            -v "${{ github.workspace }}/templates:/templates:ro" \
+            -v "$WORKSPACE/tests:/tests:ro" \
+            -v "$WORKSPACE/templates:/templates:ro" \
             python:3.11-slim \
             sh -c "pip install requests pytest -q && pytest /tests/integration/test_e2e.py -v"
 
       - name: "E2E: LoRA SFT fine-tuning (TinyLlama-1.1B, gsm8k 2%)"
+        env:
+          WORKSPACE: ${{ github.workspace }}
         run: |
           docker run --rm \
             --network "${PROJECT}_ci-net" \
@@ -346,12 +375,14 @@ jobs:
             -e FLOWMESH_API_KEY="${FLOWMESH_API_KEY}" \
             -e TASK_YAML="/templates/lora_sft_llama.yaml" \
             -e E2E_TIMEOUT_SEC="1200" \
-            -v "${{ github.workspace }}/tests:/tests:ro" \
-            -v "${{ github.workspace }}/templates:/templates:ro" \
+            -v "$WORKSPACE/tests:/tests:ro" \
+            -v "$WORKSPACE/templates:/templates:ro" \
             python:3.11-slim \
             sh -c "pip install requests pytest -q && pytest /tests/integration/test_e2e.py -v"
 
       - name: "E2E: SSH non-interactive (python:3.12-slim container)"
+        env:
+          WORKSPACE: ${{ github.workspace }}
         run: |
           docker run --rm \
             --network "${PROJECT}_ci-net" \
@@ -359,12 +390,14 @@ jobs:
             -e FLOWMESH_API_KEY="${FLOWMESH_API_KEY}" \
             -e TASK_YAML="/templates/ssh_noninteractive.yaml" \
             -e E2E_TIMEOUT_SEC="120" \
-            -v "${{ github.workspace }}/tests:/tests:ro" \
-            -v "${{ github.workspace }}/templates:/templates:ro" \
+            -v "$WORKSPACE/tests:/tests:ro" \
+            -v "$WORKSPACE/templates:/templates:ro" \
             python:3.11-slim \
             sh -c "pip install requests pytest -q && pytest /tests/integration/test_e2e.py -v"
 
       - name: "E2E: n8n parallel DAG inference (dag_inference.json)"
+        env:
+          WORKSPACE: ${{ github.workspace }}
         run: |
           docker run --rm \
             --network "${PROJECT}_ci-net" \
@@ -372,19 +405,21 @@ jobs:
             -e FLOWMESH_API_KEY="${FLOWMESH_API_KEY}" \
             -e TASK_YAML="/templates/n8n/dag_inference.json" \
             -e E2E_TIMEOUT_SEC="600" \
-            -v "${{ github.workspace }}/tests:/tests:ro" \
-            -v "${{ github.workspace }}/templates:/templates:ro" \
+            -v "$WORKSPACE/tests:/tests:ro" \
+            -v "$WORKSPACE/templates:/templates:ro" \
             python:3.11-slim \
             sh -c "pip install requests pytest -q && pytest /tests/integration/test_e2e.py -v"
 
       - name: Verify GPU worker actually executed the task
+        env:
+          RUN_ID: ${{ github.run_id }}
         run: |
           echo "=== GPU worker logs (full) ==="
-          docker logs ci-worker-gpu 2>&1 | tee /tmp/worker-gpu-${{ github.run_id }}.log || true
+          docker logs ci-worker-gpu 2>&1 | tee "/tmp/worker-gpu-${RUN_ID}.log" || true
 
           echo ""
           echo "=== Execution evidence check ==="
-          LOG=/tmp/worker-gpu-${{ github.run_id }}.log
+          LOG="/tmp/worker-gpu-${RUN_ID}.log"
 
           if grep -qiE "executor|running task|dispatched|inference|model" "$LOG"; then
             echo "✓ Worker received and processed a task"
@@ -411,15 +446,17 @@ jobs:
 
       - name: Collect logs on failure
         if: failure()
+        env:
+          RUN_ID: ${{ github.run_id }}
         run: |
           docker compose -p "$PROJECT" \
             -f docker/ci.compose.yml \
             -f docker/ci.worker.gpu.yml \
-            logs --no-color > /tmp/ci-gpu-logs-${{ github.run_id }}.txt 2>&1 || true
+            logs --no-color > "/tmp/ci-gpu-logs-${RUN_ID}.txt" 2>&1 || true
 
       - name: Upload logs on failure
         if: failure()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
         with:
           name: ci-logs-gpu-${{ github.run_id }}
           path: /tmp/ci-gpu-logs-${{ github.run_id }}.txt
