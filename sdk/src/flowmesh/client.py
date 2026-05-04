@@ -59,10 +59,10 @@ class FlowMesh(BaseClient):
         timeout: float = DEFAULT_TIMEOUT,
         http_client: httpx.Client | None = None,
     ) -> None:
-        resolved_url, resolved_key = resolve_config(base_url, api_key)
+        cfg = resolve_config(base_url, api_key)
         super().__init__(
-            base_url=resolved_url,
-            api_key=resolved_key,
+            base_url=cfg.base_url,
+            api_key=cfg.api_key,
             timeout=timeout,
             http_client=http_client,
         )

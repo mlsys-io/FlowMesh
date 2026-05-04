@@ -10,10 +10,11 @@ from typing import Any, Self
 import httpx
 
 from ._constants import API_VERSION_PREFIX, DEFAULT_BASE_URL, STREAM_TIMEOUT, USER_AGENT
-from .config import FlowMeshConfig
+from .config import DEFAULT_CONFIG_PATH, FlowMeshConfig
 from .exceptions import (
     APIError,
     AuthenticationError,
+    ConfigNotFoundError,
     FlowMeshConnectionError,
     NotFoundError,
     ValidationError,
@@ -393,20 +394,29 @@ class BaseAsyncClient:
         await self.close()
 
 
-def resolve_config(base_url: str | None, api_key: str | None) -> tuple[str, str | None]:
+def resolve_config(
+    base_url: str | None = None,
+    api_key: str | None = None,
+    config_path: Path | None = DEFAULT_CONFIG_PATH,
+) -> FlowMeshConfig:
     """Resolve configuration from params → env → config file → defaults."""
-    if base_url is None:
-        base_url = os.getenv("FLOWMESH_BASE_URL")
     if api_key is None:
-        api_key = os.getenv("FLOWMESH_API_KEY")
-
+        api_key = os.getenv("FLOWMESH_API_KEY", "").strip() or None
     if base_url is None:
-        try:
-            cfg = FlowMeshConfig.from_file()
-            base_url = cfg.base_url
-            if api_key is None:
-                api_key = cfg.api_key
-        except Exception:
-            base_url = DEFAULT_BASE_URL
+        base_url = os.getenv("FLOWMESH_BASE_URL", "").strip() or None
 
-    return base_url, api_key
+    if not (api_key is None or base_url is None):
+        return FlowMeshConfig(base_url=base_url, api_key=api_key)
+
+    try:
+        cfg = FlowMeshConfig.from_file(config_path or DEFAULT_CONFIG_PATH)
+    except ConfigNotFoundError:
+        return FlowMeshConfig(
+            base_url=DEFAULT_BASE_URL if base_url is None else base_url, api_key=api_key
+        )
+
+    if base_url is not None:
+        cfg.base_url = base_url
+    if api_key is not None:
+        cfg.api_key = api_key
+    return cfg

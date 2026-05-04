@@ -10,7 +10,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Self
 
-from .exceptions import ConfigError
+from .exceptions import ConfigInvalidError, ConfigNotFoundError
 
 DEFAULT_CONFIG_DIR = Path.home() / ".flowmesh"
 DEFAULT_CONFIG_PATH = DEFAULT_CONFIG_DIR / "config.toml"
@@ -22,17 +22,16 @@ class FlowMeshConfig:
 
     base_url: str
     api_key: str | None = None
-    principal_id: str | None = None
 
     @classmethod
     def from_file(cls, path: Path = DEFAULT_CONFIG_PATH) -> Self:
         """Load configuration from a TOML config file."""
         if not path.exists():
-            raise ConfigError(f"Config file not found at {path}")
+            raise ConfigNotFoundError(f"Config file not found at {path}")
         try:
             data = tomllib.loads(path.read_text())
         except Exception as exc:
-            raise ConfigError(f"Failed to parse config file {path}: {exc}")
+            raise ConfigInvalidError(f"Failed to parse config file {path}: {exc}")
         return cls.from_mapping(data)
 
     @classmethod
@@ -42,25 +41,28 @@ class FlowMeshConfig:
         Reads ``FLOWMESH_BASE_URL``, ``FLOWMESH_API_KEY``, and
         optionally ``FLOWMESH_PRINCIPAL_ID``.
         """
-        base_url = os.getenv("FLOWMESH_BASE_URL")
+        base_url = os.getenv("FLOWMESH_BASE_URL", "").strip()
         if not base_url:
-            raise ConfigError("FLOWMESH_BASE_URL environment variable not set")
+            raise ConfigInvalidError("FLOWMESH_BASE_URL environment variable not set")
         return cls(
-            base_url=base_url,
-            api_key=os.getenv("FLOWMESH_API_KEY"),
-            principal_id=os.getenv("FLOWMESH_PRINCIPAL_ID"),
+            base_url=base_url, api_key=os.getenv("FLOWMESH_API_KEY", "").strip() or None
         )
 
     @classmethod
     def from_mapping(cls, data: dict[str, Any]) -> Self:
         """Create from a dict (e.g. parsed TOML)."""
         base_url = data.get("base_url")
-        if not base_url:
-            raise ConfigError("Missing 'base_url' in config")
+        if base_url is None:
+            raise ConfigInvalidError("Missing 'base_url' in config")
+        if not isinstance(base_url, str):
+            raise ConfigInvalidError(
+                "Invalid type for 'base_url' in config, expected string"
+            )
+        if not base_url.strip():
+            raise ConfigInvalidError("Config 'base_url' cannot be empty")
         return cls(
             base_url=base_url,
-            api_key=data.get("api_key"),
-            principal_id=data.get("principal_id"),
+            api_key=None if (api_key := data.get("api_key")) is None else str(api_key),
         )
 
     def to_mapping(self) -> dict[str, Any]:

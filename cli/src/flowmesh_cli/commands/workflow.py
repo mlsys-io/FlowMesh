@@ -3,13 +3,13 @@ import time
 from pathlib import Path
 
 import typer
+from flowmesh import FlowMesh
 from flowmesh.exceptions import FlowMeshError
 from flowmesh.models.common import TERMINAL_WORKFLOW_STATUSES, WorkflowStatus
 from flowmesh.resources.workflows import WorkflowFormat
 
 from ..core import logging
 from ..core.query import parse_query_filters
-from ..core.runtime import flowmesh_client_from_config
 from ..core.typer import get_typer
 
 app = get_typer(help="Submit and manage workflows.")
@@ -43,7 +43,7 @@ def submit(
         logging.error(f"Template not found: {template}")
         raise typer.Exit(code=1)
     workflow_text = template.read_text()
-    client = flowmesh_client_from_config()
+    client = FlowMesh()
     try:
         result = client.workflows.submit(workflow_text, workflow_format=workflow_format)
     except FlowMeshError as exc:
@@ -64,7 +64,7 @@ def validate(
         logging.error(f"Template not found: {template}")
         raise typer.Exit(code=1)
     workflow_text = template.read_text()
-    client = flowmesh_client_from_config()
+    client = FlowMesh()
     try:
         result = client.workflows.validate(
             workflow_text, workflow_format=workflow_format
@@ -80,7 +80,7 @@ def info(
     workflow_id: str = typer.Argument(..., help="ID of the workflow to retrieve")
 ) -> None:
     """Retrieve information for a specific workflow."""
-    client = flowmesh_client_from_config()
+    client = FlowMesh()
     try:
         wf = client.workflows.retrieve(workflow_id)
     except FlowMeshError as exc:
@@ -105,7 +105,7 @@ def list_workflows(
     ),
 ) -> None:
     """List all workflows submitted to the FlowMesh server."""
-    client = flowmesh_client_from_config()
+    client = FlowMesh()
     query_params = parse_query_filters(query)
     try:
         workflows = client.workflows.list(
@@ -126,7 +126,7 @@ def watch(
     interval: float = typer.Option(2.0, help="Polling interval in seconds"),
 ) -> None:
     """Monitor a workflow's progress by polling until completion."""
-    client = flowmesh_client_from_config()
+    client = FlowMesh()
     last_status: str | None = None
     try:
         while True:
@@ -152,7 +152,7 @@ def cancel(
     workflow_id: str = typer.Argument(..., help="ID of the workflow to cancel")
 ) -> None:
     """Request cancellation of a running workflow and its associated tasks."""
-    client = flowmesh_client_from_config()
+    client = FlowMesh()
     try:
         wf = client.workflows.cancel(workflow_id)
     except FlowMeshError as exc:
@@ -176,7 +176,7 @@ def show_logs(
     ),
 ) -> None:
     """Query recent workflow logs from the server."""
-    client = flowmesh_client_from_config()
+    client = FlowMesh()
     try:
         result = client.workflows.get_logs(
             workflow_id, limit=limit, before=before, after=after
@@ -210,7 +210,7 @@ def stream_logs(
     cursor: str | None = typer.Option(None, help="Start streaming after this cursor"),
 ) -> None:
     """Stream workflow logs via SSE."""
-    client = flowmesh_client_from_config()
+    client = FlowMesh()
     try:
         for entry in client.workflows.stream_logs(workflow_id, cursor=cursor):
             event = entry.event.model_dump(mode="json")
@@ -230,7 +230,7 @@ def download_logs(
         ..., "--output", "-o", help="Directory to save task logs"
     ),
 ) -> None:
-    client = flowmesh_client_from_config()
+    client = FlowMesh()
     error = True
     try:
         for path in client.workflows.download_logs(workflow_id, output_dir):

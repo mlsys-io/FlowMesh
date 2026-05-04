@@ -1,12 +1,12 @@
 import json
 
 import typer
+from flowmesh import FlowMesh
 from flowmesh.exceptions import FlowMeshError
 from flowmesh.params import append_param, extend_params
 
 from ..core import logging
 from ..core.query import parse_query_filters
-from ..core.runtime import flowmesh_client_from_config
 from ..core.typer import get_typer
 
 app = get_typer(help="Manage nodes registered with FlowMesh.")
@@ -15,7 +15,7 @@ app = get_typer(help="Manage nodes registered with FlowMesh.")
 @app.command()
 def info(node_id: str = typer.Argument(..., help="Node identifier")) -> None:
     """Retrieve information for a specific node."""
-    client = flowmesh_client_from_config()
+    client = FlowMesh()
     try:
         node = client.nodes.retrieve(node_id)
     except FlowMeshError as exc:
@@ -42,7 +42,7 @@ def list_nodes(
     ),
 ) -> None:
     """List all nodes registered with FlowMesh."""
-    client = flowmesh_client_from_config()
+    client = FlowMesh()
     query_params = parse_query_filters(query)
     try:
         nodes = client.nodes.list(
@@ -91,7 +91,7 @@ def list_workers(
     ),
 ) -> None:
     """List workers on a specific node or all nodes."""
-    client = flowmesh_client_from_config()
+    client = FlowMesh()
     query_params = parse_query_filters(query)
     append_param(query_params, "id", worker_id)
     append_param(query_params, "name", name)
@@ -118,7 +118,7 @@ def start_worker(
     worker_name: str = typer.Argument(..., help="Worker name"),
 ) -> None:
     """Start a worker on a specific node."""
-    client = flowmesh_client_from_config()
+    client = FlowMesh()
     try:
         client.nodes.start_worker(node_id, worker_name)
     except FlowMeshError as exc:
@@ -133,7 +133,7 @@ def stop_worker(
     worker_name: str = typer.Argument(..., help="Worker name"),
 ) -> None:
     """Stop a worker on a specific node."""
-    client = flowmesh_client_from_config()
+    client = FlowMesh()
     try:
         client.nodes.stop_worker(node_id, worker_name)
     except FlowMeshError as exc:

@@ -1,10 +1,10 @@
 import json
 
 import typer
+from flowmesh import FlowMesh
 from flowmesh.exceptions import FlowMeshError
 
 from ..core import logging
-from ..core.runtime import flowmesh_client_from_config
 from ..core.typer import get_typer
 
 app = get_typer(help="Query FlowMesh server system information.")
@@ -13,7 +13,7 @@ app = get_typer(help="Query FlowMesh server system information.")
 @app.command()
 def metrics() -> None:
     """Retrieve and display system metrics from the FlowMesh server."""
-    client = flowmesh_client_from_config()
+    client = FlowMesh()
     try:
         result = client.system.metrics()
     except FlowMeshError as exc:

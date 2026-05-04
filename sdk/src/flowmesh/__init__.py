@@ -30,7 +30,8 @@ from .config import FlowMeshConfig
 from .exceptions import (
     APIError,
     AuthenticationError,
-    ConfigError,
+    ConfigInvalidError,
+    ConfigNotFoundError,
     FlowMeshConnectionError,
     FlowMeshError,
     NotFoundError,
@@ -47,7 +48,8 @@ __all__ = [
     "NotFoundError",
     "ValidationError",
     "FlowMeshConnectionError",
-    "ConfigError",
+    "ConfigNotFoundError",
+    "ConfigInvalidError",
 ]
 
 __version__ = "0.1.0"

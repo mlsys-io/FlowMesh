@@ -1,16 +1,16 @@
 """Task status utilities for the FlowMesh CLI."""
 
 import typer
+from flowmesh import FlowMesh
 from flowmesh.exceptions import FlowMeshError
 from flowmesh.models.common import TaskStatus
 
 from . import logging
-from .runtime import flowmesh_client_from_config
 
 
 def wait_for_task_completion(task_id: str, interval: float) -> tuple[str, str | None]:
     """Poll task until it reaches a terminal state."""
-    client = flowmesh_client_from_config()
+    client = FlowMesh()
     try:
         task = client.tasks.wait(task_id, interval=interval)
         status = task.status

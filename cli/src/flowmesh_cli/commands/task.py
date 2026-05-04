@@ -11,7 +11,6 @@ from flowmesh.models.common import TERMINAL_TASK_STATUSES, TaskStatus
 
 from ..core import logging
 from ..core.query import parse_query_filters
-from ..core.runtime import flowmesh_client_from_config
 from ..core.task import wait_for_task_completion
 from ..core.typer import get_typer
 
@@ -44,7 +43,7 @@ def _log_ssh_connection_instructions(
 @app.command()
 def info(task_id: str = typer.Argument(..., help="Task identifier")) -> None:
     """Retrieve the current status and metadata for a specific task."""
-    client = flowmesh_client_from_config()
+    client = FlowMesh()
     try:
         task = client.tasks.retrieve(task_id)
     except FlowMeshError as exc:
@@ -85,7 +84,7 @@ def list_tasks(
     ),
 ) -> None:
     """List all tasks registered in the FlowMesh server."""
-    client = flowmesh_client_from_config()
+    client = FlowMesh()
     query_params = parse_query_filters(query)
     try:
         tasks = client.tasks.list(
@@ -115,7 +114,7 @@ def stop(
     ),
 ) -> None:
     """Stop a running task."""
-    client = flowmesh_client_from_config()
+    client = FlowMesh()
     try:
         client.tasks.stop(task_id)
     except FlowMeshError as exc:
@@ -146,7 +145,7 @@ def watch(
     interval: float = typer.Option(2.0, help="Polling interval in seconds"),
 ) -> None:
     """Monitor a task's status by polling until completion."""
-    client = flowmesh_client_from_config()
+    client = FlowMesh()
     last_status: TaskStatus | None = None
     last_update: dict | None = None
     try:
@@ -189,7 +188,7 @@ def show_logs(
     ),
 ) -> None:
     """Query recent task logs from the server."""
-    client = flowmesh_client_from_config()
+    client = FlowMesh()
     try:
         result = client.tasks.get_logs(task_id, limit=limit, before=before, after=after)
     except FlowMeshError as exc:
@@ -221,7 +220,7 @@ def stream_logs(
     cursor: str | None = typer.Option(None, help="Start streaming after this cursor"),
 ) -> None:
     """Stream task logs via SSE."""
-    client = flowmesh_client_from_config()
+    client = FlowMesh()
     try:
         for entry in client.tasks.stream_logs(task_id, cursor=cursor):
             event = entry.event.model_dump(mode="json")
@@ -240,7 +239,7 @@ def download_logs(
     output: Path = typer.Option(..., "--output", "-o", help="Path to save logs.jsonl"),
 ) -> None:
     """Download archived logs.jsonl for a task."""
-    client = flowmesh_client_from_config()
+    client = FlowMesh()
     try:
         client.tasks.download_logs(task_id, output)
     except FlowMeshError as exc:

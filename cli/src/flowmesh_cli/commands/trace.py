@@ -6,6 +6,7 @@ from enum import StrEnum
 from pathlib import Path
 
 import typer
+from flowmesh import FlowMesh
 from flowmesh.exceptions import FlowMeshError
 from flowmesh.models.traces import (
     EventSummary,
@@ -23,7 +24,6 @@ from rich.table import Table
 from rich.tree import Tree
 
 from ..core import logging
-from ..core.runtime import flowmesh_client_from_config
 from ..core.typer import get_typer
 
 app = get_typer(help="Workflow trace: fetch raw rows or run the analyzer.")
@@ -310,7 +310,7 @@ def fetch(
     ),
 ) -> None:
     """Fetch JSONL rows for a workflow's spans / assets / lineage."""
-    client = flowmesh_client_from_config()
+    client = FlowMesh()
     try:
         rows = client.traces.fetch(workflow_id, trace_type)
     except FlowMeshError as exc:
@@ -348,7 +348,7 @@ def analyze(
     """Run the trace analyzer on a workflow and render the result."""
     fmt = _ANALYZE_VIEW_ALIAS.get(fmt, fmt)
 
-    client = flowmesh_client_from_config()
+    client = FlowMesh()
     try:
         summary = client.traces.analyze(workflow_id)
     except FlowMeshError as exc:

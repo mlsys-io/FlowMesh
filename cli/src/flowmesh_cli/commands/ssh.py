@@ -19,7 +19,6 @@ from flowmesh.params import append_param, extend_params
 
 from ..core import logging
 from ..core.query import parse_query_filters
-from ..core.runtime import flowmesh_client_from_config, safe_load_config
 from ..core.typer import get_typer
 
 app = get_typer(help="Connect to SSH sessions on FlowMesh workers.")
@@ -158,7 +157,7 @@ def connect(
 ) -> None:
     """Wait for an SSH session to be ready on a task and connect."""
     logging.info(f"Waiting for SSH session on task {task_id}...")
-    client = flowmesh_client_from_config()
+    client = FlowMesh()
     try:
         ssh_info = client.tasks.wait_for_ssh(task_id, interval=interval)
     except FlowMeshError as exc:
@@ -260,7 +259,7 @@ def run(
             public_key = key.read_text().strip()
         else:
             try:
-                public_key = flowmesh_client_from_config().ssh.detect_public_key()
+                public_key = FlowMesh().ssh.detect_public_key()
             except FlowMeshError as exc:
                 logging.error(str(exc))
                 raise typer.Exit(code=1)
@@ -269,7 +268,7 @@ def run(
             logging.error(f"Invalid mode: {mode}. Use 'direct', 'proxy', or 'forward'.")
             raise typer.Exit(code=1)
 
-    client = flowmesh_client_from_config()
+    client = FlowMesh()
     workflow_yaml = client.ssh.build_task_yaml(
         name=name,
         public_key=public_key,
@@ -334,15 +333,12 @@ def proxy(
 
 async def _run_proxy(task_id: str) -> None:
     """Async WebSocket <-> stdio proxy."""
-    config = safe_load_config()
-    api_key = config.api_key
+    client = FlowMesh()
+    api_key = client.api_key
+    ws_url = client.ssh.proxy_url(task_id)
 
-    ws_url = flowmesh_client_from_config(config).ssh.proxy_url(task_id)
-
-    async with websockets.connect(
-        ws_url,
-        additional_headers={"Authorization": f"Bearer {api_key}"},
-    ) as ws:
+    auth_header = {"Authorization": f"Bearer {api_key}"} if api_key else None
+    async with websockets.connect(ws_url, additional_headers=auth_header) as ws:
         loop = asyncio.get_running_loop()
 
         async def stdin_to_ws() -> None:
@@ -407,7 +403,7 @@ def list_connections(
     ),
 ) -> None:
     """List active SSH connections audited by the server."""
-    client = flowmesh_client_from_config()
+    client = FlowMesh()
     query_params = parse_query_filters(query)
     append_param(query_params, "connection_id", connection_id)
     extend_params(query_params, "access_mode", access_mode)

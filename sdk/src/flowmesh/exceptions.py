@@ -47,5 +47,9 @@ class FlowMeshConnectionError(FlowMeshError):
     """Raised when the SDK cannot connect to the FlowMesh server."""
 
 
-class ConfigError(FlowMeshError):
-    """Raised when SDK configuration is missing or invalid."""
+class ConfigNotFoundError(FlowMeshError):
+    """Raised when the SDK cannot find a configuration file."""
+
+
+class ConfigInvalidError(FlowMeshError):
+    """Raised when the SDK encounters invalid configurations."""

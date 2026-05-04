@@ -2,10 +2,10 @@ import json
 from pathlib import Path
 
 import typer
+from flowmesh import FlowMesh
 from flowmesh.exceptions import FlowMeshError
 
 from ..core import logging
-from ..core.runtime import flowmesh_client_from_config
 from ..core.typer import get_typer
 
 app = get_typer(help="Retrieve task execution results and output artifacts.")
@@ -19,7 +19,7 @@ def fetch(
     ),
 ) -> None:
     """Download task result JSON and optionally save it to a local file."""
-    client = flowmesh_client_from_config()
+    client = FlowMesh()
     if output:
         try:
             payload, target, downloaded = client.results.materialize(task_id, output)
@@ -48,7 +48,7 @@ def download_result_files(
     ),
 ) -> None:
     """Download specified result files for a task."""
-    client = flowmesh_client_from_config()
+    client = FlowMesh()
     try:
         for path in client.results.download_files(task_id, file_paths, output_dir):
             logging.log(f"Wrote file to {path}")

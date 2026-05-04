@@ -1,12 +1,12 @@
 import json
 
 import typer
+from flowmesh import FlowMesh
 from flowmesh.exceptions import FlowMeshError
 from flowmesh.params import append_param
 
 from ..core import logging
 from ..core.query import parse_query_filters
-from ..core.runtime import flowmesh_client_from_config
 from ..core.typer import get_typer
 
 app = get_typer(help="Query and manage workers across all servers via the server API.")
@@ -15,7 +15,7 @@ app = get_typer(help="Query and manage workers across all servers via the server
 @app.command()
 def info(worker_id: str = typer.Argument(..., help="Worker identifier")) -> None:
     """Retrieve information for a specific worker."""
-    client = flowmesh_client_from_config()
+    client = FlowMesh()
     try:
         worker = client.workers.retrieve(worker_id)
     except FlowMeshError as exc:
@@ -54,7 +54,7 @@ def list_workers(
     ),
 ) -> None:
     """List all workers."""
-    client = flowmesh_client_from_config()
+    client = FlowMesh()
     query_params = parse_query_filters(query)
     append_param(query_params, "node_id", node_id)
     append_param(query_params, "node_alias", node_alias)
