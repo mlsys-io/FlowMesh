@@ -247,12 +247,14 @@ def archive_model_dir(model_dir: Path, compression_level: int | None = None) -> 
     level = _resolve_compression_level(compression_level)
     pigz_enabled = _should_use_pigz()
     pigz_binary = (
-        shutil.which(os.getenv("MODEL_ARCHIVE_PIGZ_BIN", "pigz"))
+        shutil.which(os.getenv("MODEL_ARCHIVE_PIGZ_BIN", "").strip() or "pigz")
         if pigz_enabled
         else None
     )
     tar_binary = (
-        shutil.which(os.getenv("MODEL_ARCHIVE_TAR_BIN", "tar")) if pigz_binary else None
+        shutil.which(os.getenv("MODEL_ARCHIVE_TAR_BIN", "").strip() or "tar")
+        if pigz_binary
+        else None
     )
 
     if pigz_binary and tar_binary:
