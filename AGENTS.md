@@ -70,19 +70,5 @@ that come up most often, surfaced here so you can't miss them.
 
 ## Dev workflow
 
-```bash
-uv sync --all-extras
-uv run pre-commit install --install-hooks -t pre-commit -t prepare-commit-msg -t commit-msg
-uv run pre-commit run --all-files
-uv run pytest tests/ --ignore=tests/worker/test_mp_executor_cleanup_gpu.py
-```
-
-Run locally:
-
-```bash
-uv run flowmesh stack down # Or clean to wipe out previous state
-uv run flowmesh stack build # Required if you changed the code
-uv run flowmesh stack up
-uv run flowmesh stack worker up gpu -t 0
-uv run flowmesh workflow submit templates/echo_local.yaml
-```
+Use `CONTRIBUTING.md` for setup, hooks, tests, dependency pins, and
+commit rules. Use `docs/CLI.md` for local stack and workflow commands.

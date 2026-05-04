@@ -59,10 +59,9 @@ async with AsyncFlowMesh(base_url="...", api_key="...") as client:
 
 ## Cursor pagination
 
-List endpoints take `limit` and `before` / `after` cursors. Cursors are
-opaque base64 strings — pass them through; do not parse them. The SDK
-exposes `next_cursor` on the response object so you can paginate by
-threading it back in.
+Cursor-enabled calls take `limit` and `before` / `after` params.
+Cursors are opaque base64 strings — pass them through; do not parse
+them.
 
 ## Errors
 
