@@ -52,6 +52,7 @@ ENV REDIS_URL=redis://redis_control:6379/0 \
     REDIS_CONTROL_URL=redis://redis_control:6379/0 \
     REDIS_TELEMETRY_URL=redis://redis_telemetry:6379/0 \
     RESULTS_DIR=/mnt/flowmesh-results \
+    WORKER_RESULTS_DIR=flowmesh_results \
     SERVER_METRICS_DIR=/mnt/flowmesh-metrics \
     LOG_DIR=/var/log/flowmesh-server \
     LOG_FILE=/var/log/flowmesh-server/server.log \

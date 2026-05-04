@@ -93,7 +93,10 @@ if CUDA_VISIBLE_DEVICES is not None:
     if CUDA_VISIBLE_DEVICES.strip().lower() == "all":
         CUDA_VISIBLE_DEVICES = None
         os.environ.pop("CUDA_VISIBLE_DEVICES", None)
-RESULTS_DIR: str = os.getenv("RESULTS_DIR", "flowmesh-node_results")
+RESULTS_DIR: str = os.getenv("RESULTS_DIR", "").strip() or "./results"
+WORKER_RESULTS_DIR: str = (
+    os.getenv("WORKER_RESULTS_DIR", "").strip() or "flowmesh_results"
+)
 HF_CACHE_DIR: str | None = os.getenv("HF_CACHE_DIR") or None
 PREDOWNLOAD_MODEL_LIST: str = os.getenv("PREDOWNLOAD_MODEL_LIST", "")
 WORKER_TAGS: str = os.getenv("WORKER_TAGS", "")

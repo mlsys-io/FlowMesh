@@ -16,6 +16,8 @@ listed here is in `.env.example`.
 | `REDIS_TELEMETRY_URL` | `redis://localhost:6380/0` | Redis telemetry channel |
 | `DATABASE_URL` | – | Postgres connection string |
 | `RESULTS_DIR` | `./results` | Server-side results directory |
+| `SERVER_RESULTS_DIR` | `flowmesh_results` | Host-side directory/docker volume to mount at `RESULTS_DIR` in the server container |
+| `WORKER_RESULTS_DIR` | `flowmesh_results` | Server-side directory/docker volume to mount to worker containers |
 | `SERVER_HTTP_PORT` | `8000` | Public HTTP port |
 | `SERVER_GRPC_PORT` | `50051` | Supervisor gRPC port |
 | `ORCHESTRATOR_DISPATCH_MODE` | `adaptive` | Scheduler mode |
@@ -40,7 +42,7 @@ listed here is in `.env.example`.
 |----------|---------|-------------|
 | `WORKER_TOKEN` | – | Auth token for supervisor gRPC |
 | `SUPERVISOR_GRPC_TARGET` | – | Supervisor gRPC endpoint |
-| `RESULTS_DIR` | `./results_workers` | Task output directory |
+| `RESULTS_DIR` | `./results` | Task output directory |
 | `WORKER_TAGS` | `` | Scheduler hints |
 | `WORKER_COST_PER_HOUR` | `1.0` | Cost metadata |
 | `WORKER_UPLOAD_RESULTS` | `false` | Upload results when no destination set |

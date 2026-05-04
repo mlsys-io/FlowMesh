@@ -69,7 +69,7 @@ def resolve_checkpoint_load(
         task_str = str(task_hint).strip()
         if task_str:
             base_dir = (
-                Path(os.getenv("RESULTS_DIR", "./results_workers"))
+                Path(os.getenv("RESULTS_DIR", "").strip() or "./results")
                 .expanduser()
                 .resolve()
             )

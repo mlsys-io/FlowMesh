@@ -271,12 +271,14 @@ class ServerConfig:
     metrics: MetricsConfig
     worker_management: WorkerManagementConfig
     log_stream: LogStreamConfig
-    results_dir: Path = Path("./results_node")
+    results_dir: Path = Path("./results")
 
     @classmethod
     def from_env(cls) -> "ServerConfig":
         results_dir = (
-            Path(os.getenv("RESULTS_DIR", "./results_node")).expanduser().resolve()
+            Path(os.getenv("RESULTS_DIR", "").strip() or "./results")
+            .expanduser()
+            .resolve()
         )
         return cls(
             logging=LoggingConfig.from_env(),

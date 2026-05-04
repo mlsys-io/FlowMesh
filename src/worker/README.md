@@ -30,7 +30,7 @@ uv sync --extra inference
 ### 2. Launch the worker
 ```bash
 export SUPERVISOR_GRPC_TARGET="localhost:50051" # supervisor gRPC host:port
-export RESULTS_DIR=./results_workers
+export RESULTS_DIR=./results
 export FLOWMESH_BASE_URL="http://localhost:8000"  # required for HTTP artifact uploads
 uv run python worker/main.py
 ```
@@ -49,7 +49,7 @@ At startup the worker:
 | `WORKER_TOKEN` | – | Worker token, used as a unique ID (required). |
 | `SUPERVISOR_GRPC_TARGET` | – | Supervisor gRPC host:port (required). |
 | `SERVER_GRPC_TLS_CA_B64` | - | Base64-encoded CA bundle for server TLS; when present, the worker uses a secure gRPC channel. |
-| `RESULTS_DIR` | `./results_workers` | Root directory for task outputs. |
+| `RESULTS_DIR` | `./results` | Root directory for task outputs. |
 | `HEARTBEAT_INTERVAL_SEC` | `30` | Interval between heartbeats. |
 | `WORKER_NAMESPACE` | flowmesh | Optional namespace associated with the worker. |
 | `WORKER_CLUSTER` | cluster | Optional cluster associated with the worker. |

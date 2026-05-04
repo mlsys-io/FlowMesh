@@ -14,7 +14,7 @@ class WorkerConfig(BaseModel):
 
     supervisor_grpc_target: str = f"{env.SERVER_LOCAL_HOST}:{env.SERVER_GRPC_PORT}"
     """Supervisor gRPC target"""
-    results_dir: str = env.RESULTS_DIR
+    results_dir: str = env.WORKER_RESULTS_DIR
     """Root directory for task outputs"""
     hb_interval: int = env.SERVER_HEARTBEAT_INTERVAL
     """Interval between heartbeats in seconds"""

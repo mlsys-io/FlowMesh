@@ -206,7 +206,7 @@ class VLLMLoRAExecutor(VLLMExecutor):
         task_id = adapter.get("task_id")
         if task_id:
             base_dir = (
-                Path(os.getenv("RESULTS_DIR", "./results_workers"))
+                Path(os.getenv("RESULTS_DIR", "").strip() or "./results")
                 .expanduser()
                 .resolve()
             )

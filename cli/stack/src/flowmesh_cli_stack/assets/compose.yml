@@ -151,11 +151,12 @@ services:
       SERVER_METRICS_DIR: "/mnt/flowmesh-metrics"
       LOG_FILE: "/var/log/flowmesh-server/server.log"
       WORKER_CONFIG_PATH: /etc/flowmesh/worker_config.yaml
-      RESULTS_DIR: ${RESULTS_DIR:-flowmesh_results}
+      RESULTS_DIR: "/mnt/flowmesh-results"
+      WORKER_RESULTS_DIR: ${WORKER_RESULTS_DIR:-flowmesh_results}
       SERVER_APP_PORT: ${SERVER_HTTP_PORT:-8000}
       FLOWMESH_BASE_URL: ${FLOWMESH_BASE_URL:-http://localhost:${SERVER_HTTP_PORT:-8000}}
     volumes:
-      - flowmesh_results:/mnt/flowmesh-results
+      - ${SERVER_RESULTS_DIR:-flowmesh_results}:/mnt/flowmesh-results
       - flowmesh_metrics:/mnt/flowmesh-metrics
       - flowmesh_server_logs:/var/log/flowmesh-server
       - /var/run/docker.sock:/var/run/docker.sock
@@ -186,5 +187,6 @@ volumes:
   redis_control_data:
   redis_telemetry_data:
   flowmesh_results:
+    name: flowmesh_results
   flowmesh_metrics:
   flowmesh_server_logs:

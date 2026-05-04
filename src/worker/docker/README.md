@@ -14,7 +14,7 @@ docker build -f src/worker/docker/Dockerfile.ssh.gpu -t yourrepo/flowmesh_ssh:la
 docker run --rm \
   -e SUPERVISOR_GRPC_TARGET="host.docker.internal:50051" \
   -e WORKER_HB_FILE="/tmp/flowmesh_worker_health/worker.hb" \
-  -e RESULTS_DIR=/app/results \
+  -e RESULTS_DIR=/app/worker/results \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v "$(pwd)/results_cpu:/app/results" \
   yourrepo/flowmesh_worker:cpu-latest
@@ -23,7 +23,7 @@ docker run --rm \
 docker run --rm --gpus all \
   -e SUPERVISOR_GRPC_TARGET="host.docker.internal:50051" \
   -e WORKER_HB_FILE="/tmp/flowmesh_worker_health/worker.hb" \
-  -e RESULTS_DIR=/app/results \
+  -e RESULTS_DIR=/app/worker/results \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v "$(pwd)/results_gpu:/app/results" \
   yourrepo/flowmesh_worker:cuda-latest
@@ -52,6 +52,6 @@ NFS_EXPORT_PATH=/srv/flowmesh/results
 NFS_VERSION=4                 # optional, defaults to 4
 ```
 
-The compose file mounts the shared export at `/mnt/flowmesh-results` inside the
+The compose file mounts the shared export at `/var/lib/flowmesh-results` inside the
 worker container and sets `RESULTS_DIR` accordingly so that all task outputs are
 stored on the NFS share.

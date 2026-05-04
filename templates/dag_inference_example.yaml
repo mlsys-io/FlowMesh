@@ -52,10 +52,10 @@ spec:
               columns:
                 - label: "Benefits insight"
                   node: "branch-a"
-                  path: "result.items[0].output"
+                  path: "items[0].output"
                 - label: "Challenges insight"
                   node: "branch-b"
-                  path: "result.items[0].output"
+                  path: "items[0].output"
 
   output:
     destination:

@@ -53,7 +53,9 @@ class WorkerConfig:
             os.getenv("SUPERVISOR_GRPC_TLS_CA_B64") or ""
         ).strip() or None
 
-        results_dir = Path(os.getenv("RESULTS_DIR", "./results_workers")).absolute()
+        results_dir = Path(
+            os.getenv("RESULTS_DIR", "").strip() or "./results"
+        ).absolute()
         results_dir.mkdir(parents=True, exist_ok=True)
 
         hb_interval, hb_ttl, hb_file = get_hb_config()

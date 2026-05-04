@@ -400,7 +400,18 @@ STACK_ENV_SCHEMA = EnvSchema(
                     var_type=EnvVarType.FLOAT,
                     min_value=0.0,
                 ),
-                EnvVar("RESULTS_DIR", var_type=EnvVarType.DIR_PATH),
+                EnvVar(
+                    "SERVER_RESULTS_DIR",
+                    "flowmesh_results",
+                    var_type=EnvVarType.DIR_PATH,
+                    description="Set to the same value as WORKER_RESULTS_DIR to enable "
+                    "server-side access to worker results.",
+                ),
+                EnvVar(
+                    "WORKER_RESULTS_DIR",
+                    "flowmesh_results",
+                    var_type=EnvVarType.DIR_PATH,
+                ),
                 EnvVar("HF_CACHE_DIR", var_type=EnvVarType.DIR_PATH),
                 EnvVar(
                     "WORKER_NETWORK_BANDWIDTH_BYTES_PER_SEC",
