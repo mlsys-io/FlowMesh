@@ -4,6 +4,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
 
+import pytest
+
 from worker.executors.base_executor import TaskReference
 from worker.executors.utils import checkpoints
 
@@ -104,3 +106,65 @@ class TestMaybeUploadArtifacts:
 
         monkeypatch.setattr(checkpoints.requests, "request", fake_request)
         assert checkpoints.maybe_upload_artifacts(_task(), out_dir) == []
+
+
+class TestArchiveModelDir:
+    def test_pigz_bin_empty_string_fallback(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Test that an empty MODEL_ARCHIVE_PIGZ_BIN env var gracefully falls back to
+        'pigz' instead of passing an empty string to shutil.which()."""
+        # Create a dummy model dir
+        model_dir = tmp_path / "model"
+        model_dir.mkdir()
+        (model_dir / "config.json").write_text("{}")
+
+        # Mock shutil.which to verify what it receives and pretend pigz doesn't exist
+        # to quickly exit the compression flow without actually compressing
+        calls = []
+
+        def mock_which(cmd, *args, **kwargs):
+            calls.append(cmd)
+            return None
+
+        monkeypatch.setattr(checkpoints.shutil, "which", mock_which)
+
+        # Explicitly set the env var to an empty string (or whitespace)
+        monkeypatch.setenv("MODEL_ARCHIVE_PIGZ_BIN", "   ")
+        monkeypatch.setenv("MODEL_ARCHIVE_TAR_BIN", "")
+
+        # Also need to mock _should_use_pigz to True so it reaches the bin resolution
+        monkeypatch.setattr(checkpoints, "_should_use_pigz", lambda: True)
+
+        # The compression logic will fall back to tarfile if binaries are not found
+        archive_path = checkpoints.archive_model_dir(model_dir)
+
+        # Ensure shutil.which was called with the default 'pigz' and 'tar',
+        # not empty strings
+        assert "pigz" in calls
+        assert "tar" not in calls  # Because pigz failed, it shouldn't even check tar
+
+        assert archive_path.exists()
+        assert archive_path.name == "model.tar.gz"
+
+    def test_pigz_bin_custom_path_honored(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Test that a custom valid string is passed to shutil.which."""
+        model_dir = tmp_path / "model"
+        model_dir.mkdir()
+        (model_dir / "config.json").write_text("{}")
+
+        calls = []
+
+        def mock_which(cmd, *args, **kwargs):
+            calls.append(cmd)
+            return None
+
+        monkeypatch.setattr(checkpoints.shutil, "which", mock_which)
+        monkeypatch.setenv("MODEL_ARCHIVE_PIGZ_BIN", "/usr/local/bin/mypigz")
+        monkeypatch.setattr(checkpoints, "_should_use_pigz", lambda: True)
+
+        checkpoints.archive_model_dir(model_dir)
+
+        assert "/usr/local/bin/mypigz" in calls

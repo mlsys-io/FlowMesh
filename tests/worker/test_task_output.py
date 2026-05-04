@@ -2,7 +2,9 @@
 
 import json
 from pathlib import Path
+from unittest.mock import MagicMock
 
+from worker.runner import Runner
 from worker.utils.manifest import (
     ARTIFACTS_DIR,
     LOGS_DIR,
@@ -90,3 +92,26 @@ class TestSyncManifest:
         assert entries[ARTIFACTS_DIR]["status"] == "present"
         assert entries[ARTIFACTS_DIR]["file_count"] == 1
         assert entries["subdir"]["type"] == "directory"
+
+
+class TestRunnerOutputDir:
+    def test_resolve_output_dir_uses_canonical_path(self, tmp_path: Path) -> None:
+        """Test that _resolve_output_dir creates and returns the canonical path
+        `<results_dir>/<task_id>`."""
+        results_dir = tmp_path / "results"
+        runner = Runner(
+            lifecycle=MagicMock(),
+            task_stream=[],
+            results_dir=results_dir,
+            hardware=MagicMock(),
+            executors={},
+            default_executor=MagicMock(),
+            logger=MagicMock(),
+        )
+
+        task_id = "task-123"
+        out_dir = runner._resolve_output_dir(task_id)
+
+        assert out_dir == results_dir / task_id
+        assert out_dir.exists()
+        assert out_dir.is_dir()
