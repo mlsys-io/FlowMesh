@@ -31,6 +31,7 @@ from trl.trainer.ppo_config import PPOConfig
 from trl.trainer.ppo_trainer import PPOTrainer
 
 from shared.tasks.specs import PPOSpecStrict
+from shared.utils.parsing import safe_int, to_float
 from worker.config import WorkerConfig
 from worker.lifecycle import Lifecycle
 
@@ -319,32 +320,6 @@ class _RewardAdapter(torch.nn.Module):
             return getattr(self.__dict__.get("_lm", object()), name)
 
 
-def _safe_int(
-    value: Any,
-    *,
-    default: int | None = None,
-    minimum: int | None = None,
-) -> int | None:
-    if value is None:
-        return default
-    try:
-        parsed = int(value)
-    except (TypeError, ValueError):
-        return default
-    if minimum is not None:
-        parsed = max(parsed, minimum)
-    return parsed
-
-
-def _safe_float(value: Any, *, default: float | None = None) -> float | None:
-    if value is None:
-        return default
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return default
-
-
 class PPOExecutor(TrainingMixin, Executor):
     """PPO training executor using TRL library."""
 
@@ -604,17 +579,17 @@ class PPOExecutor(TrainingMixin, Executor):
             dataset_size = len(dataset)
             logger.info("Dataset loaded with %d samples", dataset_size)
 
-            per_device_batch = _safe_int(
+            per_device_batch: int | None = safe_int(
                 training_config.get("per_device_train_batch_size"),
-                default=_safe_int(
+                default=safe_int(
                     training_config.get("batch_size"), default=1, minimum=1
                 ),
                 minimum=1,
             )
-            grad_acc_steps = _safe_int(
+            grad_acc_steps: int | None = safe_int(
                 training_config.get("gradient_accumulation_steps"), default=1, minimum=1
             )
-            num_mini_batches = _safe_int(
+            num_mini_batches: int | None = safe_int(
                 training_config.get("num_mini_batches"), default=1, minimum=1
             )
             per_device_batch, grad_acc_steps = self._normalize_ppo_batch_settings(
@@ -719,7 +694,7 @@ class PPOExecutor(TrainingMixin, Executor):
                     "train_dataset": dataset,
                     "eval_dataset": dataset,
                     "dataset": dataset,
-                    "output_dir": str(checkpoint_dir),
+                    "output_dir": checkpoint_dir.as_posix(),
                     "data_collator": _simple_collate,
                     "collate_fn": _simple_collate,
                 }
@@ -827,7 +802,7 @@ class PPOExecutor(TrainingMixin, Executor):
                     logger.info("Saving trained model...")
                     model_save_path = checkpoint_dir / "final_model"
                     # Prefer save_model to avoid safetensors shared-tensor errors
-                    ppo_trainer.save_model(str(model_save_path))
+                    ppo_trainer.save_model(model_save_path.as_posix())
                     logger.info("Model saved to: %s", model_save_path)
                     final_model_path = model_save_path
                     destination = get_http_destination(task.spec)
@@ -931,7 +906,7 @@ class PPOExecutor(TrainingMixin, Executor):
                     timeout=timeout,
                     logger=logger,
                 )
-                jsonl_cfg["path"] = str(resolved)
+                jsonl_cfg["path"] = resolved.as_posix()
                 return resolved
             except ExecutionError as exc:
                 last_error = exc
@@ -1060,30 +1035,25 @@ class PPOExecutor(TrainingMixin, Executor):
         num_mini_batches: int | None,
         dataset_size: int,
     ) -> PPOConfig:
-        learning_rate = _safe_float(
-            training_config.get("learning_rate"), default=1.41e-5
-        )
-        batch_size = _safe_int(
+        learning_rate = to_float(training_config.get("learning_rate"), default=1.41e-5)
+        batch_size = safe_int(
             training_config.get("batch_size"), default=per_device_batch or 1, minimum=1
         )
-        mini_batch_size = _safe_int(
+        mini_batch_size = safe_int(
             training_config.get("mini_batch_size"),
             default=num_mini_batches or 1,
             minimum=1,
         )
-        seed = _safe_int(training_config.get("seed"), default=42, minimum=0)
-        ppo_epochs = _safe_int(training_config.get("ppo_epochs"), minimum=1)
-        train_epochs = _safe_float(
-            training_config.get("num_train_epochs"), default=None
-        )
+        seed = safe_int(training_config.get("seed"), default=42, minimum=0)
+        ppo_epochs = safe_int(training_config.get("ppo_epochs"), minimum=1)
+        train_epochs = to_float(training_config.get("num_train_epochs"), default=None)
         num_train_epochs = max(train_epochs, 1.0) if train_epochs is not None else 1.0
-        kl_coef = _safe_float(training_config.get("kl_coef"), default=None)
+        kl_coef = to_float(training_config.get("kl_coef"), default=None)
 
         max_seq_length = (
-            _safe_int(training_config.get("max_seq_length"), default=64, minimum=1)
-            or 64
+            safe_int(training_config.get("max_seq_length"), default=64, minimum=1) or 64
         )
-        response_length = _safe_int(
+        response_length = safe_int(
             response_cfg.get("max_new_tokens"),
             default=max_seq_length,
             minimum=1,
@@ -1091,21 +1061,21 @@ class PPOExecutor(TrainingMixin, Executor):
         if response_length is None:
             response_length = max_seq_length
 
-        temperature = _safe_float(response_cfg.get("temperature"), default=None)
+        temperature = to_float(response_cfg.get("temperature"), default=None)
         if temperature is None:
-            temperature = _safe_float(training_config.get("temperature"), default=None)
+            temperature = to_float(training_config.get("temperature"), default=None)
 
         save_strategy = str(training_config.get("save_strategy", "steps")).lower()
 
         save_steps = training_config.get("save_steps")
         if save_steps is None:
             save_steps = training_config.get("save_freq")
-        save_steps = _safe_int(save_steps, default=None, minimum=1)
+        save_steps = safe_int(save_steps, default=None, minimum=1)
         save_total_limit = training_config.get("save_total_limit")
-        save_total_limit = _safe_int(save_total_limit, default=None, minimum=1)
+        save_total_limit = safe_int(save_total_limit, default=None, minimum=1)
         save_only_model = training_config.get("save_only_model")
 
-        steps_requested = _safe_int(
+        steps_requested = safe_int(
             training_config.get("steps"), default=None, minimum=1
         )
         total_episodes = None
@@ -1135,11 +1105,11 @@ class PPOExecutor(TrainingMixin, Executor):
             ppo_ctor_kwargs["save_only_model"] = bool(save_only_model)
 
         ppo_config = PPOConfig(
-            learning_rate=learning_rate or 1.41e-5,
-            batch_size=batch_size or 1,
-            mini_batch_size=mini_batch_size or 1,
-            output_dir=str(checkpoint_dir),
-            seed=seed or 42,
+            learning_rate=learning_rate,
+            batch_size=batch_size,
+            mini_batch_size=mini_batch_size,
+            output_dir=checkpoint_dir.as_posix(),
+            seed=seed,
             num_train_epochs=num_train_epochs,
             response_length=response_length,
             save_strategy=save_strategy,
@@ -1170,7 +1140,7 @@ class PPOExecutor(TrainingMixin, Executor):
             logger.info(
                 "Using num_train_epochs=%.2f over %d samples "
                 "(per_device_batch=%s, grad_acc=%s)",
-                float(getattr(ppo_config, "num_train_epochs", 1.0)),
+                num_train_epochs,
                 dataset_size,
                 per_device_batch,
                 grad_acc_steps,
