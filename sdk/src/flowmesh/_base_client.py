@@ -405,7 +405,7 @@ def resolve_config(
     if api_key is None:
         api_key = os.getenv("FLOWMESH_API_KEY", "").strip() or None
 
-    if not (api_key is None or base_url is None):
+    if not (base_url is None or api_key is None):
         return FlowMeshConfig(base_url=base_url, api_key=api_key)
 
     try:

@@ -66,7 +66,7 @@ class FlowMeshConfig:
             api_key = api_key.strip()
         elif api_key is not None:
             raise ConfigInvalidError(
-                "Invalid type for 'api_key' in config, expected string or null"
+                "Invalid type for 'api_key' in config, expected string or None"
             )
 
         return cls(base_url=base_url, api_key=api_key)
