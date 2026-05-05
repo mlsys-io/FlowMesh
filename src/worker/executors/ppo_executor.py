@@ -1106,6 +1106,16 @@ class PPOExecutor(TrainingMixin, Executor):
         if temperature is None:
             temperature = _safe_float(training_config.get("temperature"), default=None)
 
+        save_strategy = str(training_config.get("save_strategy", "steps")).lower()
+
+        save_steps = training_config.get("save_steps")
+        if save_steps is None:
+            save_steps = training_config.get("save_freq")
+        save_steps = _safe_int(save_steps, default=None, minimum=1)
+        save_total_limit = training_config.get("save_total_limit")
+        save_total_limit = _safe_int(save_total_limit, default=None, minimum=1)
+        save_only_model = training_config.get("save_only_model")
+
         steps_requested = _safe_int(
             training_config.get("steps"), default=None, minimum=1
         )
@@ -1128,6 +1138,12 @@ class PPOExecutor(TrainingMixin, Executor):
             ppo_ctor_kwargs["kl_coef"] = kl_coef
         if temperature is not None and temperature > 0:
             ppo_ctor_kwargs["temperature"] = temperature
+        if save_steps is not None:
+            ppo_ctor_kwargs["save_steps"] = save_steps
+        if save_total_limit is not None:
+            ppo_ctor_kwargs["save_total_limit"] = save_total_limit
+        if save_only_model is not None:
+            ppo_ctor_kwargs["save_only_model"] = bool(save_only_model)
 
         ppo_config = PPOConfig(
             learning_rate=learning_rate or 1.41e-5,
@@ -1137,6 +1153,7 @@ class PPOExecutor(TrainingMixin, Executor):
             seed=seed or 42,
             num_train_epochs=num_train_epochs,
             response_length=response_length,
+            save_strategy=save_strategy,
             remove_unused_columns=False,
             save_safetensors=bool(training_config.get("save_safetensors", False)),
             **ppo_ctor_kwargs,
