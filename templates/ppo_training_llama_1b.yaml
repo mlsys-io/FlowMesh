@@ -26,9 +26,6 @@ spec:
       identifier: "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
       revision: "main"
       trust_remote_code: false
-    config:
-      bf16: true
-      device_map_auto: true
 
   # Reward model configuration (optional)
   reward_model:
@@ -71,6 +68,8 @@ spec:
     save_freq: 25               # Save checkpoint every 25 steps
     log_with: null              # Options: "tensorboard", "wandb", null
     tracker_project_name: "tinyllama-ppo-training"
+    fp16: false
+    bf16: true
 
   # Text generation parameters during training
   generation:

@@ -25,9 +25,6 @@ spec:
       identifier: "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
       revision: "main"
       trust_remote_code: false
-    config:
-      bf16: true
-      device_map_auto: false
 
   reward_model:
     identifier: "cardiffnlp/twitter-roberta-base-sentiment-latest"
@@ -62,6 +59,8 @@ spec:
     save_freq: 25
     log_with: null
     tracker_project_name: "tinyllama-ppo-multi-gpu"
+    fp16: false
+    bf16: true
 
   generation:
     max_new_tokens: 128

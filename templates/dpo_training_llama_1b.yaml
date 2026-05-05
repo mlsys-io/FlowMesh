@@ -23,9 +23,6 @@ spec:
       identifier: TinyLlama/TinyLlama-1.1B-Chat-v1.0
       revision: main
       trust_remote_code: false
-    config:
-      bf16: true
-      device_map_auto: true
 
   data:
     # Option 1: Use Hugging Face dataset
@@ -62,6 +59,8 @@ spec:
     num_train_epochs: 1        # Number of epochs
     save_model: true
     save_freq: 500             # Save every N steps
+    fp16: false
+    bf16: true
     
   output:
     destination:

@@ -25,9 +25,6 @@ spec:
       identifier: TinyLlama/TinyLlama-1.1B-Chat-v1.0
       revision: main
       trust_remote_code: false
-    config:
-      bf16: true
-      device_map_auto: false
 
   data:
     preferences:
@@ -55,6 +52,8 @@ spec:
     num_train_epochs: 1
     save_model: false
     save_freq: 500
+    fp16: false
+    bf16: true
 
   output:
     destination:
