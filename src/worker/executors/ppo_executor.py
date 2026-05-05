@@ -616,16 +616,6 @@ class PPOExecutor(TrainingMixin, Executor):
                 training_config.get("num_mini_batches"), default=1, minimum=1
             )
 
-            def _safe_float(
-                value: Any, *, default: float | None = None
-            ) -> float | None:
-                if value is None:
-                    return default
-                try:
-                    return float(value)
-                except (TypeError, ValueError):
-                    return default
-
             # Some TRL versions expect tokenized inputs in the dataset and will
             # route through a padding collator. Ensure input_ids/attention_mask exist.
             try:
@@ -682,106 +672,16 @@ class PPOExecutor(TrainingMixin, Executor):
                 reward_module.eval()
 
             logger.info("Creating PPOConfig...")
-            # Optional args to control saving behavior and memory
-            ppo_optional: dict[str, Any] = {}
-            if "save_safetensors" in training_config:
-                ppo_optional["save_safetensors"] = bool(
-                    training_config["save_safetensors"]
-                )  # transformers arg
-            else:
-                # Default off to avoid shared-tensor safetensors error when
-                # embeddings are tied
-                ppo_optional["save_safetensors"] = False
-            ppo_optional["remove_unused_columns"] = False
-
-            ppo_config = PPOConfig(
-                learning_rate=float(training_config.get("learning_rate", 1.41e-5)),
-                batch_size=int(
-                    training_config.get("batch_size", per_device_batch or 1)
-                ),
-                mini_batch_size=int(
-                    training_config.get("mini_batch_size", num_mini_batches or 1)
-                ),
-                output_dir=str(checkpoint_dir),
-                seed=int(training_config.get("seed", 42)),
-                **ppo_optional,
-            )
-
-            if per_device_batch is not None:
-                ppo_config.per_device_train_batch_size = per_device_batch
-            if grad_acc_steps is not None:
-                ppo_config.gradient_accumulation_steps = grad_acc_steps
-            if num_mini_batches is not None:
-                ppo_config.num_mini_batches = num_mini_batches
-
-            ppo_epochs = _safe_int(training_config.get("ppo_epochs"), minimum=1)
-            if ppo_epochs is not None:
-                ppo_config.num_ppo_epochs = ppo_epochs
-
-            train_epochs = _safe_float(
-                training_config.get("num_train_epochs"), default=None
-            )
-            if train_epochs is not None:
-                ppo_config.num_train_epochs = max(train_epochs, 1.0)
-            else:
-                # Default to 1 pass over the data unless overridden
-                ppo_config.num_train_epochs = 1.0
-
-            kl_coef = _safe_float(training_config.get("kl_coef"), default=None)
-            if kl_coef is not None and kl_coef > 0:
-                ppo_config.kl_coef = kl_coef
-
             response_cfg = spec.generation or {}
-            response_length = _safe_int(
-                response_cfg.get("max_new_tokens"), default=None, minimum=1
+            ppo_config = self._build_ppo_config(
+                training_config,
+                response_cfg,
+                checkpoint_dir,
+                per_device_batch=per_device_batch,
+                grad_acc_steps=grad_acc_steps,
+                num_mini_batches=num_mini_batches,
+                dataset_size=dataset_size,
             )
-            if response_length is not None:
-                ppo_config.response_length = response_length
-            else:
-                ppo_config.response_length = int(
-                    training_config.get("max_seq_length", 64)
-                )
-
-            temperature = _safe_float(response_cfg.get("temperature"), default=None)
-            if temperature is None:
-                temperature = _safe_float(
-                    training_config.get("temperature"), default=None
-                )
-            if temperature is not None and temperature > 0:
-                ppo_config.temperature = temperature
-
-            stop_token = response_cfg.get("stop")
-            if isinstance(stop_token, str):
-                ppo_config.stop_token = stop_token  # type: ignore[assignment]
-
-            logger.info(
-                "Final PPO batch parameters: per_device=%s, grad_acc=%s, "
-                "num_mini_batches=%s",
-                per_device_batch,
-                grad_acc_steps,
-                num_mini_batches,
-            )
-
-            steps_requested = _safe_int(
-                training_config.get("steps"), default=None, minimum=1
-            )
-            if steps_requested is not None and per_device_batch:
-                total_episodes = steps_requested * max(1, per_device_batch)
-                ppo_config.total_episodes = total_episodes
-                logger.info(
-                    "Configuring PPO to run %d update steps (~%d episodes)",
-                    steps_requested,
-                    total_episodes,
-                )
-            else:
-                logger.info(
-                    "Using num_train_epochs=%.2f over %d samples "
-                    "(per_device_batch=%s, grad_acc=%s)",
-                    float(getattr(ppo_config, "num_train_epochs", 1.0)),
-                    dataset_size,
-                    per_device_batch,
-                    grad_acc_steps,
-                )
             logger.info("PPOConfig created successfully")
 
             # Initialize PPO trainer with correct API
@@ -1136,6 +1036,141 @@ class PPOExecutor(TrainingMixin, Executor):
         reward_adapter = _RewardAdapter(value_model)
         self._ensure_value_head_score(value_model, ref_model)
         return reward_adapter, False, nullcontext()
+
+    def _build_ppo_config(
+        self,
+        training_config: dict[str, Any],
+        response_cfg: dict[str, Any],
+        checkpoint_dir: Path,
+        per_device_batch: int | None,
+        grad_acc_steps: int | None,
+        num_mini_batches: int | None,
+        dataset_size: int,
+    ) -> PPOConfig:
+        def _safe_int(
+            value: Any,
+            *,
+            default: int | None = None,
+            minimum: int | None = None,
+        ) -> int | None:
+            if value is None:
+                return default
+            try:
+                parsed = int(value)
+            except (TypeError, ValueError):
+                return default
+            if minimum is not None:
+                parsed = max(parsed, minimum)
+            return parsed
+
+        def _safe_float(value: Any, *, default: float | None = None) -> float | None:
+            if value is None:
+                return default
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return default
+
+        learning_rate = _safe_float(
+            training_config.get("learning_rate"), default=1.41e-5
+        )
+        batch_size = _safe_int(
+            training_config.get("batch_size"), default=per_device_batch or 1, minimum=1
+        )
+        mini_batch_size = _safe_int(
+            training_config.get("mini_batch_size"),
+            default=num_mini_batches or 1,
+            minimum=1,
+        )
+        seed = _safe_int(training_config.get("seed"), default=42, minimum=0)
+        ppo_epochs = _safe_int(training_config.get("ppo_epochs"), minimum=1)
+        train_epochs = _safe_float(
+            training_config.get("num_train_epochs"), default=None
+        )
+        num_train_epochs = max(train_epochs, 1.0) if train_epochs is not None else 1.0
+        kl_coef = _safe_float(training_config.get("kl_coef"), default=None)
+
+        max_seq_length = (
+            _safe_int(training_config.get("max_seq_length"), default=64, minimum=1)
+            or 64
+        )
+        response_length = _safe_int(
+            response_cfg.get("max_new_tokens"),
+            default=max_seq_length,
+            minimum=1,
+        )
+        if response_length is None:
+            response_length = max_seq_length
+
+        temperature = _safe_float(response_cfg.get("temperature"), default=None)
+        if temperature is None:
+            temperature = _safe_float(training_config.get("temperature"), default=None)
+
+        steps_requested = _safe_int(
+            training_config.get("steps"), default=None, minimum=1
+        )
+        total_episodes = None
+        if steps_requested is not None and per_device_batch:
+            total_episodes = steps_requested * max(1, per_device_batch)
+
+        ppo_ctor_kwargs: dict[str, Any] = {}
+        if per_device_batch is not None:
+            ppo_ctor_kwargs["per_device_train_batch_size"] = per_device_batch
+        if grad_acc_steps is not None:
+            ppo_ctor_kwargs["gradient_accumulation_steps"] = grad_acc_steps
+        if num_mini_batches is not None:
+            ppo_ctor_kwargs["num_mini_batches"] = num_mini_batches
+        if total_episodes is not None:
+            ppo_ctor_kwargs["total_episodes"] = total_episodes
+        if ppo_epochs is not None:
+            ppo_ctor_kwargs["num_ppo_epochs"] = ppo_epochs
+        if kl_coef is not None and kl_coef > 0:
+            ppo_ctor_kwargs["kl_coef"] = kl_coef
+        if temperature is not None and temperature > 0:
+            ppo_ctor_kwargs["temperature"] = temperature
+
+        ppo_config = PPOConfig(
+            learning_rate=learning_rate or 1.41e-5,
+            batch_size=batch_size or 1,
+            mini_batch_size=mini_batch_size or 1,
+            output_dir=str(checkpoint_dir),
+            seed=seed or 42,
+            num_train_epochs=num_train_epochs,
+            response_length=response_length,
+            remove_unused_columns=False,
+            save_safetensors=bool(training_config.get("save_safetensors", False)),
+            **ppo_ctor_kwargs,
+        )
+
+        stop_token = response_cfg.get("stop")
+        if isinstance(stop_token, str):
+            ppo_config.stop_token = stop_token  # type: ignore[assignment]
+
+        logger.info(
+            "Final PPO batch parameters: per_device=%s, grad_acc=%s, "
+            "num_mini_batches=%s",
+            per_device_batch,
+            grad_acc_steps,
+            num_mini_batches,
+        )
+
+        if total_episodes is not None:
+            logger.info(
+                "Configuring PPO to run %d update steps (~%d episodes)",
+                steps_requested,
+                total_episodes,
+            )
+        else:
+            logger.info(
+                "Using num_train_epochs=%.2f over %d samples "
+                "(per_device_batch=%s, grad_acc=%s)",
+                float(getattr(ppo_config, "num_train_epochs", 1.0)),
+                dataset_size,
+                per_device_batch,
+                grad_acc_steps,
+            )
+
+        return ppo_config
 
     @staticmethod
     def _ensure_value_head_score(
