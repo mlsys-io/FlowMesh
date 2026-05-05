@@ -32,6 +32,8 @@ def build_hf_load_kwargs(
     """Build ``(tok_kwargs, model_kwargs)`` for HuggingFace ``from_pretrained``."""
     tok_kwargs: dict[str, Any] = {}
     model_kwargs: dict[str, Any] = {}
+    if padding_side := training_cfg.get("padding_side"):
+        tok_kwargs["padding_side"] = padding_side
     if trust_remote_code:
         tok_kwargs["trust_remote_code"] = True
         model_kwargs["trust_remote_code"] = True

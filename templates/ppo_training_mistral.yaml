@@ -55,16 +55,18 @@ spec:
 
   # PPO training parameters
   training:
-    learning_rate: 1.41e-5
-    batch_size: 4
+    learning_rate: 3.0e-6
+    batch_size: 2
     mini_batch_size: 1
-    gradient_accumulation_steps: 4
+    gradient_accumulation_steps: 2
     steps: 50                    # Reduced for faster demo
     ppo_epochs: 4
     target_kl: 0.1
     seed: 42
+    padding_side: "left"
     early_stopping: false
     optimize_cuda_cache: true
+    save_strategy: "steps"
     save_model: true
     save_freq: 25               # Save checkpoint every 25 steps
     log_with: null              # Options: "tensorboard", "wandb", null
@@ -72,7 +74,7 @@ spec:
 
   # Text generation parameters during training
   generation:
-    max_new_tokens: 256
+    max_new_tokens: 128
     temperature: 0.7
     do_sample: true
 
@@ -82,5 +84,5 @@ spec:
       type: "local"
     artifacts:
       - "results.json"
-      - "trained_model/"  # Only saved if save_model: true
+      - "artifacts/checkpoints"
       - "logs"

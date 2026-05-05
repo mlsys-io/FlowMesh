@@ -46,16 +46,18 @@ spec:
 
   training:
     allow_multi_gpu: true
-    learning_rate: 1.41e-5
-    batch_size: 2
+    learning_rate: 3.0e-6
+    batch_size: 1
     mini_batch_size: 1
-    gradient_accumulation_steps: 4
+    gradient_accumulation_steps: 1
     steps: 16
     ppo_epochs: 2
     target_kl: 0.1
     seed: 42
+    padding_side: "left"
     early_stopping: false
     optimize_cuda_cache: true
+    save_strategy: "no"
     save_model: false
     save_freq: 25
     log_with: null
@@ -68,7 +70,8 @@ spec:
 
   output:
     destination:
-      type: "http"
+      type: "local"
     artifacts:
       - "results.json"
       - "logs"
+      - "artifacts/checkpoints"
