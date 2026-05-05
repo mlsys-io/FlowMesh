@@ -28,7 +28,7 @@ class EnvVarType(enum.StrEnum):
 class EnvVar:
     key: str
     default: str = ""
-    description: str | None = None
+    description: str | list[str] | None = None
     var_type: EnvVarType = EnvVarType.STRING
     required: bool = False
     use_default: bool = False
@@ -78,8 +78,12 @@ def render_env_example(schema: EnvSchema) -> str:
         for desc in section.description:
             lines.append(f"# {desc}")
         for var in section.vars:
-            if var.description:
-                lines.append(f"# {var.description}")
+            if description := var.description:
+                if isinstance(description, list):
+                    for desc_line in description:
+                        lines.append(f"# {desc_line}")
+                else:
+                    lines.append(f"# {description}")
             lines.append(f"{var.key}={var.default}")
     lines.append("")
     return "\n".join(lines)

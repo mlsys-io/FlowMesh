@@ -404,8 +404,19 @@ STACK_ENV_SCHEMA = EnvSchema(
                     "SERVER_RESULTS_DIR",
                     "flowmesh_results",
                     var_type=EnvVarType.DIR_PATH,
-                    description="Set to the same value as WORKER_RESULTS_DIR to enable "
-                    "server-side access to worker results.",
+                    description=[
+                        "Directory/Docker volume for the server to look up task "
+                        "results after worker completion.",
+                        "Set to the same value as WORKER_RESULTS_DIR so the server "
+                        "can access worker results.",
+                        "For workflows with a local output destination "
+                        '(`spec.output.destination.type="local"`),',
+                        "`SERVER_RESULTS_DIR` and `WORKER_RESULTS_DIR` must point to "
+                        "the same shared directory",
+                        "or volume; otherwise, the server cannot read the worker's "
+                        "outputs and downstream tasks",
+                        "will stall in the dispatching loop.",
+                    ],
                 ),
                 EnvVar(
                     "WORKER_RESULTS_DIR",

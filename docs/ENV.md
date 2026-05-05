@@ -36,6 +36,16 @@ listed here is in `.env.example`.
 | `FLOWMESH_PLUGINS` | – | Comma-separated plugin module names |
 | `LOG_LEVEL` | `INFO` | Server log level |
 
+**Notes:**
+- In Docker deployments, `SERVER_RESULTS_DIR` and `WORKER_RESULTS_DIR`
+are the host directories or Docker volumes mounted into the server and
+worker containers for storing and reading task results. For workflows
+with a local output destination (`spec.output.destination.type="local"`)
+that have downstream tasks, both variables must point to the same shared
+directory or volume so the server can access the worker's task results.
+Otherwise, downstream tasks that depend on upstream outputs will stall
+in the dispatching loop indefinitely.
+
 ## Worker
 
 | Variable | Default | Description |
