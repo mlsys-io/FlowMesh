@@ -1,10 +1,10 @@
 apiVersion: flowmesh/v1
 kind: TrainingTask
 metadata:
-  name: mistral-7b-dpo-training
+  name: ministral-3b-dpo-training
   owner: alice
   annotations:
-    description: DPO training for Mistral-7B using direct preference optimization
+    description: DPO training for Ministral-3B using direct preference optimization
 spec:
   taskType: dpo
   resources:
