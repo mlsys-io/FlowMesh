@@ -25,6 +25,7 @@ from .env_schema import STACK_ENV_SCHEMA
 from .utils import (
     DEFAULT_ENV_FILE,
     STACK_PATH_KEYS,
+    apply_stack_resource_env,
     ensure_deploy_paths,
     stack_bake_file,
     stack_compose_file,
@@ -40,6 +41,11 @@ def _stack() -> DockerComposeStack:
     def _load(env_file: Path) -> None:
         ensure_env_file(env_file, stack_env_example())
         load_env(env_file, base_dir=Path.cwd(), path_keys=STACK_PATH_KEYS)
+        try:
+            apply_stack_resource_env()
+        except ValueError as exc:
+            logging.error(str(exc))
+            raise typer.Exit(code=1)
 
     return DockerComposeStack(
         compose_file=stack_compose_file(),

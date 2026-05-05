@@ -29,6 +29,16 @@ STACK_ENV_SCHEMA = EnvSchema(
             title="Node Identity",
             vars=[
                 EnvVar(
+                    "FLOWMESH_STACK_SUFFIX",
+                    description=[
+                        "Optional suffix appended to stack-managed Docker object "
+                        "names.",
+                        "Use a distinct suffix per local stack on shared hosts.",
+                        "This isolates container, network, and volume names,",
+                        "but each stack still needs unique ports.",
+                    ],
+                ),
+                EnvVar(
                     "NODE_ROLE",
                     "root",
                     var_type=EnvVarType.ENUM,
@@ -402,7 +412,6 @@ STACK_ENV_SCHEMA = EnvSchema(
                 ),
                 EnvVar(
                     "SERVER_RESULTS_DIR",
-                    "flowmesh_results",
                     var_type=EnvVarType.DIR_PATH,
                     description=[
                         "Directory/Docker volume for the server to look up task "
@@ -416,12 +425,15 @@ STACK_ENV_SCHEMA = EnvSchema(
                         "or volume; otherwise, the server cannot read the worker's "
                         "outputs and downstream tasks",
                         "will stall in the dispatching loop.",
+                        "Defaults to the stack-scoped results volume when empty.",
                     ],
                 ),
                 EnvVar(
                     "WORKER_RESULTS_DIR",
-                    "flowmesh_results",
                     var_type=EnvVarType.DIR_PATH,
+                    description=[
+                        "Defaults to the stack-scoped results volume when empty."
+                    ],
                 ),
                 EnvVar("HF_CACHE_DIR", var_type=EnvVarType.DIR_PATH),
                 EnvVar(

@@ -1,4 +1,6 @@
 import os
+import re
+from collections.abc import Mapping
 from pathlib import Path
 
 from flowmesh import FlowMesh
@@ -13,6 +15,41 @@ STACK_PATH_KEYS = {
     "SERVER_TLS_DIR",
     "SERVER_WORKER_CONFIG",
 }
+STACK_SUFFIX_ENV = "FLOWMESH_STACK_SUFFIX"
+STACK_SLUG_ENV = "FLOWMESH_STACK_SLUG"
+WORKER_RESULTS_DIR_ENV = "WORKER_RESULTS_DIR"
+_STACK_SLUG_BASE = "flowmesh_node"
+_STACK_SUFFIX_MAX_LEN = 48
+
+
+def _resolve_stack_suffix(value: str) -> str:
+    sanitized = re.sub(r"[^A-Za-z0-9_.-]+", "-", value.strip())
+    sanitized = re.sub(r"-{2,}", "-", sanitized).strip("-_.")
+    sanitized = re.sub(r"^[^A-Za-z0-9]+", "", sanitized)[:_STACK_SUFFIX_MAX_LEN]
+    sanitized = sanitized.rstrip("-_.")
+    if not sanitized and value.strip():
+        raise ValueError(
+            f"{STACK_SUFFIX_ENV} must contain at least one ASCII letter or digit"
+        )
+    return sanitized
+
+
+def stack_resource_env_overrides(
+    env: Mapping[str, str] | None = None,
+) -> dict[str, str]:
+    values = os.environ if env is None else env
+    suffix = _resolve_stack_suffix(values.get(STACK_SUFFIX_ENV, ""))
+    stack_slug = f"{_STACK_SLUG_BASE}_{suffix}" if suffix else _STACK_SLUG_BASE
+    return {STACK_SLUG_ENV: stack_slug}
+
+
+def apply_stack_resource_env() -> None:
+    overrides = stack_resource_env_overrides(os.environ)
+    os.environ.update(overrides)
+    os.environ["COMPOSE_PROJECT_NAME"] = overrides[STACK_SLUG_ENV]
+    results_volume = f"{overrides[STACK_SLUG_ENV]}_results"
+    if not os.environ.get(WORKER_RESULTS_DIR_ENV, "").strip():
+        os.environ[WORKER_RESULTS_DIR_ENV] = results_volume
 
 
 def stack_compose_file() -> Path:

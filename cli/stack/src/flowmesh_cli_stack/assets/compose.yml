@@ -1,9 +1,7 @@
-name: flowmesh-node
-
 services:
   redis_control:
     image: redis:7-alpine
-    container_name: flowmesh_node_redis_control
+    container_name: ${FLOWMESH_STACK_SLUG:-flowmesh_node}_redis_control
     environment:
       REDIS_ACL_ENABLED: ${REDIS_ACL_ENABLED:-0}
       REDIS_USERNAME: ${REDIS_USERNAME:-admin}
@@ -70,7 +68,7 @@ services:
 
   redis_telemetry:
     image: redis:7-alpine
-    container_name: flowmesh_node_redis_telemetry
+    container_name: ${FLOWMESH_STACK_SLUG:-flowmesh_node}_redis_telemetry
     environment:
       REDIS_ACL_ENABLED: ${REDIS_ACL_ENABLED:-0}
       REDIS_USERNAME: ${REDIS_USERNAME:-admin}
@@ -137,7 +135,7 @@ services:
 
   server:
     image: ${FLOWMESH_REGISTRY:-ghcr.io/mlsys-io}/flowmesh_server:${FLOWMESH_VERSION:-dev}
-    container_name: flowmesh_node_server
+    container_name: ${FLOWMESH_STACK_SLUG:-flowmesh_node}_server
     depends_on:
       redis_control:
         condition: service_healthy
@@ -152,10 +150,12 @@ services:
       LOG_FILE: "/var/log/flowmesh-server/server.log"
       WORKER_CONFIG_PATH: /etc/flowmesh/worker_config.yaml
       RESULTS_DIR: "/mnt/flowmesh-results"
-      WORKER_RESULTS_DIR: ${WORKER_RESULTS_DIR:-flowmesh_results}
+      WORKER_RESULTS_DIR: ${WORKER_RESULTS_DIR:-${FLOWMESH_STACK_SLUG:-flowmesh_node}_results}
       SERVER_APP_PORT: ${SERVER_HTTP_PORT:-8000}
       FLOWMESH_BASE_URL: ${FLOWMESH_BASE_URL:-http://localhost:${SERVER_HTTP_PORT:-8000}}
     volumes:
+      # Bare `flowmesh_results` is the compose volume key below; it resolves to
+      # the slug-scoped Docker volume name when SERVER_RESULTS_DIR is empty.
       - ${SERVER_RESULTS_DIR:-flowmesh_results}:/mnt/flowmesh-results
       - flowmesh_metrics:/mnt/flowmesh-metrics
       - flowmesh_server_logs:/var/log/flowmesh-server
@@ -180,13 +180,17 @@ services:
 
 networks:
   flowmesh_node_network:
-    name: flowmesh_node_network
+    name: ${FLOWMESH_STACK_SLUG:-flowmesh_node}_network
     driver: bridge
 
 volumes:
   redis_control_data:
+    name: ${FLOWMESH_STACK_SLUG:-flowmesh_node}_redis_control_data
   redis_telemetry_data:
+    name: ${FLOWMESH_STACK_SLUG:-flowmesh_node}_redis_telemetry_data
   flowmesh_results:
-    name: flowmesh_results
+    name: ${FLOWMESH_STACK_SLUG:-flowmesh_node}_results
   flowmesh_metrics:
+    name: ${FLOWMESH_STACK_SLUG:-flowmesh_node}_metrics
   flowmesh_server_logs:
+    name: ${FLOWMESH_STACK_SLUG:-flowmesh_node}_server_logs

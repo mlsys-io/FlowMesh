@@ -45,6 +45,9 @@ that have downstream tasks, both variables must point to the same shared
 directory or volume so the server can access the worker's task results.
 Otherwise, downstream tasks that depend on upstream outputs will stall
 in the dispatching loop indefinitely.
+- When multiple people share one host, you can set `FLOWMESH_STACK_SUFFIX`
+in `.env` to differentiate the deployments so that FlowMesh stack CLI does
+not interfere with each other.
 
 ## Worker
 
