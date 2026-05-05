@@ -319,6 +319,32 @@ class _RewardAdapter(torch.nn.Module):
             return getattr(self.__dict__.get("_lm", object()), name)
 
 
+def _safe_int(
+    value: Any,
+    *,
+    default: int | None = None,
+    minimum: int | None = None,
+) -> int | None:
+    if value is None:
+        return default
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    if minimum is not None:
+        parsed = max(parsed, minimum)
+    return parsed
+
+
+def _safe_float(value: Any, *, default: float | None = None) -> float | None:
+    if value is None:
+        return default
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
 class PPOExecutor(TrainingMixin, Executor):
     """PPO training executor using TRL library."""
 
@@ -578,22 +604,6 @@ class PPOExecutor(TrainingMixin, Executor):
             dataset_size = len(dataset)
             logger.info("Dataset loaded with %d samples", dataset_size)
 
-            def _safe_int(
-                value: Any,
-                *,
-                default: int | None = None,
-                minimum: int | None = None,
-            ) -> int | None:
-                if value is None:
-                    return default
-                try:
-                    parsed = int(value)
-                except (TypeError, ValueError):
-                    return default
-                if minimum is not None:
-                    parsed = max(parsed, minimum)
-                return parsed
-
             per_device_batch = _safe_int(
                 training_config.get("per_device_train_batch_size"),
                 default=_safe_int(
@@ -601,20 +611,21 @@ class PPOExecutor(TrainingMixin, Executor):
                 ),
                 minimum=1,
             )
-            if dataset_size and per_device_batch and per_device_batch > dataset_size:
-                logger.info(
-                    "Clipping per_device_train_batch_size from %d to dataset size %d "
-                    "to avoid empty PPO batches",
-                    per_device_batch,
-                    dataset_size,
-                )
-                per_device_batch = dataset_size
-
             grad_acc_steps = _safe_int(
                 training_config.get("gradient_accumulation_steps"), default=1, minimum=1
             )
             num_mini_batches = _safe_int(
                 training_config.get("num_mini_batches"), default=1, minimum=1
+            )
+            per_device_batch, grad_acc_steps = self._normalize_ppo_batch_settings(
+                dataset_size,
+                per_device_batch,
+                grad_acc_steps,
+            )
+            num_mini_batches = self._normalize_ppo_num_mini_batches(
+                per_device_batch,
+                grad_acc_steps,
+                num_mini_batches,
             )
 
             # Some TRL versions expect tokenized inputs in the dataset and will
@@ -1049,30 +1060,6 @@ class PPOExecutor(TrainingMixin, Executor):
         num_mini_batches: int | None,
         dataset_size: int,
     ) -> PPOConfig:
-        def _safe_int(
-            value: Any,
-            *,
-            default: int | None = None,
-            minimum: int | None = None,
-        ) -> int | None:
-            if value is None:
-                return default
-            try:
-                parsed = int(value)
-            except (TypeError, ValueError):
-                return default
-            if minimum is not None:
-                parsed = max(parsed, minimum)
-            return parsed
-
-        def _safe_float(value: Any, *, default: float | None = None) -> float | None:
-            if value is None:
-                return default
-            try:
-                return float(value)
-            except (TypeError, ValueError):
-                return default
-
         learning_rate = _safe_float(
             training_config.get("learning_rate"), default=1.41e-5
         )
@@ -1190,6 +1177,107 @@ class PPOExecutor(TrainingMixin, Executor):
             )
 
         return ppo_config
+
+    @staticmethod
+    def _ppo_world_size() -> int:
+        world_size_raw = os.environ.get("WORLD_SIZE")
+        if world_size_raw:
+            try:
+                world_size = int(world_size_raw)
+                if world_size > 0:
+                    return world_size
+            except ValueError:
+                pass
+        try:
+            if torch.distributed.is_available() and torch.distributed.is_initialized():
+                world_size = torch.distributed.get_world_size()
+                if world_size > 0:
+                    return world_size
+        except Exception:
+            pass
+        return 1
+
+    def _normalize_ppo_batch_settings(
+        self,
+        dataset_size: int,
+        per_device_batch: int | None,
+        grad_acc_steps: int | None,
+    ) -> tuple[int | None, int | None]:
+        """Ensure PPO batch settings are compatible with dataset size and world size,
+        adjusting if necessary."""
+        if dataset_size <= 0 or per_device_batch is None or grad_acc_steps is None:
+            return per_device_batch, grad_acc_steps
+
+        world_size = self._ppo_world_size()
+        max_local_batch = dataset_size // world_size
+        if max_local_batch < 1:
+            raise ExecutionError(
+                "PPO dataset is too small for distributed training: "
+                f"{dataset_size} samples for world_size={world_size}. "
+                "TRL PPO requires at least one full local batch per rank."
+            )
+
+        local_batch_size = per_device_batch * grad_acc_steps
+        if local_batch_size <= max_local_batch:
+            return per_device_batch, grad_acc_steps
+
+        original_per_device = per_device_batch
+        original_grad_acc = grad_acc_steps
+
+        max_grad_acc_steps = max_local_batch // per_device_batch
+        if max_grad_acc_steps >= 1:
+            grad_acc_steps = max_grad_acc_steps
+        else:
+            per_device_batch = max_local_batch
+            grad_acc_steps = 1
+
+        logger.warning(
+            "Clipping PPO batch settings from per_device=%d, grad_acc=%d "
+            "(local_batch=%d) to per_device=%d, grad_acc=%d "
+            "for dataset_size=%d and world_size=%d. "
+            "TRL PPO uses drop_last=True and requires at least one full "
+            "local batch per rank.",
+            original_per_device,
+            original_grad_acc,
+            local_batch_size,
+            per_device_batch,
+            grad_acc_steps,
+            dataset_size,
+            world_size,
+        )
+        return per_device_batch, grad_acc_steps
+
+    @staticmethod
+    def _normalize_ppo_num_mini_batches(
+        per_device_batch: int | None,
+        grad_acc_steps: int | None,
+        num_mini_batches: int | None,
+    ) -> int | None:
+        """Ensure num_mini_batches is compatible with local batch size, adjusting if
+        necessary."""
+        if (
+            per_device_batch is None
+            or grad_acc_steps is None
+            or num_mini_batches is None
+            or num_mini_batches < 1
+        ):
+            return num_mini_batches
+
+        local_batch_size = per_device_batch * grad_acc_steps
+        adjusted = min(num_mini_batches, local_batch_size)
+        while adjusted > 1 and local_batch_size % adjusted != 0:
+            adjusted -= 1
+        if adjusted < 1:
+            adjusted = 1
+        if adjusted != num_mini_batches:
+            logger.warning(
+                "Adjusting PPO num_mini_batches from %d to %d so local_batch=%d "
+                "divides evenly.",
+                num_mini_batches,
+                adjusted,
+                local_batch_size,
+            )
+        return adjusted
 
     @staticmethod
     def _ensure_value_head_score(
