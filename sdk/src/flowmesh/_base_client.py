@@ -400,10 +400,10 @@ def resolve_config(
     config_path: Path | None = DEFAULT_CONFIG_PATH,
 ) -> FlowMeshConfig:
     """Resolve configuration from params → env → config file → defaults."""
-    if api_key is None:
-        api_key = os.getenv("FLOWMESH_API_KEY", "").strip() or None
     if base_url is None:
         base_url = os.getenv("FLOWMESH_BASE_URL", "").strip() or None
+    if api_key is None:
+        api_key = os.getenv("FLOWMESH_API_KEY", "").strip() or None
 
     if not (api_key is None or base_url is None):
         return FlowMeshConfig(base_url=base_url, api_key=api_key)

@@ -13,14 +13,22 @@ app = get_typer()
 
 
 def _redact_api_key(
-    api_key: str | None, prefix: int = 4, suffix: int = 4
+    api_key: str | None, prefix: int | None = None, suffix: int | None = None
 ) -> str | None:
     if api_key is None:
         return None
 
     length = len(api_key)
-    if length <= prefix + suffix:
-        return "*" * length
+    if prefix is None and suffix is None:
+        prefix = suffix = 4
+        if length <= prefix + suffix:
+            return "*" * length  # If the key is too short, redact the entire key
+    elif prefix is None or suffix is None:
+        raise ValueError("Both prefix and suffix must be provided together")
+    elif length <= prefix + suffix:
+        raise ValueError(
+            "API key is too short to redact with the given prefix/suffix lengths"
+        )
 
     masked_middle = "*" * (length - prefix - suffix)
     return f"{api_key[:prefix]}{masked_middle}{api_key[-suffix:]}"

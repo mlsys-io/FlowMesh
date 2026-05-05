@@ -57,12 +57,19 @@ class FlowMeshConfig:
             raise ConfigInvalidError(
                 "Invalid type for 'base_url' in config, expected string"
             )
-        if not base_url.strip():
+        base_url = base_url.strip()
+        if not base_url:
             raise ConfigInvalidError("Config 'base_url' cannot be empty")
-        return cls(
-            base_url=base_url,
-            api_key=None if (api_key := data.get("api_key")) is None else str(api_key),
-        )
+
+        api_key = data.get("api_key")
+        if isinstance(api_key, str):
+            api_key = api_key.strip()
+        elif api_key is not None:
+            raise ConfigInvalidError(
+                "Invalid type for 'api_key' in config, expected string or null"
+            )
+
+        return cls(base_url=base_url, api_key=api_key)
 
     def to_mapping(self) -> dict[str, Any]:
         """Serialize to a dict suitable for TOML output."""

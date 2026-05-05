@@ -131,7 +131,7 @@ class TestConfig:
         )
 
         result = runner.invoke(
-            _app(), ["config", "--source", "file", "--config", str(config_path)]
+            _app(), ["config", "--source", "file", "--config", config_path.as_posix()]
         )
         assert result.exit_code == 0
         assert '"base_url": "http://file.example:8000"' in result.stdout
@@ -156,7 +156,7 @@ class TestConfig:
         missing = tmp_path / "missing.toml"
         with patch.dict("os.environ", {}, clear=True):
             result = runner.invoke(
-                _app(), ["config", "--source", "auto", "--config", str(missing)]
+                _app(), ["config", "--source", "auto", "--config", missing.as_posix()]
             )
 
         assert result.exit_code == 0
@@ -166,7 +166,7 @@ class TestConfig:
         invalid = tmp_path / "invalid.toml"
         invalid.write_text("base_url = 12345\n")  # Invalid type for base_url
         result = runner.invoke(
-            _app(), ["config", "--source", "auto", "--config", str(invalid)]
+            _app(), ["config", "--source", "auto", "--config", invalid.as_posix()]
         )
         assert result.exit_code != 0
         assert "Invalid type" in result.stderr

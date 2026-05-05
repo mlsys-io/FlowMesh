@@ -213,7 +213,9 @@ def _payloads_for_worker_create(
             if count != len(gpu_ids):
                 raise FlowMeshError(
                     f"GPU worker count {count} does not match "
-                    f"detected GPU targets: {gpu_ids}"
+                    f"detected GPU targets: {gpu_ids}. "
+                    f"Consider setting count={len(gpu_ids)} or specifying exactly "
+                    f"{count} GPU targets."
                 )
             gpu_payloads = [
                 (
