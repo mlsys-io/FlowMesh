@@ -1,10 +1,10 @@
 apiVersion: flowmesh/v1
 kind: TrainingTask
 metadata:
-  name: mistral-7b-ppo-training
+  name: ministral-3b-ppo-training
   owner: alice
   annotations:
-    description: "PPO training for Mistral-7B using reinforcement learning"
+    description: "PPO training for Ministral-3B using reinforcement learning"
 
 spec:
   taskType: "ppo"   # Worker will execute with the PPO module
@@ -23,7 +23,7 @@ spec:
   model:
     source:
       type: "huggingface"
-      identifier: "mistralai/Mistral-7B-Instruct-v0.1"
+      identifier: "mistralai/Ministral-3-3B-Instruct-2512"
       revision: "main"
       trust_remote_code: false
 
@@ -67,7 +67,7 @@ spec:
     save_model: true
     save_freq: 25               # Save checkpoint every 25 steps
     log_with: null              # Options: "tensorboard", "wandb", null
-    tracker_project_name: "mistral-ppo-training"
+    tracker_project_name: "ministral-ppo-training"
     fp16: false
     bf16: true
 

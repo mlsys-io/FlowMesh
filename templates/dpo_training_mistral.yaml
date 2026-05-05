@@ -19,7 +19,7 @@ spec:
   model:
     source:
       type: huggingface
-      identifier: mistralai/Mistral-7B-Instruct-v0.1
+      identifier: "mistralai/Ministral-3-3B-Instruct-2512"
       revision: main
       trust_remote_code: false
 
