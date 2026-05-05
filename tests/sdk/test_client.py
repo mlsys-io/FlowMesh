@@ -8,6 +8,8 @@ import pytest
 from flowmesh import AsyncFlowMesh, ConfigInvalidError, FlowMesh, FlowMeshConfig
 from flowmesh.client import resolve_config
 
+from .helpers import clear_env_and_config_file
+
 _EXPECTED_RESOURCES = [
     "results",
     "nodes",
@@ -55,11 +57,9 @@ class TestFlowMeshClient:
             assert client.api_key == "flm-explicit"
 
     def test_default_base_url(self) -> None:
-        with patch.dict(os.environ, {}, clear=True):
-            for key in ("FLOWMESH_BASE_URL", "FLOWMESH_API_KEY"):
-                os.environ.pop(key, None)
+        with clear_env_and_config_file():
             client = FlowMesh()
-            assert "localhost" in client.base_url or "8000" in client.base_url
+        assert "localhost" in client.base_url or "8000" in client.base_url
 
     def test_context_manager(self) -> None:
         with FlowMesh(base_url="http://localhost:8000") as client:
@@ -107,11 +107,9 @@ class TestAsyncFlowMeshClient:
             assert client.api_key == "flm-explicit"
 
     def test_default_base_url(self) -> None:
-        with patch.dict(os.environ, {}, clear=True):
-            for key in ("FLOWMESH_BASE_URL", "FLOWMESH_API_KEY"):
-                os.environ.pop(key, None)
+        with clear_env_and_config_file():
             client = AsyncFlowMesh()
-            assert "localhost" in client.base_url or "8000" in client.base_url
+        assert "localhost" in client.base_url or "8000" in client.base_url
 
     @pytest.mark.anyio
     async def test_context_manager(self) -> None:

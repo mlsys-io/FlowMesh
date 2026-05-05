@@ -23,6 +23,7 @@ from server.schemas.workflow import (
     WorkflowSubmitTaskEntry as SrvWorkflowSubmitTaskEntry,
 )
 
+from .helpers import clear_env_and_config_file
 from .router_app import TEST_BASE_URL, route_url
 
 
@@ -102,7 +103,8 @@ class TestURLConstruction:
 class TestAuthHeaders:
     @respx.mock
     def test_no_token_no_auth_header(self) -> None:
-        client = FlowMesh(base_url=TEST_BASE_URL, api_key=None)
+        with clear_env_and_config_file():
+            client = FlowMesh(base_url=TEST_BASE_URL, api_key=None)
         route = respx.get(route_url("healthz")).respond(json=_json(_OK_RESPONSE))
         client.system.health()
         request = route.calls[0].request

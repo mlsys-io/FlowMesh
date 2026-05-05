@@ -1,9 +1,13 @@
 """Reusable helpers for SDK tests."""
 
 import enum
+import os
+from contextlib import contextmanager
 from typing import Any
+from unittest.mock import patch
 
 import pytest
+from flowmesh import ConfigNotFoundError
 from pydantic import BaseModel
 from pydantic.fields import FieldInfo
 
@@ -219,3 +223,15 @@ class AsyncHTTP:
 
     async def aclose(self) -> None:
         return None
+
+
+@contextmanager
+def clear_env_and_config_file():
+    with patch.dict(os.environ, {}, clear=True):
+        for key in ("FLOWMESH_BASE_URL", "FLOWMESH_API_KEY"):
+            os.environ.pop(key, None)
+        with patch(
+            "flowmesh._base_client.FlowMeshConfig.from_file",
+            side_effect=ConfigNotFoundError("no config"),
+        ):
+            yield
