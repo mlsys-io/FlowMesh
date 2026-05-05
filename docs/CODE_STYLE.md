@@ -15,6 +15,10 @@
   default, reaching into untyped third-party APIs.
 - `# type: ignore[<error-code>]` only after exhausting alternatives.
   Never a bare `# type: ignore`.
+- Use `path.as_posix()` when a `Path` is serialized to a string for
+  internal use (data structures, APIs, storage, test assertions). Use
+  `str(path)` only for user-facing output (log messages, CLI display)
+  where an OS-native path is more readable.
 
 ## Comments and docstrings
 
