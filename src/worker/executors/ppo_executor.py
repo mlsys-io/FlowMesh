@@ -24,6 +24,7 @@ from transformers import (
     GenerationConfig,
     PreTrainedModel,
     PreTrainedTokenizerBase,
+    Trainer,
 )
 from trl.models.modeling_value_head import AutoModelForCausalLMWithValueHead
 from trl.trainer.ppo_config import PPOConfig
@@ -772,6 +773,7 @@ class PPOExecutor(TrainingMixin, Executor):
 
             ppo_trainer = build_trainer()
             self._ppo_trainer = ppo_trainer
+            self._install_trainer_save_overrides(ppo_trainer)
             # Ensure eval dataset/dataloader exist for TRL 0.23 `generate_completions`.
             try:
                 if getattr(ppo_trainer, "eval_dataset", None) is None:
@@ -1253,6 +1255,51 @@ class PPOExecutor(TrainingMixin, Executor):
         except Exception:
             pass
         return 0
+
+    @staticmethod
+    def _resolve_model_for_save(model: Any) -> Any:
+        """Return the policy model that should be serialized."""
+        policy_model = getattr(model, "policy", None)
+        if policy_model is not None:
+            return policy_model
+
+        module = getattr(model, "module", None)
+        if module is not None:
+            policy_model = getattr(module, "policy", None)
+            if policy_model is not None:
+                return policy_model
+
+        return model
+
+    def _install_trainer_save_overrides(self, ppo_trainer: PPOTrainer) -> None:
+        """Patch PPO trainer saves to avoid TRL's DDP-unsafe checkpoint wrapper.
+
+        TRL's PPO checkpoint path assumes ``self.model`` exposes policy/config
+        attributes directly. Under DDP, ``self.model`` is wrapped, so that path
+        can fail on rank 0 while other ranks continue into checkpoint
+        collectives, hanging the run.
+        """
+
+        def _wrapped_save_model(
+            output_dir: str | None = None, _internal_call: bool = False
+        ) -> None:
+            backup_model = ppo_trainer.model
+            backup_deepspeed = getattr(ppo_trainer, "deepspeed", None)
+            ppo_trainer.model = self._resolve_model_for_save(backup_model)
+            if getattr(ppo_trainer, "is_deepspeed_enabled", False):
+                setattr(ppo_trainer, "deepspeed", ppo_trainer.model)
+            try:
+                Trainer.save_model(ppo_trainer, output_dir, _internal_call)
+            finally:
+                ppo_trainer.model = backup_model
+                if getattr(ppo_trainer, "is_deepspeed_enabled", False):
+                    setattr(ppo_trainer, "deepspeed", backup_deepspeed)
+
+        def _wrapped_save_checkpoint(model: Any, trial: Any) -> None:
+            Trainer._save_checkpoint(ppo_trainer, model, trial)
+
+        setattr(ppo_trainer, "save_model", _wrapped_save_model)
+        setattr(ppo_trainer, "_save_checkpoint", _wrapped_save_checkpoint)
 
     def cleanup_after_run(self) -> None:
         dropped_objects = []
