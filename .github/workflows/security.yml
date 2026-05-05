@@ -94,6 +94,10 @@ jobs:
             --ignore-vuln GHSA-69w3-r845-3855 \
             --ignore-vuln GHSA-cfh3-3jmp-rvhc \
             --ignore-vuln GHSA-whj4-6x5x-4v2j \
+            --ignore-vuln GHSA-wjx4-4jcj-g98j \
+            --ignore-vuln GHSA-5xmw-vc9v-4wf2 \
+            --ignore-vuln GHSA-r73j-pqj5-w3x7 \
+            --ignore-vuln GHSA-pwv6-vv43-88gr \
             --ignore-vuln GHSA-vfmq-68hx-4jfw \
             -r src/worker/requirements/requirements.txt
       - name: Run pip-audit (worker GPU delta)  # no --strict: flashinfer-jit-cache is unauditable on PyPI
@@ -102,6 +106,10 @@ jobs:
             --ignore-vuln GHSA-69w3-r845-3855 \
             --ignore-vuln GHSA-cfh3-3jmp-rvhc \
             --ignore-vuln GHSA-whj4-6x5x-4v2j \
+            --ignore-vuln GHSA-wjx4-4jcj-g98j \
+            --ignore-vuln GHSA-5xmw-vc9v-4wf2 \
+            --ignore-vuln GHSA-r73j-pqj5-w3x7 \
+            --ignore-vuln GHSA-pwv6-vv43-88gr \
             --ignore-vuln GHSA-vfmq-68hx-4jfw \
             --ignore-vuln GHSA-pf3h-qjgv-vcpr \
             --ignore-vuln GHSA-pq5c-rjhq-qp7p \

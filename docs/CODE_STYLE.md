@@ -102,6 +102,10 @@ flags in `.github/workflows/security.yml`.
 | GHSA-3mwp-wvh9-7528 | vllm | 0.19.0 | same |
 | GHSA-cfh3-3jmp-rvhc | pillow | 12.1.1 | gradio 5.50 caps pillow<12 (transitive via vllm-omni) |
 | GHSA-whj4-6x5x-4v2j | pillow | 12.2.0 | same cap |
+| GHSA-wjx4-4jcj-g98j | pillow | 12.2.0 | same cap |
+| GHSA-5xmw-vc9v-4wf2 | pillow | 12.2.0 | same cap |
+| GHSA-r73j-pqj5-w3x7 | pillow | 12.2.0 | same cap |
+| GHSA-pwv6-vv43-88gr | pillow | 12.2.0 | same cap |
 | GHSA-vfmq-68hx-4jfw | lxml | 6.1.0 | crawl4ai 0.8.6 caps lxml<6 |
 | GHSA-39mp-8hj3-5c49 | gradio | 6.7.0 | vllm-omni 0.18 pins gradio==5.50 |
 | GHSA-h3h8-3v2v-rg7m | gradio | 6.6.0 | same pin |
