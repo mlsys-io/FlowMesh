@@ -21,6 +21,40 @@ def to_int(value: Any, default: int | None = None) -> int | None:
 
 
 @overload
+def safe_int(
+    value: Any,
+    default: int,
+    minimum: int | None = None,
+    maximum: int | None = None,
+) -> int: ...
+
+
+@overload
+def safe_int(
+    value: Any,
+    default: int | None = None,
+    minimum: int | None = None,
+    maximum: int | None = None,
+) -> int | None: ...
+
+
+def safe_int(
+    value: Any,
+    default: int | None = None,
+    minimum: int | None = None,
+    maximum: int | None = None,
+) -> int | None:
+    result = to_int(value, default=default)
+    if result is None:
+        return None
+    if minimum is not None and result < minimum:
+        return minimum
+    if maximum is not None and result > maximum:
+        return maximum
+    return result
+
+
+@overload
 def to_float(value: Any, default: float) -> float: ...
 
 
@@ -35,6 +69,40 @@ def to_float(value: Any, default: float | None = None) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+@overload
+def safe_float(
+    value: Any,
+    default: float,
+    minimum: float | None = None,
+    maximum: float | None = None,
+) -> float: ...
+
+
+@overload
+def safe_float(
+    value: Any,
+    default: float | None = None,
+    minimum: float | None = None,
+    maximum: float | None = None,
+) -> float | None: ...
+
+
+def safe_float(
+    value: Any,
+    default: float | None = None,
+    minimum: float | None = None,
+    maximum: float | None = None,
+) -> float | None:
+    result = to_float(value, default=default)
+    if result is None:
+        return None
+    if minimum is not None and result < minimum:
+        return minimum
+    if maximum is not None and result > maximum:
+        return maximum
+    return result
 
 
 @overload
