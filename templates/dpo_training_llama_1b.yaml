@@ -67,5 +67,5 @@ spec:
       type: local
     artifacts:
       - results.json
-      - trained_model/
       - logs
+      - artifacts/checkpoints
