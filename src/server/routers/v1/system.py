@@ -1,8 +1,15 @@
+import logging
 from typing import Any
 
 from fastapi import APIRouter, Depends
 
-from ...app_state import get_metrics
+from ...app_state import get_logger, get_metrics
+from ...auth.security import (
+    PrincipalContext,
+    authenticate_request,
+    require_permission,
+)
+from ...hooks import ResourceAction, ResourceType
 from ...services.metrics import MetricsRecorder
 
 router = APIRouter(prefix="/system", tags=["System"])
@@ -15,6 +22,11 @@ router = APIRouter(prefix="/system", tags=["System"])
     response_description="Metrics data",
 )
 async def get_metrics_snapshot(
+    principal: PrincipalContext = Depends(authenticate_request),
     metrics: MetricsRecorder = Depends(get_metrics),
+    logger: logging.Logger = Depends(get_logger),
 ) -> dict[str, Any]:
+    await require_permission(
+        principal, ResourceType.SYSTEM, None, ResourceAction.ADMIN, logger
+    )
     return metrics.snapshot()
