@@ -1,15 +1,17 @@
 # Plugin extension points
 
 External integrations (auth, submission policy, usage tracking,
-authorisation, supplier attribution) plug into the server through five
-protocol hooks defined in the standalone **`flowmesh-hook`** package
-(`pip install flowmesh[hook]`):
+authorisation, supplier attribution, resource lifecycle) plug into the
+server through six protocol hooks defined in the standalone
+**`flowmesh-hook`** package (`pip install flowmesh[hook]`):
 
 - `IdentityProvider` — resolve a bearer token to a `PrincipalContext`
   (iterated from `auth/security.py`). Routers consume the chain via the
   `authenticate_request` FastAPI dependency, which extracts the bearer
   token from the `Authorization` header. With no providers registered,
   auth is a no-op and the dependency returns a default admin principal.
+  Workers self-authenticate the same way, sending their `FLOWMESH_API_KEY`
+  as a bearer on every server call.
 - `SubmissionGuard` — pre-submit precondition (iterated from
   `routers/v1/workflows.py`).
 - `UsageSink` — fan-out per-task usage rows after a task completes
@@ -22,6 +24,10 @@ protocol hooks defined in the standalone **`flowmesh-hook`** package
   any checker returns `None`, otherwise the union of returned id sets;
   `require` requires every checker to pass. With no checkers registered
   the helpers are no-ops, matching OSS's open-by-default behaviour.
+  `require` accepts `resource_id=None` for type-level / fleet-level
+  checks (e.g. "may the principal create workflows", "may the principal
+  read system metrics") used at create-time before an id has been minted
+  and for `SYSTEM`-typed resources that have no associated id.
 - `SupplierResolver` — map an assigned worker (a `WorkerView`, the
   structural Protocol the server's `Worker` model satisfies) to a
   supplier id at dispatch time (iterated from
@@ -29,6 +35,21 @@ protocol hooks defined in the standalone **`flowmesh-hook`** package
   and is stamped on `TaskRecord.supplier_id`; `UsageSink`s receive that
   value. With no resolvers registered, `supplier_id` stays at its `""`
   default.
+- `ResourceRegistrar` — observe resource lifecycle. The server fires
+  `register` after a "root" resource is persisted (`WORKFLOW`, `NODE`,
+  `WORKER`) and `deregister` after one is hard-deleted, both iterated
+  from `auth/security.py` via `register_resource` /
+  `deregister_resource`. Plugins use these to seed their own ACL /
+  ownership tables so subsequent `PermissionChecker` calls have data to
+  decide on. `TASK` and `RESULT` ownership is inferred from the parent
+  workflow — they don't fire individually.
+
+The `ResourceType` enum covers `WORKFLOW`, `TASK`, `RESULT`, `NODE`,
+`WORKER`, and `SYSTEM`; `ResourceAction` covers `READ`, `WRITE`,
+`CANCEL`, and `ADMIN`. Plugins use `principal.scopes` to discriminate
+user-vs-supplier-vs-admin capabilities — there is no typed
+`PrincipalType` because a single principal can carry multiple scopes
+(e.g. a supplier key that also acts as a regular user).
 
 The `flowmesh-hook` package has no runtime dependencies and does not
 import the server or worker packages, so plugin wheels stay tiny and

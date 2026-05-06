@@ -7,6 +7,19 @@ Workflow and task statuses (used in payloads and filters):
 `PENDING`, `DISPATCHED`, `FAILED`, `CANCELLED`, `DONE`. Worker statuses:
 `STARTING`, `IDLE`, `BUSY`, `STOPPING`, `STOPPED`.
 
+## Authentication
+
+Every endpoint under `/api/v1/*` (REST and WebSocket) authenticates via
+the `Authorization: Bearer <token>` header. The token is routed through
+the registered `IdentityProvider` chain (see `docs/PLUGINS.md`); with
+no providers registered, every caller resolves to a default admin
+principal — auth is a no-op in OSS. After authentication, every
+resource-scoped endpoint runs the registered `PermissionChecker`
+chain; with no checkers registered, all calls succeed (open by
+default). The classification of resource type and action per endpoint
+lives in `src/server/routers/v1/`. Workers self-authenticate the same
+way, sending `FLOWMESH_API_KEY` as the bearer.
+
 ## Workflows
 
 | Method | Path | Description |
