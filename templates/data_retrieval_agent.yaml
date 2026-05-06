@@ -1,0 +1,98 @@
+# Two-stage e2e for the lumid.data agent connector: NL retrieval → LLM analysis.
+# Requires a reachable lumid.data instance with the ``star.*`` schema.
+
+apiVersion: flowmesh/v1
+kind: InferenceTask
+metadata:
+  name: agent-retrieval-demo
+  owner: smoke-test
+  annotations:
+    description: "data_retrieval(type=agent) → inference; downstream consumes access_chain"
+
+spec:
+  taskType: "inference"
+
+  graph:
+    nodes:
+      - name: fundamentals
+        spec:
+          taskType: "data_retrieval"
+          resources:
+            replicas: 1
+            hardware:
+              cpu: "2"
+              memory: "4GiB"
+          data:
+            type: "agent"
+            lumid_data_url: "http://127.0.0.1:9102"
+            schema_scope: "star.*"
+            description: "Show me {symbol}'s last 10 quarters of fundamentals and key financial-health ratios."
+            output_format: "jsonl"
+            max_steps: 20
+            verify: false
+            params:
+              - label: symbol
+                data:
+                  type: "list"
+                  items:
+                    - "NVDA"
+
+      - name: summary
+        dependsOn: ["fundamentals"]
+        spec:
+          taskType: "inference"
+          resources:
+            replicas: 1
+            hardware:
+              cpu: "2"
+              memory: "8GiB"
+              gpu:
+                type: any
+                count: 1
+          model:
+            source:
+              type: "huggingface"
+              identifier: "Qwen/Qwen2.5-1.5B-Instruct"
+          inference:
+            max_tokens: 256
+            temperature: 0.3
+          # The agent picks its own column names, so the downstream node
+          # consumes the whole materialized table plus the access chain.
+          # ``items.table`` resolves to the DataFrame (the resolver auto-
+          # deserializes the ``{df: <json>}`` envelope) which pandas
+          # stringifies into a tabular text block for the prompt.
+          data:
+            type: dataframe
+            columns:
+              - label: "goal"
+                node: "fundamentals"
+                path: "items.description"
+              - label: "chain"
+                node: "fundamentals"
+                path: "items.access_chain"
+              - label: "table"
+                node: "fundamentals"
+                path: "items.table"
+            messages:
+              - role: "system"
+                content: "Concise financial-data writing. Exactly two sentences."
+              - role: "user"
+                content: |
+                  Goal: {goal}
+
+                  SQL chain emitted by the agent:
+                  {chain}
+
+                  Materialized rows:
+                  {table}
+
+                  Write two sentences: (1) the headline trend across the
+                  rows for the leading metric; (2) one analytical question
+                  this dataset enables.
+
+  output:
+    destination:
+      type: "local"
+    artifacts:
+      - "results.json"
+      - "artifacts"
