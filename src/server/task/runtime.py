@@ -11,6 +11,7 @@ from shared.schemas.command import InterruptMessage
 from shared.tasks import TaskEnvelopeTemplate
 from shared.utils import new_workflow_id
 
+from ..hooks import SUPPLIER_RESOLVERS
 from ..registries.worker import Worker, WorkerRegistry
 from ..registries.workflow import WorkflowRegistry
 from ..utils.time import parse_iso_ts
@@ -663,6 +664,13 @@ class TaskRuntime:
     # ------------------------------------------------------------------ #
 
     def mark_dispatched(self, task_id: str, worker: Worker) -> None:
+        supplier_id = ""
+        for resolver in SUPPLIER_RESOLVERS:
+            resolved = resolver.resolve(worker)
+            if resolved is not None:
+                supplier_id = resolved
+                break
+
         with self._cv:
             record = self._tasks.get(task_id)
             if not record:
@@ -672,6 +680,7 @@ class TaskRuntime:
             record.topic = "tasks"
             record.dispatched_ts = time.time()
             record.next_retry_at = None
+            record.supplier_id = supplier_id
             self._workflow_registry.mark_task_dispatched(record.workflow_id, task_id)
             self._remove_from_ready_locked(task_id)
             self._merge_bucket_remove(task_id)

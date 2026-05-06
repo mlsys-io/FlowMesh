@@ -11,6 +11,7 @@ from collections.abc import Iterator
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 from fastapi import Depends, FastAPI, HTTPException, status
@@ -27,11 +28,17 @@ from server.hooks import (
     IDENTITY_PROVIDERS,
     PERMISSION_CHECKERS,
     SUBMISSION_GUARDS,
+    SUPPLIER_RESOLVERS,
     USAGE_SINKS,
     AccessibleIds,
     UsageRow,
     UsageSink,
 )
+from server.registries.worker import Worker
+from server.task.models import TaskRecord
+from server.task.runtime import TaskRuntime
+from shared.tasks import TaskEnvelopeTemplate
+from shared.tasks.worker_message import WorkerStatus
 
 
 @pytest.fixture
@@ -45,11 +52,13 @@ def _clear_registries() -> Iterator[None]:
     SUBMISSION_GUARDS.clear()
     USAGE_SINKS.clear()
     PERMISSION_CHECKERS.clear()
+    SUPPLIER_RESOLVERS.clear()
     yield
     IDENTITY_PROVIDERS.clear()
     SUBMISSION_GUARDS.clear()
     USAGE_SINKS.clear()
     PERMISSION_CHECKERS.clear()
+    SUPPLIER_RESOLVERS.clear()
 
 
 class _FakeIdentityProvider:
@@ -433,3 +442,68 @@ class TestPermissionCheckerComposition:
 
         assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
         assert seen == ["block"]
+
+
+def _make_runtime_with_record(task_id: str) -> tuple[TaskRuntime, TaskRecord]:
+    runtime = TaskRuntime(
+        workflow_registry=MagicMock(),
+        worker_registry=MagicMock(),
+        logger=logging.getLogger("test.supplier"),
+    )
+    env = TaskEnvelopeTemplate.model_validate(
+        {"apiVersion": "mloc/v1", "kind": "Task", "spec": {"taskType": "echo"}}
+    )
+    record = TaskRecord(
+        task_id=task_id,
+        workflow_id="wfl-1",
+        owner_id="admin",
+        raw_yaml="",
+        task=env,
+    )
+    runtime._tasks[task_id] = record  # type: ignore[attr-defined]
+    return runtime, record
+
+
+def _make_worker() -> Worker:
+    return Worker(
+        id="wkr-1",
+        namespace="ns",
+        cluster="cl",
+        node_id="nd-1",
+        node_alias="nd-1",
+        status=WorkerStatus.IDLE,
+    )
+
+
+class TestSupplierResolverWiring:
+    def test_first_non_none_wins_and_stamps_record(self) -> None:
+        class _ReturnsNone:
+            name = "none"
+
+            def resolve(self, worker: Worker) -> str | None:
+                return None
+
+        class _ReturnsValue:
+            name = "value"
+
+            def resolve(self, worker: Worker) -> str | None:
+                return "sup-cloud-1"
+
+        class _NeverRuns:
+            name = "never"
+
+            def resolve(self, worker: Worker) -> str | None:
+                raise AssertionError("subsequent resolvers must not run")
+
+        SUPPLIER_RESOLVERS.extend([_ReturnsNone(), _ReturnsValue(), _NeverRuns()])
+
+        runtime, record = _make_runtime_with_record("tsk-1")
+        runtime.mark_dispatched("tsk-1", _make_worker())
+
+        assert record.supplier_id == "sup-cloud-1"
+
+    def test_no_resolvers_leaves_supplier_id_empty(self) -> None:
+        runtime, record = _make_runtime_with_record("tsk-2")
+        runtime.mark_dispatched("tsk-2", _make_worker())
+
+        assert record.supplier_id == ""

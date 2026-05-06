@@ -1,8 +1,8 @@
 # Plugin extension points
 
 External integrations (auth, submission policy, usage tracking,
-authorisation) plug into the server through four protocol hooks defined
-in `src/server/hooks/`:
+authorisation, supplier attribution) plug into the server through five
+protocol hooks defined in `src/server/hooks/`:
 
 - `IdentityProvider` — resolve a bearer token to a `PrincipalContext`
   (iterated from `auth/security.py`). Routers consume the chain via the
@@ -21,6 +21,11 @@ in `src/server/hooks/`:
   returns `"all"`, otherwise the union of returned id sets; `require`
   requires every checker to pass. With no checkers registered the
   helpers are no-ops, matching OSS's open-by-default behaviour.
+- `SupplierResolver` — map an assigned `Worker` to a supplier id at
+  dispatch time (iterated from `task/runtime.py:mark_dispatched`). The
+  first non-`None` result wins and is stamped on
+  `TaskRecord.supplier_id`; `UsageSink`s receive that value. With no
+  resolvers registered, `supplier_id` stays at its `""` default.
 
 ## How plugins are loaded
 
