@@ -13,6 +13,7 @@ server = [
     "cryptography>=46.0.7",
     "docker>=7.1.0",
     "fastapi>=0.120.3",
+    "flowmesh-hook",
     "grpcio>=1.76.0",
     "httpx>=0.28.1",
     "protobuf>=5.29.6",
@@ -148,6 +149,7 @@ dev = [
 # ── Workspace aliases ─────────────────────────────────────────────
 cli = ["flowmesh-cli[stack]"]
 sdk = ["flowmesh-sdk", "flowmesh-sdk-stack"]
+hook = ["flowmesh-hook"]
 
 [project.scripts]
 flowmesh = "flowmesh_cli.cli:main"
@@ -180,6 +182,7 @@ files = [
     "src",
     "cli/src",
     "cli/stack/src",
+    "hook/src",
     "sdk/src",
     "sdk/stack/src",
     "tests",
@@ -220,8 +223,9 @@ skips = [
 [tool.uv.sources]
 flowmesh-cli = { workspace = true }
 flowmesh-cli-stack = { workspace = true }
+flowmesh-hook = { workspace = true }
 flowmesh-sdk = { workspace = true }
 flowmesh-sdk-stack = { workspace = true }
 
 [tool.uv.workspace]
-members = ["cli", "cli/stack", "sdk", "sdk/stack"]
+members = ["cli", "cli/stack", "hook", "sdk", "sdk/stack"]
