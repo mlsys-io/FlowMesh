@@ -31,7 +31,7 @@ from trl.trainer.ppo_config import PPOConfig
 from trl.trainer.ppo_trainer import PPOTrainer
 
 from shared.tasks.specs import PPOSpecStrict
-from shared.utils.parsing import safe_int, to_float
+from shared.utils.parsing import safe_float, safe_int
 from worker.config import WorkerConfig
 from worker.lifecycle import Lifecycle
 
@@ -579,13 +579,13 @@ class PPOExecutor(TrainingMixin, Executor):
             dataset_size = len(dataset)
             logger.info("Dataset loaded with %d samples", dataset_size)
 
-            per_device_batch: int | None = safe_int(
-                training_config.get("per_device_train_batch_size"),
-                default=safe_int(
-                    training_config.get("batch_size"), default=1, minimum=1
-                ),
-                minimum=1,
+            per_device_batch = safe_int(
+                training_config.get("per_device_train_batch_size"), minimum=1
             )
+            if per_device_batch is None:
+                per_device_batch = safe_int(
+                    training_config.get("batch_size"), default=1, minimum=1
+                )
             grad_acc_steps: int | None = safe_int(
                 training_config.get("gradient_accumulation_steps"), default=1, minimum=1
             )
@@ -1035,7 +1035,9 @@ class PPOExecutor(TrainingMixin, Executor):
         num_mini_batches: int | None,
         dataset_size: int,
     ) -> PPOConfig:
-        learning_rate = to_float(training_config.get("learning_rate"), default=1.41e-5)
+        learning_rate = safe_float(
+            training_config.get("learning_rate"), default=1.41e-5, minimum=0
+        )
         batch_size = safe_int(
             training_config.get("batch_size"), default=per_device_batch or 1, minimum=1
         )
@@ -1046,12 +1048,13 @@ class PPOExecutor(TrainingMixin, Executor):
         )
         seed = safe_int(training_config.get("seed"), default=42, minimum=0)
         ppo_epochs = safe_int(training_config.get("ppo_epochs"), minimum=1)
-        train_epochs = to_float(training_config.get("num_train_epochs"), default=None)
-        num_train_epochs = max(train_epochs, 1.0) if train_epochs is not None else 1.0
-        kl_coef = to_float(training_config.get("kl_coef"), default=None)
+        num_train_epochs = safe_float(
+            training_config.get("num_train_epochs"), default=1.0, minimum=1.0
+        )
+        kl_coef = safe_float(training_config.get("kl_coef"), minimum=0)
 
-        max_seq_length = (
-            safe_int(training_config.get("max_seq_length"), default=64, minimum=1) or 64
+        max_seq_length = safe_int(
+            training_config.get("max_seq_length"), default=64, minimum=1
         )
         response_length = safe_int(
             response_cfg.get("max_new_tokens"),
@@ -1061,23 +1064,26 @@ class PPOExecutor(TrainingMixin, Executor):
         if response_length is None:
             response_length = max_seq_length
 
-        temperature = to_float(response_cfg.get("temperature"), default=None)
+        temperature = safe_float(response_cfg.get("temperature"), minimum=0)
         if temperature is None:
-            temperature = to_float(training_config.get("temperature"), default=None)
+            temperature = safe_float(training_config.get("temperature"), minimum=0)
+        if temperature == 0:
+            logger.warning(
+                "Non-positive temperature is capped to 0, which may cause issues "
+                "during PPO training; consider using a small positive value instead."
+            )
 
         save_strategy = str(training_config.get("save_strategy", "steps")).lower()
 
         save_steps = training_config.get("save_steps")
         if save_steps is None:
             save_steps = training_config.get("save_freq")
-        save_steps = safe_int(save_steps, default=None, minimum=1)
+        save_steps = safe_int(save_steps, minimum=1)
         save_total_limit = training_config.get("save_total_limit")
-        save_total_limit = safe_int(save_total_limit, default=None, minimum=1)
+        save_total_limit = safe_int(save_total_limit, minimum=1)
         save_only_model = training_config.get("save_only_model")
 
-        steps_requested = safe_int(
-            training_config.get("steps"), default=None, minimum=1
-        )
+        steps_requested = safe_int(training_config.get("steps"), minimum=1)
         total_episodes = None
         if steps_requested is not None and per_device_batch:
             total_episodes = steps_requested * max(1, per_device_batch)
@@ -1093,9 +1099,9 @@ class PPOExecutor(TrainingMixin, Executor):
             ppo_ctor_kwargs["total_episodes"] = total_episodes
         if ppo_epochs is not None:
             ppo_ctor_kwargs["num_ppo_epochs"] = ppo_epochs
-        if kl_coef is not None and kl_coef > 0:
+        if kl_coef is not None:
             ppo_ctor_kwargs["kl_coef"] = kl_coef
-        if temperature is not None and temperature > 0:
+        if temperature is not None:
             ppo_ctor_kwargs["temperature"] = temperature
         if save_steps is not None:
             ppo_ctor_kwargs["save_steps"] = save_steps
