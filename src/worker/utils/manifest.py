@@ -14,18 +14,25 @@ LOGS_DIR = "logs"
 ARTIFACTS_DIR = "artifacts"
 SCRATCH_DIR = "scratch"
 
+# Single-node deployments share the results volume between the server (root)
+# and supervisor-spawned workers (appuser); both call sync_manifest, so each
+# directory and the manifest itself must be writable from either UID.
+_SHARED_DIR_MODE = 0o0777
+_SHARED_FILE_MODE = 0o0666
+
 
 def prepare_output_dir(base_dir: Path) -> None:
     """Ensure the base directory and standard sub-directories exist."""
-    base_dir.mkdir(parents=True, exist_ok=True)
-    (base_dir / LOGS_DIR).mkdir(parents=True, exist_ok=True)
-    (base_dir / ARTIFACTS_DIR).mkdir(parents=True, exist_ok=True)
+    for d in (base_dir, base_dir / LOGS_DIR, base_dir / ARTIFACTS_DIR):
+        d.mkdir(parents=True, exist_ok=True)
+        _shared_chmod(d, _SHARED_DIR_MODE)
 
 
 def scratch_dir(base_dir: Path) -> Path:
     """Return `out_dir/scratch/`, creating it if needed."""
     path = base_dir / SCRATCH_DIR
     path.mkdir(parents=True, exist_ok=True)
+    _shared_chmod(path, _SHARED_DIR_MODE)
     return path
 
 
@@ -63,15 +70,25 @@ def sync_manifest(
         "generated_at": now_iso(),
         "entries": entries,
     }
-    (base_dir / MANIFEST_NAME).write_text(
+    manifest_path = base_dir / MANIFEST_NAME
+    manifest_path.write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
     )
+    _shared_chmod(manifest_path, _SHARED_FILE_MODE)
     return manifest
 
 
 # -------------------------
 # Helpers
 # -------------------------
+
+
+def _shared_chmod(path: Path, mode: int) -> None:
+    """Best-effort chmod tolerant of cross-UID ownership."""
+    try:
+        path.chmod(mode)
+    except PermissionError:
+        pass
 
 
 def _path_key(path: Path) -> str:

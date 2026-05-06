@@ -1,6 +1,7 @@
 """Tests for worker output manifest generation and artifact tracking."""
 
 import json
+import stat
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -28,6 +29,12 @@ class TestPrepareOutputDir:
         prepare_output_dir(out)
         prepare_output_dir(out)  # should not raise
         assert out.exists()
+
+    def test_directories_are_world_writable(self, tmp_path: Path) -> None:
+        out = tmp_path / "task-out"
+        prepare_output_dir(out)
+        for d in (out, out / LOGS_DIR, out / ARTIFACTS_DIR):
+            assert stat.S_IMODE(d.stat().st_mode) == 0o0777
 
 
 class TestSyncManifest:
@@ -71,6 +78,18 @@ class TestSyncManifest:
         assert manifest_path.exists()
         data = json.loads(manifest_path.read_text())
         assert data["task_id"] == "t-1"
+
+    def test_manifest_is_group_and_other_writable(self, tmp_path: Path) -> None:
+        """The manifest must be replaceable from a peer UID sharing the volume."""
+        sync_manifest(tmp_path, "t-1", expected=[])
+        mode = stat.S_IMODE((tmp_path / MANIFEST_NAME).stat().st_mode)
+        assert mode & 0o0066 == 0o0066
+
+    def test_second_call_overwrites_first(self, tmp_path: Path) -> None:
+        sync_manifest(tmp_path, "t-1", expected=[])
+        sync_manifest(tmp_path, "t-2", expected=[])
+        data = json.loads((tmp_path / MANIFEST_NAME).read_text())
+        assert data["task_id"] == "t-2"
 
     def test_expected_names_are_normalized_in_manifest(self, tmp_path: Path) -> None:
         manifest = sync_manifest(tmp_path, "t-1", expected=["  file.txt  ", "./dir/"])
