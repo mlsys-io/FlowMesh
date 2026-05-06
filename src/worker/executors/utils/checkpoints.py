@@ -138,6 +138,7 @@ def download_and_unpack(load_cfg: dict[str, Any], out_dir: Path) -> Path:
         raise ExecutionError("checkpoint.load.url is required for HTTP checkpoints")
 
     headers = {str(k): str(v) for k, v in (load_cfg.get("headers") or {}).items()}
+    add_auth_headers(headers)
     timeout = float(load_cfg.get("timeoutSec", 60))
     dest_root = out_dir / "imported_checkpoint"
     if dest_root.exists():
