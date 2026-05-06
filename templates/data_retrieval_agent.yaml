@@ -25,7 +25,7 @@ spec:
           data:
             type: "agent"
             lumid_data_url: "http://127.0.0.1:9102"
-            schema_scope: "star.*"
+            schema_scope: "*"
             description: "Show me {symbol}'s last 10 quarters of fundamentals and key financial-health ratios."
             output_format: "jsonl"
             max_steps: 20
@@ -56,11 +56,6 @@ spec:
           inference:
             max_tokens: 256
             temperature: 0.3
-          # The agent picks its own column names, so the downstream node
-          # consumes the whole materialized table plus the access chain.
-          # ``items.table`` resolves to the DataFrame (the resolver auto-
-          # deserializes the ``{df: <json>}`` envelope) which pandas
-          # stringifies into a tabular text block for the prompt.
           data:
             type: dataframe
             columns:
