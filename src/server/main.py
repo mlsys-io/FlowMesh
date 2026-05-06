@@ -19,6 +19,7 @@ if __name__ == "__main__" and __package__ is None:
 from .clients import RedisClient
 from .config import NodeRole, ServerConfig
 from .dispatcher.factory import create_dispatcher
+from .hooks import HookBindings, register
 from .registries import WorkerRegistry, WorkflowRegistry
 from .registries.node import NodeRegistry
 from .routers import docs, health, v1
@@ -282,13 +283,14 @@ app = FastAPI(
 
 
 async def _load_plugins(stack: AsyncExitStack) -> None:
-    """Load FLOWMESH_PLUGINS modules and enter any async-context-manager install()
-    helpers into the lifespan's exit stack.
+    """Load FLOWMESH_PLUGINS modules and drain their `HookBindings` into the
+    server's runtime registries.
 
     A plugin's `install()` is either:
-      - a sync function returning None (fire-and-forget registration), or
-      - an `@asynccontextmanager async def` returning a ctx manager (registers
-        on enter, cleans up on exit; e.g. closes a SQLAlchemy engine).
+      - a sync function returning a `HookBindings`, or
+      - an `@asynccontextmanager async def` yielding a `HookBindings` (the
+        ctx manager registers on enter, cleans up on exit; e.g. closes a
+        SQLAlchemy engine).
     """
     raw = os.getenv("FLOWMESH_PLUGINS", "")
     for entry in raw.split(","):
@@ -298,9 +300,17 @@ async def _load_plugins(stack: AsyncExitStack) -> None:
         mod = importlib.import_module(plugin_name)
         rv = mod.install()
         if hasattr(rv, "__aenter__"):
-            await stack.enter_async_context(rv)
+            bindings = await stack.enter_async_context(rv)
         elif inspect.iscoroutine(rv):
-            await rv
+            bindings = await rv
+        else:
+            bindings = rv
+        if not isinstance(bindings, HookBindings):
+            raise TypeError(
+                f"{plugin_name}.install() must return HookBindings, got "
+                f"{type(bindings).__name__}"
+            )
+        register(bindings)
 
 
 @asynccontextmanager

@@ -2,7 +2,8 @@
 
 External integrations (auth, submission policy, usage tracking,
 authorisation, supplier attribution) plug into the server through five
-protocol hooks defined in `src/server/hooks/`:
+protocol hooks defined in the standalone **`flowmesh-hook`** package
+(`pip install flowmesh[hook]`):
 
 - `IdentityProvider` — resolve a bearer token to a `PrincipalContext`
   (iterated from `auth/security.py`). Routers consume the chain via the
@@ -21,30 +22,59 @@ protocol hooks defined in `src/server/hooks/`:
   returns `"all"`, otherwise the union of returned id sets; `require`
   requires every checker to pass. With no checkers registered the
   helpers are no-ops, matching OSS's open-by-default behaviour.
-- `SupplierResolver` — map an assigned `Worker` to a supplier id at
-  dispatch time (iterated from `task/runtime.py:mark_dispatched`). The
-  first non-`None` result wins and is stamped on
-  `TaskRecord.supplier_id`; `UsageSink`s receive that value. With no
-  resolvers registered, `supplier_id` stays at its `""` default.
+- `SupplierResolver` — map an assigned worker (a `WorkerView`, the
+  structural Protocol the server's `Worker` model satisfies) to a
+  supplier id at dispatch time (iterated from
+  `task/runtime.py:mark_dispatched`). The first non-`None` result wins
+  and is stamped on `TaskRecord.supplier_id`; `UsageSink`s receive that
+  value. With no resolvers registered, `supplier_id` stays at its `""`
+  default.
+
+The `flowmesh-hook` package has no runtime dependencies and does not
+import the server or worker packages, so plugin wheels stay tiny and
+can be installed without the heavy core stack.
 
 ## How plugins are loaded
 
-A plugin is any Python module that exposes a top-level `install()`. The
-server loads `FLOWMESH_PLUGINS` (comma-separated module names) inside
-its FastAPI lifespan and treats `install()` as either:
+A plugin is any Python module that exposes a top-level `install()`
+returning a `HookBindings` — the frozen aggregate of the protocol
+implementations the plugin contributes. The server loads
+`FLOWMESH_PLUGINS` (comma-separated module names) inside its FastAPI
+lifespan and treats `install()` as either:
 
-- a sync function returning `None` — the plugin appends its adapters to
-  the registries in `server.hooks` and returns; or
-- an `@asynccontextmanager async def install()` — the plugin owns
-  resources with a lifecycle (a SQLAlchemy engine, an HTTP client, a
-  background task) that need teardown on server shutdown. The loader
-  holds an `AsyncExitStack`, enters each ctx-manager `install()` on
-  startup, and unwinds them in reverse order on shutdown.
+- a sync function returning a `HookBindings` directly; or
+- an `@asynccontextmanager async def install()` that yields a
+  `HookBindings`. Use this form for plugins owning resources with a
+  lifecycle (a SQLAlchemy engine, an HTTP client, a background task)
+  that need teardown on server shutdown. The loader holds an
+  `AsyncExitStack`, enters each ctx-manager `install()` on startup,
+  and unwinds them in reverse order on shutdown.
+
+The loader drains every plugin's `HookBindings` into the server's
+runtime registries. Plugins never touch those registries directly.
 
 Plugins live anywhere on `sys.path` — in-tree under
 `src/server/<name>/`, sibling-mounted under `/app/src/<name>/`, or a
 pip-installable wheel. Core never references plugin module names; each
 plugin self-filters internally.
+
+## Minimal sync plugin
+
+```python
+# myorg_supplier_plugin/__init__.py
+from flowmesh_hook import HookBindings, WorkerView
+
+
+class _MyOrgSupplier:
+    name = "myorg.supplier"
+
+    def resolve(self, worker: WorkerView) -> str | None:
+        return worker.env.get("supplier_id") or None
+
+
+def install() -> HookBindings:
+    return HookBindings(supplier_resolvers=[_MyOrgSupplier()])
+```
 
 ## Plugins with their own DB
 
@@ -57,12 +87,15 @@ import os
 from contextlib import asynccontextmanager
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from server.hooks import IDENTITY_PROVIDERS
+from flowmesh_hook import HookBindings
 
 
 class _MyOrgAuth:
     name = "myorg.auth"
-    def __init__(self, sessionmaker): self._sm = sessionmaker
+
+    def __init__(self, sessionmaker):
+        self._sm = sessionmaker
+
     async def resolve(self, raw_token, logger):
         async with self._sm() as session:
             ...
@@ -71,9 +104,10 @@ class _MyOrgAuth:
 @asynccontextmanager
 async def install():
     engine = create_async_engine(os.environ["MYORG_DATABASE_URL"])
-    IDENTITY_PROVIDERS.append(_MyOrgAuth(async_sessionmaker(engine)))
     try:
-        yield
+        yield HookBindings(
+            identity_providers=[_MyOrgAuth(async_sessionmaker(engine))],
+        )
     finally:
         await engine.dispose()
 ```

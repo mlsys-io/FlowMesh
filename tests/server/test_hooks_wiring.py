@@ -16,9 +16,16 @@ from unittest.mock import MagicMock
 import pytest
 from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.testclient import TestClient
+from flowmesh_hook import (
+    AccessibleIds,
+    HookBindings,
+    PrincipalContext,
+    UsageRow,
+    UsageSink,
+    WorkerView,
+)
 
 from server.auth.security import (
-    PrincipalContext,
     authenticate_api_key,
     authenticate_request,
     require_permission,
@@ -30,9 +37,7 @@ from server.hooks import (
     SUBMISSION_GUARDS,
     SUPPLIER_RESOLVERS,
     USAGE_SINKS,
-    AccessibleIds,
-    UsageRow,
-    UsageSink,
+    register,
 )
 from server.registries.worker import Worker
 from server.task.models import TaskRecord
@@ -98,7 +103,7 @@ class TestIdentityProviderWiring:
         )
         first = _FakeIdentityProvider(returns=principal)
         second = _FakeIdentityProvider(returns=None)
-        IDENTITY_PROVIDERS.extend([first, second])
+        register(HookBindings(identity_providers=[first, second]))
 
         result = await authenticate_api_key("opaque", logger)
 
@@ -111,7 +116,7 @@ class TestIdentityProviderWiring:
         self, logger: logging.Logger
     ) -> None:
         provider = _FakeIdentityProvider(returns=None)
-        IDENTITY_PROVIDERS.append(provider)
+        register(HookBindings(identity_providers=[provider]))
 
         with pytest.raises(HTTPException) as exc_info:
             await authenticate_api_key("opaque", logger)
@@ -152,7 +157,7 @@ class TestSubmissionGuardWiring:
                     status_code=status.HTTP_402_PAYMENT_REQUIRED, detail="nope"
                 )
 
-        SUBMISSION_GUARDS.extend([_AllowGuard(), _BlockGuard()])
+        register(HookBindings(submission_guards=[_AllowGuard(), _BlockGuard()]))
         principal = PrincipalContext(
             principal_id="p",
             org_id="x",
@@ -282,7 +287,7 @@ class TestAuthenticateRequest:
             scopes=[],
         )
         provider = _CapturingProvider(returns=principal)
-        IDENTITY_PROVIDERS.append(provider)
+        register(HookBindings(identity_providers=[provider]))
 
         app = _build_submit_app()
         client = TestClient(app)
@@ -295,7 +300,7 @@ class TestAuthenticateRequest:
 
     def test_missing_authorization_header_falls_through_to_401(self) -> None:
         provider = _CapturingProvider(returns=None)
-        IDENTITY_PROVIDERS.append(provider)
+        register(HookBindings(identity_providers=[provider]))
 
         app = _build_submit_app()
         client = TestClient(app)
@@ -358,7 +363,7 @@ class TestPermissionCheckerComposition:
             async def require(self, *args: Any, **kwargs: Any) -> None:
                 return None
 
-        PERMISSION_CHECKERS.extend([_UnionChecker(), _AllChecker()])
+        register(HookBindings(permission_checkers=[_UnionChecker(), _AllChecker()]))
 
         ids = await resolve_accessible_ids(principal, "task", "list", logger)
         assert ids is None
@@ -397,7 +402,7 @@ class TestPermissionCheckerComposition:
             async def require(self, *args: Any, **kwargs: Any) -> None:
                 return None
 
-        PERMISSION_CHECKERS.extend([_A(), _B()])
+        register(HookBindings(permission_checkers=[_A(), _B()]))
 
         ids = await resolve_accessible_ids(principal, "task", "list", logger)
         assert ids == frozenset({"tsk-1", "tsk-2", "tsk-3"})
@@ -435,7 +440,7 @@ class TestPermissionCheckerComposition:
             async def require(self, *args: Any, **kwargs: Any) -> None:
                 seen.append("never")
 
-        PERMISSION_CHECKERS.extend([_Block(), _NeverRuns()])
+        register(HookBindings(permission_checkers=[_Block(), _NeverRuns()]))
 
         with pytest.raises(HTTPException) as exc_info:
             await require_permission(principal, "task", "tsk-1", "read", logger)
@@ -480,22 +485,26 @@ class TestSupplierResolverWiring:
         class _ReturnsNone:
             name = "none"
 
-            def resolve(self, worker: Worker) -> str | None:
+            def resolve(self, worker: WorkerView) -> str | None:
                 return None
 
         class _ReturnsValue:
             name = "value"
 
-            def resolve(self, worker: Worker) -> str | None:
+            def resolve(self, worker: WorkerView) -> str | None:
                 return "sup-cloud-1"
 
         class _NeverRuns:
             name = "never"
 
-            def resolve(self, worker: Worker) -> str | None:
+            def resolve(self, worker: WorkerView) -> str | None:
                 raise AssertionError("subsequent resolvers must not run")
 
-        SUPPLIER_RESOLVERS.extend([_ReturnsNone(), _ReturnsValue(), _NeverRuns()])
+        register(
+            HookBindings(
+                supplier_resolvers=[_ReturnsNone(), _ReturnsValue(), _NeverRuns()]
+            )
+        )
 
         runtime, record = _make_runtime_with_record("tsk-1")
         runtime.mark_dispatched("tsk-1", _make_worker())

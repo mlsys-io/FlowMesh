@@ -18,18 +18,11 @@ gate", preserving OSS-only behaviour.
 """
 
 import logging
-from dataclasses import dataclass
 
 from fastapi import HTTPException, Request, status
+from flowmesh_hook import PrincipalContext
 
-
-@dataclass(frozen=True)
-class PrincipalContext:
-    principal_id: str
-    org_id: str
-    external_id: str
-    principal_type: str
-    scopes: list[str]
+from ..hooks import IDENTITY_PROVIDERS, PERMISSION_CHECKERS
 
 
 def default_principal() -> PrincipalContext:
@@ -51,8 +44,6 @@ async def authenticate_api_key(
     With no providers registered, returns `default_principal()` — auth is off,
     every caller is admin.
     """
-    from ..hooks import IDENTITY_PROVIDERS  # Import here to avoid circular dependency
-
     if not IDENTITY_PROVIDERS:
         return default_principal()
 
@@ -89,8 +80,6 @@ async def resolve_accessible_ids(
     registered, or some checker explicitly returned `"all"`. Otherwise
     returns the union of all checker-permitted id sets.
     """
-    from ..hooks import PERMISSION_CHECKERS  # avoid circular import
-
     if not PERMISSION_CHECKERS:
         return None
 
@@ -111,7 +100,5 @@ async def require_permission(
     logger: logging.Logger,
 ) -> None:
     """Run every registered `PermissionChecker.require`. Raises on first deny."""
-    from ..hooks import PERMISSION_CHECKERS  # avoid circular import
-
     for checker in PERMISSION_CHECKERS:
         await checker.require(principal, resource_type, resource_id, action, logger)
