@@ -100,6 +100,7 @@ flags in `.github/workflows/security.yml`.
 | GHSA-pf3h-qjgv-vcpr | vllm | 0.19.0 | held by transformers 4.57 + adjacent inference deps |
 | GHSA-pq5c-rjhq-qp7p | vllm | 0.19.0 | same |
 | GHSA-3mwp-wvh9-7528 | vllm | 0.19.0 | same |
+| GHSA-hpv8-x276-m59f | vllm | 0.20.0 | same |
 | GHSA-cfh3-3jmp-rvhc | pillow | 12.1.1 | gradio 5.50 caps pillow<12 (transitive via vllm-omni) |
 | GHSA-whj4-6x5x-4v2j | pillow | 12.2.0 | same cap |
 | GHSA-wjx4-4jcj-g98j | pillow | 12.2.0 | same cap |
