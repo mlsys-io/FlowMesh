@@ -25,7 +25,6 @@ spec:
           data:
             type: "agent"
             lumid_data_url: "http://127.0.0.1:9102"
-            schema_scope: "*"
             description: "Show me {symbol}'s last 10 quarters of fundamentals and key financial-health ratios."
             output_format: "jsonl"
             max_steps: 20

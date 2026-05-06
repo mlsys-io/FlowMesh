@@ -224,10 +224,10 @@ class DataRetrievalExecutor(DataMixin, Executor):
         validate_keys(
             data_cfg,
             "DataRetrievalExecutor.spec.data",
-            required={"type", "description", "schema_scope", "lumid_data_url"},
+            required={"type", "description", "lumid_data_url"},
         )
         description_template: str = data_cfg["description"]
-        schema_scope: str = data_cfg["schema_scope"]
+        schema_scope: str | None = data_cfg.get("schema_scope")
         output_format: str = data_cfg.get("output_format", "jsonl")
         if output_format not in {"jsonl", "csv"}:
             raise ExecutionError(

@@ -34,7 +34,7 @@ class AgentConnector(BaseConnector):
         self,
         query: str | list[str],
         *,
-        schema_scope: str,
+        schema_scope: str | None = None,
         out_path: Path,
         output_format: str = "jsonl",
         max_steps: int | None = None,
