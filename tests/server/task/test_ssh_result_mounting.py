@@ -296,3 +296,9 @@ def test_collect_upstream_results_excludes_unrelated_completed_stages(
     )
 
     assert set(upstream_results) == {"preprocess"}
+    # The upstream payload sits under a ``"result"`` envelope so a
+    # template's ``<stage>.result.<field>`` path resolves correctly
+    # against the worker's expression evaluator.
+    assert upstream_results["preprocess"] == {
+        "result": {"responses": [{"output": "pre"}]}
+    }

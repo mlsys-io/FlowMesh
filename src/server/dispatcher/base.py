@@ -884,7 +884,7 @@ class Dispatcher:
                     exc,
                 )
                 continue
-            results[name] = data
+            results[name] = {"result": data}
         return results
 
     def _resolve_upstream_task_ids(
