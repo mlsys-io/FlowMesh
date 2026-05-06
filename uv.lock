@@ -1691,6 +1691,7 @@ agent = [
 ]
 analytics = [
     { name = "boto3" },
+    { name = "lumid-data-sdk" },
     { name = "pandas" },
     { name = "psycopg", extra = ["binary"] },
     { name = "sqlalchemy" },
@@ -1836,6 +1837,7 @@ requires-dist = [
     { name = "ipython", marker = "extra == 'agent'", specifier = ">=9.5.0" },
     { name = "isort", marker = "extra == 'dev'", specifier = ">=7.0.0" },
     { name = "jinja2", marker = "extra == 'agent'", specifier = ">=3.1.6" },
+    { name = "lumid-data-sdk", marker = "extra == 'analytics'", git = "https://github.com/mlsys-io/lumid.data.git?subdirectory=sdk&rev=85b6743" },
     { name = "matplotlib", marker = "extra == 'agent'", specifier = ">=3.10.6" },
     { name = "mcp", marker = "extra == 'agent'", specifier = ">=1.23.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.19.1" },
@@ -3159,6 +3161,16 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/3a/05/a1dae3dffd1116099471c643b8924f5aa6524411dc6c63fdae648c4f1aca/loguru-0.7.3.tar.gz", hash = "sha256:19480589e77d47b8d85b2c827ad95d49bf31b0dcde16593892eb51dd18706eb6", size = 63559, upload-time = "2024-12-06T11:20:56.608Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/0c/29/0348de65b8cc732daa3e33e67806420b2ae89bdce2b04af740289c5c6c8c/loguru-0.7.3-py3-none-any.whl", hash = "sha256:31a33c10c8e1e10422bfd431aeb5d351c7cf7fa671e3c4df004162264b28220c", size = 61595, upload-time = "2024-12-06T11:20:54.538Z" },
+]
+
+[[package]]
+name = "lumid-data-sdk"
+version = "0.1.0"
+source = { git = "https://github.com/mlsys-io/lumid.data.git?subdirectory=sdk&rev=85b6743#85b6743f50abf89f489c7c84b02ebd9c613ec870" }
+dependencies = [
+    { name = "httpx" },
+    { name = "httpx-sse" },
+    { name = "pydantic" },
 ]
 
 [[package]]

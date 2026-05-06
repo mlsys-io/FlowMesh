@@ -1,10 +1,17 @@
 """Connectors for external systems (databases, APIs, etc.)."""
 
+from .agent_connector import AgentConnector
 from .base_connector import BaseConnector, ConnectorError
 from .postgresql_connector import PostgreSQLConnector
 from .s3_connector import S3Connector
 
-__all__ = ["BaseConnector", "ConnectorError", "PostgreSQLConnector", "S3Connector"]
+__all__ = [
+    "AgentConnector",
+    "BaseConnector",
+    "ConnectorError",
+    "PostgreSQLConnector",
+    "S3Connector",
+]
 
 
 def get_connector_from_spec(connection_string: str, **kwargs) -> BaseConnector:

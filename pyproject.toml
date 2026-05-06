@@ -113,6 +113,7 @@ analytics = [
     "pandas>=2.3.3",
     "psycopg[binary]>=3.2.12",
     "sqlalchemy>=2.0.44",
+    "lumid-data-sdk @ git+https://github.com/mlsys-io/lumid.data.git@85b6743#subdirectory=sdk",
 ]
 
 # ── Developer tooling ─────────────────────────────────────────────

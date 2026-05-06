@@ -68,7 +68,7 @@ HEADER = (
     "# Regenerate with: uv run scripts/dev/sync_requirements.py --write\n"
 )
 
-_PKG_RE = re.compile(r"^([A-Za-z0-9_.-]+)(\[[^\]]+\])?\s*(?:[<>=!~].*)?$")
+_PKG_RE = re.compile(r"^([A-Za-z0-9_.-]+)(\[[^\]]+\])?(?:\s*[@<>=!~].*)?$")
 
 
 def _direct_deps(extras: list[str]) -> dict[str, str]:

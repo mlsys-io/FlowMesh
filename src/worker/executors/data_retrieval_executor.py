@@ -12,7 +12,7 @@ from PIL import Image
 from shared.tasks.specs import DataRetrievalSpecStrict
 from shared.utils.json import validate_keys
 
-from ..connectors import PostgreSQLConnector, S3Connector
+from ..connectors import AgentConnector, PostgreSQLConnector, S3Connector
 from ..utils.serialization import serialize_dataframe
 from .base_executor import ExecutionError, Executor, ExecutorTask
 from .mixins.data import DataMixin
@@ -39,9 +39,10 @@ class DataRetrievalExecutor(DataMixin, Executor):
             if not isinstance(data_cfg, dict):
                 raise ExecutionError("spec.data must be a mapping for data_retrieval.")
             retrieval_type = data_cfg.get("type")
-            if retrieval_type not in {"sql", "s3"}:
+            if retrieval_type not in {"sql", "s3", "agent"}:
                 raise ExecutionError(
-                    "spec.data.type must be either 'sql' or 's3' for data_retrieval."
+                    "spec.data.type must be 'sql', 's3', or 'agent' for "
+                    "data_retrieval."
                 )
             context = spec.upstreamResults or {}
 
@@ -49,6 +50,8 @@ class DataRetrievalExecutor(DataMixin, Executor):
                 result = self._run_sql(data_cfg, context)
             elif retrieval_type == "s3":
                 result = self._run_s3(data_cfg, context, out_dir)
+            elif retrieval_type == "agent":
+                result = self._run_agent(data_cfg, context, out_dir)
             else:
                 raise ExecutionError(
                     f"Unsupported data_retrieval type: {retrieval_type!r}."
@@ -210,6 +213,114 @@ class DataRetrievalExecutor(DataMixin, Executor):
             "metadata": s3_result["metadata"],  # type: ignore
         }
         return result
+
+    def _run_agent(
+        self,
+        data_cfg: dict[str, Any],
+        context: dict[str, Any],
+        out_dir: Path,
+    ) -> dict[str, Any]:
+        """Drive lumid.data ``/retrieve/v1`` for NL-driven retrieval."""
+        validate_keys(
+            data_cfg,
+            "DataRetrievalExecutor.spec.data",
+            required={"type", "description", "schema_scope", "lumid_data_url"},
+        )
+        description_template: str = data_cfg["description"]
+        schema_scope: str = data_cfg["schema_scope"]
+        output_format: str = data_cfg.get("output_format", "jsonl")
+        if output_format not in {"jsonl", "csv"}:
+            raise ExecutionError(
+                "spec.data.output_format must be 'jsonl' or 'csv' for "
+                "data_retrieval(agent); 'raw' is not supported here."
+            )
+        base_url: str = data_cfg["lumid_data_url"]
+        token: str | None = data_cfg.get("lumid_data_token")
+        max_steps_raw = data_cfg.get("max_steps")
+        max_steps: int | None = None
+        if max_steps_raw is not None:
+            if not isinstance(max_steps_raw, int):
+                raise ExecutionError("spec.data.max_steps must be an integer.")
+            max_steps = max_steps_raw
+        model: str | None = data_cfg.get("model")
+        verify_raw = data_cfg.get("verify", False)
+        if not isinstance(verify_raw, bool):
+            raise ExecutionError("spec.data.verify must be a boolean.")
+
+        params: list[dict[str, Any]] = data_cfg.get("params", [])
+        resolved_columns = _resolve_columns(params, context)
+        params_dict: dict[str, Any] = {
+            col["label"]: col["value"] for col in resolved_columns
+        }
+
+        if self._has_grouped_params(params_dict):
+            raise ExecutionError(
+                "Grouped params are not supported for agent retrieval."
+            )
+
+        columns_dict, params_rows = self._normalize_params(params_dict)  # type: ignore
+        format_kwargs = {key: key for key in params_dict}
+        rendered = _render_template(columns_dict, description_template, format_kwargs)  # type: ignore[arg-type]
+        if not all(isinstance(x, str) for x in rendered):
+            raise ExecutionError(
+                "Rendered description template did not produce text output."
+            )
+        descriptions: list[str] = list(rendered)  # type: ignore[arg-type]
+
+        artifact_dir = out_dir / "artifacts" / "agent_retrievals"
+        artifact_dir.mkdir(parents=True, exist_ok=True)
+
+        items: list[dict[str, Any]] = []
+        with AgentConnector(base_url=base_url, token=token, verify=verify_raw) as conn:
+            for idx, (description, params_row) in enumerate(
+                zip(descriptions, params_rows)
+            ):
+                out_path = artifact_dir / f"result_{idx}.{output_format}"
+                outcome = conn.execute(
+                    description,
+                    schema_scope=schema_scope,
+                    out_path=out_path,
+                    output_format=output_format,
+                    max_steps=max_steps,
+                    model=model,
+                )
+                if not outcome["success"]:
+                    raise ExecutionError(
+                        f"Agent retrieval failed (idx={idx}): {outcome['error']}"
+                    )
+                df = self._load_table(out_path, output_format)
+                items.append(
+                    {
+                        "index": idx,
+                        "description": description,
+                        "params": params_row,
+                        "table": serialize_dataframe(df),
+                        "rows": len(df),
+                        "access_chain": outcome["data"]["access_chain"],
+                        "run_id": outcome["data"]["run_id"],
+                        "transcript_url": outcome["data"]["transcript_url"],
+                        "tokens_in": outcome["data"]["tokens_in"],
+                        "tokens_out": outcome["data"]["tokens_out"],
+                        "steps_taken": outcome["data"]["steps_taken"],
+                        "replay_latency_ms": outcome["data"]["replay_latency_ms"],
+                        "materialized_uri": outcome["metadata"]["materialized_uri"],
+                    }
+                )
+
+        return {
+            "ok": True,
+            "type": "agent",
+            "items": items,
+            "count": len(items),
+        }
+
+    def _load_table(self, path: Path, output_format: str) -> pd.DataFrame:
+        """Load the materialized retrieval file into a DataFrame."""
+        if path.stat().st_size == 0:
+            return pd.DataFrame()
+        if output_format == "jsonl":
+            return pd.read_json(path, lines=True)
+        return pd.read_csv(path)
 
     def _serialize_s3_content(self, content: Any, out_dir: Path) -> Any:
         if isinstance(content, pd.DataFrame):
