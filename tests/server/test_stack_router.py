@@ -1,5 +1,6 @@
 """Tests for the /api/v1/stack/workers router (IPC command channel)."""
 
+import logging
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -23,6 +24,7 @@ def _error(message: str = "fail") -> CommandResponse:
 def _make_app(supervisor: MagicMock) -> FastAPI:
     app = FastAPI()
     app.state.supervisor = supervisor
+    app.state.logger = logging.getLogger("test.stack_router")
     app.include_router(stack_router.router, prefix=PREFIX)
     return app
 
