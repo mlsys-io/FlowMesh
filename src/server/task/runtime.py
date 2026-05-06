@@ -666,8 +666,7 @@ class TaskRuntime:
     def mark_dispatched(self, task_id: str, worker: Worker) -> None:
         supplier_id = ""
         for resolver in SUPPLIER_RESOLVERS:
-            resolved = resolver.resolve(worker)
-            if resolved is not None:
+            if (resolved := resolver.resolve(worker)) is not None:
                 supplier_id = resolved
                 break
 

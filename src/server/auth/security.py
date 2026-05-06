@@ -20,7 +20,7 @@ gate", preserving OSS-only behaviour.
 import logging
 
 from fastapi import HTTPException, Request, status
-from flowmesh_hook import PrincipalContext
+from flowmesh_hook import PrincipalContext, ResourceAction, ResourceType
 
 from ..hooks import IDENTITY_PROVIDERS, PERMISSION_CHECKERS
 
@@ -61,23 +61,25 @@ async def authenticate_api_key(
 async def authenticate_request(request: Request) -> PrincipalContext:
     """FastAPI dependency: extract the bearer token and run the auth chain."""
     auth_header = request.headers.get("Authorization", "")
+    bearer_prefix = "Bearer "
     raw_token = (
-        auth_header[len("Bearer ") :] if auth_header.startswith("Bearer ") else ""
+        auth_header[len(bearer_prefix) :]
+        if auth_header.startswith(bearer_prefix)
+        else ""
     )
-    logger: logging.Logger = request.app.state.logger
-    return await authenticate_api_key(raw_token, logger)
+    return await authenticate_api_key(raw_token, request.app.state.logger)
 
 
 async def resolve_accessible_ids(
     principal: PrincipalContext,
-    resource_type: str,
-    action: str,
+    resource_type: ResourceType,
+    action: ResourceAction,
     logger: logging.Logger,
 ) -> frozenset[str] | None:
     """Compose `PermissionChecker.accessible_ids` across registered checkers.
 
     Returns `None` to indicate "no filter" — either no checkers are
-    registered, or some checker explicitly returned `"all"`. Otherwise
+    registered, or some checker explicitly returned `None`. Otherwise
     returns the union of all checker-permitted id sets.
     """
     if not PERMISSION_CHECKERS:
@@ -86,7 +88,7 @@ async def resolve_accessible_ids(
     accumulated: set[str] = set()
     for checker in PERMISSION_CHECKERS:
         result = await checker.accessible_ids(principal, resource_type, action, logger)
-        if result == "all":
+        if result is None:
             return None
         accumulated.update(result)
     return frozenset(accumulated)
@@ -94,9 +96,9 @@ async def resolve_accessible_ids(
 
 async def require_permission(
     principal: PrincipalContext,
-    resource_type: str,
+    resource_type: ResourceType,
     resource_id: str,
-    action: str,
+    action: ResourceAction,
     logger: logging.Logger,
 ) -> None:
     """Run every registered `PermissionChecker.require`. Raises on first deny."""

@@ -24,6 +24,7 @@ from ...auth.security import (
     resolve_accessible_ids,
 )
 from ...clients.redis import RedisClient, task_log_closed_key, task_log_stream_key
+from ...hooks import ResourceAction, ResourceType
 from ...registries.worker import WorkerRegistry
 from ...schemas.common import OkResponse
 from ...schemas.logs import LogEntry, LogEvent, LogQueryResponse
@@ -61,7 +62,9 @@ async def list_tasks(
     logger: logging.Logger = Depends(get_logger),
 ) -> list[TaskInfo]:
     tasks = runtime.list_tasks()
-    allowed = await resolve_accessible_ids(principal, "task", "list", logger)
+    allowed = await resolve_accessible_ids(
+        principal, ResourceType.TASK, ResourceAction.READ, logger
+    )
     if allowed is not None:
         tasks = [task for task in tasks if task.task_id in allowed]
     for task in tasks:
@@ -81,7 +84,9 @@ async def get_task(
     runtime: TaskRuntime = Depends(get_runtime),
     logger: logging.Logger = Depends(get_logger),
 ) -> TaskInfo:
-    await require_permission(principal, "task", task_id, "read", logger)
+    await require_permission(
+        principal, ResourceType.TASK, task_id, ResourceAction.READ, logger
+    )
     info = runtime.describe_task(task_id)
     if not info:
         raise HTTPException(
@@ -107,7 +112,9 @@ async def stop_task(
     worker_registry: WorkerRegistry = Depends(get_worker_registry),
     logger: logging.Logger = Depends(get_logger),
 ) -> OkResponse:
-    await require_permission(principal, "task", task_id, "cancel", logger)
+    await require_permission(
+        principal, ResourceType.TASK, task_id, ResourceAction.CANCEL, logger
+    )
     record = runtime.get_record(task_id)
     if record is None:
         raise HTTPException(

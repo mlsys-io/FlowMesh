@@ -7,7 +7,8 @@ server or worker packages.
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
-from typing import Any, Literal, Protocol, TypedDict, runtime_checkable
+from enum import StrEnum
+from typing import Any, Protocol, TypedDict, runtime_checkable
 
 
 @dataclass(frozen=True)
@@ -19,7 +20,17 @@ class PrincipalContext:
     scopes: list[str]
 
 
-AccessibleIds = Literal["all"] | frozenset[str]
+class ResourceType(StrEnum):
+    WORKFLOW = "workflow"
+    TASK = "task"
+    RESULT = "result"
+
+
+class ResourceAction(StrEnum):
+    READ = "read"
+    WRITE = "write"
+    CANCEL = "cancel"
+    ADMIN = "admin"
 
 
 @runtime_checkable

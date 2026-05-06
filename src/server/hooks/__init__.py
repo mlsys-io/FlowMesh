@@ -6,11 +6,12 @@ that the server iterates at call time.
 """
 
 from flowmesh_hook import (
-    AccessibleIds,
     HookBindings,
     IdentityProvider,
     PermissionChecker,
     PrincipalContext,
+    ResourceAction,
+    ResourceType,
     SubmissionGuard,
     SupplierResolver,
     UsageRow,
@@ -35,13 +36,14 @@ def register(bindings: HookBindings) -> None:
 
 
 __all__ = [
-    "AccessibleIds",
     "HookBindings",
     "IDENTITY_PROVIDERS",
     "IdentityProvider",
     "PERMISSION_CHECKERS",
     "PermissionChecker",
     "PrincipalContext",
+    "ResourceAction",
+    "ResourceType",
     "SUBMISSION_GUARDS",
     "SUPPLIER_RESOLVERS",
     "SubmissionGuard",

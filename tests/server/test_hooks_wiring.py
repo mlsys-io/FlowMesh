@@ -17,9 +17,10 @@ import pytest
 from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.testclient import TestClient
 from flowmesh_hook import (
-    AccessibleIds,
     HookBindings,
     PrincipalContext,
+    ResourceAction,
+    ResourceType,
     UsageRow,
     UsageSink,
     WorkerView,
@@ -326,7 +327,9 @@ class TestPermissionCheckerComposition:
     async def test_no_checkers_means_no_filter(
         self, principal: PrincipalContext, logger: logging.Logger
     ) -> None:
-        ids = await resolve_accessible_ids(principal, "task", "list", logger)
+        ids = await resolve_accessible_ids(
+            principal, ResourceType.TASK, ResourceAction.READ, logger
+        )
         assert ids is None
 
     @pytest.mark.anyio
@@ -342,7 +345,7 @@ class TestPermissionCheckerComposition:
                 resource_type: str,
                 action: str,
                 logger: logging.Logger,
-            ) -> AccessibleIds:
+            ) -> frozenset[str] | None:
                 return frozenset({"tsk-A"})
 
             async def require(self, *args: Any, **kwargs: Any) -> None:
@@ -357,15 +360,17 @@ class TestPermissionCheckerComposition:
                 resource_type: str,
                 action: str,
                 logger: logging.Logger,
-            ) -> AccessibleIds:
-                return "all"
+            ) -> frozenset[str] | None:
+                return None
 
             async def require(self, *args: Any, **kwargs: Any) -> None:
                 return None
 
         register(HookBindings(permission_checkers=[_UnionChecker(), _AllChecker()]))
 
-        ids = await resolve_accessible_ids(principal, "task", "list", logger)
+        ids = await resolve_accessible_ids(
+            principal, ResourceType.TASK, ResourceAction.READ, logger
+        )
         assert ids is None
 
     @pytest.mark.anyio
@@ -381,7 +386,7 @@ class TestPermissionCheckerComposition:
                 resource_type: str,
                 action: str,
                 logger: logging.Logger,
-            ) -> AccessibleIds:
+            ) -> frozenset[str] | None:
                 return frozenset({"tsk-1", "tsk-2"})
 
             async def require(self, *args: Any, **kwargs: Any) -> None:
@@ -396,7 +401,7 @@ class TestPermissionCheckerComposition:
                 resource_type: str,
                 action: str,
                 logger: logging.Logger,
-            ) -> AccessibleIds:
+            ) -> frozenset[str] | None:
                 return frozenset({"tsk-2", "tsk-3"})
 
             async def require(self, *args: Any, **kwargs: Any) -> None:
@@ -404,14 +409,18 @@ class TestPermissionCheckerComposition:
 
         register(HookBindings(permission_checkers=[_A(), _B()]))
 
-        ids = await resolve_accessible_ids(principal, "task", "list", logger)
+        ids = await resolve_accessible_ids(
+            principal, ResourceType.TASK, ResourceAction.READ, logger
+        )
         assert ids == frozenset({"tsk-1", "tsk-2", "tsk-3"})
 
     @pytest.mark.anyio
     async def test_require_passes_when_no_checkers(
         self, principal: PrincipalContext, logger: logging.Logger
     ) -> None:
-        await require_permission(principal, "task", "tsk-1", "read", logger)
+        await require_permission(
+            principal, ResourceType.TASK, "tsk-1", ResourceAction.READ, logger
+        )
 
     @pytest.mark.anyio
     async def test_require_first_failure_short_circuits(
@@ -422,8 +431,10 @@ class TestPermissionCheckerComposition:
         class _Block:
             name = "block"
 
-            async def accessible_ids(self, *args: Any, **kwargs: Any) -> AccessibleIds:
-                return "all"
+            async def accessible_ids(
+                self, *args: Any, **kwargs: Any
+            ) -> frozenset[str] | None:
+                return None
 
             async def require(self, *args: Any, **kwargs: Any) -> None:
                 seen.append("block")
@@ -434,8 +445,10 @@ class TestPermissionCheckerComposition:
         class _NeverRuns:
             name = "never"
 
-            async def accessible_ids(self, *args: Any, **kwargs: Any) -> AccessibleIds:
-                return "all"
+            async def accessible_ids(
+                self, *args: Any, **kwargs: Any
+            ) -> frozenset[str] | None:
+                return None
 
             async def require(self, *args: Any, **kwargs: Any) -> None:
                 seen.append("never")
@@ -443,7 +456,9 @@ class TestPermissionCheckerComposition:
         register(HookBindings(permission_checkers=[_Block(), _NeverRuns()]))
 
         with pytest.raises(HTTPException) as exc_info:
-            await require_permission(principal, "task", "tsk-1", "read", logger)
+            await require_permission(
+                principal, ResourceType.TASK, "tsk-1", ResourceAction.READ, logger
+            )
 
         assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
         assert seen == ["block"]

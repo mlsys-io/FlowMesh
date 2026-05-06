@@ -34,7 +34,7 @@ from ...clients.redis import (
     workflow_log_closed_key,
     workflow_log_stream_key,
 )
-from ...hooks import SUBMISSION_GUARDS
+from ...hooks import SUBMISSION_GUARDS, ResourceAction, ResourceType
 from ...registries.workflow import Workflow, WorkflowRegistry
 from ...schemas.logs import LogEntry, LogEvent, LogQueryResponse
 from ...schemas.workflow import (
@@ -256,7 +256,9 @@ async def get_workflow(
     registry: WorkflowRegistry = Depends(get_workflow_registry),
     logger: logging.Logger = Depends(get_logger),
 ) -> Workflow:
-    await require_permission(principal, "workflow", workflow_id, "read", logger)
+    await require_permission(
+        principal, ResourceType.WORKFLOW, workflow_id, ResourceAction.READ, logger
+    )
     workflow = await registry.get_workflow_async(workflow_id)
     if not workflow:
         raise HTTPException(
@@ -467,7 +469,9 @@ async def cancel_workflow(
     registry: WorkflowRegistry = Depends(get_workflow_registry),
     logger: logging.Logger = Depends(get_logger),
 ) -> Workflow:
-    await require_permission(principal, "workflow", workflow_id, "cancel", logger)
+    await require_permission(
+        principal, ResourceType.WORKFLOW, workflow_id, ResourceAction.CANCEL, logger
+    )
     runtime.cancel_workflow(workflow_id)
     workflow = await registry.get_workflow_async(workflow_id)
     if not workflow:
@@ -491,7 +495,9 @@ async def list_workflows(
     logger: logging.Logger = Depends(get_logger),
 ) -> list[Workflow]:
     workflow_ids = await registry.get_workflow_ids_async()
-    allowed = await resolve_accessible_ids(principal, "workflow", "list", logger)
+    allowed = await resolve_accessible_ids(
+        principal, ResourceType.WORKFLOW, ResourceAction.READ, logger
+    )
     if allowed is not None:
         workflow_ids = workflow_ids & allowed
     workflows: list[Workflow] = []

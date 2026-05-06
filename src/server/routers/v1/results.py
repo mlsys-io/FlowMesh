@@ -27,11 +27,8 @@ from ...app_state import (
     get_results_dir,
     get_runtime,
 )
-from ...auth.security import (
-    PrincipalContext,
-    authenticate_request,
-    require_permission,
-)
+from ...auth.security import PrincipalContext, authenticate_request, require_permission
+from ...hooks import ResourceAction, ResourceType
 from ...schemas.common import PathResponse
 from ...schemas.result import ResultPayload, read_result, result_file_path, write_result
 from ...services.monitoring import EventMonitor
@@ -121,7 +118,9 @@ async def get_result(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="task_id is required"
         )
-    await require_permission(principal, "result", task_id, "read", logger)
+    await require_permission(
+        principal, ResourceType.RESULT, task_id, ResourceAction.READ, logger
+    )
     try:
         raw = read_result(results_dir, task_id)
     except FileNotFoundError:
@@ -153,7 +152,9 @@ async def upload_result_file(
     results_dir: Path = Depends(get_results_dir),
     logger: logging.Logger = Depends(get_logger),
 ) -> PathResponse:
-    await require_permission(principal, "result", task_id, "read", logger)
+    await require_permission(
+        principal, ResourceType.RESULT, task_id, ResourceAction.WRITE, logger
+    )
     base_dir = result_file_path(results_dir, task_id).parent
     relative_path = _resolve_artifact_path(file.filename or "")
     target_path = (base_dir / relative_path).resolve()
@@ -199,7 +200,9 @@ async def download_result_file(
     results_dir: Path = Depends(get_results_dir),
     logger: logging.Logger = Depends(get_logger),
 ) -> FileResponse:
-    await require_permission(principal, "result", task_id, "read", logger)
+    await require_permission(
+        principal, ResourceType.RESULT, task_id, ResourceAction.READ, logger
+    )
     sanitized = Path(filename)
     base_dir = result_file_path(results_dir, task_id).parent
     relative_path = _resolve_artifact_path(filename)
@@ -249,7 +252,9 @@ async def download_result_bundle(
     results_dir: Path = Depends(get_results_dir),
     logger: logging.Logger = Depends(get_logger),
 ) -> FileResponse:
-    await require_permission(principal, "result", task_id, "read", logger)
+    await require_permission(
+        principal, ResourceType.RESULT, task_id, ResourceAction.READ, logger
+    )
     sections = _resolve_bundle_sections(include)
 
     record = runtime.get_record(task_id)
@@ -300,7 +305,9 @@ async def download_task_logs(
     results_dir: Path = Depends(get_results_dir),
     logger: logging.Logger = Depends(get_logger),
 ) -> FileResponse:
-    await require_permission(principal, "result", task_id, "read", logger)
+    await require_permission(
+        principal, ResourceType.RESULT, task_id, ResourceAction.READ, logger
+    )
     base_dir = result_file_path(results_dir, task_id).parent
     target_path = (base_dir / LOGS_DIR / "logs.jsonl").resolve()
     try:

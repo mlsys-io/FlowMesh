@@ -18,10 +18,10 @@ protocol hooks defined in the standalone **`flowmesh-hook`** package
 - `PermissionChecker` — filter list endpoints (`accessible_ids`) and
   gate point reads / mutations (`require`), iterated from
   `auth/security.py` via `resolve_accessible_ids` / `require_permission`.
-  Multiple checkers compose: `accessible_ids` is `"all"` if any checker
-  returns `"all"`, otherwise the union of returned id sets; `require`
-  requires every checker to pass. With no checkers registered the
-  helpers are no-ops, matching OSS's open-by-default behaviour.
+  Multiple checkers compose: `accessible_ids` is `None` (no filter) if
+  any checker returns `None`, otherwise the union of returned id sets;
+  `require` requires every checker to pass. With no checkers registered
+  the helpers are no-ops, matching OSS's open-by-default behaviour.
 - `SupplierResolver` — map an assigned worker (a `WorkerView`, the
   structural Protocol the server's `Worker` model satisfies) to a
   supplier id at dispatch time (iterated from
