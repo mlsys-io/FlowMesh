@@ -1,18 +1,26 @@
 # Plugin extension points
 
-External integrations (auth, submission policy, usage tracking) plug
-into the server through three protocol hooks defined in
-`src/server/hooks/`:
+External integrations (auth, submission policy, usage tracking,
+authorisation) plug into the server through four protocol hooks defined
+in `src/server/hooks/`:
 
 - `IdentityProvider` — resolve a bearer token to a `PrincipalContext`
-  (iterated from `auth/security.py`). With no providers registered,
-  auth is a no-op and `authenticate_api_key` returns a default admin
-  principal.
+  (iterated from `auth/security.py`). Routers consume the chain via the
+  `authenticate_request` FastAPI dependency, which extracts the bearer
+  token from the `Authorization` header. With no providers registered,
+  auth is a no-op and the dependency returns a default admin principal.
 - `SubmissionGuard` — pre-submit precondition (iterated from
   `routers/v1/workflows.py`).
 - `UsageSink` — fan-out per-task usage rows after a task completes
   (iterated from `services/monitoring.py`). Typical consumers: billing,
   audit, observability.
+- `PermissionChecker` — filter list endpoints (`accessible_ids`) and
+  gate point reads / mutations (`require`), iterated from
+  `auth/security.py` via `resolve_accessible_ids` / `require_permission`.
+  Multiple checkers compose: `accessible_ids` is `"all"` if any checker
+  returns `"all"`, otherwise the union of returned id sets; `require`
+  requires every checker to pass. With no checkers registered the
+  helpers are no-ops, matching OSS's open-by-default behaviour.
 
 ## How plugins are loaded
 

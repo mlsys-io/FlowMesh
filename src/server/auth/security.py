@@ -11,7 +11,10 @@ OSS ships no native API-key auth. The semantic is:
 
 Routers consume the chain via `authenticate_request`, a FastAPI dependency
 that pulls the bearer token from the request header before invoking
-`authenticate_api_key`.
+`authenticate_api_key`. Permission helpers (`resolve_accessible_ids`,
+`require_permission`) compose the registered `PermissionChecker` chain;
+with no checkers registered both helpers short-circuit to "no filter, no
+gate", preserving OSS-only behaviour.
 """
 
 import logging
@@ -72,3 +75,43 @@ async def authenticate_request(request: Request) -> PrincipalContext:
     )
     logger: logging.Logger = request.app.state.logger
     return await authenticate_api_key(raw_token, logger)
+
+
+async def resolve_accessible_ids(
+    principal: PrincipalContext,
+    resource_type: str,
+    action: str,
+    logger: logging.Logger,
+) -> frozenset[str] | None:
+    """Compose `PermissionChecker.accessible_ids` across registered checkers.
+
+    Returns `None` to indicate "no filter" — either no checkers are
+    registered, or some checker explicitly returned `"all"`. Otherwise
+    returns the union of all checker-permitted id sets.
+    """
+    from ..hooks import PERMISSION_CHECKERS  # avoid circular import
+
+    if not PERMISSION_CHECKERS:
+        return None
+
+    accumulated: set[str] = set()
+    for checker in PERMISSION_CHECKERS:
+        result = await checker.accessible_ids(principal, resource_type, action, logger)
+        if result == "all":
+            return None
+        accumulated.update(result)
+    return frozenset(accumulated)
+
+
+async def require_permission(
+    principal: PrincipalContext,
+    resource_type: str,
+    resource_id: str,
+    action: str,
+    logger: logging.Logger,
+) -> None:
+    """Run every registered `PermissionChecker.require`. Raises on first deny."""
+    from ..hooks import PERMISSION_CHECKERS  # avoid circular import
+
+    for checker in PERMISSION_CHECKERS:
+        await checker.require(principal, resource_type, resource_id, action, logger)

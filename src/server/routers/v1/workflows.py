@@ -23,7 +23,12 @@ from ...app_state import (
     get_runtime,
     get_workflow_registry,
 )
-from ...auth.security import PrincipalContext, authenticate_request
+from ...auth.security import (
+    PrincipalContext,
+    authenticate_request,
+    require_permission,
+    resolve_accessible_ids,
+)
 from ...clients.redis import (
     RedisClient,
     workflow_log_closed_key,
@@ -196,8 +201,10 @@ async def validate_workflow(
     workflow_format: str = Header(
         default="native", description="Workflow format (native/n8n)"
     ),
+    principal: PrincipalContext = Depends(authenticate_request),
     runtime: TaskRuntime = Depends(get_runtime),
 ) -> WorkflowValidateResponse:
+    del principal  # auth gate; payload is not principal-scoped
     raw_body = await request.body()
     if not raw_body:
         raise HTTPException(
@@ -245,8 +252,11 @@ async def validate_workflow(
 )
 async def get_workflow(
     workflow_id: str,
+    principal: PrincipalContext = Depends(authenticate_request),
     registry: WorkflowRegistry = Depends(get_workflow_registry),
+    logger: logging.Logger = Depends(get_logger),
 ) -> Workflow:
+    await require_permission(principal, "workflow", workflow_id, "read", logger)
     workflow = await registry.get_workflow_async(workflow_id)
     if not workflow:
         raise HTTPException(
@@ -452,9 +462,12 @@ async def stream_workflow_logs(
 )
 async def cancel_workflow(
     workflow_id: str,
+    principal: PrincipalContext = Depends(authenticate_request),
     runtime: TaskRuntime = Depends(get_runtime),
     registry: WorkflowRegistry = Depends(get_workflow_registry),
+    logger: logging.Logger = Depends(get_logger),
 ) -> Workflow:
+    await require_permission(principal, "workflow", workflow_id, "cancel", logger)
     runtime.cancel_workflow(workflow_id)
     workflow = await registry.get_workflow_async(workflow_id)
     if not workflow:
@@ -473,9 +486,14 @@ async def cancel_workflow(
 )
 async def list_workflows(
     request: Request,
+    principal: PrincipalContext = Depends(authenticate_request),
     registry: WorkflowRegistry = Depends(get_workflow_registry),
+    logger: logging.Logger = Depends(get_logger),
 ) -> list[Workflow]:
     workflow_ids = await registry.get_workflow_ids_async()
+    allowed = await resolve_accessible_ids(principal, "workflow", "list", logger)
+    if allowed is not None:
+        workflow_ids = workflow_ids & allowed
     workflows: list[Workflow] = []
     for workflow_id in workflow_ids:
         workflow = await registry.get_workflow_async(workflow_id)

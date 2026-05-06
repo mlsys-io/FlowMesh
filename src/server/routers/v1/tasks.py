@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 from typing import Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException
@@ -11,9 +12,16 @@ from shared.schemas.command import StopMessage
 from shared.tasks import TaskType
 
 from ...app_state import (
+    get_logger,
     get_redis_client,
     get_runtime,
     get_worker_registry,
+)
+from ...auth.security import (
+    PrincipalContext,
+    authenticate_request,
+    require_permission,
+    resolve_accessible_ids,
 )
 from ...clients.redis import RedisClient, task_log_closed_key, task_log_stream_key
 from ...registries.worker import WorkerRegistry
@@ -48,9 +56,14 @@ def _sanitize_latest_update(info: TaskInfo) -> None:
 )
 async def list_tasks(
     request: Request,
+    principal: PrincipalContext = Depends(authenticate_request),
     runtime: TaskRuntime = Depends(get_runtime),
+    logger: logging.Logger = Depends(get_logger),
 ) -> list[TaskInfo]:
     tasks = runtime.list_tasks()
+    allowed = await resolve_accessible_ids(principal, "task", "list", logger)
+    if allowed is not None:
+        tasks = [task for task in tasks if task.task_id in allowed]
     for task in tasks:
         _sanitize_latest_update(task)
     return filter_models_by_queries(tasks, request.query_params)
@@ -64,8 +77,11 @@ async def list_tasks(
 )
 async def get_task(
     task_id: str = ApiPath(..., min_length=1),
+    principal: PrincipalContext = Depends(authenticate_request),
     runtime: TaskRuntime = Depends(get_runtime),
+    logger: logging.Logger = Depends(get_logger),
 ) -> TaskInfo:
+    await require_permission(principal, "task", task_id, "read", logger)
     info = runtime.describe_task(task_id)
     if not info:
         raise HTTPException(
@@ -86,9 +102,12 @@ async def get_task(
 )
 async def stop_task(
     task_id: str = ApiPath(..., min_length=1),
+    principal: PrincipalContext = Depends(authenticate_request),
     runtime: TaskRuntime = Depends(get_runtime),
     worker_registry: WorkerRegistry = Depends(get_worker_registry),
+    logger: logging.Logger = Depends(get_logger),
 ) -> OkResponse:
+    await require_permission(principal, "task", task_id, "cancel", logger)
     record = runtime.get_record(task_id)
     if record is None:
         raise HTTPException(

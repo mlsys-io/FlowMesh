@@ -10,6 +10,7 @@ import logging
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from decimal import Decimal
+from typing import Any
 
 import pytest
 from fastapi import Depends, FastAPI, HTTPException, status
@@ -19,11 +20,15 @@ from server.auth.security import (
     PrincipalContext,
     authenticate_api_key,
     authenticate_request,
+    require_permission,
+    resolve_accessible_ids,
 )
 from server.hooks import (
     IDENTITY_PROVIDERS,
+    PERMISSION_CHECKERS,
     SUBMISSION_GUARDS,
     USAGE_SINKS,
+    AccessibleIds,
     UsageRow,
     UsageSink,
 )
@@ -39,10 +44,12 @@ def _clear_registries() -> Iterator[None]:
     IDENTITY_PROVIDERS.clear()
     SUBMISSION_GUARDS.clear()
     USAGE_SINKS.clear()
+    PERMISSION_CHECKERS.clear()
     yield
     IDENTITY_PROVIDERS.clear()
     SUBMISSION_GUARDS.clear()
     USAGE_SINKS.clear()
+    PERMISSION_CHECKERS.clear()
 
 
 class _FakeIdentityProvider:
@@ -288,3 +295,141 @@ class TestAuthenticateRequest:
 
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
         assert provider.tokens_seen == [""]
+
+
+class TestPermissionCheckerComposition:
+    @pytest.fixture
+    def principal(self) -> PrincipalContext:
+        return PrincipalContext(
+            principal_id="p",
+            org_id="o",
+            external_id="e",
+            principal_type="user",
+            scopes=[],
+        )
+
+    @pytest.mark.anyio
+    async def test_no_checkers_means_no_filter(
+        self, principal: PrincipalContext, logger: logging.Logger
+    ) -> None:
+        ids = await resolve_accessible_ids(principal, "task", "list", logger)
+        assert ids is None
+
+    @pytest.mark.anyio
+    async def test_all_short_circuits_union(
+        self, principal: PrincipalContext, logger: logging.Logger
+    ) -> None:
+        class _UnionChecker:
+            name = "union"
+
+            async def accessible_ids(
+                self,
+                principal: PrincipalContext,
+                resource_type: str,
+                action: str,
+                logger: logging.Logger,
+            ) -> AccessibleIds:
+                return frozenset({"tsk-A"})
+
+            async def require(self, *args: Any, **kwargs: Any) -> None:
+                return None
+
+        class _AllChecker:
+            name = "allowall"
+
+            async def accessible_ids(
+                self,
+                principal: PrincipalContext,
+                resource_type: str,
+                action: str,
+                logger: logging.Logger,
+            ) -> AccessibleIds:
+                return "all"
+
+            async def require(self, *args: Any, **kwargs: Any) -> None:
+                return None
+
+        PERMISSION_CHECKERS.extend([_UnionChecker(), _AllChecker()])
+
+        ids = await resolve_accessible_ids(principal, "task", "list", logger)
+        assert ids is None
+
+    @pytest.mark.anyio
+    async def test_set_results_are_unioned(
+        self, principal: PrincipalContext, logger: logging.Logger
+    ) -> None:
+        class _A:
+            name = "a"
+
+            async def accessible_ids(
+                self,
+                principal: PrincipalContext,
+                resource_type: str,
+                action: str,
+                logger: logging.Logger,
+            ) -> AccessibleIds:
+                return frozenset({"tsk-1", "tsk-2"})
+
+            async def require(self, *args: Any, **kwargs: Any) -> None:
+                return None
+
+        class _B:
+            name = "b"
+
+            async def accessible_ids(
+                self,
+                principal: PrincipalContext,
+                resource_type: str,
+                action: str,
+                logger: logging.Logger,
+            ) -> AccessibleIds:
+                return frozenset({"tsk-2", "tsk-3"})
+
+            async def require(self, *args: Any, **kwargs: Any) -> None:
+                return None
+
+        PERMISSION_CHECKERS.extend([_A(), _B()])
+
+        ids = await resolve_accessible_ids(principal, "task", "list", logger)
+        assert ids == frozenset({"tsk-1", "tsk-2", "tsk-3"})
+
+    @pytest.mark.anyio
+    async def test_require_passes_when_no_checkers(
+        self, principal: PrincipalContext, logger: logging.Logger
+    ) -> None:
+        await require_permission(principal, "task", "tsk-1", "read", logger)
+
+    @pytest.mark.anyio
+    async def test_require_first_failure_short_circuits(
+        self, principal: PrincipalContext, logger: logging.Logger
+    ) -> None:
+        seen: list[str] = []
+
+        class _Block:
+            name = "block"
+
+            async def accessible_ids(self, *args: Any, **kwargs: Any) -> AccessibleIds:
+                return "all"
+
+            async def require(self, *args: Any, **kwargs: Any) -> None:
+                seen.append("block")
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN, detail="nope"
+                )
+
+        class _NeverRuns:
+            name = "never"
+
+            async def accessible_ids(self, *args: Any, **kwargs: Any) -> AccessibleIds:
+                return "all"
+
+            async def require(self, *args: Any, **kwargs: Any) -> None:
+                seen.append("never")
+
+        PERMISSION_CHECKERS.extend([_Block(), _NeverRuns()])
+
+        with pytest.raises(HTTPException) as exc_info:
+            await require_permission(principal, "task", "tsk-1", "read", logger)
+
+        assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
+        assert seen == ["block"]

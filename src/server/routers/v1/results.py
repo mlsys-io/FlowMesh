@@ -1,5 +1,6 @@
 import gzip
 import json
+import logging
 import tarfile
 import tempfile
 from pathlib import Path
@@ -22,8 +23,14 @@ from shared.utils.manifest import ARTIFACTS_DIR, LOGS_DIR, RESULTS_NAME, sync_ma
 
 from ...app_state import (
     get_event_monitor,
+    get_logger,
     get_results_dir,
     get_runtime,
+)
+from ...auth.security import (
+    PrincipalContext,
+    authenticate_request,
+    require_permission,
 )
 from ...schemas.common import PathResponse
 from ...schemas.result import ResultPayload, read_result, result_file_path, write_result
@@ -105,13 +112,16 @@ async def ingest_result(
 )
 async def get_result(
     task_id: str,
+    principal: PrincipalContext = Depends(authenticate_request),
     results_dir: Path = Depends(get_results_dir),
+    logger: logging.Logger = Depends(get_logger),
 ) -> dict[str, Any]:
     task_id = (task_id or "").strip()
     if not task_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="task_id is required"
         )
+    await require_permission(principal, "result", task_id, "read", logger)
     try:
         raw = read_result(results_dir, task_id)
     except FileNotFoundError:
@@ -139,8 +149,11 @@ async def upload_result_file(
     task_id: str,
     file: UploadFile = File(...),
     runtime: TaskRuntime = Depends(get_runtime),
+    principal: PrincipalContext = Depends(authenticate_request),
     results_dir: Path = Depends(get_results_dir),
+    logger: logging.Logger = Depends(get_logger),
 ) -> PathResponse:
+    await require_permission(principal, "result", task_id, "read", logger)
     base_dir = result_file_path(results_dir, task_id).parent
     relative_path = _resolve_artifact_path(file.filename or "")
     target_path = (base_dir / relative_path).resolve()
@@ -182,8 +195,11 @@ async def upload_result_file(
 async def download_result_file(
     task_id: str,
     filename: str,
+    principal: PrincipalContext = Depends(authenticate_request),
     results_dir: Path = Depends(get_results_dir),
+    logger: logging.Logger = Depends(get_logger),
 ) -> FileResponse:
+    await require_permission(principal, "result", task_id, "read", logger)
     sanitized = Path(filename)
     base_dir = result_file_path(results_dir, task_id).parent
     relative_path = _resolve_artifact_path(filename)
@@ -228,9 +244,12 @@ async def download_result_bundle(
     task_id: str,
     background_tasks: BackgroundTasks,
     include: list[str] = Query(default_factory=list),
+    principal: PrincipalContext = Depends(authenticate_request),
     runtime: TaskRuntime = Depends(get_runtime),
     results_dir: Path = Depends(get_results_dir),
+    logger: logging.Logger = Depends(get_logger),
 ) -> FileResponse:
+    await require_permission(principal, "result", task_id, "read", logger)
     sections = _resolve_bundle_sections(include)
 
     record = runtime.get_record(task_id)
@@ -277,8 +296,11 @@ async def download_result_bundle(
 )
 async def download_task_logs(
     task_id: str,
+    principal: PrincipalContext = Depends(authenticate_request),
     results_dir: Path = Depends(get_results_dir),
+    logger: logging.Logger = Depends(get_logger),
 ) -> FileResponse:
+    await require_permission(principal, "result", task_id, "read", logger)
     base_dir = result_file_path(results_dir, task_id).parent
     target_path = (base_dir / LOGS_DIR / "logs.jsonl").resolve()
     try:
