@@ -23,7 +23,7 @@ from ...app_state import (
     get_runtime,
     get_workflow_registry,
 )
-from ...auth.security import default_principal
+from ...auth.security import PrincipalContext, authenticate_request
 from ...clients.redis import (
     RedisClient,
     workflow_log_closed_key,
@@ -113,6 +113,7 @@ async def submit_workflow(
     workflow_format: str = Header(
         default="native", description="Workflow format (native/n8n)"
     ),
+    principal: PrincipalContext = Depends(authenticate_request),
     runtime: TaskRuntime = Depends(get_runtime),
     metrics: MetricsRecorder = Depends(get_metrics),
     logger: logging.Logger = Depends(get_logger),
@@ -124,9 +125,6 @@ async def submit_workflow(
             detail="Request body is required",
         )
 
-    # OSS: no auth → synthetic admin principal. Plugins can still gate via
-    # SUBMISSION_GUARDS even though OSS doesn't authenticate the caller.
-    principal = default_principal()
     for guard in SUBMISSION_GUARDS:
         await guard.check(principal, logger)
 

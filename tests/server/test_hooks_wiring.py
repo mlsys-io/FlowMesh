@@ -12,9 +12,14 @@ from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
-from fastapi import HTTPException, status
+from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi.testclient import TestClient
 
-from server.auth.security import PrincipalContext, authenticate_api_key
+from server.auth.security import (
+    PrincipalContext,
+    authenticate_api_key,
+    authenticate_request,
+)
 from server.hooks import (
     IDENTITY_PROVIDERS,
     SUBMISSION_GUARDS,
@@ -197,3 +202,89 @@ class TestUsageSinkWiring:
                 logger.warning("Usage sink %s failed: %s", sink.name, exc)
 
         assert seen == ["boom", "ok"]  # second sink ran despite first failure
+
+
+class _CapturingProvider:
+    name = "capturing"
+
+    def __init__(self, returns: PrincipalContext | None) -> None:
+        self.returns = returns
+        self.tokens_seen: list[str] = []
+
+    async def resolve(
+        self, raw_token: str, logger: logging.Logger
+    ) -> PrincipalContext | None:
+        self.tokens_seen.append(raw_token)
+        return self.returns
+
+
+def _build_submit_app() -> FastAPI:
+    """A FastAPI app that exercises only the `authenticate_request` dep.
+
+    The real submit endpoint pulls in registries and Redis; this stub
+    keeps the test focused on whether the dependency extracts the bearer
+    token and routes it through `IDENTITY_PROVIDERS`.
+    """
+    app = FastAPI()
+    app.state.logger = logging.getLogger("test.authenticate_request")
+
+    @app.post("/probe")
+    async def probe(
+        principal: PrincipalContext = Depends(authenticate_request),
+    ) -> dict[str, str]:
+        return {
+            "principal_id": principal.principal_id,
+            "org_id": principal.org_id,
+        }
+
+    return app
+
+
+class TestAuthenticateRequest:
+    """The router-level FastAPI dependency must run the auth chain on every call.
+
+    Before this dependency landed, `submit_workflow` called
+    `default_principal()` directly and never read the `Authorization`
+    header — registered `IdentityProvider`s saw zero traffic.
+    """
+
+    def test_no_providers_yields_admin_default(self) -> None:
+        app = _build_submit_app()
+        client = TestClient(app)
+
+        response = client.post("/probe", headers={"Authorization": "Bearer abc"})
+
+        assert response.status_code == 200
+        assert response.json() == {"principal_id": "admin", "org_id": "local"}
+
+    def test_provider_receives_bearer_token(self) -> None:
+        principal = PrincipalContext(
+            principal_id="p-1",
+            org_id="org-1",
+            external_id="ext-1",
+            principal_type="user",
+            scopes=[],
+        )
+        provider = _CapturingProvider(returns=principal)
+        IDENTITY_PROVIDERS.append(provider)
+
+        app = _build_submit_app()
+        client = TestClient(app)
+
+        response = client.post("/probe", headers={"Authorization": "Bearer secret-x"})
+
+        assert response.status_code == 200
+        assert response.json() == {"principal_id": "p-1", "org_id": "org-1"}
+        assert provider.tokens_seen == ["secret-x"]
+
+    def test_missing_authorization_header_falls_through_to_401(self) -> None:
+        provider = _CapturingProvider(returns=None)
+        IDENTITY_PROVIDERS.append(provider)
+
+        app = _build_submit_app()
+        client = TestClient(app)
+
+        response = client.post("/probe")
+
+        assert response.status_code == status.HTTP_401_UNAUTHORIZED
+        assert provider.tokens_seen == [""]

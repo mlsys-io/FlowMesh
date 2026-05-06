@@ -4,28 +4,20 @@ OSS ships no native API-key auth. The semantic is:
 
 - With no `IdentityProvider` plugins registered, `authenticate_api_key`
   returns a default admin principal — auth is effectively a no-op and every
-  caller is admin. This matches `submit_workflow`'s direct use of
-  `default_principal()` to short-circuit auth in the unconfigured case.
+  caller is admin.
 - Once at least one provider is registered, every bearer token is routed
   through the chain in registration order. The first provider returning a
   non-`None` `PrincipalContext` wins; if none claim the token, 401 is raised.
 
-This module exists for two reasons:
-
-1. The hook protocols (`server.hooks.{identity,submission,usage}`) reference
-   `PrincipalContext` as their canonical principal type. Keeping the dataclass
-   here matches cloud's import path so the hook contracts stay byte-identical.
-
-2. `authenticate_api_key` is a thin wrapper around the identity-provider
-   chain. OSS routers do not depend on this function today; it is kept for
-   any external user of the hook contract (cloud, tests, third-party plugin
-   authors) that wants to exercise the chain in OSS too.
+Routers consume the chain via `authenticate_request`, a FastAPI dependency
+that pulls the bearer token from the request header before invoking
+`authenticate_api_key`.
 """
 
 import logging
 from dataclasses import dataclass
 
-from fastapi import HTTPException, status
+from fastapi import HTTPException, Request, status
 
 
 @dataclass(frozen=True)
@@ -70,3 +62,13 @@ async def authenticate_api_key(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="No identity provider accepted the token",
     )
+
+
+async def authenticate_request(request: Request) -> PrincipalContext:
+    """FastAPI dependency: extract the bearer token and run the auth chain."""
+    auth_header = request.headers.get("Authorization", "")
+    raw_token = (
+        auth_header[len("Bearer ") :] if auth_header.startswith("Bearer ") else ""
+    )
+    logger: logging.Logger = request.app.state.logger
+    return await authenticate_api_key(raw_token, logger)
