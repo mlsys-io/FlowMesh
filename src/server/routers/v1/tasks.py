@@ -180,8 +180,13 @@ async def get_task_logs(
             '(example: `"1707349300000-0"`).'
         ),
     ),
+    principal: PrincipalContext = Depends(authenticate_request),
     redis: RedisClient = Depends(get_redis_client),
+    logger: logging.Logger = Depends(get_logger),
 ) -> LogQueryResponse:
+    await require_permission(
+        principal, ResourceType.RESULT, task_id, ResourceAction.READ, logger
+    )
     limit = max(1, min(10_000, int(limit)))
     if before and after:
         raise HTTPException(
@@ -268,8 +273,13 @@ async def stream_task_logs(
             "takes precedence."
         ),
     ),
+    principal: PrincipalContext = Depends(authenticate_request),
     redis: RedisClient = Depends(get_redis_client),
+    logger: logging.Logger = Depends(get_logger),
 ):
+    await require_permission(
+        principal, ResourceType.RESULT, task_id, ResourceAction.READ, logger
+    )
     key = task_log_stream_key(task_id)
     if not await redis.asyncio.exists_telemetry(key):
         raise HTTPException(

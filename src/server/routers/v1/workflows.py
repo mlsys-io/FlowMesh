@@ -26,6 +26,7 @@ from ...app_state import (
 from ...auth.security import (
     PrincipalContext,
     authenticate_request,
+    register_resource,
     require_permission,
     resolve_accessible_ids,
 )
@@ -130,6 +131,9 @@ async def submit_workflow(
             detail="Request body is required",
         )
 
+    await require_permission(
+        principal, ResourceType.WORKFLOW, None, ResourceAction.WRITE, logger
+    )
     for guard in SUBMISSION_GUARDS:
         await guard.check(principal, logger)
 
@@ -147,6 +151,22 @@ async def submit_workflow(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Failed to register workflow: {exc}",
         ) from exc
+
+    await register_resource(
+        principal,
+        ResourceType.WORKFLOW,
+        workflow_id,
+        {"format": workflow_format, "task_count": len(entries)},
+        logger,
+    )
+    for entry in entries:
+        await register_resource(
+            principal,
+            ResourceType.TASK,
+            entry.task_id,
+            {"workflow_id": workflow_id},
+            logger,
+        )
 
     results: list[WorkflowSubmitTaskEntry] = []
 
@@ -299,8 +319,13 @@ async def get_workflow_logs(
             '(example: `"1707349300000-0"`).'
         ),
     ),
+    principal: PrincipalContext = Depends(authenticate_request),
     redis: RedisClient = Depends(get_redis_client),
+    logger: logging.Logger = Depends(get_logger),
 ) -> LogQueryResponse:
+    await require_permission(
+        principal, ResourceType.RESULT, workflow_id, ResourceAction.READ, logger
+    )
     limit = max(1, min(10_000, int(limit)))
     if before and after:
         raise HTTPException(
@@ -388,8 +413,13 @@ async def stream_workflow_logs(
             "takes precedence."
         ),
     ),
+    principal: PrincipalContext = Depends(authenticate_request),
     redis: RedisClient = Depends(get_redis_client),
+    logger: logging.Logger = Depends(get_logger),
 ):
+    await require_permission(
+        principal, ResourceType.RESULT, workflow_id, ResourceAction.READ, logger
+    )
     key = workflow_log_stream_key(workflow_id)
     if not await redis.asyncio.exists_telemetry(key):
         raise HTTPException(
