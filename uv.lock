@@ -1837,7 +1837,7 @@ requires-dist = [
     { name = "ipython", marker = "extra == 'agent'", specifier = ">=9.5.0" },
     { name = "isort", marker = "extra == 'dev'", specifier = ">=7.0.0" },
     { name = "jinja2", marker = "extra == 'agent'", specifier = ">=3.1.6" },
-    { name = "lumid-data-sdk", marker = "extra == 'analytics'", git = "https://github.com/mlsys-io/lumid.data.git?subdirectory=sdk&rev=85b6743" },
+    { name = "lumid-data-sdk", marker = "extra == 'analytics'", git = "https://github.com/mlsys-io/lumid.data.git?subdirectory=sdk&rev=a800051" },
     { name = "matplotlib", marker = "extra == 'agent'", specifier = ">=3.10.6" },
     { name = "mcp", marker = "extra == 'agent'", specifier = ">=1.23.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.19.1" },
@@ -3166,7 +3166,7 @@ wheels = [
 [[package]]
 name = "lumid-data-sdk"
 version = "0.1.0"
-source = { git = "https://github.com/mlsys-io/lumid.data.git?subdirectory=sdk&rev=85b6743#85b6743f50abf89f489c7c84b02ebd9c613ec870" }
+source = { git = "https://github.com/mlsys-io/lumid.data.git?subdirectory=sdk&rev=a800051#a800051326c9924d599f2e64d054143f0a726398" }
 dependencies = [
     { name = "httpx" },
     { name = "httpx-sse" },

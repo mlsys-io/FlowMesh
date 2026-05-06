@@ -24,7 +24,7 @@ httpx==0.28.1
 hydra-core==1.3.2
 ipython==9.5.0
 jinja2==3.1.6
-lumid-data-sdk @ git+https://github.com/mlsys-io/lumid.data.git@85b6743f50abf89f489c7c84b02ebd9c613ec870#subdirectory=sdk
+lumid-data-sdk @ git+https://github.com/mlsys-io/lumid.data.git@a800051326c9924d599f2e64d054143f0a726398#subdirectory=sdk
 matplotlib==3.10.6
 mcp==1.27.0
 nvidia-ml-py==13.580.82
