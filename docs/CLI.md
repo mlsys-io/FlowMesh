@@ -67,10 +67,10 @@ flowmesh trace analyze <wfl-id> --format critical-path
 `FLOWMESH_VERSION` to a PR-identifying slug (e.g. `myfeature`) so parallel
 PRs don't overwrite each other's local images.
 
-When multiple people share one host, give each stack its own
+When multiple deployments share one host, give each stack its own
 `FLOWMESH_STACK_SUFFIX` and distinct `SERVER_HTTP_PORT`,
 `SERVER_GRPC_PORT`, `REDIS_CONTROL_PORT`, and `REDIS_TELEMETRY_PORT`.
-The suffix isolates Docker object names; the ports isolate host bindings.
+The suffix isolates Docker object names (including containers, volumes, and networks); the ports isolate host bindings.
 
 ```bash
 flowmesh stack up                          # Server + Redis + Supervisor
