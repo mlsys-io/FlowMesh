@@ -7,6 +7,7 @@ into its runtime registries on startup.
 from .bindings import HookBindings
 from .identity import IdentityProvider
 from .permissions import PermissionChecker
+from .registrar import ResourceRegistrar
 from .submission import SubmissionGuard
 from .supplier import SupplierResolver
 from .types import PrincipalContext, ResourceAction, ResourceType, UsageRow, WorkerView
@@ -18,6 +19,7 @@ __all__ = [
     "PermissionChecker",
     "PrincipalContext",
     "ResourceAction",
+    "ResourceRegistrar",
     "ResourceType",
     "SubmissionGuard",
     "SupplierResolver",

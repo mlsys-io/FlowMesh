@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 
 from .identity import IdentityProvider
 from .permissions import PermissionChecker
+from .registrar import ResourceRegistrar
 from .submission import SubmissionGuard
 from .supplier import SupplierResolver
 from .usage import UsageSink
@@ -22,3 +23,4 @@ class HookBindings:
     usage_sinks: Sequence[UsageSink] = field(default_factory=tuple)
     permission_checkers: Sequence[PermissionChecker] = field(default_factory=tuple)
     supplier_resolvers: Sequence[SupplierResolver] = field(default_factory=tuple)
+    resource_registrars: Sequence[ResourceRegistrar] = field(default_factory=tuple)

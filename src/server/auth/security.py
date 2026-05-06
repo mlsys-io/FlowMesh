@@ -18,11 +18,13 @@ gate", preserving OSS-only behaviour.
 """
 
 import logging
+from collections.abc import Mapping
+from typing import Any
 
 from fastapi import HTTPException, Request, status
 from flowmesh_hook import PrincipalContext, ResourceAction, ResourceType
 
-from ..hooks import IDENTITY_PROVIDERS, PERMISSION_CHECKERS
+from ..hooks import IDENTITY_PROVIDERS, PERMISSION_CHECKERS, RESOURCE_REGISTRARS
 
 
 def default_principal() -> PrincipalContext:
@@ -97,10 +99,47 @@ async def resolve_accessible_ids(
 async def require_permission(
     principal: PrincipalContext,
     resource_type: ResourceType,
-    resource_id: str,
+    resource_id: str | None,
     action: ResourceAction,
     logger: logging.Logger,
 ) -> None:
-    """Run every registered `PermissionChecker.require`. Raises on first deny."""
+    """Run every registered `PermissionChecker.require`. Raises on first deny.
+
+    `resource_id=None` is a type-level / fleet-level check (e.g. "may the
+    principal create workflows" before a `wfl-` id has been minted, or any
+    `SYSTEM`-scoped check). Plugins should branch on `is None`.
+    """
     for checker in PERMISSION_CHECKERS:
         await checker.require(principal, resource_type, resource_id, action, logger)
+
+
+async def register_resource(
+    principal: PrincipalContext,
+    resource_type: ResourceType,
+    resource_id: str,
+    metadata: Mapping[str, Any],
+    logger: logging.Logger,
+) -> None:
+    """Notify every registered `ResourceRegistrar` that a resource was created.
+
+    Fires for `WORKFLOW`, `TASK`, `NODE`, and `WORKER`. `RESULT` ownership
+    is inferred from the owning task / workflow and does not fire. With no
+    registrars registered this is a no-op.
+    """
+    for registrar in RESOURCE_REGISTRARS:
+        await registrar.register(principal, resource_type, resource_id, metadata, logger)
+
+
+async def deregister_resource(
+    principal: PrincipalContext,
+    resource_type: ResourceType,
+    resource_id: str,
+    logger: logging.Logger,
+) -> None:
+    """Notify every registered `ResourceRegistrar` that a resource was destroyed.
+
+    `principal` is the actor performing the destruction (not necessarily the
+    original creator).
+    """
+    for registrar in RESOURCE_REGISTRARS:
+        await registrar.deregister(principal, resource_type, resource_id, logger)

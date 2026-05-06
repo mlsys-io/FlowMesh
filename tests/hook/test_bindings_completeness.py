@@ -18,6 +18,7 @@ _HOOK_MODULES = frozenset(
         "flowmesh_hook.usage",
         "flowmesh_hook.permissions",
         "flowmesh_hook.supplier",
+        "flowmesh_hook.registrar",
     }
 )
 

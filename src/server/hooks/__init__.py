@@ -11,6 +11,7 @@ from flowmesh_hook import (
     PermissionChecker,
     PrincipalContext,
     ResourceAction,
+    ResourceRegistrar,
     ResourceType,
     SubmissionGuard,
     SupplierResolver,
@@ -24,6 +25,7 @@ SUBMISSION_GUARDS: list[SubmissionGuard] = []
 USAGE_SINKS: list[UsageSink] = []
 PERMISSION_CHECKERS: list[PermissionChecker] = []
 SUPPLIER_RESOLVERS: list[SupplierResolver] = []
+RESOURCE_REGISTRARS: list[ResourceRegistrar] = []
 
 
 def register(bindings: HookBindings) -> None:
@@ -33,6 +35,7 @@ def register(bindings: HookBindings) -> None:
     USAGE_SINKS.extend(bindings.usage_sinks)
     PERMISSION_CHECKERS.extend(bindings.permission_checkers)
     SUPPLIER_RESOLVERS.extend(bindings.supplier_resolvers)
+    RESOURCE_REGISTRARS.extend(bindings.resource_registrars)
 
 
 __all__ = [
@@ -42,7 +45,9 @@ __all__ = [
     "PERMISSION_CHECKERS",
     "PermissionChecker",
     "PrincipalContext",
+    "RESOURCE_REGISTRARS",
     "ResourceAction",
+    "ResourceRegistrar",
     "ResourceType",
     "SUBMISSION_GUARDS",
     "SUPPLIER_RESOLVERS",

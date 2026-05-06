@@ -42,9 +42,16 @@ class PermissionChecker(Protocol):
         self,
         principal: PrincipalContext,
         resource_type: ResourceType,
-        resource_id: str,
+        resource_id: str | None,
         action: ResourceAction,
         logger: logging.Logger,
     ) -> None:
-        """Raise if the principal may not `action` the resource."""
+        """Raise if the principal may not `action` the resource.
+
+        `resource_id=None` is a type-level / fleet-level check — "may the
+        principal `action` resources of this type" — used at create-time
+        before any id has been minted, and for `SYSTEM`-typed checks that
+        have no associated id. Plugins should treat `None` distinctly from
+        any concrete id; never compare against `""`.
+        """
         ...

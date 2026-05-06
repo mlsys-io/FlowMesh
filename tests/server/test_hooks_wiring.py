@@ -29,12 +29,15 @@ from flowmesh_hook import (
 from server.auth.security import (
     authenticate_api_key,
     authenticate_request,
+    deregister_resource,
+    register_resource,
     require_permission,
     resolve_accessible_ids,
 )
 from server.hooks import (
     IDENTITY_PROVIDERS,
     PERMISSION_CHECKERS,
+    RESOURCE_REGISTRARS,
     SUBMISSION_GUARDS,
     SUPPLIER_RESOLVERS,
     USAGE_SINKS,
@@ -59,12 +62,14 @@ def _clear_registries() -> Iterator[None]:
     USAGE_SINKS.clear()
     PERMISSION_CHECKERS.clear()
     SUPPLIER_RESOLVERS.clear()
+    RESOURCE_REGISTRARS.clear()
     yield
     IDENTITY_PROVIDERS.clear()
     SUBMISSION_GUARDS.clear()
     USAGE_SINKS.clear()
     PERMISSION_CHECKERS.clear()
     SUPPLIER_RESOLVERS.clear()
+    RESOURCE_REGISTRARS.clear()
 
 
 class _FakeIdentityProvider:
@@ -531,3 +536,101 @@ class TestSupplierResolverWiring:
         runtime.mark_dispatched("tsk-2", _make_worker())
 
         assert record.supplier_id == ""
+
+
+class _RecordingRegistrar:
+    name = "recording"
+
+    def __init__(self) -> None:
+        self.registered: list[tuple[str, ResourceType, str, dict[str, Any]]] = []
+        self.deregistered: list[tuple[str, ResourceType, str]] = []
+
+    async def register(
+        self,
+        principal: PrincipalContext,
+        resource_type: ResourceType,
+        resource_id: str,
+        metadata: Any,
+        logger: logging.Logger,
+    ) -> None:
+        self.registered.append(
+            (principal.principal_id, resource_type, resource_id, dict(metadata))
+        )
+
+    async def deregister(
+        self,
+        principal: PrincipalContext,
+        resource_type: ResourceType,
+        resource_id: str,
+        logger: logging.Logger,
+    ) -> None:
+        self.deregistered.append((principal.principal_id, resource_type, resource_id))
+
+
+class TestResourceRegistrarComposition:
+    @pytest.fixture
+    def principal(self) -> PrincipalContext:
+        return PrincipalContext(
+            principal_id="p-1",
+            org_id="org-1",
+            external_id="ext-1",
+            principal_type="user",
+            scopes=["user"],
+        )
+
+    @pytest.mark.anyio
+    async def test_no_registrars_is_noop(
+        self, principal: PrincipalContext, logger: logging.Logger
+    ) -> None:
+        await register_resource(
+            principal, ResourceType.WORKFLOW, "wfl-1", {"name": "n"}, logger
+        )
+        await deregister_resource(principal, ResourceType.WORKFLOW, "wfl-1", logger)
+
+    @pytest.mark.anyio
+    async def test_register_fans_out_in_registration_order(
+        self, principal: PrincipalContext, logger: logging.Logger
+    ) -> None:
+        first = _RecordingRegistrar()
+        second = _RecordingRegistrar()
+        register(HookBindings(resource_registrars=[first, second]))
+
+        await register_resource(
+            principal, ResourceType.WORKFLOW, "wfl-1", {"name": "n"}, logger
+        )
+
+        for r in (first, second):
+            assert r.registered == [
+                ("p-1", ResourceType.WORKFLOW, "wfl-1", {"name": "n"})
+            ]
+
+    @pytest.mark.anyio
+    async def test_deregister_fans_out(
+        self, principal: PrincipalContext, logger: logging.Logger
+    ) -> None:
+        recorder = _RecordingRegistrar()
+        register(HookBindings(resource_registrars=[recorder]))
+
+        await deregister_resource(principal, ResourceType.WORKER, "wkr-1", logger)
+
+        assert recorder.deregistered == [("p-1", ResourceType.WORKER, "wkr-1")]
+
+    @pytest.mark.anyio
+    async def test_register_propagates_failure(
+        self, principal: PrincipalContext, logger: logging.Logger
+    ) -> None:
+        class _Boom:
+            name = "boom"
+
+            async def register(self, *args: Any, **kwargs: Any) -> None:
+                raise RuntimeError("plugin failure")
+
+            async def deregister(self, *args: Any, **kwargs: Any) -> None:
+                return None
+
+        register(HookBindings(resource_registrars=[_Boom()]))
+
+        with pytest.raises(RuntimeError, match="plugin failure"):
+            await register_resource(
+                principal, ResourceType.WORKFLOW, "wfl-1", {}, logger
+            )

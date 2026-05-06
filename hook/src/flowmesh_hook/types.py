@@ -24,6 +24,9 @@ class ResourceType(StrEnum):
     WORKFLOW = "workflow"
     TASK = "task"
     RESULT = "result"
+    NODE = "node"
+    WORKER = "worker"
+    SYSTEM = "system"
 
 
 class ResourceAction(StrEnum):
