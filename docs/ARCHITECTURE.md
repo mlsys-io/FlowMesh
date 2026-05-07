@@ -93,6 +93,7 @@ hook/                   Plugin hook protocol interfaces
 sdk/                    Public Python SDK
 proto/                  gRPC service definition
 templates/              Example workflow YAMLs
+examples/               Sample artifacts
 tests/{server,worker,shared,cli,sdk}/
 scripts/dev/            compile_protos, sync_requirements, check_env_examples
 ```
