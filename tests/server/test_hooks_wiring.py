@@ -28,7 +28,7 @@ from flowmesh_hook import (
 
 from server.auth.security import (
     authenticate_api_key,
-    authenticate_request,
+    authenticate_connection,
     deregister_resource,
     register_resource,
     require_permission,
@@ -246,18 +246,18 @@ class _CapturingProvider:
 
 
 def _build_submit_app() -> FastAPI:
-    """A FastAPI app that exercises only the `authenticate_request` dep.
+    """A FastAPI app that exercises only the `authenticate_connection` dep.
 
     The real submit endpoint pulls in registries and Redis; this stub
     keeps the test focused on whether the dependency extracts the bearer
     token and routes it through `IDENTITY_PROVIDERS`.
     """
     app = FastAPI()
-    app.state.logger = logging.getLogger("test.authenticate_request")
+    app.state.logger = logging.getLogger("test.authenticate_connection")
 
     @app.post("/probe")
     async def probe(
-        principal: PrincipalContext = Depends(authenticate_request),
+        principal: PrincipalContext = Depends(authenticate_connection),
     ) -> dict[str, str]:
         return {
             "principal_id": principal.principal_id,
@@ -267,7 +267,7 @@ def _build_submit_app() -> FastAPI:
     return app
 
 
-class TestAuthenticateRequest:
+class TestAuthenticateConnection:
     """The router-level FastAPI dependency must run the auth chain on every call.
 
     Before this dependency landed, `submit_workflow` called

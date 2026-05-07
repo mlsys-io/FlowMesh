@@ -26,8 +26,8 @@ from ...app_state import (
 )
 from ...auth.security import (
     PrincipalContext,
-    authenticate_api_key,
-    authenticate_request,
+    authenticate_connection,
+    authenticate_websocket,
     require_permission,
 )
 from ...clients.redis import RedisClient, ssh_down_key, ssh_up_key
@@ -86,7 +86,7 @@ async def _start_server_uplink(
 async def ssh_proxy(
     websocket: WebSocket,
     task_id: str = ApiPath(..., min_length=1),
-    token: str | None = None,
+    principal: PrincipalContext = Depends(authenticate_websocket),
     runtime: TaskRuntime = Depends(get_runtime),
     redis_client: RedisClient = Depends(get_redis_client),
     logger: logging.Logger = Depends(get_logger),
@@ -111,17 +111,6 @@ async def ssh_proxy(
     - ``4404``: task not found
     - ``1011``: relay/uplink unavailable
     """
-    auth_header = websocket.headers.get("Authorization", "")
-    bearer_prefix = "Bearer "
-    if auth_header.startswith(bearer_prefix):
-        raw_token = auth_header[len(bearer_prefix) :]
-    else:
-        raw_token = token or ""
-    try:
-        principal = await authenticate_api_key(raw_token, logger)
-    except Exception:
-        await websocket.close(code=4401, reason="unauthorized")
-        return
     try:
         await require_permission(
             principal, ResourceType.TASK, task_id, ResourceAction.READ, logger
@@ -263,7 +252,7 @@ async def ssh_proxy(
 )
 async def list_ssh_connections(
     request: Request,
-    principal: PrincipalContext = Depends(authenticate_request),
+    principal: PrincipalContext = Depends(authenticate_connection),
     ssh_audit: SshAuditService | None = Depends(get_ssh_audit),
     logger: logging.Logger = Depends(get_logger),
 ) -> list[SSHConnectionInfo]:

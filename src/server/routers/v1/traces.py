@@ -13,7 +13,7 @@ from shared.utils.json import encode_jsonl_bytes, read_jsonl
 from ...app_state import get_logger, get_results_dir, get_workflow_registry
 from ...auth.security import (
     PrincipalContext,
-    authenticate_request,
+    authenticate_connection,
     require_permission,
 )
 from ...governance import ProfileSummary, analyze
@@ -60,7 +60,7 @@ async def _resolve_task_ids(workflow_id: str, registry: WorkflowRegistry) -> lis
 )
 async def analyze_workflow_trace(
     workflow_id: str,
-    principal: PrincipalContext = Depends(authenticate_request),
+    principal: PrincipalContext = Depends(authenticate_connection),
     registry: WorkflowRegistry = Depends(get_workflow_registry),
     results_dir: Path = Depends(get_results_dir),
     logger: logging.Logger = Depends(get_logger),
@@ -82,7 +82,7 @@ async def analyze_workflow_trace(
 async def get_workflow_trace(
     workflow_id: str,
     trace_type: str,
-    principal: PrincipalContext = Depends(authenticate_request),
+    principal: PrincipalContext = Depends(authenticate_connection),
     registry: WorkflowRegistry = Depends(get_workflow_registry),
     results_dir: Path = Depends(get_results_dir),
     logger: logging.Logger = Depends(get_logger),
@@ -111,7 +111,7 @@ async def upload_task_trace(
     task_id: str,
     trace_type: str,
     file: UploadFile = File(...),
-    principal: PrincipalContext = Depends(authenticate_request),
+    principal: PrincipalContext = Depends(authenticate_connection),
     results_dir: Path = Depends(get_results_dir),
 ) -> PathResponse:
     del principal  # auth gate; the supplier-key principal isn't task-scoped

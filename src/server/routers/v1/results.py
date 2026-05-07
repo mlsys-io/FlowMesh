@@ -27,7 +27,11 @@ from ...app_state import (
     get_results_dir,
     get_runtime,
 )
-from ...auth.security import PrincipalContext, authenticate_request, require_permission
+from ...auth.security import (
+    PrincipalContext,
+    authenticate_connection,
+    require_permission,
+)
 from ...hooks import ResourceAction, ResourceType
 from ...schemas.common import PathResponse
 from ...schemas.result import ResultPayload, read_result, result_file_path, write_result
@@ -64,7 +68,7 @@ def _resolve_artifact_path(filename: str) -> Path:
 )
 async def ingest_result(
     payload: ResultPayload,
-    principal: PrincipalContext = Depends(authenticate_request),
+    principal: PrincipalContext = Depends(authenticate_connection),
     runtime: TaskRuntime = Depends(get_runtime),
     event_monitor: EventMonitor = Depends(get_event_monitor),
     results_dir: Path = Depends(get_results_dir),
@@ -111,7 +115,7 @@ async def ingest_result(
 )
 async def get_result(
     task_id: str,
-    principal: PrincipalContext = Depends(authenticate_request),
+    principal: PrincipalContext = Depends(authenticate_connection),
     results_dir: Path = Depends(get_results_dir),
     logger: logging.Logger = Depends(get_logger),
 ) -> dict[str, Any]:
@@ -150,7 +154,7 @@ async def upload_result_file(
     task_id: str,
     file: UploadFile = File(...),
     runtime: TaskRuntime = Depends(get_runtime),
-    principal: PrincipalContext = Depends(authenticate_request),
+    principal: PrincipalContext = Depends(authenticate_connection),
     results_dir: Path = Depends(get_results_dir),
 ) -> PathResponse:
     del principal  # auth gate; the supplier-key principal isn't task-scoped
@@ -195,7 +199,7 @@ async def upload_result_file(
 async def download_result_file(
     task_id: str,
     filename: str,
-    principal: PrincipalContext = Depends(authenticate_request),
+    principal: PrincipalContext = Depends(authenticate_connection),
     results_dir: Path = Depends(get_results_dir),
     logger: logging.Logger = Depends(get_logger),
 ) -> FileResponse:
@@ -246,7 +250,7 @@ async def download_result_bundle(
     task_id: str,
     background_tasks: BackgroundTasks,
     include: list[str] = Query(default_factory=list),
-    principal: PrincipalContext = Depends(authenticate_request),
+    principal: PrincipalContext = Depends(authenticate_connection),
     runtime: TaskRuntime = Depends(get_runtime),
     results_dir: Path = Depends(get_results_dir),
     logger: logging.Logger = Depends(get_logger),
@@ -300,7 +304,7 @@ async def download_result_bundle(
 )
 async def download_task_logs(
     task_id: str,
-    principal: PrincipalContext = Depends(authenticate_request),
+    principal: PrincipalContext = Depends(authenticate_connection),
     results_dir: Path = Depends(get_results_dir),
     logger: logging.Logger = Depends(get_logger),
 ) -> FileResponse:

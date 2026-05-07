@@ -19,7 +19,7 @@ from ...app_state import (
 )
 from ...auth.security import (
     PrincipalContext,
-    authenticate_request,
+    authenticate_connection,
     require_permission,
     resolve_accessible_ids,
 )
@@ -57,7 +57,7 @@ def _sanitize_latest_update(info: TaskInfo) -> None:
 )
 async def list_tasks(
     request: Request,
-    principal: PrincipalContext = Depends(authenticate_request),
+    principal: PrincipalContext = Depends(authenticate_connection),
     runtime: TaskRuntime = Depends(get_runtime),
     logger: logging.Logger = Depends(get_logger),
 ) -> list[TaskInfo]:
@@ -80,7 +80,7 @@ async def list_tasks(
 )
 async def get_task(
     task_id: str = ApiPath(..., min_length=1),
-    principal: PrincipalContext = Depends(authenticate_request),
+    principal: PrincipalContext = Depends(authenticate_connection),
     runtime: TaskRuntime = Depends(get_runtime),
     logger: logging.Logger = Depends(get_logger),
 ) -> TaskInfo:
@@ -107,7 +107,7 @@ async def get_task(
 )
 async def stop_task(
     task_id: str = ApiPath(..., min_length=1),
-    principal: PrincipalContext = Depends(authenticate_request),
+    principal: PrincipalContext = Depends(authenticate_connection),
     runtime: TaskRuntime = Depends(get_runtime),
     worker_registry: WorkerRegistry = Depends(get_worker_registry),
     logger: logging.Logger = Depends(get_logger),
@@ -180,7 +180,7 @@ async def get_task_logs(
             '(example: `"1707349300000-0"`).'
         ),
     ),
-    principal: PrincipalContext = Depends(authenticate_request),
+    principal: PrincipalContext = Depends(authenticate_connection),
     redis: RedisClient = Depends(get_redis_client),
     logger: logging.Logger = Depends(get_logger),
 ) -> LogQueryResponse:
@@ -273,7 +273,7 @@ async def stream_task_logs(
             "takes precedence."
         ),
     ),
-    principal: PrincipalContext = Depends(authenticate_request),
+    principal: PrincipalContext = Depends(authenticate_connection),
     redis: RedisClient = Depends(get_redis_client),
     logger: logging.Logger = Depends(get_logger),
 ):

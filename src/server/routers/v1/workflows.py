@@ -25,7 +25,7 @@ from ...app_state import (
 )
 from ...auth.security import (
     PrincipalContext,
-    authenticate_request,
+    authenticate_connection,
     register_resource,
     require_permission,
     resolve_accessible_ids,
@@ -119,7 +119,7 @@ async def submit_workflow(
     workflow_format: str = Header(
         default="native", description="Workflow format (native/n8n)"
     ),
-    principal: PrincipalContext = Depends(authenticate_request),
+    principal: PrincipalContext = Depends(authenticate_connection),
     runtime: TaskRuntime = Depends(get_runtime),
     metrics: MetricsRecorder = Depends(get_metrics),
     logger: logging.Logger = Depends(get_logger),
@@ -221,7 +221,7 @@ async def validate_workflow(
     workflow_format: str = Header(
         default="native", description="Workflow format (native/n8n)"
     ),
-    principal: PrincipalContext = Depends(authenticate_request),
+    principal: PrincipalContext = Depends(authenticate_connection),
     runtime: TaskRuntime = Depends(get_runtime),
 ) -> WorkflowValidateResponse:
     del principal  # auth gate; payload is not principal-scoped
@@ -272,7 +272,7 @@ async def validate_workflow(
 )
 async def get_workflow(
     workflow_id: str,
-    principal: PrincipalContext = Depends(authenticate_request),
+    principal: PrincipalContext = Depends(authenticate_connection),
     registry: WorkflowRegistry = Depends(get_workflow_registry),
     logger: logging.Logger = Depends(get_logger),
 ) -> Workflow:
@@ -319,7 +319,7 @@ async def get_workflow_logs(
             '(example: `"1707349300000-0"`).'
         ),
     ),
-    principal: PrincipalContext = Depends(authenticate_request),
+    principal: PrincipalContext = Depends(authenticate_connection),
     redis: RedisClient = Depends(get_redis_client),
     logger: logging.Logger = Depends(get_logger),
 ) -> LogQueryResponse:
@@ -413,7 +413,7 @@ async def stream_workflow_logs(
             "takes precedence."
         ),
     ),
-    principal: PrincipalContext = Depends(authenticate_request),
+    principal: PrincipalContext = Depends(authenticate_connection),
     redis: RedisClient = Depends(get_redis_client),
     logger: logging.Logger = Depends(get_logger),
 ):
@@ -494,7 +494,7 @@ async def stream_workflow_logs(
 )
 async def cancel_workflow(
     workflow_id: str,
-    principal: PrincipalContext = Depends(authenticate_request),
+    principal: PrincipalContext = Depends(authenticate_connection),
     runtime: TaskRuntime = Depends(get_runtime),
     registry: WorkflowRegistry = Depends(get_workflow_registry),
     logger: logging.Logger = Depends(get_logger),
@@ -520,7 +520,7 @@ async def cancel_workflow(
 )
 async def list_workflows(
     request: Request,
-    principal: PrincipalContext = Depends(authenticate_request),
+    principal: PrincipalContext = Depends(authenticate_connection),
     registry: WorkflowRegistry = Depends(get_workflow_registry),
     logger: logging.Logger = Depends(get_logger),
 ) -> list[Workflow]:

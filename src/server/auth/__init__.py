@@ -1,7 +1,8 @@
 from .security import (
     PrincipalContext,
     authenticate_api_key,
-    authenticate_request,
+    authenticate_connection,
+    authenticate_websocket,
     default_principal,
     deregister_resource,
     register_resource,
@@ -12,7 +13,8 @@ from .security import (
 __all__ = [
     "PrincipalContext",
     "authenticate_api_key",
-    "authenticate_request",
+    "authenticate_connection",
+    "authenticate_websocket",
     "default_principal",
     "deregister_resource",
     "register_resource",

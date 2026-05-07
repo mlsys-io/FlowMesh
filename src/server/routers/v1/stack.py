@@ -11,7 +11,7 @@ from shared.schemas.command import CommandMessage, CommandType
 from ...app_state import get_logger, get_supervisor
 from ...auth.security import (
     PrincipalContext,
-    authenticate_request,
+    authenticate_connection,
     deregister_resource,
     register_resource,
     require_permission,
@@ -48,7 +48,7 @@ async def _exec(
 
 @router.get("")
 async def list_workers(
-    principal: PrincipalContext = Depends(authenticate_request),
+    principal: PrincipalContext = Depends(authenticate_connection),
     supervisor: WorkerSupervisor = Depends(get_supervisor),
     logger: logging.Logger = Depends(get_logger),
 ) -> list[dict[str, Any]]:
@@ -66,7 +66,7 @@ async def list_workers(
 @router.post("")
 async def create_worker(
     request: Request,
-    principal: PrincipalContext = Depends(authenticate_request),
+    principal: PrincipalContext = Depends(authenticate_connection),
     supervisor: WorkerSupervisor = Depends(get_supervisor),
     logger: logging.Logger = Depends(get_logger),
 ) -> dict[str, Any]:
@@ -91,7 +91,7 @@ async def create_worker(
 @router.get("/{name}")
 async def get_worker(
     name: str,
-    principal: PrincipalContext = Depends(authenticate_request),
+    principal: PrincipalContext = Depends(authenticate_connection),
     supervisor: WorkerSupervisor = Depends(get_supervisor),
     logger: logging.Logger = Depends(get_logger),
 ) -> dict[str, Any]:
@@ -112,7 +112,7 @@ async def get_worker(
 @router.post("/{name}/start")
 async def start_worker(
     name: str,
-    principal: PrincipalContext = Depends(authenticate_request),
+    principal: PrincipalContext = Depends(authenticate_connection),
     supervisor: WorkerSupervisor = Depends(get_supervisor),
     logger: logging.Logger = Depends(get_logger),
 ) -> None:
@@ -133,7 +133,7 @@ async def start_worker(
 @router.post("/{name}/stop")
 async def stop_worker(
     name: str,
-    principal: PrincipalContext = Depends(authenticate_request),
+    principal: PrincipalContext = Depends(authenticate_connection),
     supervisor: WorkerSupervisor = Depends(get_supervisor),
     logger: logging.Logger = Depends(get_logger),
 ) -> None:
@@ -152,7 +152,7 @@ async def stop_worker(
 @router.delete("/{name}")
 async def destroy_worker(
     name: str,
-    principal: PrincipalContext = Depends(authenticate_request),
+    principal: PrincipalContext = Depends(authenticate_connection),
     supervisor: WorkerSupervisor = Depends(get_supervisor),
     logger: logging.Logger = Depends(get_logger),
 ) -> None:
@@ -169,7 +169,7 @@ async def destroy_worker(
 @router.delete("")
 async def destroy_all_workers(
     request: Request,
-    principal: PrincipalContext = Depends(authenticate_request),
+    principal: PrincipalContext = Depends(authenticate_connection),
     supervisor: WorkerSupervisor = Depends(get_supervisor),
     logger: logging.Logger = Depends(get_logger),
 ) -> None:

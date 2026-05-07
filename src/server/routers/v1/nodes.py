@@ -14,7 +14,7 @@ from ...app_state import (
 )
 from ...auth.security import (
     PrincipalContext,
-    authenticate_request,
+    authenticate_connection,
     register_resource,
     require_permission,
     resolve_accessible_ids,
@@ -41,7 +41,7 @@ router = APIRouter(prefix="/nodes", tags=["Nodes"])
 )
 async def list_nodes(
     request: Request,
-    principal: PrincipalContext = Depends(authenticate_request),
+    principal: PrincipalContext = Depends(authenticate_connection),
     node_registry: NodeRegistry = Depends(get_node_registry),
     logger: logging.Logger = Depends(get_logger),
 ) -> list[Node]:
@@ -71,7 +71,7 @@ async def list_nodes(
 )
 async def list_all_workers(
     request: Request,
-    principal: PrincipalContext = Depends(authenticate_request),
+    principal: PrincipalContext = Depends(authenticate_connection),
     node_registry: NodeRegistry = Depends(get_node_registry),
     worker_registry: WorkerRegistry = Depends(get_worker_registry),
     logger: logging.Logger = Depends(get_logger),
@@ -111,7 +111,7 @@ async def list_all_workers(
 )
 async def register_node(
     node_info: NodeInfo,
-    principal: PrincipalContext = Depends(authenticate_request),
+    principal: PrincipalContext = Depends(authenticate_connection),
     node_registry: NodeRegistry = Depends(get_node_registry),
     logger: logging.Logger = Depends(get_logger),
 ) -> NodeRegisterResponse:
@@ -146,7 +146,7 @@ async def register_node(
 async def list_node_workers(
     node_id: str,
     request: Request,
-    principal: PrincipalContext = Depends(authenticate_request),
+    principal: PrincipalContext = Depends(authenticate_connection),
     node_registry: NodeRegistry = Depends(get_node_registry),
     worker_registry: WorkerRegistry = Depends(get_worker_registry),
     logger: logging.Logger = Depends(get_logger),
@@ -174,7 +174,7 @@ async def list_node_workers(
 async def register_worker(
     node_id: str,
     request: Request,
-    principal: PrincipalContext = Depends(authenticate_request),
+    principal: PrincipalContext = Depends(authenticate_connection),
     node_registry: NodeRegistry = Depends(get_node_registry),
     worker_registry: WorkerRegistry = Depends(get_worker_registry),
     logger: logging.Logger = Depends(get_logger),
@@ -210,7 +210,7 @@ async def register_worker(
 async def start_node_worker(
     node_id: str,
     worker_name: str,
-    principal: PrincipalContext = Depends(authenticate_request),
+    principal: PrincipalContext = Depends(authenticate_connection),
     node_registry: NodeRegistry = Depends(get_node_registry),
     logger: logging.Logger = Depends(get_logger),
 ) -> None:
@@ -250,7 +250,7 @@ async def start_node_worker(
 async def stop_node_worker(
     node_id: str,
     worker_name: str,
-    principal: PrincipalContext = Depends(authenticate_request),
+    principal: PrincipalContext = Depends(authenticate_connection),
     node_registry: NodeRegistry = Depends(get_node_registry),
     logger: logging.Logger = Depends(get_logger),
 ) -> None:
@@ -289,7 +289,7 @@ async def stop_node_worker(
 )
 async def get_node(
     node_id: str,
-    principal: PrincipalContext = Depends(authenticate_request),
+    principal: PrincipalContext = Depends(authenticate_connection),
     node_registry: NodeRegistry = Depends(get_node_registry),
     logger: logging.Logger = Depends(get_logger),
 ) -> Node:

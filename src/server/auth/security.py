@@ -1,6 +1,6 @@
-"""Minimal auth surface for OSS.
+"""Minimal auth surface.
 
-OSS ships no native API-key auth. The semantic is:
+FlowMesh ships no native API-key auth. The semantic is:
 
 - With no `IdentityProvider` plugins registered, `authenticate_api_key`
   returns a default admin principal — auth is effectively a no-op and every
@@ -9,20 +9,20 @@ OSS ships no native API-key auth. The semantic is:
   through the chain in registration order. The first provider returning a
   non-`None` `PrincipalContext` wins; if none claim the token, 401 is raised.
 
-Routers consume the chain via `authenticate_request`, a FastAPI dependency
-that pulls the bearer token from the request header before invoking
-`authenticate_api_key`. Permission helpers (`resolve_accessible_ids`,
-`require_permission`) compose the registered `PermissionChecker` chain;
-with no checkers registered both helpers short-circuit to "no filter, no
-gate", preserving OSS-only behaviour.
+Routers consume the chain via `authenticate_connection`, which works for
+both REST and WebSocket endpoints (both extend Starlette's `HTTPConnection`).
+Permission helpers (`resolve_accessible_ids`, `require_permission`) compose
+the registered `PermissionChecker` chain; with no checkers registered both
+helpers short-circuit to "no filter, no gate".
 """
 
 import logging
 from collections.abc import Mapping
 from typing import Any
 
-from fastapi import HTTPException, Request, status
+from fastapi import HTTPException, WebSocket, WebSocketException, status
 from flowmesh_hook import PrincipalContext, ResourceAction, ResourceType
+from starlette.requests import HTTPConnection
 
 from ..hooks import IDENTITY_PROVIDERS, PERMISSION_CHECKERS, RESOURCE_REGISTRARS
 
@@ -60,16 +60,43 @@ async def authenticate_api_key(
     )
 
 
-async def authenticate_request(request: Request) -> PrincipalContext:
-    """FastAPI dependency: extract the bearer token and run the auth chain."""
-    auth_header = request.headers.get("Authorization", "")
+async def authenticate_connection(conn: HTTPConnection) -> PrincipalContext:
+    """FastAPI dependency: extract the bearer token and run the auth chain.
+
+    Works for both REST routes and WebSocket endpoints — both `Request` and
+    `WebSocket` are `HTTPConnection` subclasses.
+    """
+    auth_header = conn.headers.get("Authorization", "")
     bearer_prefix = "Bearer "
     raw_token = (
         auth_header[len(bearer_prefix) :]
         if auth_header.startswith(bearer_prefix)
         else ""
     )
-    return await authenticate_api_key(raw_token, request.app.state.logger)
+    return await authenticate_api_key(raw_token, conn.app.state.logger)
+
+
+async def authenticate_websocket(
+    websocket: WebSocket,
+    token: str | None = None,
+) -> PrincipalContext:
+    """FastAPI dependency for WebSocket auth.
+
+    Tries the `Authorization: Bearer ...` header first, falling back to a
+    `?token=...` query param for browser clients that can't set headers.
+    Raises `WebSocketException(4401)` on failure so FastAPI closes the
+    socket before the route body runs.
+    """
+    try:
+        return await authenticate_connection(websocket)
+    except HTTPException:
+        pass
+    if token:
+        try:
+            return await authenticate_api_key(token, websocket.app.state.logger)
+        except HTTPException:
+            pass
+    raise WebSocketException(code=4401, reason="unauthorized")
 
 
 async def resolve_accessible_ids(
@@ -107,7 +134,7 @@ async def require_permission(
 
     `resource_id=None` is a type-level / fleet-level check (e.g. "may the
     principal create workflows" before a `wfl-` id has been minted, or any
-    `SYSTEM`-scoped check). Plugins should branch on `is None`.
+    `SYSTEM`-scoped check).
     """
     for checker in PERMISSION_CHECKERS:
         await checker.require(principal, resource_type, resource_id, action, logger)
@@ -123,11 +150,13 @@ async def register_resource(
     """Notify every registered `ResourceRegistrar` that a resource was created.
 
     Fires for `WORKFLOW`, `TASK`, `NODE`, and `WORKER`. `RESULT` ownership
-    is inferred from the owning task / workflow and does not fire. With no
-    registrars registered this is a no-op.
+    is inferred from the owning task and does not fire. With no registrars
+    registered this is a no-op.
     """
     for registrar in RESOURCE_REGISTRARS:
-        await registrar.register(principal, resource_type, resource_id, metadata, logger)
+        await registrar.register(
+            principal, resource_type, resource_id, metadata, logger
+        )
 
 
 async def deregister_resource(
