@@ -121,7 +121,7 @@ class _MyOrgSupplier:
     name = "myorg.supplier"
 
     def resolve(self, worker: WorkerView) -> str | None:
-        return worker.env.get("supplier_id") or None
+        return worker.namespace or None
 
 
 def install() -> HookBindings:

@@ -36,6 +36,7 @@ listed here is in `.env.example`.
 | `FLOWMESH_PLUGINS` | – | Comma-separated plugin module names |
 | `SERVER_CUDA_PROBE_IMAGE` | `nvidia/cuda:12.9.1-base-ubuntu24.04` | CUDA image the server runs briefly to query local GPU names/indices |
 | `DOCKER_GPU_RUNTIME` | nvidia | Optional Docker runtime name for GPU probe/worker containers; leave empty unless the host requires a named runtime such as `nvidia` |
+| `FLOWMESH_API_KEY` | – | Forwarded to spawned workers as their server-callback bearer |
 | `LOG_LEVEL` | `INFO` | Server log level |
 
 **Notes:**
