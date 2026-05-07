@@ -153,7 +153,6 @@ if IS_ROOT_NODE:
 
     EVENT_MONITOR = EventMonitor(
         redis_client=REDIS_CLIENT.sync,
-        stop_event=threading.Event(),  # replaced below
         logger=logger,
         runtime=RUNTIME,
         dispatcher=DISPATCHER,
@@ -211,12 +210,8 @@ BACKGROUND_THREADS: list[threading.Thread] = []
 def _start_root_threads() -> None:
     """Start orchestrator background threads. Only called on root nodes."""
     assert DISPATCHER is not None
-    assert EVENT_MONITOR is not None
     assert LOG_ARCHIVER is not None
     assert WATCHDOG is not None
-
-    # Replace the placeholder stop_event on the EventMonitor
-    EVENT_MONITOR._stop_event = STOP_EVENT
 
     dispatcher = DISPATCHER
     dispatch_thread = threading.Thread(
@@ -226,9 +221,6 @@ def _start_root_threads() -> None:
     )
     dispatch_thread.start()
     BACKGROUND_THREADS.append(dispatch_thread)
-
-    for thread in EVENT_MONITOR.start():
-        BACKGROUND_THREADS.append(thread)
 
     log_archiver_thread = threading.Thread(
         target=LOG_ARCHIVER.run, args=(STOP_EVENT,), name="log-archiver", daemon=True
@@ -323,6 +315,8 @@ async def _lifespan(_: FastAPI):
             if SSH_FORWARD_SERVICE is not None:
                 await SSH_FORWARD_SERVICE.start()
             _start_root_threads()
+            if EVENT_MONITOR is not None:
+                EVENT_MONITOR.start()
 
         # --- Supervisor (all nodes with worker management) ---
         if SUPERVISOR is not None:
@@ -336,6 +330,10 @@ async def _lifespan(_: FastAPI):
             if SUPERVISOR is not None:
                 await SUPERVISOR.stop()
                 app.state.node_id = None
+
+            # --- Event monitor shutdown ---
+            if EVENT_MONITOR is not None:
+                await EVENT_MONITOR.stop()
 
             # --- Root-only shutdown ---
             _stop_background()

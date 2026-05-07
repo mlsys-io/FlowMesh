@@ -23,7 +23,6 @@ def _make_monitor(results_dir: Path) -> EventMonitor:
     runtime.get_record.return_value = None
     return EventMonitor(
         redis_client=MagicMock(),
-        stop_event=MagicMock(),
         logger=logging.getLogger("test-event-monitor"),
         runtime=runtime,
         dispatcher=MagicMock(),

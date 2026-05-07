@@ -5,6 +5,7 @@ import shutil
 import threading
 import time
 from collections.abc import Iterable
+from concurrent.futures import Future
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -20,6 +21,7 @@ from shared.schemas.event import (
 from shared.schemas.worker import WorkerStatus
 from shared.utils.manifest import RESULTS_NAME, sync_manifest
 
+from ..auth import deregister_resource
 from ..clients.redis import (
     NODE_EVENT_CHANNEL,
     TASK_EVENT_CHANNEL,
@@ -34,7 +36,7 @@ from ..clients.redis import (
     workflow_tasks_key,
 )
 from ..dispatcher import Dispatcher
-from ..hooks import USAGE_SINKS, UsageRow
+from ..hooks import RESOURCE_REGISTRARS, USAGE_SINKS, ResourceType, UsageRow
 from ..registries.node import NodeRegistry
 from ..registries.worker import WorkerRegistry
 from ..schemas.logs import LogEvent
@@ -55,7 +57,6 @@ class EventMonitor:
     def __init__(
         self,
         redis_client: SyncRedisClient,
-        stop_event: threading.Event,
         logger: logging.Logger,
         runtime: TaskRuntime,
         dispatcher: Dispatcher,
@@ -69,7 +70,7 @@ class EventMonitor:
         log_stream_ttl_sec: int = 0,
     ) -> None:
         self._redis_client = redis_client
-        self._stop_event = stop_event
+        self._stop_event = threading.Event()
         self._logger = logger
         self._runtime = runtime
         self._dispatcher = dispatcher
@@ -86,13 +87,19 @@ class EventMonitor:
         self._pending_lock = threading.RLock()
 
         self._loop: asyncio.AbstractEventLoop | None = None
+        self._threads: list[threading.Thread] | None = None
+        self._pending_coros: set[Future[Any]] = set()
+        self._pending_coros_lock = threading.Lock()
 
     # ------------------------------------------------------------------ #
     # Public API
     # ------------------------------------------------------------------ #
 
-    def start(self) -> list[threading.Thread]:
+    def start(self) -> None:
         """Spawn task/worker listener threads."""
+        if self._threads is not None:
+            self._logger.warning("Event monitor already started")
+            return
         if self._loop is None:
             try:
                 self._loop = asyncio.get_running_loop()
@@ -100,7 +107,7 @@ class EventMonitor:
                 raise RuntimeError(
                     "Event monitor must be started inside an event loop: %s", exc
                 )
-        threads = [
+        self._threads = [
             threading.Thread(
                 target=self._tasks_events_loop, name="tasks-events", daemon=True
             ),
@@ -111,9 +118,40 @@ class EventMonitor:
                 target=self._node_events_loop, name="nodes-events", daemon=True
             ),
         ]
-        for thread in threads:
+        for thread in self._threads:
             thread.start()
-        return threads
+
+    async def stop(
+        self, thread_join_timeout: float = 2.0, coro_timeout: float = 5.0
+    ) -> None:
+        """Drain in-flight events and pending hook coroutines, then exit."""
+        if self._threads is None:
+            self._logger.warning("Event monitor not started")
+            return
+        self._stop_event.set()
+        for thread in self._threads:
+            thread.join(timeout=thread_join_timeout)
+        self._threads = None
+
+        with self._pending_coros_lock:
+            pending = list(self._pending_coros)
+            self._pending_coros.clear()
+        if not pending:
+            return
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(
+                    *(asyncio.wrap_future(f) for f in pending),
+                    return_exceptions=True,
+                ),
+                timeout=coro_timeout,
+            )
+        except TimeoutError:
+            self._logger.warning(
+                "EventMonitor.stop: %d hook coroutine(s) did not finish within %ss",
+                len(pending),
+                coro_timeout,
+            )
 
     def mirror_task_results(self, parent_task_id: str, child_ids: list[str]) -> None:
         if not child_ids:
@@ -398,6 +436,7 @@ class EventMonitor:
                 )
             case "SV_UNREGISTER":
                 self._node_registry.unregister_node(event.node_id)
+                self._schedule_deregister(ResourceType.NODE, event.node_id)
             case _:
                 self._logger.debug(
                     "Ignoring node event type=%s payload=%s",
@@ -446,6 +485,7 @@ class EventMonitor:
                 worker_id = (event.worker_id or "").strip()
                 self._worker_registry.unregister_workers(worker_id)
                 if worker_id:
+                    self._schedule_deregister(ResourceType.WORKER, worker_id)
                     if self._watchdog.enabled and self._watchdog.is_marked_dead(
                         worker_id
                     ):
@@ -538,15 +578,49 @@ class EventMonitor:
         payload["ssh"] = ssh_payload
         return payload
 
+    def _track_pending(self, fut: Future[Any]) -> None:
+        fut.add_done_callback(self._untrack_pending)
+        with self._pending_coros_lock:
+            if not fut.done():
+                self._pending_coros.add(fut)
+
+    def _untrack_pending(self, fut: Future[Any]) -> None:
+        with self._pending_coros_lock:
+            self._pending_coros.discard(fut)
+
     def _schedule_emit_usage(self, usages: list[tuple[str, TaskUsage]]) -> None:
         if not usages or not USAGE_SINKS:
             return
         if self._loop is None:
             return
         try:
-            asyncio.run_coroutine_threadsafe(self._emit_usage_async(usages), self._loop)
+            fut = asyncio.run_coroutine_threadsafe(
+                self._emit_usage_async(usages), self._loop
+            )
         except RuntimeError as exc:
             self._logger.debug("Failed to schedule usage delivery: %s", exc)
+            return
+        self._track_pending(fut)
+
+    def _schedule_deregister(
+        self, resource_type: ResourceType, resource_id: str
+    ) -> None:
+        if not RESOURCE_REGISTRARS or not resource_id or self._loop is None:
+            return
+        try:
+            fut = asyncio.run_coroutine_threadsafe(
+                deregister_resource(None, resource_type, resource_id, self._logger),
+                self._loop,
+            )
+        except RuntimeError as exc:
+            self._logger.debug(
+                "Failed to schedule %s/%s deregister: %s",
+                resource_type.value,
+                resource_id,
+                exc,
+            )
+            return
+        self._track_pending(fut)
 
     async def _emit_usage_async(self, usages: list[tuple[str, TaskUsage]]) -> None:
         if not usages or not USAGE_SINKS:
