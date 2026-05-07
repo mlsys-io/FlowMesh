@@ -20,15 +20,11 @@ class RegisterRequest(_message.Message):
     ) -> None: ...
 
 class RegisterResponse(_message.Message):
-    __slots__ = ("worker_id", "api_key")
+    __slots__ = ("worker_id",)
     WORKER_ID_FIELD_NUMBER: _ClassVar[int]
-    API_KEY_FIELD_NUMBER: _ClassVar[int]
     worker_id: str
-    api_key: str
 
-    def __init__(
-        self, worker_id: _Optional[str] = ..., api_key: _Optional[str] = ...
-    ) -> None: ...
+    def __init__(self, worker_id: _Optional[str] = ...) -> None: ...
 
 class InterruptMessage(_message.Message):
     __slots__ = ("task_id", "reason")

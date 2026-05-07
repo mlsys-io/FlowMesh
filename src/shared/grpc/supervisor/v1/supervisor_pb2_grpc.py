@@ -67,7 +67,7 @@ class SupervisorServicer(object):
     """Supervisor streams tasks to workers and accepts events from them."""
 
     def RegisterWorker(self, request, context):
-        """Register a worker and return its worker id + auth token."""
+        """Register a worker and return its worker id."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details("Method not implemented!")
         raise NotImplementedError("Method not implemented!")

@@ -99,7 +99,6 @@ class SupervisorServicer(supervisor_pb2_grpc.SupervisorServicer):
         worker_meta["node_id"] = self._node_id
         self._redis.sadd(WORKERS_SET_KEY, worker_id)
         self._redis.hash_set(worker_key(worker_id), worker_meta)
-        api_key = ""  # Workers authenticate via token, not API key in OSS
         self._registry.set_worker_id(worker.token, worker_id)
         self._task_listener.add_worker(worker_id)
         try:
@@ -107,7 +106,7 @@ class SupervisorServicer(supervisor_pb2_grpc.SupervisorServicer):
         except RuntimeError as exc:
             self._logger.warning(exc)
         self._logger.info("Registered worker %s", worker_id)
-        return supervisor_pb2.RegisterResponse(worker_id=worker_id, api_key=api_key)
+        return supervisor_pb2.RegisterResponse(worker_id=worker_id)
 
     async def StreamTasks(
         self, request: Empty, context: grpc.aio.ServicerContext

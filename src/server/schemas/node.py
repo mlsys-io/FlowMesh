@@ -12,7 +12,6 @@ class NodeRegisterResponse(BaseModel):
 
 class WorkerRegisterResponse(BaseModel):
     worker_id: str = Field(description="Registered worker identifier.")
-    api_key: str = Field(description="Issued worker API key.")
 
 
 class NodeWorkerStatus(StrEnum):

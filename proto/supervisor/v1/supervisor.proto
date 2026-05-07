@@ -7,7 +7,7 @@ import "google/protobuf/empty.proto";
 
 // Supervisor streams tasks to workers and accepts events from them.
 service Supervisor {
-  // Register a worker and return its worker id + auth token.
+  // Register a worker and return its worker id.
   rpc RegisterWorker(RegisterRequest) returns (RegisterResponse);
   // Stream tasks assigned to a worker token.
   rpc StreamTasks(google.protobuf.Empty) returns (stream DispatchMessage);
@@ -26,7 +26,6 @@ message RegisterRequest {
 // Worker registration response.
 message RegisterResponse {
   string worker_id = 1;
-  string api_key = 2;
 }
 
 // Interrupt payload emitted by the supervisor.

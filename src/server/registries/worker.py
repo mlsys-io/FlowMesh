@@ -25,7 +25,6 @@ from ..clients.redis import (
     WORKERS_SET_KEY,
     RedisClient,
     node_dispatch_channel,
-    worker_api_key_id_key,
     worker_hb_key,
     worker_key,
 )
@@ -81,7 +80,6 @@ class WorkerRegistry:
         self,
         node_id: str,
         node_alias: str,
-        worker_api_key_id: str,
         worker_meta: dict[str, Any],
     ) -> str:
         worker_id = self._allocate_worker_id()
@@ -91,7 +89,6 @@ class WorkerRegistry:
         with self._rds.sync.control_pipeline() as pipe:
             pipe.sadd(WORKERS_SET_KEY, worker_id)
             pipe.hset(worker_key(worker_id), mapping=worker_meta)
-            pipe.set(worker_api_key_id_key(worker_id), worker_api_key_id)
             pipe.execute()
         return worker_id
 
@@ -99,7 +96,6 @@ class WorkerRegistry:
         self,
         node_id: str,
         node_alias: str,
-        worker_api_key_id: str,
         worker_meta: dict[str, Any],
     ) -> str:
         worker_id = await self._allocate_worker_id_async()
@@ -109,7 +105,6 @@ class WorkerRegistry:
         async with self._rds.asyncio.control_pipeline() as pipe:
             pipe.sadd(WORKERS_SET_KEY, worker_id)
             pipe.hset(worker_key(worker_id), mapping=worker_meta)
-            pipe.set(worker_api_key_id_key(worker_id), worker_api_key_id)
             await pipe.execute()
         return worker_id
 
@@ -160,7 +155,6 @@ class WorkerRegistry:
             pipe.srem(WORKERS_SET_KEY, *worker_ids)
             pipe.delete(*(worker_key(worker_id) for worker_id in worker_ids))
             pipe.delete(*(worker_hb_key(worker_id) for worker_id in worker_ids))
-            pipe.delete(*(worker_api_key_id_key(worker_id) for worker_id in worker_ids))
             pipe.execute()
 
     async def unregister_workers_async(self, *worker_ids: str) -> None:
@@ -168,7 +162,6 @@ class WorkerRegistry:
             pipe.srem(WORKERS_SET_KEY, *worker_ids)
             pipe.delete(*(worker_key(worker_id) for worker_id in worker_ids))
             pipe.delete(*(worker_hb_key(worker_id) for worker_id in worker_ids))
-            pipe.delete(*(worker_api_key_id_key(worker_id) for worker_id in worker_ids))
             await pipe.execute()
 
     # ------------------------------------------------------------------ #

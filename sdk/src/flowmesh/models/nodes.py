@@ -34,7 +34,6 @@ class NodeRegisterResponse(BaseModel):
 
 class WorkerRegisterResponse(BaseModel):
     worker_id: str
-    api_key: str
 
 
 class NodeWorkerInfo(BaseModel):

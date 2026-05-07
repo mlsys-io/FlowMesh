@@ -2,7 +2,6 @@ import base64
 import binascii
 import json
 import logging
-import os
 import queue
 import threading
 import time
@@ -389,8 +388,6 @@ class SupervisorClient:
         if not resp.worker_id:
             raise SystemExit("Supervisor registration response missing worker_id")
         self._worker_id = resp.worker_id
-        if resp.api_key:
-            os.environ["FLOWMESH_API_KEY"] = resp.api_key
 
     def _start_event_stream(self) -> None:
         self._event_ready.clear()

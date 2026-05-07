@@ -54,10 +54,6 @@ def worker_key(worker_id: str) -> str:
     return f"worker:{worker_id}"
 
 
-def worker_api_key_id_key(worker_id: str) -> str:
-    return f"worker:{worker_id}:api_key_id"
-
-
 def worker_hb_key(worker_id: str) -> str:
     return f"worker:{worker_id}:hb"
 

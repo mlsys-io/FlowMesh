@@ -168,7 +168,7 @@ async def list_node_workers(
     "/{node_id}/workers/register",
     summary="Register a worker",
     description="Register a new worker for a node.",
-    response_description="Worker ID and API key",
+    response_description="Worker ID",
     status_code=status.HTTP_201_CREATED,
 )
 async def register_worker(
@@ -189,7 +189,7 @@ async def register_worker(
         )
     worker_meta = await request.json()
     worker_id = await worker_registry.register_worker_async(
-        node_id, node.alias, "", worker_meta
+        node_id, node.alias, worker_meta
     )
     await register_resource(
         principal,
@@ -198,7 +198,7 @@ async def register_worker(
         {"node_id": node_id, "node_alias": node.alias},
         logger,
     )
-    return WorkerRegisterResponse(worker_id=worker_id, api_key="")
+    return WorkerRegisterResponse(worker_id=worker_id)
 
 
 @router.post(
