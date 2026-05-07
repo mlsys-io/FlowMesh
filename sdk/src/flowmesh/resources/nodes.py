@@ -51,7 +51,7 @@ class Nodes(SyncResource):
         tags: builtins.list[str] | None = None,
         last_seen: str | None = None,
     ) -> NodeRegisterResponse:
-        """Register a new node (requires operator key)."""
+        """Register a new node."""
         payload: dict[str, Any] = {
             "namespace": namespace,
             "cluster": cluster,
@@ -91,7 +91,7 @@ class Nodes(SyncResource):
         node_id: str,
         worker_metadata: dict[str, Any],
     ) -> WorkerRegisterResponse:
-        """Register a worker under a node (requires operator key)."""
+        """Register a worker under a node."""
         data = self._client._request(
             "POST",
             f"/nodes/{node_id}/workers/register",
@@ -152,7 +152,7 @@ class AsyncNodes(AsyncResource):
         tags: builtins.list[str] | None = None,
         last_seen: str | None = None,
     ) -> NodeRegisterResponse:
-        """Register a new node (requires operator key)."""
+        """Register a new node."""
         payload: dict[str, Any] = {
             "namespace": namespace,
             "cluster": cluster,
@@ -192,7 +192,7 @@ class AsyncNodes(AsyncResource):
         node_id: str,
         worker_metadata: dict[str, Any],
     ) -> WorkerRegisterResponse:
-        """Register a worker under a node (requires operator key)."""
+        """Register a worker under a node."""
         data = await self._client._request(
             "POST",
             f"/nodes/{node_id}/workers/register",
