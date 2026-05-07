@@ -50,8 +50,13 @@ ENV PATH=/opt/py312/bin:$PATH
 
 # Install Python dependencies (CPU + GPU stacks)
 COPY src/worker/requirements/requirements.txt /tmp/requirements.txt
+COPY src/worker/requirements/requirements.gpu.txt /tmp/requirements.gpu.txt
 RUN uv pip install --python /opt/py312/bin/python --system --requirement /tmp/requirements.txt \
- && rm -f /tmp/requirements.txt
+ && uv pip install --python /opt/py312/bin/python --system --requirement /tmp/requirements.gpu.txt \
+ && rm -f /tmp/requirements.txt /tmp/requirements.gpu.txt
+
+# Verify GPU dependencies are importable at build time
+RUN python -c "import torch; from transformers import AutoModelForCausalLM; print('torch:', torch.__version__, 'cuda:', torch.cuda.is_available())"
 
 # Non-root runtime user + HF cache
 RUN useradd -m -u 10001 appuser \

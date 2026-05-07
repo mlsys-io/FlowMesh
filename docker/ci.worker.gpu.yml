@@ -1,0 +1,23 @@
+# docker/ci.worker.gpu.yml — GPU worker overlay for CI
+#
+# Overlay on top of ci.compose.yml for GPU runner (luyao3, RTX 5080).
+# Overrides the worker config to use the GPU image and passes the
+# compose network name so GPU workers can reach the server by hostname.
+#
+# Pre-build the GPU worker image before running compose:
+#   docker build -f src/worker/docker/Dockerfile.cuda \
+#     -t ci/flowmesh_worker:latest-gpu .
+#
+# Usage:
+#   docker compose -p ci-$RUN_ID \
+#     -f docker/ci.compose.yml \
+#     -f docker/ci.worker.gpu.yml \
+#     up -d --build
+
+services:
+  server:
+    environment:
+      WORKER_CONFIG_PATH: "/etc/flowmesh/worker_config.yaml"
+      WORKER_DOCKER_NETWORK: "${COMPOSE_PROJECT_NAME}_ci-net"
+    volumes:
+      - ./ci.gpu_worker_config.yaml:/etc/flowmesh/worker_config.yaml:ro

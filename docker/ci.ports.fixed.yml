@@ -1,0 +1,19 @@
+# docker/ci.ports.fixed.yml — Fixed host-port bindings for CI environments
+#
+# Include alongside ci.compose.yml when running without run_local.sh
+# (e.g. GitHub Actions or a dedicated CI machine where ports 8000/50051
+# are guaranteed to be free):
+#
+#   docker compose -p ci-$RUN_ID \
+#     -f docker/ci.compose.yml \
+#     -f docker/ci.ports.fixed.yml \
+#     up -d --build --wait
+#
+# run_local.sh generates its own dynamic-port overlay instead; this file
+# is not used by that script.
+
+services:
+  server:
+    ports:
+      - "8000:8000"
+      - "50051:50051"

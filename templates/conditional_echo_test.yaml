@@ -87,6 +87,7 @@ spec:
 
   output:
     destination:
-      type: "http"
+      type: "local"
+      path: "./conditional_echo_test"
     artifacts:
       - "results.json"

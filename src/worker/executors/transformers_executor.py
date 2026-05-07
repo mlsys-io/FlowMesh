@@ -74,6 +74,7 @@ from .utils.checkpoints import (
     maybe_upload_traces,
 )
 
+_HF_IMPORT_ERROR: str = ""
 try:
     import torch
     from transformers import (
@@ -83,12 +84,11 @@ try:
         AutoModelForImageTextToText,
         AutoTokenizer,
         GenerationConfig,
-        PreTrainedModel,
-        PreTrainedTokenizerBase,
     )
 
     _HAS_TRANSFORMERS = True
-except Exception:
+except Exception as _exc:
+    _HF_IMPORT_ERROR = f"{type(_exc).__name__}: {_exc}"
     if TYPE_CHECKING:
         import torch
         from transformers import (
@@ -98,8 +98,6 @@ except Exception:
             AutoModelForImageTextToText,
             AutoTokenizer,
             GenerationConfig,
-            PreTrainedModel,
-            PreTrainedTokenizerBase,
         )
     else:
         torch = None
@@ -109,10 +107,29 @@ except Exception:
         AutoModelForCausalLM = None
         AutoTokenizer = None
         GenerationConfig = None
-        PreTrainedModel = None
-        PreTrainedTokenizerBase = None
 
     _HAS_TRANSFORMERS = False
+
+# PreTrainedModel and PreTrainedTokenizerBase are used only as type annotations.
+# Some installations (e.g. when vllm pins an older/patched transformers) don't
+# re-export them from transformers.__init__; import from their source modules as
+# a fallback so a missing top-level export doesn't break the functional classes.
+try:
+    from transformers import PreTrainedModel, PreTrainedTokenizerBase
+except ImportError:
+    try:
+        from transformers.modeling_utils import (
+            PreTrainedModel,  # type: ignore[assignment]
+        )
+        from transformers.tokenization_utils_base import (  # type: ignore[assignment]
+            PreTrainedTokenizerBase,
+        )
+    except ImportError:
+        if TYPE_CHECKING:
+            from transformers import PreTrainedModel, PreTrainedTokenizerBase
+        else:
+            PreTrainedModel = None  # type: ignore[assignment,misc]
+            PreTrainedTokenizerBase = None  # type: ignore[assignment,misc]
 
 logger = logging.getLogger(__name__)
 
@@ -141,12 +158,17 @@ class HFTransformersExecutor(InferenceMixin, Executor):
     # ------------------------------------------------------------------ #
     # Lifecycle
     # ------------------------------------------------------------------ #
-    def prepare(self) -> None:  # type: ignore[override]
-        if not _HAS_TRANSFORMERS:
+    def _require_transformers(self) -> None:
+        """Raise ExecutionError with the original import traceback if unavailable."""
+        if not _HAS_TRANSFORMERS or AutoModelForCausalLM is None:
+            detail = f" ({_HF_IMPORT_ERROR})" if _HF_IMPORT_ERROR else ""
             raise ExecutionError(
-                "transformers/torch is not installed (`pip install transformers "
-                "torch`)."
+                f"transformers/torch not available{detail} — "
+                "install with: pip install transformers torch"
             )
+
+    def prepare(self) -> None:  # type: ignore[override]
+        self._require_transformers()
         configure_hf_library_logging()
 
     def _pick_device(self, cfg: dict[str, Any]) -> str:
@@ -389,6 +411,8 @@ class HFTransformersExecutor(InferenceMixin, Executor):
         return None
 
     def run(self, task: ExecutorTask, out_dir: Path) -> dict[str, Any]:  # type: ignore[override]
+        # Guard runs in the subprocess too (prepare() only runs in parent process).
+        self._require_transformers()
         configure_hf_library_logging()
         spec = task.spec
         if not isinstance(spec, (InferenceSpecStrict, EmbeddingSpecStrict)):

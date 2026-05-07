@@ -17,7 +17,7 @@
     },
     {
       "parameters": {
-        "model": "meta-llama/Llama-3.2-1B-Instruct",
+        "model": "Qwen/Qwen2.5-0.5B-Instruct",
         "options": {
           "maxTokens": 128,
           "temperature": 1,
@@ -136,7 +136,7 @@
     },
     {
       "parameters": {
-        "model": "meta-llama/Llama-3.2-1B-Instruct",
+        "model": "Qwen/Qwen2.5-0.5B-Instruct",
         "options": {
           "maxTokens": 128,
           "temperature": 1,
@@ -236,7 +236,7 @@
     },
     {
       "parameters": {
-        "model": "meta-llama/Llama-3.2-1B-Instruct",
+        "model": "Qwen/Qwen2.5-0.5B-Instruct",
         "options": {
           "maxTokens": 128,
           "temperature": 1,

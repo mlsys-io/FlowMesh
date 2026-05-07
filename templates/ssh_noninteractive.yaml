@@ -18,7 +18,8 @@ spec:
     MY_CUSTOM_VAR: "hello"
   output:
     destination:
-      type: http
+      type: local
+      path: "./ssh_noninteractive_output"
     artifacts:
       - "results.json"
       - "logs"

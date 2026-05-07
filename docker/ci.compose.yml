@@ -1,0 +1,85 @@
+# docker/ci.compose.yml — CI integration test stack (single-host, no GPU)
+#
+# Brings up a fully isolated FlowMesh environment for each CI run.
+# FlowMesh uses a single server container (HTTP API port 8000 + gRPC
+# supervisor port 50051); no separate host or database service needed.
+#
+# Workers are spawned by the server's Docker adapter with network_mode: host.
+# They connect to gRPC at localhost:50051 and HTTP at http://localhost:8000.
+# Ports 8000 and 50051 MUST therefore be bound on the Docker host machine.
+#
+# RESULTS_DIR is set to an absolute host path so workers can write results
+# without relying on the _VolumeInitializer busybox chown mechanism.
+# Caller must create /tmp/flowmesh-ci-results with chmod 777 before 'up'.
+#
+# NOTE: No ports are exposed in this base file.  Add ports via an overlay:
+#   - Fixed (GitHub Actions / bare docker compose):  docker/ci.ports.fixed.yml
+#   - Fixed local (run_local.sh):                    generated at runtime
+
+services:
+  redis_control:
+    image: redis:7-alpine
+    command: ["redis-server", "--loglevel", "warning"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 2s
+      retries: 10
+    networks: [ci-net]
+
+  redis_telemetry:
+    image: redis:7-alpine
+    command: ["redis-server", "--loglevel", "warning"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 2s
+      retries: 10
+    networks: [ci-net]
+
+  server:
+    build:
+      context: ..
+      dockerfile: src/server/Dockerfile
+    depends_on:
+      redis_control:
+        condition: service_healthy
+      redis_telemetry:
+        condition: service_healthy
+    environment:
+      REDIS_CONTROL_URL: "redis://redis_control:6379/0"
+      REDIS_TELEMETRY_URL: "redis://redis_telemetry:6379/0"
+      FLOWMESH_API_KEY: "flm-ci-00000000000000000000000000000000"
+      # Workers run with network_mode: host, so FLOWMESH_BASE_URL must be
+      # reachable from the Docker host (not the compose overlay network).
+      FLOWMESH_BASE_URL: "http://localhost:8000"
+      SERVER_HOST: "server"
+      NODE_NAMESPACE: "ci"
+      NODE_CLUSTER: "ci-cluster"
+      NODE_ALIAS: "ci-server"
+      LOG_LEVEL: "INFO"
+      # Worker spawning via Docker
+      ENABLE_SUPERVISOR: "true"
+      FLOWMESH_REGISTRY: "ci"
+      FLOWMESH_VERSION: "latest"
+      WORKER_CONFIG_PATH: "/etc/flowmesh/worker_config.yaml"
+      # Absolute host path for worker results (chmod 777 before 'up').
+      # Using an absolute path bypasses the _VolumeInitializer busybox chown
+      # so workers (UID 10001) can write without depending on image pulls.
+      RESULTS_DIR: "/tmp/flowmesh-ci-results"
+      # Pass HuggingFace token through so workers can download gated models.
+      HF_TOKEN:
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./ci.worker_config.yaml:/etc/flowmesh/worker_config.yaml:ro
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8000/healthz"]
+      interval: 5s
+      timeout: 3s
+      start_period: 20s
+      retries: 12
+    networks: [ci-net]
+
+networks:
+  ci-net:
+    # Isolated per-run network; named via project (-p ci-$RUN_ID)

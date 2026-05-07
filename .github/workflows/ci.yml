@@ -1,0 +1,496 @@
+name: CI — Integration & GPU Tests
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FLOWMESH_API_KEY: "flm-ci-00000000000000000000000000000000"
+
+jobs:
+  # ── Integration test (CPU, luyao3 self-hosted runner) ──────────────────────
+  integration:
+    name: Integration test (CPU)
+    runs-on: [self-hosted, linux, luyao3]
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
+        with:
+          persist-credentials: false
+
+      - name: Set project name
+        env:
+          RUN_ID: ${{ github.run_id }}
+        run: echo "PROJECT=ci-${RUN_ID}-integ" >> "$GITHUB_ENV"
+
+      - name: Pre-clean stale worker containers and disk
+        run: |
+          docker rm -f ci-worker-cpu 2>/dev/null || true
+          docker rmi ci/flowmesh_worker:latest-cpu 2>/dev/null || true
+          docker image prune -f
+          docker volume prune -f
+          docker builder prune -f --keep-storage 5gb 2>/dev/null \
+            || docker builder prune -f --filter "until=72h" 2>/dev/null \
+            || true
+          echo "=== Disk after pre-clean ==="
+          df -h /
+          docker system df
+
+      - name: Create worker results directory
+        run: |
+          mkdir -p /tmp/flowmesh-ci-results
+          chmod 777 /tmp/flowmesh-ci-results
+
+      - name: Build worker image
+        run: |
+          DOCKER_BUILDKIT=1 docker build \
+            -f src/worker/docker/Dockerfile.cpu \
+            -t ci/flowmesh_worker:latest-cpu \
+            .
+
+      - name: Build & start services
+        run: |
+          docker compose -p "$PROJECT" \
+            -f docker/ci.compose.yml \
+            -f docker/ci.ports.fixed.yml \
+            up -d --build
+        env:
+          DOCKER_BUILDKIT: "1"
+          COMPOSE_PROJECT_NAME: ${{ env.PROJECT }}
+
+      - name: Wait for server to be healthy
+        run: |
+          timeout 120 bash -c '
+            until docker compose -p "$PROJECT" -f docker/ci.compose.yml \
+              exec -T server curl -sf http://localhost:8000/healthz; do
+              echo "waiting for server…"
+              sleep 3
+            done
+          '
+
+      - name: Debug container state
+        run: |
+          echo "=== Running containers ==="
+          docker compose -p "$PROJECT" -f docker/ci.compose.yml ps
+          echo "=== All Docker containers (incl. server-spawned worker) ==="
+          docker ps -a --format "table {{.Names}}\t{{.Image}}\t{{.Status}}" | grep -E "NAME|worker|ci-worker" || true
+          echo "=== Server logs ==="
+          docker compose -p "$PROJECT" -f docker/ci.compose.yml logs server --tail=40
+          echo "=== Worker container logs (server-spawned) ==="
+          docker logs ci-worker-cpu 2>&1 | tail -40 || echo "(no ci-worker-cpu container found)"
+
+      - name: Wait for worker to register
+        run: |
+          for i in $(seq 1 24); do
+            RESP=$(docker compose -p "$PROJECT" -f docker/ci.compose.yml \
+              exec -T server \
+              curl -sf \
+                -H "Authorization: Bearer flm-ci-00000000000000000000000000000000" \
+                http://localhost:8000/api/v1/workers 2>/dev/null \
+              || echo "CURL_FAILED")
+            echo "Attempt $i: $RESP"
+            if echo "$RESP" | grep -qE '"worker_id"|"id":|"wkr-'; then
+              echo "Worker registered!"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "=== Worker never registered. Final server logs ==="
+          docker compose -p "$PROJECT" -f docker/ci.compose.yml logs server --tail=80
+          exit 1
+
+      - name: Run E2E smoke test (echo task)
+        env:
+          WORKSPACE: ${{ github.workspace }}
+        run: |
+          docker run --rm \
+            --network "${PROJECT}_ci-net" \
+            -e FLOWMESH_HOST_URL="http://server:8000" \
+            -e FLOWMESH_API_KEY="${FLOWMESH_API_KEY}" \
+            -e TASK_YAML="/templates/echo_local.yaml" \
+            -e E2E_TIMEOUT_SEC="120" \
+            -v "$WORKSPACE/tests:/tests:ro" \
+            -v "$WORKSPACE/templates:/templates:ro" \
+            python:3.11-slim \
+            sh -c "pip install requests pytest -q && pytest /tests/integration/test_e2e.py -v"
+
+      - name: Verify CPU worker actually executed the task
+        env:
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          echo "=== CPU worker logs (full) ==="
+          docker logs ci-worker-cpu 2>&1 | tee "/tmp/worker-cpu-${RUN_ID}.log" || true
+
+          echo ""
+          echo "=== Execution evidence check ==="
+          LOG="/tmp/worker-cpu-${RUN_ID}.log"
+          if grep -qiE "executor|running task|dispatched|echo|succeeded|TASK_SUCCEEDED|done" "$LOG"; then
+            echo "✓ Worker executed and completed the task"
+          else
+            echo "✗ FAIL: No task execution evidence in worker logs"
+            exit 1
+          fi
+
+          echo ""
+          echo "=== Result files written by worker ==="
+          ls -la /tmp/flowmesh-ci-results/ 2>/dev/null | head -20 || echo "(result dir empty or missing)"
+
+      - name: Collect logs on failure
+        if: failure()
+        env:
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          docker compose -p "$PROJECT" -f docker/ci.compose.yml logs --no-color \
+            > "/tmp/ci-logs-${RUN_ID}.txt" 2>&1 || true
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
+        with:
+          name: ci-logs-integ-${{ github.run_id }}
+          path: /tmp/ci-logs-${{ github.run_id }}.txt
+          retention-days: 3
+
+      - name: Destroy workers via server API
+        if: always()
+        run: |
+          docker compose -p "$PROJECT" -f docker/ci.compose.yml \
+            exec -T server \
+            curl -sf -X DELETE http://localhost:8000/api/v1/workers \
+              -H "Authorization: Bearer flm-ci-00000000000000000000000000000000" || true
+          sleep 5
+
+      - name: Teardown
+        if: always()
+        run: |
+          docker rm -f ci-worker-cpu 2>/dev/null || true
+          docker compose -p "$PROJECT" -f docker/ci.compose.yml down -v --remove-orphans
+          docker rmi ci/flowmesh_worker:latest-cpu 2>/dev/null || true
+          rm -rf /tmp/flowmesh-ci-results 2>/dev/null || true
+          docker image prune -f
+          docker volume prune -f
+          echo "=== Disk after teardown ==="
+          df -h /
+          docker system df
+
+  # ── GPU smoke test (RTX 5080 self-hosted runner) ─────────────────────────
+  gpu-smoke:
+    name: GPU smoke test (RTX 5080)
+    needs: integration
+    runs-on: [self-hosted, linux, luyao3]
+    timeout-minutes: 90
+    concurrency:
+      group: gpu-rtx5080-${{ github.ref }}
+      cancel-in-progress: false
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
+        with:
+          persist-credentials: false
+
+      - name: Set project name
+        env:
+          RUN_ID: ${{ github.run_id }}
+        run: echo "PROJECT=ci-${RUN_ID}-gpu" >> "$GITHUB_ENV"
+
+      - name: Pre-clean stale worker containers and disk
+        run: |
+          docker rm -f ci-worker-gpu 2>/dev/null || true
+          docker rmi ci/flowmesh_worker:latest-gpu 2>/dev/null || true
+          docker image prune -f
+          docker volume prune -f
+          docker builder prune -f --keep-storage 5gb 2>/dev/null \
+            || docker builder prune -f --filter "until=72h" 2>/dev/null \
+            || true
+          echo "=== Disk after pre-clean ==="
+          df -h /
+          docker system df
+
+      - name: Create worker results directory
+        run: |
+          mkdir -p /tmp/flowmesh-ci-results
+          chmod 777 /tmp/flowmesh-ci-results
+
+      - name: Build GPU worker builder image (cached by content hash)
+        run: |
+          BUILDER_HASH=$(cat \
+            src/worker/docker/Dockerfile.cuda.builder \
+            src/worker/requirements/requirements.gpu.txt \
+            | sha256sum | cut -d' ' -f1 | head -c 12)
+          BUILDER_TAG="flowmesh-builder:${BUILDER_HASH}"
+          echo "Builder content hash: ${BUILDER_HASH}"
+          if docker image inspect "${BUILDER_TAG}" > /dev/null 2>&1; then
+            echo "Cache hit — reusing ${BUILDER_TAG}"
+            docker tag "${BUILDER_TAG}" builder
+          else
+            echo "Cache miss — building ${BUILDER_TAG}"
+            DOCKER_BUILDKIT=1 docker build \
+              -f src/worker/docker/Dockerfile.cuda.builder \
+              -t "${BUILDER_TAG}" \
+              -t builder \
+              .
+          fi
+
+      - name: Build GPU worker image
+        run: |
+          DOCKER_BUILDKIT=1 docker build \
+            -f src/worker/docker/Dockerfile.cuda \
+            -t ci/flowmesh_worker:latest-gpu \
+            .
+
+      - name: Build & start services (with GPU worker)
+        run: |
+          docker compose -p "$PROJECT" \
+            -f docker/ci.compose.yml \
+            -f docker/ci.worker.gpu.yml \
+            -f docker/ci.ports.fixed.yml \
+            up -d --build
+        env:
+          DOCKER_BUILDKIT: "1"
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          COMPOSE_PROJECT_NAME: ${{ env.PROJECT }}
+
+      - name: Wait for server to be healthy
+        run: |
+          timeout 120 bash -c '
+            until docker compose -p "$PROJECT" -f docker/ci.compose.yml \
+              exec -T server curl -sf http://localhost:8000/healthz; do
+              echo "waiting for server…"
+              sleep 3
+            done
+          '
+
+      - name: Wait for GPU worker to register
+        run: |
+          for i in $(seq 1 36); do
+            RESP=$(docker compose -p "$PROJECT" -f docker/ci.compose.yml \
+              exec -T server \
+              curl -sf \
+                -H "Authorization: Bearer flm-ci-00000000000000000000000000000000" \
+                http://localhost:8000/api/v1/workers 2>/dev/null \
+              || echo "CURL_FAILED")
+            echo "Attempt $i: $RESP"
+            if echo "$RESP" | grep -qE '"worker_id"|"id":|"wkr-'; then
+              echo "Worker registered!"
+              exit 0
+            fi
+            sleep 5
+          done
+          docker logs ci-worker-gpu 2>&1 | tail -40 || true
+          exit 1
+
+      - name: "E2E: vLLM inference (TinyLlama-1.1B)"
+        env:
+          WORKSPACE: ${{ github.workspace }}
+        run: |
+          docker run --rm \
+            --network "${PROJECT}_ci-net" \
+            -e FLOWMESH_HOST_URL="http://server:8000" \
+            -e FLOWMESH_API_KEY="${FLOWMESH_API_KEY}" \
+            -e TASK_YAML="/templates/inference_vllm_tiny.yaml" \
+            -e E2E_TIMEOUT_SEC="600" \
+            -v "$WORKSPACE/tests:/tests:ro" \
+            -v "$WORKSPACE/templates:/templates:ro" \
+            python:3.11-slim \
+            sh -c "pip install requests pytest -q && pytest /tests/integration/test_e2e.py -v"
+
+      - name: "E2E: 3-node fan-in graph DAG (echo executor)"
+        env:
+          WORKSPACE: ${{ github.workspace }}
+        run: |
+          docker run --rm \
+            --network "${PROJECT}_ci-net" \
+            -e FLOWMESH_HOST_URL="http://server:8000" \
+            -e FLOWMESH_API_KEY="${FLOWMESH_API_KEY}" \
+            -e TASK_YAML="/templates/echo_three_node_graph.yaml" \
+            -e E2E_TIMEOUT_SEC="120" \
+            -v "$WORKSPACE/tests:/tests:ro" \
+            -v "$WORKSPACE/templates:/templates:ro" \
+            python:3.11-slim \
+            sh -c "pip install requests pytest -q && pytest /tests/integration/test_e2e.py -v"
+
+      - name: "E2E: parallel DAG with synthesis (vLLM, graph_template)"
+        env:
+          WORKSPACE: ${{ github.workspace }}
+        run: |
+          docker run --rm \
+            --network "${PROJECT}_ci-net" \
+            -e FLOWMESH_HOST_URL="http://server:8000" \
+            -e FLOWMESH_API_KEY="${FLOWMESH_API_KEY}" \
+            -e TASK_YAML="/templates/dag_inference_example.yaml" \
+            -e E2E_TIMEOUT_SEC="600" \
+            -v "$WORKSPACE/tests:/tests:ro" \
+            -v "$WORKSPACE/templates:/templates:ro" \
+            python:3.11-slim \
+            sh -c "pip install requests pytest -q && pytest /tests/integration/test_e2e.py -v"
+
+      - name: "E2E: conditional task skip (echo executor)"
+        env:
+          WORKSPACE: ${{ github.workspace }}
+        run: |
+          docker run --rm \
+            --network "${PROJECT}_ci-net" \
+            -e FLOWMESH_HOST_URL="http://server:8000" \
+            -e FLOWMESH_API_KEY="${FLOWMESH_API_KEY}" \
+            -e TASK_YAML="/templates/conditional_echo_test.yaml" \
+            -e E2E_TIMEOUT_SEC="120" \
+            -v "$WORKSPACE/tests:/tests:ro" \
+            -v "$WORKSPACE/templates:/templates:ro" \
+            python:3.11-slim \
+            sh -c "pip install requests pytest -q && pytest /tests/integration/test_e2e.py -v"
+
+      - name: "E2E: HF Transformers inference (tiny-gpt2)"
+        env:
+          WORKSPACE: ${{ github.workspace }}
+        run: |
+          docker run --rm \
+            --network "${PROJECT}_ci-net" \
+            -e FLOWMESH_HOST_URL="http://server:8000" \
+            -e FLOWMESH_API_KEY="${FLOWMESH_API_KEY}" \
+            -e TASK_YAML="/templates/inference_hf_tiny.yaml" \
+            -e E2E_TIMEOUT_SEC="300" \
+            -v "$WORKSPACE/tests:/tests:ro" \
+            -v "$WORKSPACE/templates:/templates:ro" \
+            python:3.11-slim \
+            sh -c "pip install requests pytest -q && pytest /tests/integration/test_e2e.py -v"
+
+      - name: "E2E: LoRA SFT fine-tuning (TinyLlama-1.1B, gsm8k 2%)"
+        env:
+          WORKSPACE: ${{ github.workspace }}
+        run: |
+          docker run --rm \
+            --network "${PROJECT}_ci-net" \
+            -e FLOWMESH_HOST_URL="http://server:8000" \
+            -e FLOWMESH_API_KEY="${FLOWMESH_API_KEY}" \
+            -e TASK_YAML="/templates/lora_sft_llama.yaml" \
+            -e E2E_TIMEOUT_SEC="1200" \
+            -v "$WORKSPACE/tests:/tests:ro" \
+            -v "$WORKSPACE/templates:/templates:ro" \
+            python:3.11-slim \
+            sh -c "pip install requests pytest -q && pytest /tests/integration/test_e2e.py -v"
+
+      - name: "E2E: SSH non-interactive (python:3.12-slim container)"
+        env:
+          WORKSPACE: ${{ github.workspace }}
+        run: |
+          docker run --rm \
+            --network "${PROJECT}_ci-net" \
+            -e FLOWMESH_HOST_URL="http://server:8000" \
+            -e FLOWMESH_API_KEY="${FLOWMESH_API_KEY}" \
+            -e TASK_YAML="/templates/ssh_noninteractive.yaml" \
+            -e E2E_TIMEOUT_SEC="120" \
+            -v "$WORKSPACE/tests:/tests:ro" \
+            -v "$WORKSPACE/templates:/templates:ro" \
+            python:3.11-slim \
+            sh -c "pip install requests pytest -q && pytest /tests/integration/test_e2e.py -v"
+
+      - name: "E2E: n8n parallel DAG inference (dag_inference.json)"
+        env:
+          WORKSPACE: ${{ github.workspace }}
+        run: |
+          docker run --rm \
+            --network "${PROJECT}_ci-net" \
+            -e FLOWMESH_HOST_URL="http://server:8000" \
+            -e FLOWMESH_API_KEY="${FLOWMESH_API_KEY}" \
+            -e TASK_YAML="/templates/n8n/dag_inference.json" \
+            -e E2E_TIMEOUT_SEC="600" \
+            -v "$WORKSPACE/tests:/tests:ro" \
+            -v "$WORKSPACE/templates:/templates:ro" \
+            python:3.11-slim \
+            sh -c "pip install requests pytest -q && pytest /tests/integration/test_e2e.py -v"
+
+      - name: Verify GPU worker actually executed the task
+        env:
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          echo "=== GPU worker logs (full) ==="
+          docker logs ci-worker-gpu 2>&1 | tee "/tmp/worker-gpu-${RUN_ID}.log" || true
+
+          echo ""
+          echo "=== Execution evidence check ==="
+          LOG="/tmp/worker-gpu-${RUN_ID}.log"
+
+          if grep -qiE "executor|running task|dispatched|inference|model" "$LOG"; then
+            echo "✓ Worker received and processed a task"
+          else
+            echo "✗ FAIL: No task execution evidence in worker logs"
+            exit 1
+          fi
+
+          if grep -qiE "succeeded|TASK_SUCCEEDED|done|completed" "$LOG"; then
+            echo "✓ Task completed successfully in worker"
+          else
+            echo "✗ FAIL: No task completion evidence in worker logs"
+            exit 1
+          fi
+
+          echo ""
+          echo "=== GPU utilization during test ==="
+          nvidia-smi --query-gpu=name,memory.used,memory.total,utilization.gpu \
+            --format=csv,noheader,nounits 2>/dev/null || echo "(nvidia-smi not available)"
+
+          echo ""
+          echo "=== Result files written by worker ==="
+          ls -la /tmp/flowmesh-ci-results/ 2>/dev/null | head -20 || echo "(result dir empty or missing)"
+
+      - name: Collect logs on failure
+        if: failure()
+        env:
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          docker compose -p "$PROJECT" \
+            -f docker/ci.compose.yml \
+            -f docker/ci.worker.gpu.yml \
+            logs --no-color > "/tmp/ci-gpu-logs-${RUN_ID}.txt" 2>&1 || true
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
+        with:
+          name: ci-logs-gpu-${{ github.run_id }}
+          path: /tmp/ci-gpu-logs-${{ github.run_id }}.txt
+          retention-days: 3
+
+      - name: Destroy workers via server API
+        if: always()
+        run: |
+          docker compose -p "$PROJECT" -f docker/ci.compose.yml \
+            exec -T server \
+            curl -sf -X DELETE http://localhost:8000/api/v1/workers \
+              -H "Authorization: Bearer flm-ci-00000000000000000000000000000000" || true
+          sleep 5
+
+      - name: Teardown
+        if: always()
+        run: |
+          docker rm -f ci-worker-gpu 2>/dev/null || true
+          docker compose -p "$PROJECT" \
+            -f docker/ci.compose.yml \
+            -f docker/ci.worker.gpu.yml \
+            down -v --remove-orphans
+          docker rmi ci/flowmesh_worker:latest-gpu 2>/dev/null || true
+          CURRENT_HASH=$(cat \
+            src/worker/docker/Dockerfile.cuda.builder \
+            src/worker/requirements/requirements.gpu.txt \
+            | sha256sum | cut -d' ' -f1 | head -c 12)
+          docker images --format "{{.Repository}}:{{.Tag}}" \
+            | grep "^flowmesh-builder:" \
+            | grep -v ":${CURRENT_HASH}$" \
+            | xargs -r docker rmi 2>/dev/null || true
+          rm -rf /tmp/flowmesh-ci-results 2>/dev/null || true
+          docker image prune -f
+          docker volume prune -f
+          echo "=== Disk after teardown ==="
+          df -h /
+          docker system df
