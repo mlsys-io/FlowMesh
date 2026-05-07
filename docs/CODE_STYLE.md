@@ -116,6 +116,7 @@ flags in `.github/workflows/security.yml`.
 | GHSA-pfjf-5gxr-995x | gradio | 6.6.0 | same pin |
 | GHSA-w8v5-vhqr-4h9v | diskcache | (none) | upstream unmaintained, no fixed version published |
 | GHSA-j7w6-vpvq-j3gm | diffusers | 0.38.0 | fix requires safetensors>=0.8.0rc0 pre-release; uv lock won't pick up pre-releases without explicit opt-in |
+| GHSA-98h9-4798-4q5v | diffusers | 0.38.0 | same blocker as GHSA-j7w6-vpvq-j3gm — both fixed in 0.38.0 |
 
 When a blocker lifts (e.g. transformers 5 ↔ vllm 0.19 line stabilizes),
 drop the corresponding `--ignore-vuln` flag from the workflow and the
