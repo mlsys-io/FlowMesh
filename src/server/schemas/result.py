@@ -4,7 +4,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from ..utils.manifest import prepare_output_dir
+from shared.utils.manifest import prepare_output_dir
+
 from ..utils.time import now_iso
 
 

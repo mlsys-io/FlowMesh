@@ -3,8 +3,9 @@
 
 import logging
 import uuid
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pandas as pd
 from PIL import Image
@@ -258,14 +259,20 @@ class DataRetrievalExecutor(DataMixin, Executor):
                 "Grouped params are not supported for agent retrieval."
             )
 
-        columns_dict, params_rows = self._normalize_params(params_dict)  # type: ignore
+        columns_dict, params_rows = self._normalize_params(params_dict)
         format_kwargs = {key: key for key in params_dict}
-        rendered = _render_template(columns_dict, description_template, format_kwargs)  # type: ignore[arg-type]
-        if not all(isinstance(x, str) for x in rendered):
-            raise ExecutionError(
-                "Rendered description template did not produce text output."
-            )
-        descriptions: list[str] = list(rendered)  # type: ignore[arg-type]
+        rendered = _render_template(
+            cast("dict[str, Sequence[Any]]", columns_dict),
+            description_template,
+            format_kwargs,
+        )
+        descriptions: list[str] = []
+        for value in rendered:
+            if not isinstance(value, str):
+                raise ExecutionError(
+                    "Rendered description template did not produce text output."
+                )
+            descriptions.append(value)
 
         artifact_dir = out_dir / "artifacts" / "agent_retrievals"
         artifact_dir.mkdir(parents=True, exist_ok=True)

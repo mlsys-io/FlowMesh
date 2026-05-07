@@ -23,11 +23,11 @@ from trl.trainer.sft_config import SFTConfig
 from trl.trainer.sft_trainer import SFTTrainer
 
 from shared.tasks.specs import SFTSpecStrict, TaskSpecStrictBase
+from shared.utils.manifest import scratch_dir
 from worker.config import WorkerConfig
 from worker.lifecycle import Lifecycle
 
 from ..utils.logging import configure_hf_library_logging
-from ..utils.manifest import scratch_dir
 from .base_executor import ExecutionError, Executor, ExecutorTask
 from .mixins.training import TrainingMixin
 from .utils.checkpoints import (

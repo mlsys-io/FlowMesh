@@ -91,7 +91,7 @@ jobs:
       - name: Run pip-audit (worker CPU)
         # Drop ``@ git+`` deps before auditing — not on PyPI, no CVE feed.
         run: |
-          grep -v '@ git+' src/worker/requirements/requirements.txt > /tmp/worker-cpu-audit.txt
+          grep -v '@ git+' src/worker/requirements/requirements.txt > /tmp/requirements-worker-cpu-audit.txt
           uvx pip-audit==2.9.0 --strict \
             --ignore-vuln GHSA-69w3-r845-3855 \
             --ignore-vuln GHSA-cfh3-3jmp-rvhc \
@@ -101,7 +101,7 @@ jobs:
             --ignore-vuln GHSA-r73j-pqj5-w3x7 \
             --ignore-vuln GHSA-pwv6-vv43-88gr \
             --ignore-vuln GHSA-vfmq-68hx-4jfw \
-            -r /tmp/worker-cpu-audit.txt
+            -r /tmp/requirements-worker-cpu-audit.txt
       - name: Run pip-audit (worker GPU delta)  # no --strict: flashinfer-jit-cache is unauditable on PyPI
         run: |
           uvx pip-audit==2.9.0 \

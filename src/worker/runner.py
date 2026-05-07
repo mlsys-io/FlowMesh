@@ -17,6 +17,7 @@ from shared.tasks.worker_message import (
     WorkerHardware,
     WorkerTaskMessage,
 )
+from shared.utils.manifest import prepare_output_dir, sync_manifest
 from shared.utils.time import now_iso
 
 from .executors.base_executor import Executor, TaskCancelledError
@@ -26,7 +27,6 @@ from .executors.utils.checkpoints import (
 )
 from .lifecycle import Lifecycle
 from .utils.logging import TaskLogEmitter
-from .utils.manifest import prepare_output_dir, sync_manifest
 
 
 class Runner:

@@ -6,6 +6,8 @@ from pathlib import Path
 from threading import Event
 from typing import Any
 
+from shared.utils.manifest import sync_manifest
+
 from ..clients.redis import (
     TASK_LOGS_STREAM_PREFIX,
     SyncRedisClient,
@@ -15,7 +17,6 @@ from ..clients.redis import (
 from ..schemas.result import result_file_path
 from ..task.models import TaskStatus
 from ..task.runtime import TaskRuntime
-from ..utils.manifest import sync_manifest
 
 
 @dataclass(slots=True)

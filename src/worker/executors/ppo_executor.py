@@ -31,12 +31,12 @@ from trl.trainer.ppo_config import PPOConfig
 from trl.trainer.ppo_trainer import PPOTrainer
 
 from shared.tasks.specs import PPOSpecStrict
+from shared.utils.manifest import scratch_dir
 from shared.utils.parsing import safe_float, safe_int
 from worker.config import WorkerConfig
 from worker.lifecycle import Lifecycle
 
 from ..utils.logging import configure_hf_library_logging
-from ..utils.manifest import scratch_dir
 from .base_executor import ExecutionError, Executor, ExecutorTask
 from .mixins.training import TrainingMixin
 from .utils.checkpoints import (

@@ -1,10 +1,10 @@
-"""Tests for server-side manifest helpers."""
+"""Tests for the shared manifest helpers."""
 
 import json
 import stat
 from pathlib import Path
 
-from server.utils.manifest import (
+from shared.utils.manifest import (
     ARTIFACTS_DIR,
     LOGS_DIR,
     MANIFEST_NAME,

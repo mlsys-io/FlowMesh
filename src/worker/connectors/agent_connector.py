@@ -3,7 +3,7 @@
 from pathlib import Path
 from typing import Any
 
-from lumid_data.sdk import Client as LumidDataClient  # type: ignore[import-untyped]
+from lumid_data.sdk import Client as LumidDataClient
 
 from .base_connector import BaseConnector, ConnectorError
 
@@ -30,7 +30,7 @@ class AgentConnector(BaseConnector):
     def connect(self) -> None:
         self._client = LumidDataClient(base_url=self._base_url, token=self._token)
 
-    def execute(  # type: ignore[override]
+    def execute(
         self,
         query: str | list[str],
         *,

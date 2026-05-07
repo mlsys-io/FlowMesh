@@ -14,7 +14,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 from server.services.monitoring import EventMonitor
-from server.utils.manifest import RESULTS_NAME
+from shared.utils.manifest import RESULTS_NAME
 
 
 def _make_monitor(results_dir: Path) -> EventMonitor:

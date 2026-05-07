@@ -13,8 +13,8 @@ import sys
 from pathlib import Path
 
 from shared.tasks.worker_message import WorkerTaskMessage
+from shared.utils.manifest import scratch_dir
 from worker.config import WorkerConfig
-from worker.utils.manifest import scratch_dir
 
 from .sft_executor import SFTExecutor
 

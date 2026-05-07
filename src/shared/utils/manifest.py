@@ -1,7 +1,7 @@
+"""Manifest helpers shared between the server result store and worker output writes."""
+
 import hashlib
 import json
-import os
-import tempfile
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
@@ -12,6 +12,7 @@ MANIFEST_NAME = "manifest.json"
 RESULTS_NAME = "results.json"
 LOGS_DIR = "logs"
 ARTIFACTS_DIR = "artifacts"
+SCRATCH_DIR = "scratch"
 
 # Single-node deployments share the results volume between the server (root)
 # and supervisor-spawned workers (appuser); both call sync_manifest, so each
@@ -21,14 +22,27 @@ _SHARED_FILE_MODE = 0o0666
 
 
 def prepare_output_dir(base_dir: Path) -> None:
+    """Ensure the base directory and standard sub-directories exist."""
     for d in (base_dir, base_dir / LOGS_DIR, base_dir / ARTIFACTS_DIR):
         d.mkdir(parents=True, exist_ok=True)
         _shared_chmod(d, _SHARED_DIR_MODE)
 
 
+def scratch_dir(base_dir: Path) -> Path:
+    """Return ``out_dir/scratch/``, creating it if needed."""
+    path = base_dir / SCRATCH_DIR
+    path.mkdir(parents=True, exist_ok=True)
+    _shared_chmod(path, _SHARED_DIR_MODE)
+    return path
+
+
 def sync_manifest(
     base_dir: Path, task_id: str, expected: Iterable[str]
 ) -> dict[str, Any]:
+    """Build a manifest by reconciling expected versus actual files.
+
+    expected comes from spec.output.artifacts and is interpreted relative to base_dir.
+    """
     prepare_output_dir(base_dir)
     expected_set = {_normalize_artifact_name(item) for item in expected or [] if item}
     expected_set.update({RESULTS_NAME, LOGS_DIR, ARTIFACTS_DIR})
@@ -55,7 +69,11 @@ def sync_manifest(
         "generated_at": now_iso(),
         "entries": entries,
     }
-    _atomic_write_json(base_dir / MANIFEST_NAME, manifest)
+    manifest_path = base_dir / MANIFEST_NAME
+    manifest_path.write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    _shared_chmod(manifest_path, _SHARED_FILE_MODE)
     return manifest
 
 
@@ -65,25 +83,6 @@ def _shared_chmod(path: Path, mode: int) -> None:
         path.chmod(mode)
     except PermissionError:
         pass
-
-
-def _atomic_write_json(target: Path, payload: Any) -> None:
-    """Replace ``target`` with a JSON dump of ``payload`` atomically.
-
-    Uses tempfile + os.replace so the writer only needs write permission on
-    the parent directory, not on any pre-existing file (which may be owned
-    by a different UID under a shared results volume).
-    """
-    fd, tmp_name = tempfile.mkstemp(prefix=f".{target.name}.", dir=target.parent)
-    tmp_path = Path(tmp_name)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            json.dump(payload, fh, ensure_ascii=False, indent=2)
-        _shared_chmod(tmp_path, _SHARED_FILE_MODE)
-        os.replace(tmp_path, target)
-    except BaseException:
-        tmp_path.unlink(missing_ok=True)
-        raise
 
 
 def _path_key(path: Path) -> str:
@@ -98,6 +97,8 @@ def _infer_type(rel_path: Path) -> str:
         return "logs"
     if normalized.startswith(f"{ARTIFACTS_DIR}/") or normalized == ARTIFACTS_DIR:
         return "artifact"
+    if normalized.startswith(f"{SCRATCH_DIR}/") or normalized == SCRATCH_DIR:
+        return "scratch"
     if rel_path.suffix:
         return "artifact"
     return "directory"

@@ -18,6 +18,7 @@ from shared.schemas.event import (
     parse_event,
 )
 from shared.schemas.worker import WorkerStatus
+from shared.utils.manifest import RESULTS_NAME, sync_manifest
 
 from ..clients.redis import (
     NODE_EVENT_CHANNEL,
@@ -42,7 +43,6 @@ from ..task.metadata import extract_model_dataset_names
 from ..task.models import TaskStatus, TaskUsage
 from ..task.runtime import TaskRuntime
 from ..utils.logging import log_node_event, log_worker_event
-from ..utils.manifest import RESULTS_NAME, sync_manifest
 from ..utils.time import now_iso
 from .metrics import MetricsRecorder
 from .ssh_forward import SshForwardService
