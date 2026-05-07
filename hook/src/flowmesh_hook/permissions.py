@@ -1,7 +1,7 @@
 """Permission-checker hook.
 
-Filters and gates access to workflow / task / worker / node resources. The
-two methods cover the two read patterns:
+Filters and gates access to every `ResourceType` in the permission
+contract. The two methods cover the two read patterns:
 
 - `accessible_ids` — bulk filter for list endpoints. Returns either `None`
   (no filter) or a `frozenset[str]` of resource ids the principal may see.
@@ -10,8 +10,7 @@ two methods cover the two read patterns:
 
 Multiple checkers compose: `accessible_ids` returns `None` if any checker
 returns `None`, otherwise the union of returned id sets; `require` requires
-every checker to pass. With no checkers registered both helpers are no-ops,
-matching OSS's open-by-default behaviour.
+every checker to pass. With no checkers registered both helpers are no-ops.
 """
 
 import logging
@@ -33,8 +32,8 @@ class PermissionChecker(Protocol):
     ) -> frozenset[str] | None:
         """Return the ids of `resource_type` the principal may `action`.
 
-        Returns `None` to opt out of filtering, or a `frozenset[str]` of
-        permitted ids (possibly empty).
+        Returns `None` to opt out of filtering, or a `frozenset[str]` of permitted ids
+        (possibly empty).
         """
         ...
 
@@ -48,10 +47,9 @@ class PermissionChecker(Protocol):
     ) -> None:
         """Raise if the principal may not `action` the resource.
 
-        `resource_id=None` is a type-level / fleet-level check — "may the
-        principal `action` resources of this type" — used at create-time
-        before any id has been minted, and for `SYSTEM`-typed checks that
-        have no associated id. Plugins should treat `None` distinctly from
-        any concrete id; never compare against `""`.
+        `resource_id=None` is a type-level / fleet-level check — "may the principal
+        `action` resources of this type" — used at create-time before any id has been
+        minted, and for `SYSTEM`-typed checks that have no associated id. Plugins should
+        treat `None` distinctly from any concrete id; never compare against `""`.
         """
         ...

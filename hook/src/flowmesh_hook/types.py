@@ -1,8 +1,4 @@
-"""Shared types referenced by the hook protocols.
-
-Kept dependency-free so plugins can import them without pulling in the
-server or worker packages.
-"""
+"""Shared types referenced by the hook protocols."""
 
 from dataclasses import dataclass
 from datetime import datetime
@@ -13,14 +9,33 @@ from typing import Any, Protocol, TypedDict, runtime_checkable
 
 @dataclass(frozen=True)
 class PrincipalContext:
+    """Identity envelope returned by `IdentityProvider.resolve` and passed to every
+    downstream hook."""
+
     principal_id: str
+    """Stable id within the plugin's namespace; stamped on workflows as `owner_id`."""
+
     org_id: str
+    """Tenant the principal belongs to."""
+
     external_id: str
+    """External handle (email, OIDC `sub`, etc.). Plugin-defined."""
+
     principal_type: str
+    """Descriptive label (e.g. `"user"`, `"admin"`). Diagnostic only;
+    capability decisions belong in `scopes`."""
+
     scopes: list[str]
+    """Capabilities the principal carries, in a plugin-defined vocabulary."""
 
 
 class ResourceType(StrEnum):
+    """Resource types in the permission contract.
+
+    `RESULT` checks are always paired with a `task_id`; workflow-level
+    operations (logs, queries) check `WORKFLOW`.
+    """
+
     WORKFLOW = "workflow"
     TASK = "task"
     RESULT = "result"
@@ -30,6 +45,8 @@ class ResourceType(StrEnum):
 
 
 class ResourceAction(StrEnum):
+    """Actions in the permission contract."""
+
     READ = "read"
     WRITE = "write"
     CANCEL = "cancel"
@@ -38,11 +55,7 @@ class ResourceAction(StrEnum):
 
 @runtime_checkable
 class WorkerView(Protocol):
-    """Structural view of a `Worker` exposed to `SupplierResolver`.
-
-    The server's concrete `Worker` Pydantic model satisfies this Protocol
-    structurally. Plugins should only read attributes declared here.
-    """
+    """Read-only structural view of a `Worker` passed to `SupplierResolver`."""
 
     id: str
     node_id: str
@@ -53,6 +66,8 @@ class WorkerView(Protocol):
 
 
 class UsageRow(TypedDict):
+    """One usage row emitted to `UsageSink` after a task completes."""
+
     org_id: str
     principal_id: str
     supplier_id: str | None

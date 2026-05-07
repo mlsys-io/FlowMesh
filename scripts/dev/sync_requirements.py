@@ -1,6 +1,6 @@
 """Generate service requirements files from pyproject.toml + uv.lock.
 
-OSS FlowMesh has three generated requirements files:
+FlowMesh has three generated requirements files:
 
 - `src/server/requirements.txt` — the unified server (orchestrator + supervisor).
 - `src/worker/requirements/requirements.txt` — the worker CPU layer.

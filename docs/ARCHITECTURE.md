@@ -63,16 +63,19 @@ cycle back to `PENDING` until exhausted.
 ```
 src/
   server/               FastAPI orchestrator
-    auth/                 OSS no-op auth shim; delegates to IDENTITY_PROVIDERS chain
-    db/                   SQLAlchemy session factory + migrations (no-op in OSS)
+    auth/                 Helpers for calling plugins' auth and permission check hooks
+    clients/              Client wrappers to connect to external services like Redis
     dispatcher/           Dispatch loop, worker selector, stage stickiness, context reuse
+    governance/           Governance schemas and trace analysis
     hooks/                Plugin extension ABCs + registries
     main.py               Entrypoint, FLOWMESH_PLUGINS loader, EventMonitor wiring
     registries/           Worker / Node registries (Redis-backed)
     routers/v1/           workflows, tasks, results, workers, nodes, ssh, stack, system
+    schemas/              REST API request and response schemas
     services/             monitoring, log streaming, ssh forwarding, runtime
     supervisor/           Per-node agent (gRPC server, adapters, lifecycle)
     task/                 parser, runtime, models, merge / epoch helpers
+    utils/                concurrent, helpers, logging, misc, time
   shared/
     grpc/supervisor/v1/   Generated proto stubs (server + worker)
     schemas/              Cross-cutting schemas
@@ -86,6 +89,7 @@ src/
                             graph_templates, huggingface, safe_eval
     runner.py             Task lifecycle (execute, write results, upload artifacts)
 cli/                    Typer CLI (`flowmesh`)
+hook/                   Plugin hook protocol interfaces
 sdk/                    Public Python SDK
 proto/                  gRPC service definition
 templates/              Example workflow YAMLs

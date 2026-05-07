@@ -506,10 +506,10 @@ STACK_ENV_SCHEMA = EnvSchema(
         EnvSection(
             title="External Plugins",
             description=[
-                "# Comma-separated module names imported at server startup. Each ",
-                "# named module must expose `install()`, which registers entries ",
-                "# into server.hooks.IDENTITY_PROVIDERS / SUBMISSION_GUARDS / ",
-                "# USAGE_SINKS. Leave empty in OSS unless you ship a plugin.",
+                "Comma-separated module names imported at server startup. Each ",
+                "named module must expose `install()`, which registers entries ",
+                "into server.hooks.IDENTITY_PROVIDERS / SUBMISSION_GUARDS / ",
+                "USAGE_SINKS. Leave empty unless you ship a plugin.",
             ],
             vars=[EnvVar("FLOWMESH_PLUGINS", "")],
         ),

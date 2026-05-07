@@ -6,8 +6,8 @@ fires `register` after a resource is persisted and `deregister` after a
 resource is hard-deleted.
 
 Fires for `WORKFLOW`, `TASK`, `NODE`, and `WORKER`. `RESULT` ownership
-is inferred from the owning task / workflow by the `PermissionChecker`
-and does not fire individually.
+is inferred from the owning task by the `PermissionChecker` and does not
+fire individually.
 
 Multiple registrars compose: every registrar's `register` runs in
 registration order; failures propagate and abort the originating request.
