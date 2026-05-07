@@ -328,15 +328,23 @@ def _aggregate_structural_messages(
             content = columns[raw_content]  # Materialize Message
         else:
             rendered_rows: list[str] = []
-            for row_idx in range(num_rows):
-                row_mapping: dict[str, str] = {}
-                for label, values in columns.items():
-                    row_value = values[row_idx]
-                    if isinstance(row_value, pd.DataFrame):
-                        row_mapping[label] = row_value.to_markdown(index=False)
-                    else:
-                        row_mapping[label] = _coerce_to_string(row_value)
-                rendered_rows.append(raw_content.format_map(_SafeDict(row_mapping)))
+            with pd.option_context(
+                "display.max_columns",
+                None,
+                "display.width",
+                None,
+                "display.max_colwidth",
+                None,
+            ):
+                for row_idx in range(num_rows):
+                    row_mapping: dict[str, str] = {}
+                    for label, values in columns.items():
+                        row_value = values[row_idx]
+                        if isinstance(row_value, pd.DataFrame):
+                            row_mapping[label] = row_value.to_markdown(index=False)
+                        else:
+                            row_mapping[label] = _coerce_to_string(row_value)
+                    rendered_rows.append(raw_content.format_map(_SafeDict(row_mapping)))
             content = rendered_rows
         if role := message_metadata.get("role"):
             assert all(isinstance(prompt, str) for prompt in content), (
@@ -381,10 +389,18 @@ def _render_template(
             if len(columns[col_id]) == num_rows
             else [columns[col_id][0] for _ in range(num_rows)]
         )
-        value_list_rendered = [
-            v.to_markdown(index=False) if isinstance(v, pd.DataFrame) else v
-            for v in value_list
-        ]
+        with pd.option_context(
+            "display.max_columns",
+            None,
+            "display.width",
+            None,
+            "display.max_colwidth",
+            None,
+        ):
+            value_list_rendered = [
+                v.to_markdown(index=False) if isinstance(v, pd.DataFrame) else v
+                for v in value_list
+            ]
         format_kwargs_materialized[k] = value_list_rendered  # type: ignore
 
     prompts: list[str | Sequence[dict[str, str]]] = [
