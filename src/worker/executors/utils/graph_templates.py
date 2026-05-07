@@ -328,6 +328,7 @@ def _aggregate_structural_messages(
             content = columns[raw_content]  # Materialize Message
         else:
             rendered_rows: list[str] = []
+            # Disable pandas width caps so wide DataFrame cells render in full.
             with pd.option_context(
                 "display.max_columns",
                 None,
@@ -389,6 +390,7 @@ def _render_template(
             if len(columns[col_id]) == num_rows
             else [columns[col_id][0] for _ in range(num_rows)]
         )
+        # Disable pandas width caps so wide DataFrame cells render in full.
         with pd.option_context(
             "display.max_columns",
             None,

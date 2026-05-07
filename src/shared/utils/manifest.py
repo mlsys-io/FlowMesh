@@ -6,6 +6,7 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
+from .atomic import atomic_write_text
 from .time import now_iso
 
 MANIFEST_NAME = "manifest.json"
@@ -15,7 +16,6 @@ ARTIFACTS_DIR = "artifacts"
 SCRATCH_DIR = "scratch"
 
 _SHARED_DIR_MODE = 0o0777
-_SHARED_FILE_MODE = 0o0666
 
 
 def prepare_output_dir(base_dir: Path) -> None:
@@ -67,11 +67,10 @@ def sync_manifest(
         "generated_at": now_iso(),
         "entries": entries,
     }
-    manifest_path = base_dir / MANIFEST_NAME
-    manifest_path.write_text(
-        json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
+    atomic_write_text(
+        base_dir / MANIFEST_NAME,
+        json.dumps(manifest, ensure_ascii=False, indent=2),
     )
-    manifest_path.chmod(_SHARED_FILE_MODE)
     return manifest
 
 

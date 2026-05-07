@@ -17,6 +17,7 @@ from shared.tasks.worker_message import (
     WorkerHardware,
     WorkerTaskMessage,
 )
+from shared.utils.atomic import atomic_write_text
 from shared.utils.manifest import prepare_output_dir, sync_manifest
 from shared.utils.time import now_iso
 
@@ -159,8 +160,9 @@ class Runner:
         # Stamp the task's `_artifacts` context (base_dir / base_url) onto
         # the payload before persisting.
         payload["_artifacts"] = build_artifact_context(spec, out_dir)
-        (out_dir / "results.json").write_text(
-            json.dumps(payload, ensure_ascii=False, indent=2)
+        atomic_write_text(
+            out_dir / "results.json",
+            json.dumps(payload, ensure_ascii=False, indent=2),
         )
         sync_manifest(out_dir, task_id, spec.get_artifacts())
         self._maybe_emit_http(task_id, spec, payload)

@@ -4,6 +4,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from shared.utils.atomic import atomic_write_text
 from shared.utils.manifest import prepare_output_dir
 
 from ..utils.time import now_iso
@@ -35,7 +36,7 @@ def write_result(base_dir: Path, task_id: str, content: dict[str, Any]) -> Path:
     path = result_file_path(base_dir, task_id)
     prepare_output_dir(path.parent)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(content, ensure_ascii=False, indent=2))
+    atomic_write_text(path, json.dumps(content, ensure_ascii=False, indent=2))
     return path
 
 

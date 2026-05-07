@@ -17,6 +17,7 @@ from fastapi import (
 )
 from fastapi.responses import FileResponse
 
+from shared.utils.atomic import atomic_write_text
 from shared.utils.manifest import ARTIFACTS_DIR, LOGS_DIR, RESULTS_NAME, sync_manifest
 
 from ...app_state import (
@@ -335,8 +336,8 @@ def _rewrite_jsonl_export_paths(
 
     if updated:
         try:
-            results_path.write_text(
-                json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+            atomic_write_text(
+                results_path, json.dumps(payload, ensure_ascii=False, indent=2)
             )
         except Exception:
             pass
