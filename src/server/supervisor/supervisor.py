@@ -5,6 +5,8 @@ import logging
 import multiprocessing as mp
 import os
 import signal
+from multiprocessing.queues import Queue as MPQueue
+from queue import Empty as QueueEmpty
 
 from shared.schemas.command import CommandMessage, CommandResponse
 
@@ -18,6 +20,7 @@ from ..config import (
 from ..utils.concurrent import TaskReceiver, TaskSender, create_task_channel
 
 _CMD_TIMEOUT = 120.0
+_NODE_ID_HANDSHAKE_TIMEOUT = 30.0
 
 
 class WorkerSupervisor:
@@ -41,6 +44,15 @@ class WorkerSupervisor:
         self._process: mp.Process | None = None
         self._cmd_sender: TaskSender[CommandMessage, CommandResponse] | None = None
         self._cmd_receiver: TaskReceiver[CommandMessage, CommandResponse] | None = None
+        self._node_id_queue: MPQueue[str] = mp.Queue(maxsize=1)
+        self._node_id: str | None = None
+
+    @property
+    def node_id(self) -> str:
+        """Return the node_id assigned by the child after `start()`."""
+        if self._node_id is None:
+            raise RuntimeError("Supervisor not started; node_id not yet assigned")
+        return self._node_id
 
     # ------------------------------------------------------------------ #
     # Lifecycle
@@ -62,6 +74,7 @@ class WorkerSupervisor:
                 "wm_cfg": self._worker_management,
                 "log_cfg": self._logging_config,
                 "cmd_receiver": self._cmd_receiver,
+                "node_id_queue": self._node_id_queue,
             },
             name=f"supervisor-{self._identity.alias}",
             daemon=True,
@@ -73,6 +86,24 @@ class WorkerSupervisor:
             self._process.pid,
             self._identity.alias,
         )
+
+        try:
+            node_id = await asyncio.to_thread(
+                self._node_id_queue.get, True, _NODE_ID_HANDSHAKE_TIMEOUT
+            )
+        except QueueEmpty as exc:
+            alive = self._process.is_alive()
+            if alive:
+                self._process.terminate()
+                self._process.join(timeout=3.0)
+            self._process = None
+            raise RuntimeError(
+                f"Supervisor child did not register a node within "
+                f"{_NODE_ID_HANDSHAKE_TIMEOUT:.0f}s "
+                f"(child {'still alive' if alive else 'exited'})"
+            ) from exc
+        self._node_id = node_id
+        self._logger.info("Supervisor handshake complete: node_id=%s", node_id)
 
     async def stop(self, timeout: float = 10.0) -> None:
         """Gracefully stop the supervisor child process."""
@@ -100,6 +131,7 @@ class WorkerSupervisor:
             proc.kill()
             proc.join(timeout=3.0)
         self._process = None
+        self._node_id = None
         self._logger.info("Supervisor process stopped")
 
     def is_alive(self) -> bool:
@@ -131,6 +163,7 @@ def _run_supervisor(
     wm_cfg: WorkerManagementConfig,
     log_cfg: LoggingConfig,
     cmd_receiver: TaskReceiver[CommandMessage, CommandResponse] | None,
+    node_id_queue: MPQueue[str],
 ) -> None:
     """Target function executed inside the child process."""
     from pathlib import Path
@@ -216,6 +249,9 @@ def _run_supervisor(
     # Register now — must happen before other components that need node_id
     node_id = lifecycle.start()
     logger.info("Node registered as %s", node_id)
+
+    # Hand node_id back to the parent process
+    node_id_queue.put(node_id)
 
     # --- Supervisor components (constructed with the assigned node_id) ---
     worker_adapter_registry = WorkerAdapterRegistry()

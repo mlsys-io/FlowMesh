@@ -327,6 +327,7 @@ async def _lifespan(_: FastAPI):
         # --- Supervisor (all nodes with worker management) ---
         if SUPERVISOR is not None:
             await SUPERVISOR.start()
+            app.state.node_id = SUPERVISOR.node_id
 
         try:
             yield
@@ -334,6 +335,7 @@ async def _lifespan(_: FastAPI):
             # --- Supervisor shutdown ---
             if SUPERVISOR is not None:
                 await SUPERVISOR.stop()
+                app.state.node_id = None
 
             # --- Root-only shutdown ---
             _stop_background()
@@ -355,6 +357,7 @@ app.state.metrics_recorder = METRICS_RECORDER
 app.state.redis_client = REDIS_CLIENT
 app.state.results_dir = RESULTS_DIR
 app.state.supervisor = SUPERVISOR
+app.state.node_id = None  # populated during lifespan startup once SUPERVISOR registers
 
 # Root-only state (None on worker nodes)
 app.state.runtime = RUNTIME
