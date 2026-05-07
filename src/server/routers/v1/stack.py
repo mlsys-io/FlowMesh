@@ -8,17 +8,17 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from shared.schemas.command import CommandMessage, CommandType
 
-from ...app_state import get_logger, get_supervisor
+from ...app_state import get_logger, get_node_id, get_supervisor
 from ...auth.security import (
     PrincipalContext,
     authenticate_connection,
-    deregister_resource,
-    register_resource,
     require_permission,
-    resolve_accessible_ids,
 )
 from ...hooks import ResourceAction, ResourceType
-from ...supervisor.supervisor import WorkerSupervisor
+from ...supervisor import WorkerSupervisor
+from ...supervisor.manager import WorkerInitConfig
+from ...supervisor.schemas import WorkerInfo
+from ...utils.misc import filter_models_by_queries
 
 router = APIRouter(prefix="/stack/workers", tags=["Stack"])
 
@@ -48,44 +48,37 @@ async def _exec(
 
 @router.get("")
 async def list_workers(
+    request: Request,
     principal: PrincipalContext = Depends(authenticate_connection),
     supervisor: WorkerSupervisor = Depends(get_supervisor),
+    node_id: str = Depends(get_node_id),
     logger: logging.Logger = Depends(get_logger),
-) -> list[dict[str, Any]]:
+) -> list[WorkerInfo]:
+    await require_permission(
+        principal, ResourceType.NODE, node_id, ResourceAction.READ, logger
+    )
     cmd = CommandMessage(command=CommandType.GET_WORKERS)
     data = await _exec(supervisor, cmd)
-    workers: list[dict[str, Any]] = data.get("workers", [])
-    allowed = await resolve_accessible_ids(
-        principal, ResourceType.WORKER, ResourceAction.READ, logger
-    )
-    if allowed is not None:
-        workers = [w for w in workers if w.get("name") in allowed]
-    return workers
+    workers = [WorkerInfo(**w) for w in data.get("workers", [])]
+    return filter_models_by_queries(workers, request.query_params)
 
 
 @router.post("")
 async def create_worker(
-    request: Request,
+    init_config: WorkerInitConfig,
     principal: PrincipalContext = Depends(authenticate_connection),
     supervisor: WorkerSupervisor = Depends(get_supervisor),
+    node_id: str = Depends(get_node_id),
     logger: logging.Logger = Depends(get_logger),
-) -> dict[str, Any]:
+) -> WorkerInfo:
     await require_permission(
-        principal, ResourceType.WORKER, None, ResourceAction.WRITE, logger
+        principal, ResourceType.NODE, node_id, ResourceAction.WRITE, logger
     )
-    body = await request.json()
-    cmd = CommandMessage(command=CommandType.CREATE_WORKER, payload=body)
+    cmd = CommandMessage(
+        command=CommandType.CREATE_WORKER, payload=init_config.model_dump()
+    )
     data = await _exec(supervisor, cmd, timeout=_WORKER_CREATE_TIMEOUT)
-    worker_name = data.get("name") or body.get("name")
-    if isinstance(worker_name, str) and worker_name:
-        await register_resource(
-            principal,
-            ResourceType.WORKER,
-            worker_name,
-            {"scope": "stack"},
-            logger,
-        )
-    return data
+    return WorkerInfo(**data)
 
 
 @router.get("/{name}")
@@ -93,17 +86,16 @@ async def get_worker(
     name: str,
     principal: PrincipalContext = Depends(authenticate_connection),
     supervisor: WorkerSupervisor = Depends(get_supervisor),
+    node_id: str = Depends(get_node_id),
     logger: logging.Logger = Depends(get_logger),
-) -> dict[str, Any]:
+) -> WorkerInfo:
     await require_permission(
-        principal, ResourceType.WORKER, name, ResourceAction.READ, logger
+        principal, ResourceType.NODE, node_id, ResourceAction.READ, logger
     )
-    cmd = CommandMessage(command=CommandType.GET_WORKERS)
+    cmd = CommandMessage(command=CommandType.GET_WORKERS, payload={"worker_name": name})
     data = await _exec(supervisor, cmd)
-    workers: list[dict[str, Any]] = data.get("workers", [])
-    for w in workers:
-        if w.get("name") == name:
-            return w
+    if workers := [WorkerInfo(**w) for w in data.get("workers", [])]:
+        return workers[0]
     raise HTTPException(
         status_code=status.HTTP_404_NOT_FOUND, detail="Worker not found"
     )
@@ -114,10 +106,11 @@ async def start_worker(
     name: str,
     principal: PrincipalContext = Depends(authenticate_connection),
     supervisor: WorkerSupervisor = Depends(get_supervisor),
+    node_id: str = Depends(get_node_id),
     logger: logging.Logger = Depends(get_logger),
 ) -> None:
     await require_permission(
-        principal, ResourceType.WORKER, name, ResourceAction.WRITE, logger
+        principal, ResourceType.NODE, node_id, ResourceAction.WRITE, logger
     )
     cmd = CommandMessage(
         command=CommandType.START_WORKER, payload={"worker_name": name}
@@ -135,10 +128,11 @@ async def stop_worker(
     name: str,
     principal: PrincipalContext = Depends(authenticate_connection),
     supervisor: WorkerSupervisor = Depends(get_supervisor),
+    node_id: str = Depends(get_node_id),
     logger: logging.Logger = Depends(get_logger),
 ) -> None:
     await require_permission(
-        principal, ResourceType.WORKER, name, ResourceAction.WRITE, logger
+        principal, ResourceType.NODE, node_id, ResourceAction.WRITE, logger
     )
     cmd = CommandMessage(command=CommandType.STOP_WORKER, payload={"worker_name": name})
     data = await _exec(supervisor, cmd)
@@ -154,16 +148,16 @@ async def destroy_worker(
     name: str,
     principal: PrincipalContext = Depends(authenticate_connection),
     supervisor: WorkerSupervisor = Depends(get_supervisor),
+    node_id: str = Depends(get_node_id),
     logger: logging.Logger = Depends(get_logger),
 ) -> None:
     await require_permission(
-        principal, ResourceType.WORKER, name, ResourceAction.WRITE, logger
+        principal, ResourceType.NODE, node_id, ResourceAction.WRITE, logger
     )
     cmd = CommandMessage(
         command=CommandType.DESTROY_WORKER, payload={"worker_name": name}
     )
     await _exec(supervisor, cmd)
-    await deregister_resource(principal, ResourceType.WORKER, name, logger)
 
 
 @router.delete("")
@@ -171,10 +165,11 @@ async def destroy_all_workers(
     request: Request,
     principal: PrincipalContext = Depends(authenticate_connection),
     supervisor: WorkerSupervisor = Depends(get_supervisor),
+    node_id: str = Depends(get_node_id),
     logger: logging.Logger = Depends(get_logger),
 ) -> None:
     await require_permission(
-        principal, ResourceType.WORKER, None, ResourceAction.WRITE, logger
+        principal, ResourceType.NODE, node_id, ResourceAction.WRITE, logger
     )
     body = await request.body()
     names: list[str] | None = None
@@ -198,11 +193,4 @@ async def destroy_all_workers(
 
     payload = None if names is None else {"worker_names": names}
     cmd = CommandMessage(command=CommandType.DESTROY_WORKERS, payload=payload)
-    data = await _exec(supervisor, cmd)
-    destroyed = data.get("destroyed") if isinstance(data, dict) else None
-    if isinstance(destroyed, list):
-        for entry in destroyed:
-            if isinstance(entry, str):
-                await deregister_resource(
-                    principal, ResourceType.WORKER, entry, logger
-                )
+    await _exec(supervisor, cmd)

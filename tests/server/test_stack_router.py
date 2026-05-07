@@ -24,6 +24,7 @@ def _error(message: str = "fail") -> CommandResponse:
 def _make_app(supervisor: MagicMock) -> FastAPI:
     app = FastAPI()
     app.state.supervisor = supervisor
+    app.state.node_id = "nod-test"
     app.state.logger = logging.getLogger("test.stack_router")
     app.include_router(stack_router.router, prefix=PREFIX)
     return app
@@ -81,7 +82,7 @@ async def test_get_worker_found() -> None:
 
 @pytest.mark.anyio
 async def test_get_worker_not_found() -> None:
-    sv = _mock_supervisor(_ok(data={"workers": _WORKERS}))
+    sv = _mock_supervisor(_ok(data={"workers": []}))
     async with AsyncClient(
         transport=ASGITransport(app=_make_app(sv)), base_url="http://t"
     ) as ac:
@@ -96,13 +97,22 @@ async def test_get_worker_not_found() -> None:
 
 @pytest.mark.anyio
 async def test_create_worker() -> None:
-    sv = _mock_supervisor(_ok(data={"worker_name": "new"}))
+    sv = _mock_supervisor(
+        _ok(
+            data={
+                "id": "wkr-3",
+                "name": "new",
+                "provider": "docker",
+                "status": "RUNNING",
+            }
+        )
+    )
     async with AsyncClient(
         transport=ASGITransport(app=_make_app(sv)), base_url="http://t"
     ) as ac:
         resp = await ac.post(f"{PREFIX}/stack/workers", json={"provider": "docker"})
     assert resp.status_code == 200
-    assert resp.json()["worker_name"] == "new"
+    assert resp.json()["name"] == "new"
 
 
 @pytest.mark.anyio

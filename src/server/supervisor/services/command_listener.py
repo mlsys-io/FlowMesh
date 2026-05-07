@@ -268,9 +268,21 @@ class CommandListener:
 
     def _handle_get_workers_cmd(self, cmd: CommandMessage) -> CommandResponse:
         try:
-            workers = self._wm.list_workers()
-            workers_data = [worker.model_dump() for worker in workers]
-            return CommandResponse.ok(cmd, data={"workers": workers_data})
+            if payload := cmd.payload:
+                if (worker_name := payload.get("worker_name")) is None:
+                    return CommandResponse.error(
+                        cmd, "Missing worker_name in payload for GET_WORKERS command"
+                    )
+                workers = (
+                    [worker]
+                    if (worker := self._wm.get_worker_info(worker_name))
+                    else []
+                )
+            else:
+                workers = self._wm.list_workers()
+            return CommandResponse.ok(
+                cmd, data={"workers": [worker.model_dump() for worker in workers]}
+            )
         except Exception as exc:
             return CommandResponse.error(cmd, f"Failed to get workers: {exc}")
 

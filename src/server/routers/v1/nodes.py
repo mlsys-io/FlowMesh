@@ -120,11 +120,7 @@ async def register_node(
     )
     node_id = await node_registry.register_node_async(node_info)
     await register_resource(
-        principal,
-        ResourceType.NODE,
-        node_id,
-        {"alias": node_info.alias},
-        logger,
+        principal, ResourceType.NODE, node_id, {"alias": node_info.alias}, logger
     )
     return NodeRegisterResponse(node_id=node_id)
 
@@ -180,7 +176,7 @@ async def register_worker(
     logger: logging.Logger = Depends(get_logger),
 ) -> WorkerRegisterResponse:
     await require_permission(
-        principal, ResourceType.WORKER, None, ResourceAction.WRITE, logger
+        principal, ResourceType.NODE, node_id, ResourceAction.WRITE, logger
     )
     node = await node_registry.get_node_async(node_id)
     if node is None:
@@ -215,7 +211,7 @@ async def start_node_worker(
     logger: logging.Logger = Depends(get_logger),
 ) -> None:
     await require_permission(
-        principal, ResourceType.WORKER, worker_name, ResourceAction.WRITE, logger
+        principal, ResourceType.NODE, node_id, ResourceAction.WRITE, logger
     )
     cmd = CommandMessage(
         command=CommandType.START_WORKER, payload={"worker_name": worker_name}
@@ -255,7 +251,7 @@ async def stop_node_worker(
     logger: logging.Logger = Depends(get_logger),
 ) -> None:
     await require_permission(
-        principal, ResourceType.WORKER, worker_name, ResourceAction.WRITE, logger
+        principal, ResourceType.NODE, node_id, ResourceAction.WRITE, logger
     )
     cmd = CommandMessage(
         command=CommandType.STOP_WORKER, payload={"worker_name": worker_name}
