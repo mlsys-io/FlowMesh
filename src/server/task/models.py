@@ -65,12 +65,8 @@ class TaskRecord(BaseModel):
     task_id: str = Field(description="Task identifier.")
     workflow_id: str = Field(description="Workflow identifier.")
     owner_id: str = Field(description="Owner principal identifier.")
-    org_id: str = Field(
-        default="", description="Owner organization identifier.", exclude=True
-    )
-    supplier_id: str = Field(
-        default="", description="Supplier identifier.", exclude=True
-    )
+    org_id: str = Field(default="", description="Owner organization identifier.")
+    supplier_id: str = Field(default="", description="Supplier identifier.")
     raw_yaml: str = Field(description="Original workflow YAML.")
     task: TaskEnvelopeTemplate = Field(description="Task template.")
     status: str = Field(default=TaskStatus.PENDING, description="Task status.")

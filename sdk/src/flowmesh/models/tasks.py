@@ -25,6 +25,8 @@ class TaskInfo(BaseModel):
     task_id: str
     workflow_id: str
     owner_id: str
+    org_id: str
+    supplier_id: str
     raw_yaml: str
     task: dict[str, Any]
     status: TaskStatus
