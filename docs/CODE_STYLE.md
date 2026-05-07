@@ -101,6 +101,8 @@ flags in `.github/workflows/security.yml`.
 | GHSA-pq5c-rjhq-qp7p | vllm | 0.19.0 | same |
 | GHSA-3mwp-wvh9-7528 | vllm | 0.19.0 | same |
 | GHSA-hpv8-x276-m59f | vllm | 0.20.0 | same |
+| GHSA-x368-4g9h-fvv4 | vllm | 0.19.1 | same |
+| GHSA-83vm-p52w-f9pw | vllm | 0.20.0 | same |
 | GHSA-cfh3-3jmp-rvhc | pillow | 12.1.1 | gradio 5.50 caps pillow<12 (transitive via vllm-omni) |
 | GHSA-whj4-6x5x-4v2j | pillow | 12.2.0 | same cap |
 | GHSA-wjx4-4jcj-g98j | pillow | 12.2.0 | same cap |
@@ -113,6 +115,7 @@ flags in `.github/workflows/security.yml`.
 | GHSA-jmh7-g254-2cq9 | gradio | 6.6.0 | same pin |
 | GHSA-pfjf-5gxr-995x | gradio | 6.6.0 | same pin |
 | GHSA-w8v5-vhqr-4h9v | diskcache | (none) | upstream unmaintained, no fixed version published |
+| GHSA-j7w6-vpvq-j3gm | diffusers | 0.38.0 | fix requires safetensors>=0.8.0rc0 pre-release; uv lock won't pick up pre-releases without explicit opt-in |
 
 When a blocker lifts (e.g. transformers 5 ↔ vllm 0.19 line stabilizes),
 drop the corresponding `--ignore-vuln` flag from the workflow and the
