@@ -324,7 +324,7 @@ async def get_workflow_logs(
     logger: logging.Logger = Depends(get_logger),
 ) -> LogQueryResponse:
     await require_permission(
-        principal, ResourceType.RESULT, workflow_id, ResourceAction.READ, logger
+        principal, ResourceType.WORKFLOW, workflow_id, ResourceAction.READ, logger
     )
     limit = max(1, min(10_000, int(limit)))
     if before and after:
@@ -418,7 +418,7 @@ async def stream_workflow_logs(
     logger: logging.Logger = Depends(get_logger),
 ):
     await require_permission(
-        principal, ResourceType.RESULT, workflow_id, ResourceAction.READ, logger
+        principal, ResourceType.WORKFLOW, workflow_id, ResourceAction.READ, logger
     )
     key = workflow_log_stream_key(workflow_id)
     if not await redis.asyncio.exists_telemetry(key):
