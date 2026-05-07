@@ -163,3 +163,8 @@ async def install():
     finally:
         await engine.dispose()
 ```
+
+## Worked example: every hook over an in-memory store
+
+For a runnable end-to-end example exercising all six hook protocols against
+an in-memory store, see [`examples/plugins/simple_plugin/`](../examples/plugins/simple_plugin/).
