@@ -543,7 +543,7 @@ class _RecordingRegistrar:
 
     def __init__(self) -> None:
         self.registered: list[tuple[str, ResourceType, str, dict[str, Any]]] = []
-        self.deregistered: list[tuple[str, ResourceType, str]] = []
+        self.deregistered: list[tuple[str | None, ResourceType, str]] = []
 
     async def register(
         self,
@@ -559,12 +559,13 @@ class _RecordingRegistrar:
 
     async def deregister(
         self,
-        principal: PrincipalContext,
+        principal: PrincipalContext | None,
         resource_type: ResourceType,
         resource_id: str,
         logger: logging.Logger,
     ) -> None:
-        self.deregistered.append((principal.principal_id, resource_type, resource_id))
+        actor = principal.principal_id if principal is not None else None
+        self.deregistered.append((actor, resource_type, resource_id))
 
 
 class TestResourceRegistrarComposition:
@@ -614,6 +615,17 @@ class TestResourceRegistrarComposition:
         await deregister_resource(principal, ResourceType.WORKER, "wkr-1", logger)
 
         assert recorder.deregistered == [("p-1", ResourceType.WORKER, "wkr-1")]
+
+    @pytest.mark.anyio
+    async def test_deregister_accepts_none_principal(
+        self, logger: logging.Logger
+    ) -> None:
+        recorder = _RecordingRegistrar()
+        register(HookBindings(resource_registrars=[recorder]))
+
+        await deregister_resource(None, ResourceType.NODE, "nod-1", logger)
+
+        assert recorder.deregistered == [(None, ResourceType.NODE, "nod-1")]
 
     @pytest.mark.anyio
     async def test_register_propagates_failure(
