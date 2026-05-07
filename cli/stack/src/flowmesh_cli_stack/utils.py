@@ -74,7 +74,7 @@ def stack_node_client(
         os.getenv("SERVER_HTTP_PORT", os.getenv("SERVER_APP_PORT", "8000")),
     )
     resolved_base = base_url or default_base
-    resolved_token = token or os.getenv("SERVER_TOKEN") or None
+    resolved_token = token or os.getenv("FLOWMESH_API_KEY") or None
     return NodeClient(resolved_base, token=resolved_token)
 
 

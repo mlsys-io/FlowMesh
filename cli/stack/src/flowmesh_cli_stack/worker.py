@@ -30,7 +30,7 @@ def worker_list(
     ),
     base_url: str | None = typer.Option(None, "--base-url", help="Node API base URL"),
     token: str = typer.Option(
-        "", "--token", help="Bearer token", envvar=["SERVER_TOKEN"]
+        "", "--token", help="Bearer token", envvar=["FLOWMESH_API_KEY"]
     ),
 ) -> None:
     """List all workers managed by the local node."""
@@ -79,7 +79,7 @@ def worker_up(
     ),
     base_url: str | None = typer.Option(None, "--base-url", help="Node API base URL"),
     token: str = typer.Option(
-        "", "--token", help="Bearer token", envvar=["SERVER_TOKEN"]
+        "", "--token", help="Bearer token", envvar=["FLOWMESH_API_KEY"]
     ),
 ) -> None:
     """Create and start one or more workers from presets or a custom config file."""
@@ -111,7 +111,7 @@ def worker_start(
     ),
     base_url: str | None = typer.Option(None, "--base-url", help="Node API base URL"),
     token: str = typer.Option(
-        "", "--token", help="Bearer token", envvar=["SERVER_TOKEN"]
+        "", "--token", help="Bearer token", envvar=["FLOWMESH_API_KEY"]
     ),
 ) -> None:
     """Start a stopped worker container."""
@@ -136,7 +136,7 @@ def worker_stop(
     ),
     base_url: str | None = typer.Option(None, "--base-url", help="Node API base URL"),
     token: str = typer.Option(
-        "", "--token", help="Bearer token", envvar=["SERVER_TOKEN"]
+        "", "--token", help="Bearer token", envvar=["FLOWMESH_API_KEY"]
     ),
 ) -> None:
     """Stop a running worker container without removing it."""
@@ -161,7 +161,7 @@ def worker_down(
     ),
     base_url: str | None = typer.Option(None, "--base-url", help="Node API base URL"),
     token: str = typer.Option(
-        "", "--token", help="Bearer token", envvar=["SERVER_TOKEN"]
+        "", "--token", help="Bearer token", envvar=["FLOWMESH_API_KEY"]
     ),
 ) -> None:
     """Destroy a worker or all workers, removing containers and associated resources."""

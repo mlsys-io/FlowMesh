@@ -45,7 +45,7 @@ class NodeClient:
         timeout: float = _DEFAULT_TIMEOUT,
     ) -> None:
         resolved_url = base_url or _default_node_url()
-        resolved_token = token or os.getenv("SERVER_TOKEN") or None
+        resolved_token = token or os.getenv("FLOWMESH_API_KEY") or None
         headers: dict[str, str] = {"Accept": "application/json"}
         if resolved_token:
             headers["Authorization"] = f"Bearer {resolved_token}"

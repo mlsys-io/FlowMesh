@@ -55,7 +55,6 @@ STACK_ENV_SCHEMA = EnvSchema(
                 EnvVar("NODE_ALIAS", "node"),
                 EnvVar("NODE_TAGS", var_type=EnvVarType.CSV),
                 EnvVar("ENABLE_SUPERVISOR", "true", var_type=EnvVarType.BOOL),
-                EnvVar("SERVER_TOKEN", warn_if_empty=True),
                 EnvVar("SERVER_HOST", "localhost", required=True),
                 EnvVar(
                     "SERVER_HTTP_PORT",
@@ -455,6 +454,11 @@ STACK_ENV_SCHEMA = EnvSchema(
                     var_type=EnvVarType.URL,
                     required=True,
                     url_schemes={"http", "https"},
+                ),
+                EnvVar(
+                    "FLOWMESH_API_KEY",
+                    description="Supplier API key for worker authentication with "
+                    "the server",
                 ),
                 EnvVar(
                     "NEBULA_API_BASE_URL",

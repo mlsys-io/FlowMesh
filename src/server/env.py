@@ -21,7 +21,6 @@ SERVER_APP_PORT: int = int(
     or "8000"
 )
 SERVER_GRPC_PORT: int = int(os.getenv("SERVER_GRPC_PORT") or "50051")
-SERVER_TOKEN: str = os.getenv("SERVER_TOKEN") or ""
 
 SERVER_GRPC_TLS_CA_FILE: str = (os.getenv("SERVER_GRPC_TLS_CA_FILE") or "").strip()
 SERVER_GRPC_TLS_CERT_FILE: str = (os.getenv("SERVER_GRPC_TLS_CERT_FILE") or "").strip()
