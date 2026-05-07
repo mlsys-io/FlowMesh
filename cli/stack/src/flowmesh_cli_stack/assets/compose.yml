@@ -161,6 +161,7 @@ services:
       - flowmesh_server_logs:/var/log/flowmesh-server
       - /var/run/docker.sock:/var/run/docker.sock
       - ${SERVER_WORKER_CONFIG:-./configs/worker_config.yaml}:/etc/flowmesh/worker_config.yaml:ro
+      - ${FLOWMESH_PLUGIN_DIR:-./plugins}:/app/plugins:ro
       - ${REDIS_TLS_DIR:-./secrets/tls/redis}:/etc/ssl/redis:ro
       - ${SERVER_TLS_DIR:-./secrets/tls/server}:/etc/ssl/server:ro
     restart: unless-stopped

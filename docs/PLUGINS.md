@@ -64,9 +64,51 @@ The loader drains every plugin's `HookBindings` into the server's
 runtime registries. Plugins never touch those registries directly.
 
 Plugins live anywhere on `sys.path` — in-tree under
-`src/server/<name>/`, sibling-mounted under `/app/src/<name>/`, or a
-pip-installable wheel. Core never references plugin module names; each
-plugin self-filters internally.
+`src/server/<name>/`, host-mounted under `/app/plugins/<name>/` (the
+canonical deployment path; see below), or a pip-installable wheel.
+Core never references plugin module names; each plugin self-filters
+internally.
+
+## Deploying with `flowmesh stack`
+
+The prebuilt server image puts `/app/plugins` on `PYTHONPATH`, and
+`flowmesh stack` bind-mounts `${FLOWMESH_PLUGIN_DIR:-./plugins}` from
+the host into that location. So a typical deployment is:
+
+```
+mkdir -p plugins/myorg_auth
+# ... lay out plugins/myorg_auth/__init__.py exposing install()
+echo "FLOWMESH_PLUGINS=myorg_auth" >> .env
+flowmesh stack up
+```
+
+Each subdirectory of `FLOWMESH_PLUGIN_DIR` is importable as a
+top-level module. The mount is read-only, so the plugin code is
+treated as static deployment artifact.
+
+This handles plugin **code** without rebuilding the server image.
+When that isn't enough, build a thin overlay on top of the prebuilt
+image. Two patterns, pick by need:
+
+Plugin needs extra Python deps but ships its code via the host mount:
+
+```dockerfile
+FROM ghcr.io/mlsys-io/flowmesh_server:<pinned-tag>
+RUN pip install <your-deps>
+```
+
+Plugin is fully baked into the image (no host mount needed):
+
+```dockerfile
+FROM ghcr.io/mlsys-io/flowmesh_server:<pinned-tag>
+COPY dist/myplugin-1.0-py3-none-any.whl /tmp/
+RUN pip install /tmp/myplugin-1.0-py3-none-any.whl \
+ && rm /tmp/myplugin-1.0-py3-none-any.whl
+```
+
+Push the result to your registry and point the stack at the new tag
+via `FLOWMESH_REGISTRY` / `FLOWMESH_VERSION` (or `flowmesh stack up
+--image-tag <tag>`).
 
 ## Minimal sync plugin
 

@@ -506,12 +506,22 @@ STACK_ENV_SCHEMA = EnvSchema(
         EnvSection(
             title="External Plugins",
             description=[
-                "Comma-separated module names imported at server startup. Each ",
-                "named module must expose `install()`, which registers entries ",
-                "into server.hooks.IDENTITY_PROVIDERS / SUBMISSION_GUARDS / ",
-                "USAGE_SINKS. Leave empty unless you ship a plugin.",
+                "Plugins are Python packages dropped under FLOWMESH_PLUGIN_DIR ",
+                "(host-mounted to /app/plugins on the server) and selected by ",
+                "FLOWMESH_PLUGINS as a comma-separated list of top-level module ",
+                "names. Each named module must expose `install()` returning a ",
+                "`HookBindings`. Leave both empty unless you ship a plugin.",
             ],
-            vars=[EnvVar("FLOWMESH_PLUGINS", "")],
+            vars=[
+                EnvVar(
+                    "FLOWMESH_PLUGIN_DIR",
+                    "./plugins",
+                    var_type=EnvVarType.DIR_PATH,
+                    use_default=True,
+                    ensure_path="create",
+                ),
+                EnvVar("FLOWMESH_PLUGINS", ""),
+            ],
         ),
         EnvSection(
             title="Agent Executor (youtu-agent / utu)",

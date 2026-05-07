@@ -14,6 +14,7 @@ STACK_PATH_KEYS = {
     "REDIS_TLS_DIR",
     "SERVER_TLS_DIR",
     "SERVER_WORKER_CONFIG",
+    "FLOWMESH_PLUGIN_DIR",
 }
 STACK_SUFFIX_ENV = "FLOWMESH_STACK_SUFFIX"
 STACK_SLUG_ENV = "FLOWMESH_STACK_SLUG"
@@ -103,6 +104,13 @@ def ensure_deploy_paths(base_dir: Path) -> None:
         resolve_path(
             os.getenv("SERVER_WORKER_CONFIG", ""),
             default="./configs/worker_config.yaml",
+            base_dir=base_dir,
+        )
+    )
+    ensure_dir(
+        resolve_path(
+            os.getenv("FLOWMESH_PLUGIN_DIR", ""),
+            default="./plugins",
             base_dir=base_dir,
         )
     )
