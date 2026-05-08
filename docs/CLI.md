@@ -86,6 +86,13 @@ the stack back up — running containers don't pick up source changes:
 flowmesh stack build flowmesh_worker_cpu flowmesh_worker_gpu
 ```
 
+`flowmesh stack build` loads native images for the local client platform.
+`flowmesh stack push` publishes multi-platform images (`linux/amd64` and
+`linux/arm64`) for the stack bake targets.
+When pushing multi-platform images from Docker Engine, use either the
+containerd image store or a `buildx` builder with the `docker-container`
+driver.
+
 ## SSH tasks
 
 ```bash
