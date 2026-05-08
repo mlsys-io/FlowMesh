@@ -1,0 +1,94 @@
+name: Release
+
+on:
+  release:
+    types:
+      - published
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to publish, for example v0.1.0.
+        required: true
+        type: string
+      publish_target:
+        description: Package index to publish to.
+        required: true
+        type: choice
+        default: testpypi
+        options:
+          - testpypi
+          - pypi
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.release.tag_name || inputs.tag }}
+  cancel-in-progress: false
+
+env:
+  RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
+  PUBLISH_TARGET: ${{ github.event_name == 'release' && 'pypi' || inputs.publish_target }}
+
+jobs:
+  build:
+    name: Build and verify distributions
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
+        with:
+          persist-credentials: false
+          ref: ${{ env.RELEASE_TAG }}
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78  # v7
+        with:
+          version: "0.11.8"
+
+      - name: Install build environment
+        run: uv sync --all-packages --group dev --frozen
+
+      - name: Validate release versions
+        run: uv run python scripts/ci/check_release_version.py --tag "$RELEASE_TAG"
+
+      - name: Build distributions
+        run: uv build --all-packages --out-dir dist
+
+      - name: Verify distributions
+        run: uv run python scripts/ci/check_package_build.py --dist dist
+
+      - name: Upload distributions
+        uses: actions/upload-artifact@v4
+        with:
+          name: flowmesh-dist-${{ env.RELEASE_TAG }}
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    name: Publish distributions
+    needs: build
+    runs-on: ubuntu-latest
+    environment: ${{ github.event_name == 'release' && 'pypi' || inputs.publish_target }}
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Download distributions
+        uses: actions/download-artifact@v4
+        with:
+          name: flowmesh-dist-${{ env.RELEASE_TAG }}
+          path: dist/
+
+      - name: Publish to TestPyPI
+        if: env.PUBLISH_TARGET == 'testpypi'
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
+          repository-url: https://test.pypi.org/legacy/
+
+      - name: Publish to PyPI
+        if: env.PUBLISH_TARGET == 'pypi'
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
