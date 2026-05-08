@@ -19,8 +19,12 @@ ARG TZ=UTC
 ENV TZ=${TZ} \
     DEBIAN_FRONTEND=noninteractive
 
+# The CUDA base image ships an NVIDIA apt source, but this image only installs
+# standard Ubuntu packages. Dropping the external repo avoids transient
+# mirror-sync failures during apt metadata refresh.
 RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime \
  && echo $TZ > /etc/timezone \
+ && rm -f /etc/apt/sources.list.d/cuda*.list /etc/apt/sources.list.d/nvidia*.list \
  && apt-get update \
  && apt-get install -y --no-install-recommends \
       openssh-server \

@@ -18,20 +18,17 @@ ENV TZ=${TZ} \
     UV_LINK_MODE=copy \
     TORCH_CUDA_ARCH_LIST=${TORCH_CUDA_ARCH_LIST}
 
+# The CUDA base image ships an NVIDIA apt source, but these Dockerfiles only
+# need standard Ubuntu packages. Dropping the external repo avoids transient
+# mirror-sync failures during apt metadata refresh.
 RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime \
  && echo $TZ > /etc/timezone \
+ && rm -f /etc/apt/sources.list.d/cuda*.list /etc/apt/sources.list.d/nvidia*.list \
  && apt-get update \
  && apt-get install -y --no-install-recommends \
-      ca-certificates curl git gnupg2 software-properties-common tini tzdata \
-      ccache libnuma-dev libibverbs-dev \
+      ca-certificates ccache curl git libibverbs-dev libnuma-dev tini tzdata \
+      python3 python3-dev python3-pip python3-venv \
  && dpkg-reconfigure -f noninteractive tzdata \
- && rm -rf /var/lib/apt/lists/*
-
-# Install Python 3.12 via deadsnakes PPA
-RUN add-apt-repository ppa:deadsnakes/ppa -y \
- && apt-get update \
- && apt-get install -y --no-install-recommends \
-      python3.12 python3.12-venv python3.12-dev python3-pip \
  && rm -rf /var/lib/apt/lists/*
 
 # Workaround for Triton/PyTorch CUDA compatibility issues
@@ -40,7 +37,7 @@ RUN add-apt-repository ppa:deadsnakes/ppa -y \
 RUN ldconfig /usr/local/cuda-$(echo $CUDA_VERSION | cut -d. -f1,2)/compat/
 
 # Create isolated venv and upgrade pip + uv
-RUN python3.12 -m venv /opt/py312 \
+RUN python3 -m venv /opt/py312 \
  && /opt/py312/bin/pip install --upgrade pip uv
 ENV PATH=/opt/py312/bin:$PATH
 
