@@ -7,8 +7,7 @@ requires-python = ">=3.12"
 dependencies = []
 
 [project.optional-dependencies]
-# Public PyPI install surface. Runtime/container dependencies live in
-# [dependency-groups] so they do not become published package metadata.
+# Public PyPI install surface.
 sdk = ["flowmesh-sdk==0.1.0"]
 cli = ["flowmesh-cli[stack]==0.1.0"]
 hook = ["flowmesh-hook==0.1.0"]
@@ -19,6 +18,7 @@ all = [
 ]
 
 [dependency-groups]
+# Runtime/container dependencies.
 runtime-server = [
     "aiohttp>=3.13.4",
     "cryptography>=46.0.7",
@@ -119,6 +119,19 @@ runtime-analytics = [
     "sqlalchemy>=2.0.44",
     "lumid-data-sdk @ git+https://github.com/mlsys-io/lumid.data.git@a800051#subdirectory=sdk",
 ]
+runtime-worker-cpu = [
+    { include-group = "runtime-worker-core" },
+    { include-group = "runtime-inference" },
+    { include-group = "runtime-training" },
+    { include-group = "runtime-rag" },
+    { include-group = "runtime-agent" },
+    { include-group = "runtime-observability" },
+    { include-group = "runtime-analytics" },
+]
+runtime-worker-gpu = [
+    { include-group = "runtime-inference-gpu" },
+    { include-group = "runtime-training-gpu" },
+]
 dev = [
     "black>=25.12.0",
     "boto3-stubs>=1.42.14",
@@ -145,19 +158,6 @@ dev = [
     "types-psutil>=7.1.3.20251211",
     "types-pyyaml>=6.0.12.20250915",
     "types-requests>=2.32.4.20250913",
-]
-runtime-worker-cpu = [
-    { include-group = "runtime-worker-core" },
-    { include-group = "runtime-inference" },
-    { include-group = "runtime-training" },
-    { include-group = "runtime-rag" },
-    { include-group = "runtime-agent" },
-    { include-group = "runtime-observability" },
-    { include-group = "runtime-analytics" },
-]
-runtime-worker-gpu = [
-    { include-group = "runtime-inference-gpu" },
-    { include-group = "runtime-training-gpu" },
 ]
 ci = [
     { include-group = "dev" },
