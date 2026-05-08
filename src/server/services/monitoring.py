@@ -656,7 +656,7 @@ class EventMonitor:
         return (
             default_principal()
             if event.actor is None
-            else PrincipalContext.from_dict(event.actor)
+            else PrincipalContext.model_validate(event.actor)
         )
 
     def _schedule_register(

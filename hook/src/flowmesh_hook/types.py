@@ -1,46 +1,36 @@
 """Shared types referenced by the hook protocols."""
 
-from collections.abc import Mapping
-from dataclasses import asdict, dataclass
 from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum
 from typing import Any, Protocol, TypedDict, runtime_checkable
 
+from pydantic import BaseModel, ConfigDict, Field
 
-@dataclass(frozen=True)
-class PrincipalContext:
+
+class PrincipalContext(BaseModel):
     """Identity envelope returned by `IdentityProvider.resolve` and passed to every
     downstream hook."""
 
-    principal_id: str
-    """Stable id within the plugin's namespace; stamped on workflows as `owner_id`."""
+    model_config = ConfigDict(frozen=True)
 
-    org_id: str
-    """Tenant the principal belongs to."""
+    principal_id: str = Field(
+        description="Stable id within the plugin's namespace; stamped on workflows as "
+        "`owner_id`."
+    )
+    org_id: str = Field(description="Tenant the principal belongs to.")
+    external_id: str = Field(
+        description="External handle (email, OIDC `sub`, etc.). Plugin-defined."
+    )
+    principal_type: str = Field(
+        description='Descriptive label (e.g. `"user"`, `"admin"`). Diagnostic only; '
+        "capability decisions belong in `scopes`."
+    )
 
-    external_id: str
-    """External handle (email, OIDC `sub`, etc.). Plugin-defined."""
-
-    principal_type: str
-    """Descriptive label (e.g. `"user"`, `"admin"`). Diagnostic only;
-    capability decisions belong in `scopes`."""
-
-    scopes: list[str]
-    """Capabilities the principal carries, in a plugin-defined vocabulary."""
-
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
-
-    @classmethod
-    def from_dict(cls, payload: Mapping[str, Any]) -> "PrincipalContext":
-        return cls(
-            principal_id=str(payload["principal_id"]),
-            org_id=str(payload["org_id"]),
-            external_id=str(payload["external_id"]),
-            principal_type=str(payload["principal_type"]),
-            scopes=list(payload.get("scopes", [])),
-        )
+    scopes: list[str] = Field(
+        description="Capabilities the principal carries, in a plugin-defined "
+        "vocabulary."
+    )
 
 
 class ResourceType(StrEnum):

@@ -99,7 +99,7 @@ class Lifecycle:
             node_id=self.node_id,
             tags=[],
             payload={},
-            actor=self._system_principal.to_dict(),
+            actor=self._system_principal.model_dump(),
         )
         payload = serialize_event(event) | extra
         self._redis.publish_telemetry(NODE_EVENT_CHANNEL, json.dumps(payload))

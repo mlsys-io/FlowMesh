@@ -17,7 +17,7 @@ DEFAULT_WORKER_CONFIG: Final[WorkerConfig] = WorkerConfig(
         external_id="test-user",
         principal_type="user",
         scopes=["*"],
-    ).to_dict(),
+    ).model_dump(),
     worker_token="test",
     supervisor_grpc_target="localhost:50051",
     supervisor_grpc_tls_ca_b64=None,
