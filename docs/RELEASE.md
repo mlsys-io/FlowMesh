@@ -35,6 +35,9 @@ Create matching GitHub environments named `pypi` and `testpypi`. The `pypi`
 environment should require manual approval. The `testpypi` environment can be
 left open or use lighter approval rules.
 
+The `pypi` approver should verify the matching TestPyPI run before approving
+the production publish job.
+
 ## Prepare a release
 
 1. Pick the next synchronized package version, for example `0.1.1`.
@@ -88,6 +91,12 @@ Run the `Release` workflow manually with:
 - `tag`: `v0.1.1`
 - `publish_target`: `testpypi`
 
+Or from the CLI:
+
+```bash
+gh workflow run release.yml -f tag=v0.1.1 -f publish_target=testpypi
+```
+
 Then verify the published artifacts from TestPyPI in a fresh environment:
 
 ```bash
@@ -106,6 +115,10 @@ Create a GitHub Release from the same `vX.Y.Z` tag. Publishing the release
 triggers `.github/workflows/release.yml`, which rebuilds from the tag,
 validates versions, smoke-tests the wheels, and publishes the exact uploaded
 artifact set to PyPI after the `pypi` environment approval.
+
+Do not move or force-update release tags. The release workflow assumes the tag
+already passed PR or main-branch CI, and moving a tag can bypass that validation
+history.
 
 After the workflow finishes, verify PyPI installs in a fresh environment:
 
