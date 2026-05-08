@@ -1,0 +1,91 @@
+"""Update synchronized FlowMesh package versions and internal pins."""
+
+import argparse
+import re
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+PACKAGE_PYPROJECTS: tuple[Path, ...] = (
+    REPO_ROOT / "pyproject.toml",
+    REPO_ROOT / "cli" / "pyproject.toml",
+    REPO_ROOT / "cli" / "stack" / "pyproject.toml",
+    REPO_ROOT / "hook" / "pyproject.toml",
+    REPO_ROOT / "sdk" / "pyproject.toml",
+    REPO_ROOT / "sdk" / "stack" / "pyproject.toml",
+)
+FIRST_PARTY_DISTRIBUTIONS: tuple[str, ...] = (
+    "flowmesh-cli-stack",
+    "flowmesh-sdk-stack",
+    "flowmesh-cli",
+    "flowmesh-hook",
+    "flowmesh-sdk",
+    "flowmesh",
+)
+
+_VERSION_RE = re.compile(r'(?m)^version = "[^"]+"$')
+_PIN_RE = re.compile(
+    r"(?P<name>\b(?:"
+    + "|".join(re.escape(name) for name in FIRST_PARTY_DISTRIBUTIONS)
+    + r")\b)(?P<extras>\[[^\]]+\])?==(?P<version>[^\"'\s,\]]+)"
+)
+_VERSION_VALUE_RE = re.compile(r"^v?[0-9]+(?:\.[0-9]+){2}[A-Za-z0-9.!+_-]*$")
+
+
+def _normalize_version(raw: str) -> str:
+    if _VERSION_VALUE_RE.match(raw) is None:
+        raise SystemExit(f"Version must look like X.Y.Z or vX.Y.Z, got {raw!r}.")
+    return raw.removeprefix("v")
+
+
+def _render(text: str, version: str, path: Path) -> str:
+    versioned, count = _VERSION_RE.subn(f'version = "{version}"', text, count=1)
+    if count != 1:
+        rel = path.relative_to(REPO_ROOT)
+        raise SystemExit(f"Expected one project version line in {rel}.")
+    return _PIN_RE.sub(
+        lambda m: f"{m.group('name')}{m.group('extras') or ''}=={version}",
+        versioned,
+    )
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("version", help="Synchronized release version, e.g. 0.1.1.")
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="Fail if the package files are not already set to the version.",
+    )
+    args = parser.parse_args()
+
+    version = _normalize_version(args.version)
+    rendered: list[tuple[Path, str, str]] = []
+    for path in PACKAGE_PYPROJECTS:
+        current = path.read_text()
+        rendered.append((path, current, _render(current, version, path)))
+
+    changed = [path for path, current, updated in rendered if current != updated]
+    if args.check:
+        if changed:
+            print("Package versions need updates:")
+            for path in changed:
+                print(f"- {path.relative_to(REPO_ROOT)}")
+            return 1
+        print(f"Package versions are already set to {version}.")
+        return 0
+
+    for path, current, updated in rendered:
+        if current != updated:
+            path.write_text(updated)
+
+    if changed:
+        print(f"Updated package versions and internal pins to {version}:")
+        for path in changed:
+            print(f"- {path.relative_to(REPO_ROOT)}")
+    else:
+        print(f"Package versions are already set to {version}.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
