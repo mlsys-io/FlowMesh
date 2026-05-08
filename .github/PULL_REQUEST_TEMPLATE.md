@@ -45,7 +45,7 @@ Types: feat, fix, refactor, chore, test, perf
 - [ ] I have added or updated tests covering my changes (if applicable).
 - [ ] I have verified that `uv run pytest tests/` passes locally.
 - [ ] If I changed shared schemas or proto definitions, I have checked downstream compatibility across Server and Worker.
-- [ ] If I changed the SDK or CLI, I have verified the affected packages work (`uv sync --all-extras --frozen`).
+- [ ] If I changed the SDK or CLI, I have verified the affected packages work (`uv sync --all-packages --group ci --frozen`).
 - [ ] If this is a breaking change, I have prefixed the PR title with `[BREAKING]` and described migration steps above.
 - [ ] I have updated documentation or config examples if user-facing behavior changed.
 

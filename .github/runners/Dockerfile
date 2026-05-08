@@ -19,6 +19,6 @@ RUN curl -LsSf "https://astral.sh/uv/${UV_VERSION}/install.sh" \
  && uv --version
 COPY . /tmp/flowmesh
 RUN cd /tmp/flowmesh \
- && uv sync --all-extras --frozen \
+ && uv sync --all-packages --group ci --frozen \
  && cd / \
  && rm -rf /tmp/flowmesh

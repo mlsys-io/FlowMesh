@@ -16,6 +16,12 @@ The codebase is a **uv workspace** with these packages:
 | `flowmesh-sdk-stack` | `sdk/stack/` | Stack/node helpers |
 | `flowmesh-cli` | `cli/` | Typer CLI (`flowmesh ...`) |
 | `flowmesh-cli-stack` | `cli/stack/` | Stack deployment commands |
+| `flowmesh-hook` | `hook/` | Plugin hook protocol interfaces |
+
+Only the SDK, CLI, stack helper, hook, and lightweight `flowmesh`
+metapackage distributions are published to PyPI. The runtime source under
+`src/` is copied into server and worker images directly and is not included in
+the published `flowmesh` wheel.
 
 ## Topology
 

@@ -18,13 +18,11 @@ uv venv .venv
 source .venv/bin/activate
 
 # Sync the worker runtime (baseline inference stack)
-uv sync --extra inference
+uv sync --group runtime-worker-core --group runtime-inference
 
 # Optional executors:
-# uv sync --extra inference --extra training   # enable PPO/DPO/SFT trainers
-# uv sync --extra inference --extra rag        # enable RAG executor
-# uv sync --extra inference --extra agent      # enable Agent pipelines
-# uv sync --all-extras                         # install every optional component
+# uv sync --group runtime-worker-cpu           # enable every CPU worker component
+# uv sync --group runtime-worker-cpu --group runtime-worker-gpu  # add GPU deltas
 ```
 
 ### 2. Launch the worker

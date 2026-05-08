@@ -14,32 +14,34 @@ Thank you for your interest in FlowMesh! We welcome bug fixes, new features, doc
 ### Setup
 
 ```bash
-uv sync --extra dev
+uv sync --all-packages
 ```
 
-The `dev` extra is required for all contributors (linters, formatters, type
-checkers, test runners). Add more extras for the component you're working on:
+The `dev` dependency group is installed by default and contains linters,
+formatters, type checkers, and test runners. Add more groups for the component
+you're working on:
 
-| Extra | Purpose |
+| Group | Purpose |
 |-------|---------|
-| `dev` | Linters, formatters, type checkers, test runners (required for all contributors) |
-| `server` | Server dependencies (FastAPI, Redis, gRPC, SQLAlchemy, asyncpg, Docker) |
-| `worker-core` | Worker process baseline (gRPC, httpx, docker) |
-| `inference` | Inference executors (transformers, diffusers, accelerate, torch) |
-| `inference-gpu` | GPU-only inference deps (vLLM, vllm-omni, bitsandbytes, flashinfer) |
-| `training` | Training executors (trl, peft) |
-| `training-gpu` | GPU-only training deps (deepspeed) |
-| `rag` | RAG executor (Qdrant, fastembed) |
-| `agent` | Agent executor / Utu framework (OpenAI Agents SDK, Hydra, tools) |
-| `analytics` | Data analytics and connectors (pandas, boto3, psycopg) |
-| `observability` | Tracing and monitoring (OpenTelemetry, Arize Phoenix) |
-| `cli` | CLI package |
-| `sdk` | SDK package |
+| `dev` | Linters, formatters, type checkers, test runners (installed by default) |
+| `runtime-server` | Server dependencies (FastAPI, Redis, gRPC, Docker) |
+| `runtime-worker-core` | Worker process baseline (gRPC, httpx, docker) |
+| `runtime-inference` | Inference executors (transformers, diffusers, accelerate, torch) |
+| `runtime-inference-gpu` | GPU-only inference deps (vLLM, vllm-omni, bitsandbytes, flashinfer) |
+| `runtime-training` | Training executors (trl, peft) |
+| `runtime-training-gpu` | GPU-only training deps (deepspeed) |
+| `runtime-rag` | RAG executor (Qdrant, fastembed) |
+| `runtime-agent` | Agent executor / Utu framework (OpenAI Agents SDK, Hydra, tools) |
+| `runtime-analytics` | Data analytics and connectors (pandas, boto3, psycopg) |
+| `runtime-observability` | Tracing and monitoring (OpenTelemetry, Arize Phoenix) |
+| `runtime-worker-cpu` | Aggregate CPU worker runtime |
+| `runtime-worker-gpu` | Aggregate GPU-only worker runtime delta |
+| `ci` | Full CI environment, including dev, server, CPU worker, and GPU worker deps |
 
 For full development across all components:
 
 ```bash
-uv sync --all-extras
+uv sync --all-packages --group ci
 ```
 
 ### Install Pre-commit Hooks
@@ -107,12 +109,14 @@ If your change touches shared schemas or proto definitions, verify downstream co
 
 ## Dependency Pins
 
-Dependency versions live in two places with different styles:
+Runtime dependency versions live in two places with different styles:
 
-- **`pyproject.toml`** — `>=X.Y.Z` lower bounds. Expresses a compatibility floor; lets uv resolve the current acceptable version.
+- **`pyproject.toml` dependency groups** — `>=X.Y.Z` lower bounds. Expresses a compatibility floor; lets uv resolve the current acceptable version.
 - **`src/worker/requirements/requirements{,.gpu}.txt`** — exact `==X.Y.Z` pins for deterministic, reproducible environment of worker environment.
 
-The requirements files are **auto-generated** from `pyproject.toml` + `uv.lock` by `scripts/dev/sync_requirements.py`. Do not edit them by hand.
+The requirements files are **auto-generated** from runtime dependency groups
+in `pyproject.toml` + `uv.lock` by `scripts/dev/sync_requirements.py`. Do not
+edit them by hand.
 
 When you bump a dependency:
 

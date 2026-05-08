@@ -61,7 +61,7 @@ workers, ensure the NVIDIA Container Toolkit is also installed.
 git clone https://github.com/mlsys-io/FlowMesh.git
 cd FlowMesh
 pip install uv
-uv sync --all-extras
+uv sync --all-packages --group ci
 
 # 2. Bring up the local stack (Server + Redis + Supervisor)
 uv run flowmesh stack up
@@ -130,28 +130,28 @@ and `AGENTS.md` for the full schema reference.
 
 ## Extending FlowMesh
 
-FlowMesh exposes three plugin hooks for organisations that want to layer
-additional auth, submission, or usage-tracking behaviour on top of the core
-server:
+FlowMesh exposes plugin hooks for organisations that want to layer additional
+auth, submission policy, usage tracking, authorisation, supplier attribution,
+or resource lifecycle behaviour on top of the core server. Install the
+standalone hook contract with:
 
-- `IdentityProvider` — resolves bearer tokens to a principal context (no-op when none registered)
-- `SubmissionGuard` — runs preconditions before workflow submission
-- `UsageSink` — fans out per-task usage rows after a task completes (e.g. billing, audit, observability)
+```bash
+pip install "flowmesh[hook]"
+```
 
-A plugin is any Python module that exposes `install()` and registers itself
-into `server.hooks`. Plugins are loaded by setting `FLOWMESH_PLUGINS` to a
-comma-separated list of importable module names. Plugins can ship as
-in-tree modules, sibling-mounted packages, or pip-installable wheels — the
-core never references plugin names.
+A plugin is any Python module that exposes `install()` returning
+`flowmesh_hook.HookBindings`. Plugins are loaded by setting
+`FLOWMESH_PLUGINS` to a comma-separated list of importable module names.
+Plugins can ship as in-tree modules, sibling-mounted packages, or
+pip-installable wheels — the core never references plugin names.
 
-See `AGENTS.md` for the full plugin contract and `src/server/hooks/` for the
-hook protocols.
+See [`docs/PLUGINS.md`](docs/PLUGINS.md) for the full plugin contract.
 
 ## Development
 
 ```bash
 # Install dev tooling
-uv sync --all-extras
+uv sync --all-packages --group ci
 
 # Format / lint / type-check
 uv run pre-commit run --all-files

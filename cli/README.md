@@ -12,7 +12,7 @@ Standalone FlowMesh CLI package (`flowmesh-cli`).
 Install with the `stack` extra to get both:
 
 ```bash
-pip install './cli[stack]'
+pip install "flowmesh[cli]"
 ```
 
 The CLI entrypoint is `flowmesh`. Stack assets (compose, bake, env example) are

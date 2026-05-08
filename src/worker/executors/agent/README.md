@@ -51,7 +51,7 @@ The Youtu-Agent framework is already included. Install any additional dependenci
 
 ```bash
 # From the repo root
-uv sync --extra agent
+uv sync --group runtime-agent
 ```
 
 ### 3. Test the Integration
