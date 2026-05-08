@@ -49,6 +49,9 @@ def _project_dependencies(data: dict) -> list[str]:
     optional = project.get("optional-dependencies", {})
     for specs in optional.values():
         dependencies.extend(specs)
+    dependency_groups = data.get("dependency-groups", {})
+    for specs in dependency_groups.values():
+        dependencies.extend(spec for spec in specs if isinstance(spec, str))
     return dependencies
 
 
