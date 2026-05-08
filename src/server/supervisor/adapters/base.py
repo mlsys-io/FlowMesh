@@ -1,6 +1,7 @@
 import os
 from abc import ABC, abstractmethod
-from typing import NewType, Self
+from dataclasses import dataclass
+from typing import NewType
 
 from pydantic import BaseModel, ConfigDict, SecretStr
 
@@ -183,16 +184,8 @@ class WorkerAdapter(ABC):
 
 
 class WorkerFactory(ABC):
-    _instance: Self | None = None
-
     def __init__(self, system_principal: PrincipalContext) -> None:
         self.system_principal = system_principal
-
-    @classmethod
-    def get_instance(cls, system_principal: PrincipalContext) -> Self:
-        if cls._instance is None:
-            cls._instance = cls(system_principal)
-        return cls._instance
 
     @abstractmethod
     def create_worker(self, token: WorkerTokenType, *args, **kwargs) -> WorkerAdapter:
@@ -204,3 +197,17 @@ class WorkerFactory(ABC):
 
     def cleanup(self) -> None:
         pass
+
+
+@dataclass(frozen=True)
+class ProviderSpec:
+    """Per-provider dispatch entry consumed by `WorkerManager`.
+
+    Each provider module (e.g. `adapters.docker`, `adapters.vastai`) exposes a
+    `get_provider_spec(system_principal)` builder that returns one of these.
+    """
+
+    name: str
+    config_cls: type[WorkerConfig]
+    adapter_cls: type[WorkerAdapter]
+    factory: WorkerFactory

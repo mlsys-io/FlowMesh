@@ -115,11 +115,11 @@ class TestWorkerManagerStop:
         vastai_factory = MagicMock()
         with (
             patch(
-                "server.supervisor.manager.DockerWorkerFactory.get_instance",
+                "server.supervisor.adapters.docker.DockerWorkerFactory",
                 return_value=docker_factory,
             ),
             patch(
-                "server.supervisor.manager.VastAIWorkerFactory.get_instance",
+                "server.supervisor.adapters.vastai.VastAIWorkerFactory",
                 return_value=vastai_factory,
             ),
         ):

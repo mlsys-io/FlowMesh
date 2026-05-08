@@ -20,7 +20,13 @@ from ...hooks import PrincipalContext
 from ...utils.helpers import get_docker_client, get_logger
 from ..resource_manager import GpuArch, ResourceManager
 from ..schemas import WorkerHardware, WorkerInfo, WorkerStatus
-from .base import WorkerAdapter, WorkerConfig, WorkerFactory, WorkerTokenType
+from .base import (
+    ProviderSpec,
+    WorkerAdapter,
+    WorkerConfig,
+    WorkerFactory,
+    WorkerTokenType,
+)
 from .utils import get_worker_image_name
 
 _STOP_TIMEOUT = 30  # seconds
@@ -654,8 +660,8 @@ class DockerWorkerFactory(WorkerFactory):
     _CONTAINER_NAME_MAX_LEN = 128
     _CONTAINER_NAME_ALLOWED_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
 
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        super().__init__(*args, **kwargs)
+    def __init__(self, system_principal: PrincipalContext) -> None:
+        super().__init__(system_principal)
         self._rm = ResourceManager.get_instance()
         self._docker = get_docker_client()
         self._worker_id_registry: Counter[str] = Counter()
@@ -763,3 +769,12 @@ class DockerWorkerFactory(WorkerFactory):
                 raise ValueError(f"Unsupported worker type: {worker_type}")
         next_id = self._get_next_worker_id(prefix)
         return f"{prefix}{next_id}"
+
+
+def get_provider_spec(system_principal: PrincipalContext) -> ProviderSpec:
+    return ProviderSpec(
+        name=_PROVIDER_NAME,
+        config_cls=DockerWorkerConfig,
+        adapter_cls=DockerWorkerAdapter,
+        factory=DockerWorkerFactory(system_principal),
+    )

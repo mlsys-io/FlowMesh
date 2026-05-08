@@ -11,7 +11,13 @@ from ...hooks import PrincipalContext
 from ...utils.helpers import ResourcePool, get_logger
 from ..resource_manager import GpuArch
 from ..schemas import WorkerHardware, WorkerInfo, WorkerStatus
-from .base import WorkerAdapter, WorkerConfig, WorkerFactory, WorkerTokenType
+from .base import (
+    ProviderSpec,
+    WorkerAdapter,
+    WorkerConfig,
+    WorkerFactory,
+    WorkerTokenType,
+)
 from .utils import env_to_secret_str, get_worker_image_name, to_env_str
 
 _PROVIDER_NAME = "vastai"
@@ -362,8 +368,8 @@ class VastAIWorkerAdapter(WorkerAdapter):
 
 
 class VastAIWorkerFactory(WorkerFactory):
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        super().__init__(*args, **kwargs)
+    def __init__(self, system_principal: PrincipalContext) -> None:
+        super().__init__(system_principal)
         self._client_cache: dict[str, VastAI] = {}
         self._worker_id_registry: Counter[str] = Counter()
         self._instance_pool = ResourcePool[int]()
@@ -408,3 +414,12 @@ class VastAIWorkerFactory(WorkerFactory):
         next_id = self._worker_id_registry[prefix]
         self._worker_id_registry[prefix] += 1
         return f"{prefix}{next_id}"
+
+
+def get_provider_spec(system_principal: PrincipalContext) -> ProviderSpec:
+    return ProviderSpec(
+        name=_PROVIDER_NAME,
+        config_cls=VastAIWorkerConfig,
+        adapter_cls=VastAIWorkerAdapter,
+        factory=VastAIWorkerFactory(system_principal),
+    )
