@@ -11,12 +11,13 @@ The codebase is a **uv workspace** with these packages:
 
 | Package | Path | Purpose |
 |---------|------|---------|
-| `flowmesh` (root) | `src/` | Server, Worker, shared schemas |
+| `flowmesh` (root) | `pyproject.toml` | Lightweight PyPI metapackage |
 | `flowmesh-sdk` | `sdk/` | Public Python SDK |
 | `flowmesh-sdk-stack` | `sdk/stack/` | Stack/node helpers |
 | `flowmesh-cli` | `cli/` | Typer CLI (`flowmesh ...`) |
 | `flowmesh-cli-stack` | `cli/stack/` | Stack deployment commands |
 | `flowmesh-hook` | `hook/` | Plugin hook protocol interfaces |
+| Runtime source | `src/` | Server, Worker, shared schemas |
 
 Only the SDK, CLI, stack helper, hook, and lightweight `flowmesh`
 metapackage distributions are published to PyPI. The runtime source under
