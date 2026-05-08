@@ -282,12 +282,15 @@ def normalize_numbers(value: Any) -> Any:
 
 def iter_pubsub_messages(pubsub: PubSub) -> Iterable[Any]:
     """Iterate over messages from a Redis PubSub instance."""
-    for msg in pubsub.listen():
-        if msg.get("type") != "message":
-            continue
-        raw = msg.get("data")
-        if raw is None:
-            continue
-        if isinstance(raw, bytes):
-            raw = raw.decode("utf-8", errors="ignore")
-        yield json.loads(raw)
+    try:
+        for msg in pubsub.listen():
+            if msg.get("type") != "message":
+                continue
+            raw = msg.get("data")
+            if raw is None:
+                continue
+            if isinstance(raw, bytes):
+                raw = raw.decode("utf-8", errors="ignore")
+            yield json.loads(raw)
+    except (ConnectionError, ValueError, OSError):
+        return

@@ -57,6 +57,7 @@ class WorkerEvent(BaseEvent):
     payload: dict[str, Any] = Field(
         default_factory=dict, description="Additional context."
     )
+    actor: dict[str, Any] | None = Field(default=None, description="Actor information")
 
 
 class NodeEvent(BaseEvent):
@@ -65,6 +66,7 @@ class NodeEvent(BaseEvent):
     payload: dict[str, Any] = Field(
         default_factory=dict, description="Additional context."
     )
+    actor: dict[str, Any] | None = Field(default=None, description="Actor information")
 
 
 Event = TaskEvent | WorkerEvent | NodeEvent

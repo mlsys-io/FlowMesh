@@ -169,6 +169,7 @@ def main() -> None:
 
     supervisor_client = SupervisorClient(
         worker_token=cfg.worker_token,
+        owner_principal=cfg.owner_principal,
         grpc_target=cfg.supervisor_grpc_target,
         worker_namespace=cfg.namespace,
         worker_cluster=cfg.cluster,

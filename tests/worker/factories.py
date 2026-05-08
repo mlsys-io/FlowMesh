@@ -4,11 +4,20 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any, Final
 
+from flowmesh_hook import PrincipalContext
+
 from shared.tasks import TaskType
 from shared.tasks.worker_message import TaskEnvelopeStrict, WorkerTaskMessage
 from worker.config import WorkerConfig
 
 DEFAULT_WORKER_CONFIG: Final[WorkerConfig] = WorkerConfig(
+    owner_principal=PrincipalContext(
+        principal_id="test-user",
+        org_id="test-org",
+        external_id="test-user",
+        principal_type="user",
+        scopes=["*"],
+    ).to_dict(),
     worker_token="test",
     supervisor_grpc_target="localhost:50051",
     supervisor_grpc_tls_ca_b64=None,

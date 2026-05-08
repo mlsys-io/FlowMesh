@@ -9,10 +9,11 @@ Fires for `WORKFLOW`, `TASK`, `NODE`, and `WORKER`. `RESULT` ownership
 is inferred from the owning task by the `PermissionChecker` and does not
 fire individually.
 
-`register` always runs from a request handler with an authenticated
-actor. `deregister` may also fire from system-initiated reaps (heartbeat
-cleanup, supervisor self-shutdown) where no actor is available — in
-those cases `principal` is `None`.
+`principal` is always a real `PrincipalContext`. For
+system-initiated paths (boot-time worker auto-spawn, heartbeat reaper,
+supervisor self-shutdown) the server resolves a system principal at
+startup via the `IdentityProvider` chain against `FLOWMESH_API_KEY`,
+falling back to a synthetic admin when no providers are configured.
 
 Multiple registrars compose: every registrar's `register` runs in
 registration order; failures propagate and abort the originating request.
@@ -48,16 +49,16 @@ class ResourceRegistrar(Protocol):
 
     async def deregister(
         self,
-        principal: PrincipalContext | None,
+        principal: PrincipalContext,
         resource_type: ResourceType,
         resource_id: str,
         logger: logging.Logger,
     ) -> None:
         """Record that `resource_id` of `resource_type` no longer exists.
 
-        `principal` is the actor performing the destruction when one exists,
-        or `None` for system-initiated reaps (heartbeat-driven cleanup,
-        process self-shutdown) where no authenticated request triggered the
-        removal. Plugins typically drop the ownership row regardless.
+        `principal` is the actor performing the destruction (the calling
+        admin for request-driven teardowns, or the resolved system principal
+        for heartbeat reaps and self-shutdown). Plugins typically drop the
+        ownership row regardless of who initiated the destruction.
         """
         ...

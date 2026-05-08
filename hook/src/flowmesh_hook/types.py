@@ -1,6 +1,7 @@
 """Shared types referenced by the hook protocols."""
 
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import asdict, dataclass
 from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum
@@ -27,6 +28,19 @@ class PrincipalContext:
 
     scopes: list[str]
     """Capabilities the principal carries, in a plugin-defined vocabulary."""
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, Any]) -> "PrincipalContext":
+        return cls(
+            principal_id=str(payload["principal_id"]),
+            org_id=str(payload["org_id"]),
+            external_id=str(payload["external_id"]),
+            principal_type=str(payload["principal_type"]),
+            scopes=list(payload.get("scopes", [])),
+        )
 
 
 class ResourceType(StrEnum):

@@ -32,18 +32,17 @@ class SimpleResourceRegistrar:
 
     async def deregister(
         self,
-        principal: PrincipalContext | None,
+        principal: PrincipalContext,
         resource_type: ResourceType,
         resource_id: str,
         logger: logging.Logger,
     ) -> None:
         owner = state.OWNERSHIP.pop((resource_type, resource_id), None)
-        actor = principal.principal_id if principal is not None else "<system>"
         logger.info(
             "%s: deregister %s/%s (was_owner=%s, actor=%s)",
             self.name,
             resource_type.value,
             resource_id,
             owner,
-            actor,
+            principal.principal_id,
         )

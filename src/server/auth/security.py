@@ -60,6 +60,32 @@ async def authenticate_api_key(
     )
 
 
+async def resolve_system_principal(
+    api_key: str, logger: logging.Logger
+) -> PrincipalContext:
+    """Resolve the principal that represents this server for system-driven actions
+    (boot-time worker spawn, supervisor self-registration, heartbeat reaper, etc.)."""
+    if not IDENTITY_PROVIDERS:
+        return default_principal()
+    try:
+        for provider in IDENTITY_PROVIDERS:
+            resolved = await provider.resolve(api_key, logger)
+            if resolved is not None:
+                return resolved
+    except Exception as exc:
+        logger.warning(
+            "IdentityProvider raised resolving system principal: %s; "
+            "falling back to default admin principal.",
+            exc,
+        )
+        return default_principal()
+    logger.warning(
+        "No IdentityProvider claimed the system FLOWMESH_API_KEY; "
+        "falling back to default admin principal."
+    )
+    return default_principal()
+
+
 async def authenticate_connection(conn: HTTPConnection) -> PrincipalContext:
     """FastAPI dependency: extract the bearer token and run the auth chain.
 
@@ -160,16 +186,16 @@ async def register_resource(
 
 
 async def deregister_resource(
-    principal: PrincipalContext | None,
+    principal: PrincipalContext,
     resource_type: ResourceType,
     resource_id: str,
     logger: logging.Logger,
 ) -> None:
     """Notify every registered `ResourceRegistrar` that a resource was destroyed.
 
-    `principal` is the actor performing the destruction when one exists, or
-    `None` for system-initiated reaps (e.g. heartbeat-driven node/worker
-    cleanup) where no authenticated request triggered the removal.
+    `principal` is always a real `PrincipalContext` — the calling admin for
+    request-driven destructions, the resolved system principal (see
+    `resolve_system_principal`) for heartbeat reaps and self-shutdown.
     """
     for registrar in RESOURCE_REGISTRARS:
         await registrar.deregister(principal, resource_type, resource_id, logger)

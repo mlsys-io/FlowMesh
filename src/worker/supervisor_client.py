@@ -37,6 +37,7 @@ class SupervisorClient:
     def __init__(
         self,
         worker_token: str,
+        owner_principal: dict[str, Any] | None,
         grpc_target: str,
         worker_namespace: str,
         worker_cluster: str,
@@ -46,6 +47,7 @@ class SupervisorClient:
         grpc_keepalive_time_ms: int | None = None,
         grpc_keepalive_timeout_ms: int | None = None,
     ):
+        self.owner_principal = owner_principal
         self.grpc_target = grpc_target
         self.worker_namespace = worker_namespace
         self.worker_cluster = worker_cluster
@@ -133,6 +135,7 @@ class SupervisorClient:
             ts=started_at,
             tags=tags,
             payload=payload,
+            actor=self.owner_principal,
         )
 
     def start(self) -> None:
@@ -236,6 +239,7 @@ class SupervisorClient:
             type="UNREGISTER",
             worker_id=self.worker_id,
             payload=payload,
+            actor=self.owner_principal,
         )
         self._send_event(event)
 

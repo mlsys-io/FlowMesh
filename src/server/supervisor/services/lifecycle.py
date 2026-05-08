@@ -4,7 +4,9 @@ import threading
 from collections.abc import Callable
 
 import httpx
+from flowmesh_hook import PrincipalContext
 
+from shared.schemas.event import NodeEvent, serialize_event
 from shared.schemas.node import NodeInfo
 from shared.utils.time import now_iso
 
@@ -26,6 +28,7 @@ class Lifecycle:
         hb_sec: int,
         hb_ttl_sec: int,
         logger: logging.Logger,
+        system_principal: PrincipalContext,
         current_gpu_count_getter: Callable[[], int] | None = None,
     ) -> None:
         self._redis = redis
@@ -36,6 +39,7 @@ class Lifecycle:
         self.hb_sec = hb_sec
         self.hb_ttl_sec = hb_ttl_sec
         self.logger = logger
+        self._system_principal = system_principal
         self._current_gpu_count_getter = current_gpu_count_getter
 
         self._node_id: str | None = None
@@ -88,14 +92,15 @@ class Lifecycle:
     # ------------------------------------------------------------------ #
 
     def _publish_event(self, event_type: str, **extra: object) -> None:
-        payload = {
-            "type": event_type,
-            "node_id": self._node_id,
-            "ts": now_iso(),
-            "tags": [],
-            "payload": {},
-            **extra,
-        }
+        event = NodeEvent(
+            type=event_type,
+            ts=now_iso(),
+            node_id=self.node_id,
+            tags=[],
+            payload={},
+            actor=self._system_principal.to_dict(),
+        )
+        payload = serialize_event(event) | extra
         self._redis.publish_telemetry(NODE_EVENT_CHANNEL, json.dumps(payload))
 
     def _current_gpu_count(self) -> int | None:

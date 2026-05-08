@@ -17,6 +17,7 @@ from ..config import (
     RedisConfig,
     WorkerManagementConfig,
 )
+from ..hooks import PrincipalContext
 from ..utils.concurrent import TaskReceiver, TaskSender, create_task_channel
 
 _CMD_TIMEOUT = 120.0
@@ -58,7 +59,7 @@ class WorkerSupervisor:
     # Lifecycle
     # ------------------------------------------------------------------ #
 
-    async def start(self) -> None:
+    async def start(self, system_principal: PrincipalContext) -> None:
         """Spawn the supervisor child process."""
         if self._process is not None and self._process.is_alive():
             self._logger.warning("Supervisor process already running")
@@ -75,6 +76,7 @@ class WorkerSupervisor:
                 "log_cfg": self._logging_config,
                 "cmd_receiver": self._cmd_receiver,
                 "node_id_queue": self._node_id_queue,
+                "system_principal": system_principal,
             },
             name=f"supervisor-{self._identity.alias}",
             daemon=True,
@@ -105,7 +107,7 @@ class WorkerSupervisor:
         self._node_id = node_id
         self._logger.info("Supervisor handshake complete: node_id=%s", node_id)
 
-    async def stop(self, timeout: float = 10.0) -> None:
+    async def stop(self, timeout: float = 3.0) -> None:
         """Gracefully stop the supervisor child process."""
         proc = self._process
         if (
@@ -164,6 +166,7 @@ def _run_supervisor(
     log_cfg: LoggingConfig,
     cmd_receiver: TaskReceiver[CommandMessage, CommandResponse] | None,
     node_id_queue: MPQueue[str],
+    system_principal: PrincipalContext,
 ) -> None:
     """Target function executed inside the child process."""
     from pathlib import Path
@@ -243,6 +246,7 @@ def _run_supervisor(
         hb_sec=wm_cfg.heartbeat_interval,
         hb_ttl_sec=hb_ttl_sec,
         logger=logger,
+        system_principal=system_principal,
         current_gpu_count_getter=current_gpu_count_getter,
     )
 
@@ -261,6 +265,7 @@ def _run_supervisor(
         redis=redis_client.sync, node_id=node_id, logger=logger
     )
     worker_manager = WorkerManager(
+        system_principal,
         wm_cfg.config_path,
         worker_adapter_registry,
         logger,

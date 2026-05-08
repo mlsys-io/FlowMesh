@@ -7,6 +7,7 @@ from typing import Any
 import yaml
 from pydantic import BaseModel, ConfigDict, Field
 
+from ..hooks import PrincipalContext
 from .adapters.base import WorkerAdapter, WorkerConfig, WorkerTokenType
 from .adapters.docker import (
     DockerWorkerAdapter,
@@ -62,11 +63,13 @@ class ServerWorkerConfig(BaseModel):
 class WorkerManager:
     def __init__(
         self,
+        system_principal: PrincipalContext,
         config_path: str,
         registry: WorkerRegistry,
         logger: logging.Logger,
         capacity_change_callback: Callable[[], None] | None = None,
     ) -> None:
+        self.system_principal = system_principal
         self.config_path = config_path
         self.logger = logger
 
@@ -172,8 +175,9 @@ class WorkerManager:
 
         await self._stop_and_destroy_workers(self._registry.all_workers())
         self._report_capacity_change()
-        DockerWorkerFactory.get_instance().cleanup()
-        VastAIWorkerFactory.get_instance().cleanup()
+        principal = self.system_principal
+        DockerWorkerFactory.get_instance(principal).cleanup()
+        VastAIWorkerFactory.get_instance(principal).cleanup()
         self._registry.clear()
         self._default_worker_config = None
         self._is_started = False
@@ -264,6 +268,7 @@ class WorkerManager:
         token = init_config.worker_token or self._registry.new_token()
         provider = init_config.provider.strip().lower()
         worker_config = (self._default_worker_config or {}) | init_config.worker_config
+        principal = self.system_principal
 
         # Create worker adapter
         config: WorkerConfig
@@ -271,10 +276,14 @@ class WorkerManager:
         match provider:
             case "docker":
                 config = DockerWorkerConfig.model_validate(worker_config)
-                worker = DockerWorkerFactory.get_instance().create_worker(token, config)
+                worker = DockerWorkerFactory.get_instance(principal).create_worker(
+                    token, config
+                )
             case "vastai":
                 config = VastAIWorkerConfig.model_validate(worker_config)
-                worker = VastAIWorkerFactory.get_instance().create_worker(token, config)
+                worker = VastAIWorkerFactory.get_instance(principal).create_worker(
+                    token, config
+                )
             case _:
                 raise ValueError(f"Unsupported worker provider: {provider}")
 
@@ -299,11 +308,12 @@ class WorkerManager:
         return True
 
     def _destroy_worker(self, worker: WorkerAdapter) -> None:
+        principal = self.system_principal
         match worker:
             case DockerWorkerAdapter():
-                DockerWorkerFactory.get_instance().destroy_worker(worker)
+                DockerWorkerFactory.get_instance(principal).destroy_worker(worker)
             case VastAIWorkerAdapter():
-                VastAIWorkerFactory.get_instance().destroy_worker(worker)
+                VastAIWorkerFactory.get_instance(principal).destroy_worker(worker)
             case _:
                 raise ValueError(f"Unsupported worker type: {type(worker)}")
 

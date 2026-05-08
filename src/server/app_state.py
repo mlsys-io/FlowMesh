@@ -5,6 +5,7 @@ from starlette.requests import HTTPConnection
 
 from .clients import RedisClient
 from .dispatcher import Dispatcher
+from .hooks import PrincipalContext
 from .registries import NodeRegistry, WorkerRegistry, WorkflowRegistry
 from .services.metrics import MetricsRecorder
 from .services.monitoring import EventMonitor
@@ -71,6 +72,12 @@ def get_node_id(conn: HTTPConnection) -> str:
     if not isinstance(node_id, str) or not node_id:
         raise RuntimeError("node_id not assigned; supervisor not started")
     return node_id
+
+
+def get_system_principal(conn: HTTPConnection) -> PrincipalContext:
+    if conn.app.state.system_principal is None:
+        raise RuntimeError("System principal not initialized")
+    return conn.app.state.system_principal
 
 
 def get_ssh_forward(conn: HTTPConnection) -> SshForwardService | None:

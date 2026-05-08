@@ -123,7 +123,9 @@ class TestWorkerManagerStop:
                 return_value=vastai_factory,
             ),
         ):
-            manager = WorkerManager("missing.yaml", WorkerRegistry(), MagicMock())
+            manager = WorkerManager(
+                MagicMock(), "missing.yaml", WorkerRegistry(), MagicMock()
+            )
             manager._is_started = True
 
             asyncio.run(manager.stop())

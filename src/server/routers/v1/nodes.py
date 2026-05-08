@@ -15,7 +15,6 @@ from ...app_state import (
 from ...auth.security import (
     PrincipalContext,
     authenticate_connection,
-    register_resource,
     require_permission,
     resolve_accessible_ids,
 )
@@ -119,9 +118,6 @@ async def register_node(
         principal, ResourceType.NODE, None, ResourceAction.WRITE, logger
     )
     node_id = await node_registry.register_node_async(node_info)
-    await register_resource(
-        principal, ResourceType.NODE, node_id, {"alias": node_info.alias}, logger
-    )
     return NodeRegisterResponse(node_id=node_id)
 
 
@@ -186,13 +182,6 @@ async def register_worker(
     worker_meta = await request.json()
     worker_id = await worker_registry.register_worker_async(
         node_id, node.alias, worker_meta
-    )
-    await register_resource(
-        principal,
-        ResourceType.WORKER,
-        worker_id,
-        {"node_id": node_id, "node_alias": node.alias},
-        logger,
     )
     return WorkerRegisterResponse(worker_id=worker_id)
 

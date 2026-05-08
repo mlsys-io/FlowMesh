@@ -8,6 +8,7 @@ from .security import (
     register_resource,
     require_permission,
     resolve_accessible_ids,
+    resolve_system_principal,
 )
 
 __all__ = [
@@ -20,4 +21,5 @@ __all__ = [
     "register_resource",
     "require_permission",
     "resolve_accessible_ids",
+    "resolve_system_principal",
 ]

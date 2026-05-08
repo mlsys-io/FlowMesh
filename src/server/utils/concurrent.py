@@ -57,7 +57,6 @@ class TaskSender[T, R]:
         while True:
             task_id, result = self._recv_q.get()
             if isinstance(result, Sentinel):
-                assert result is self._SENTINEL
                 break
             fut = self._result_pool.pop(task_id, None)
             if fut is None or fut.done():
@@ -83,7 +82,6 @@ class TaskReceiver[T, R]:
         while True:
             task_id, task = self._recv_q.get()
             if isinstance(task, Sentinel):
-                assert task is self._SENTINEL
                 break
             yield task_id, task
 

@@ -5,6 +5,7 @@ from typing import NewType, Self
 from pydantic import BaseModel, ConfigDict, SecretStr
 
 from ... import env
+from ...hooks import PrincipalContext
 from ..schemas import WorkerInfo, WorkerStatus
 from .utils import env_to_secret_str, to_env_str
 
@@ -77,11 +78,18 @@ WorkerTokenType = NewType("WorkerTokenType", str)
 
 
 class WorkerAdapter(ABC):
-    def __init__(self, token: WorkerTokenType, name: str, config: WorkerConfig) -> None:
+    def __init__(
+        self,
+        token: WorkerTokenType,
+        name: str,
+        config: WorkerConfig,
+        owner: PrincipalContext,
+    ) -> None:
         self._worker_id: str | None = None
         self.token = token
         self.name = name
         self.config = config
+        self.owner = owner
 
     @property
     @abstractmethod
@@ -155,6 +163,9 @@ class WorkerAdapter(ABC):
             "WORKER_UPLOAD_RESULTS": to_env_str(config.upload_results),
             "DOCKER_GPU_RUNTIME": to_env_str(env.DOCKER_GPU_RUNTIME),
             "FLOWMESH_API_KEY": to_env_str(env.FLOWMESH_API_KEY),
+            "WORKER_OWNER_PRINCIPAL_JSON": to_env_str(
+                self.owner.to_dict(), to_json=True
+            ),
             "OPENAI_API_KEY": to_env_str(config.openai_api_key),
             "GOOGLE_API_KEY": to_env_str(config.google_api_key),
             "HF_TOKEN": to_env_str(config.hf_token),
@@ -174,10 +185,13 @@ class WorkerAdapter(ABC):
 class WorkerFactory(ABC):
     _instance: Self | None = None
 
+    def __init__(self, system_principal: PrincipalContext) -> None:
+        self.system_principal = system_principal
+
     @classmethod
-    def get_instance(cls) -> Self:
+    def get_instance(cls, system_principal: PrincipalContext) -> Self:
         if cls._instance is None:
-            cls._instance = cls()
+            cls._instance = cls(system_principal)
         return cls._instance
 
     @abstractmethod

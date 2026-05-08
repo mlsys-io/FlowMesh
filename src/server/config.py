@@ -127,6 +127,7 @@ class IdentityConfig:
     alias: str = "node"
     tags: list[str] = field(default_factory=list)
     base_url: str = "http://localhost:8000"
+    api_key: str = ""
 
     @classmethod
     def from_env(cls) -> "IdentityConfig":
@@ -146,6 +147,7 @@ class IdentityConfig:
             alias=(os.getenv("NODE_ALIAS") or "node"),
             tags=tags,
             base_url=(os.getenv("FLOWMESH_BASE_URL") or "http://localhost:8000"),
+            api_key=os.getenv("FLOWMESH_API_KEY", "").strip(),
         )
 
 
@@ -272,6 +274,7 @@ class ServerConfig:
     worker_management: WorkerManagementConfig
     log_stream: LogStreamConfig
     results_dir: Path = Path("./results")
+    plugins: list[str] = field(default_factory=list)
 
     @classmethod
     def from_env(cls) -> "ServerConfig":
@@ -280,6 +283,11 @@ class ServerConfig:
             .expanduser()
             .resolve()
         )
+        plugins = [
+            p
+            for raw in os.getenv("FLOWMESH_PLUGINS", "").split(",")
+            if (p := raw.strip())
+        ]
         return cls(
             logging=LoggingConfig.from_env(),
             redis=RedisConfig.from_env(),
@@ -293,4 +301,5 @@ class ServerConfig:
             worker_management=WorkerManagementConfig.from_env(),
             log_stream=LogStreamConfig.from_env(),
             results_dir=results_dir,
+            plugins=plugins,
         )

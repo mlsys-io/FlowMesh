@@ -7,6 +7,7 @@ from pydantic import PrivateAttr, SecretStr
 from vastai import VastAI  # type: ignore
 
 from ... import env
+from ...hooks import PrincipalContext
 from ...utils.helpers import ResourcePool, get_logger
 from ..resource_manager import GpuArch
 from ..schemas import WorkerHardware, WorkerInfo, WorkerStatus
@@ -91,8 +92,9 @@ class VastAIWorkerAdapter(WorkerAdapter):
         config: VastAIWorkerConfig,
         vastai_client: VastAI,
         instance_pool: ResourcePool[int],
+        owner: PrincipalContext,
     ) -> None:
-        super().__init__(token, name, config)
+        super().__init__(token, name, config, owner)
         self.config: VastAIWorkerConfig
         self._client = vastai_client
         self._instance_pool = instance_pool
@@ -360,7 +362,8 @@ class VastAIWorkerAdapter(WorkerAdapter):
 
 
 class VastAIWorkerFactory(WorkerFactory):
-    def __init__(self) -> None:
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
         self._client_cache: dict[str, VastAI] = {}
         self._worker_id_registry: Counter[str] = Counter()
         self._instance_pool = ResourcePool[int]()
@@ -384,6 +387,7 @@ class VastAIWorkerFactory(WorkerFactory):
             config=config,
             vastai_client=client,
             instance_pool=self._instance_pool,
+            owner=self.system_principal,
         )
 
     def destroy_worker(self, worker: WorkerAdapter) -> None:

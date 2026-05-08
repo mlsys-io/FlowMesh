@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 from shared.utils.docker import sanitize_container_name
 
 from ... import env
+from ...hooks import PrincipalContext
 from ...utils.helpers import get_docker_client, get_logger
 from ..resource_manager import GpuArch, ResourceManager
 from ..schemas import WorkerHardware, WorkerInfo, WorkerStatus
@@ -163,13 +164,14 @@ class DockerWorkerAdapter(WorkerAdapter):
         gpu_arch: GpuArch | None,
         config: DockerWorkerConfig,
         docker_client: DockerClient,
+        owner: PrincipalContext,
     ) -> None:
         if config.worker_type == WorkerType.GPU and (
             cuda_devices is None or len(cuda_devices) == 0
         ):
             raise ValueError("Expected at least one CUDA device for GPU worker.")
 
-        super().__init__(token, name, config)
+        super().__init__(token, name, config, owner)
 
         self.config: DockerWorkerConfig
         self.container_name = container_name
@@ -652,7 +654,8 @@ class DockerWorkerFactory(WorkerFactory):
     _CONTAINER_NAME_MAX_LEN = 128
     _CONTAINER_NAME_ALLOWED_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
 
-    def __init__(self) -> None:
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
         self._rm = ResourceManager.get_instance()
         self._docker = get_docker_client()
         self._worker_id_registry: Counter[str] = Counter()
@@ -686,6 +689,7 @@ class DockerWorkerFactory(WorkerFactory):
             gpu_arch=gpu_arch,
             config=config,
             docker_client=self._docker,
+            owner=self.system_principal,
         )
         return worker
 

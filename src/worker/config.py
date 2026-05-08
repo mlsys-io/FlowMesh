@@ -5,9 +5,11 @@ This module encapsulates all environment-derived configuration so the rest of
 the worker code can depend on a structured config object.
 """
 
+import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from shared.utils.parsing import parse_bool_env, parse_float_env, parse_int_env
 
@@ -17,6 +19,7 @@ from .utils.health import get_hb_config
 @dataclass(frozen=True)
 class WorkerConfig:
     worker_token: str
+    owner_principal: dict[str, Any] | None
     supervisor_grpc_target: str
     supervisor_grpc_tls_ca_b64: str | None
     results_dir: Path
@@ -45,6 +48,16 @@ class WorkerConfig:
         worker_token = os.getenv("WORKER_TOKEN", "").strip()
         if not worker_token:
             raise SystemExit("WORKER_TOKEN is required")
+
+        owner_principal: dict[str, Any] | None = None
+        if owner_principal_json := os.getenv("WORKER_OWNER_PRINCIPAL_JSON", "").strip():
+            try:
+                loaded = json.loads(owner_principal_json)
+            except json.JSONDecodeError:
+                pass
+            else:
+                if isinstance(loaded, dict):
+                    owner_principal = loaded
 
         supervisor_grpc_target = (os.getenv("SUPERVISOR_GRPC_TARGET") or "").strip()
         if not supervisor_grpc_target:
@@ -99,6 +112,7 @@ class WorkerConfig:
 
         return WorkerConfig(
             worker_token=worker_token,
+            owner_principal=owner_principal,
             supervisor_grpc_target=supervisor_grpc_target,
             supervisor_grpc_tls_ca_b64=supervisor_grpc_tls_ca_b64,
             results_dir=results_dir,

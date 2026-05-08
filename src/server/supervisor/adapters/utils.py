@@ -1,3 +1,4 @@
+import json
 import os
 from typing import Any
 
@@ -13,7 +14,9 @@ def env_to_secret_str(env_var: str) -> SecretStr | None:
     return SecretStr(value)
 
 
-def to_env_str(val: Any) -> str:
+def to_env_str(val: Any, to_json: bool = False) -> str:
+    if to_json:
+        return json.dumps(val)
     if val is None:
         return ""
     if isinstance(val, bool):

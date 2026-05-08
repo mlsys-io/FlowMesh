@@ -28,8 +28,14 @@ server through six protocol hooks defined in the standalone
   value. With no resolvers registered, `supplier_id` stays at `""`.
 - `ResourceRegistrar` — observe resource lifecycle. The server fires
   `register` after a resource is persisted (`WORKFLOW`, `TASK`, `NODE`,
-  `WORKER`) and `deregister` after one is hard-deleted. Plugins use
-  these to seed their own ACL / ownership tables so subsequent
+  `WORKER`) and `deregister` after one is hard-deleted or
+  self-terminated. `principal` on both calls is always a real
+  `PrincipalContext`: the calling admin for request-driven mutations,
+  or a server-resolved *system principal* for boot-time /
+  heartbeat-driven paths. The system principal is `FLOWMESH_API_KEY`
+  run through the `IdentityProvider` chain at startup, falling back
+  to the synthetic admin when no providers are registered. Plugins
+  use these to seed their own ACL / ownership tables so subsequent
   `PermissionChecker` calls have data to decide on. `RESULT` ownership
   is inferred from the owning task; `RESULT` permission checks are
   always paired with a `task_id`, and workflow-level operations check
