@@ -40,40 +40,5 @@ jobs:
       - name: Build distributions
         run: uv build --all-packages --out-dir dist
 
-      - name: Verify root wheel is metadata-only
-        run: |
-          uv run python - <<'PY'
-          from pathlib import Path
-          from zipfile import ZipFile
-
-          wheel = next(Path("dist").glob("flowmesh-*-py3-none-any.whl"))
-          with ZipFile(wheel) as zf:
-              bad = [
-                  name
-                  for name in zf.namelist()
-                  if name.split("/", 1)[0] in {"server", "shared", "worker"}
-              ]
-          if bad:
-              raise SystemExit(
-                  "root flowmesh wheel contains runtime source: " + ", ".join(bad[:5])
-              )
-          PY
-
-      - name: Smoke-test umbrella extras
-        run: |
-          root_wheel="$(ls dist/flowmesh-*-py3-none-any.whl)"
-
-          uv run python -m venv /tmp/flowmesh-sdk-smoke
-          /tmp/flowmesh-sdk-smoke/bin/python -m pip install --upgrade pip
-          /tmp/flowmesh-sdk-smoke/bin/python -m pip install --find-links dist "${root_wheel}[sdk]"
-          /tmp/flowmesh-sdk-smoke/bin/python -c "import flowmesh"
-
-          uv run python -m venv /tmp/flowmesh-hook-smoke
-          /tmp/flowmesh-hook-smoke/bin/python -m pip install --upgrade pip
-          /tmp/flowmesh-hook-smoke/bin/python -m pip install --find-links dist "${root_wheel}[hook]"
-          /tmp/flowmesh-hook-smoke/bin/python -c "import flowmesh_hook"
-
-          uv run python -m venv /tmp/flowmesh-cli-smoke
-          /tmp/flowmesh-cli-smoke/bin/python -m pip install --upgrade pip
-          /tmp/flowmesh-cli-smoke/bin/python -m pip install --find-links dist "${root_wheel}[cli]"
-          /tmp/flowmesh-cli-smoke/bin/flowmesh --help
+      - name: Verify distributions
+        run: uv run python scripts/ci/check_package_build.py --dist dist
