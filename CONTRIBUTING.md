@@ -133,6 +133,13 @@ uv run scripts/dev/sync_requirements.py --write
 
 The `sync-requirements` pre-commit hook (and the `Requirements Sync Check` CI job) enforces this — a PR that edits `pyproject.toml` or `uv.lock` without regenerating the requirements files will fail with a diff pointing at the stale file.
 
+## Releases
+
+Package releases are synchronized across the lightweight `flowmesh`
+metapackage, SDK, CLI, stack helpers, and hook package. See
+[`docs/RELEASE.md`](docs/RELEASE.md) for the version bump, TestPyPI, PyPI
+Trusted Publishing, and post-release verification workflow.
+
 ## Signing Off Commits (DCO)
 
 All commits must carry a [Developer Certificate of Origin](https://developercertificate.org/) sign-off line. If you installed the pre-commit hooks as described above, this is handled automatically — the `prepare-commit-msg` hook appends the sign-off to every commit, and the `commit-msg` hook verifies it. CI also checks all PR commits.
