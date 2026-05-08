@@ -7,11 +7,11 @@ FlowMesh has three generated requirements files:
 - `src/worker/requirements/requirements.gpu.txt` — the worker GPU-only delta
   layered on top of the CPU layer.
 
-Each file enumerates the DIRECT dependencies of a curated set of pyproject
-extras, pinned to the exact version resolved by uv.lock. Transitives are
-deliberately not listed so the same pin list works across CPU and GPU torch
-backends — triton, nvidia-cu*, etc. are picked up by uv at install time
-according to UV_TORCH_BACKEND.
+Each file enumerates the DIRECT dependencies of a curated set of runtime
+dependency groups, pinned to the exact version resolved by uv.lock.
+Transitives are deliberately not listed so the same pin list works across CPU
+and GPU torch backends — triton, nvidia-cu*, etc. are picked up by uv at
+install time according to UV_TORCH_BACKEND.
 
 Run with no arguments to check for drift against the committed files; run
 with ``--write`` to regenerate them in place.
@@ -31,23 +31,23 @@ SERVER_REQ = REPO_ROOT / "src" / "server" / "requirements.txt"
 WORKER_CPU_REQ = REPO_ROOT / "src" / "worker" / "requirements" / "requirements.txt"
 WORKER_GPU_REQ = REPO_ROOT / "src" / "worker" / "requirements" / "requirements.gpu.txt"
 
-SERVER_EXTRAS: list[str] = ["server"]
+SERVER_GROUPS: list[str] = ["runtime-server"]
 
 # Worker CPU layer: Dockerfile.cpu, and Dockerfile.cuda runtime stage.
-WORKER_CPU_EXTRAS: list[str] = [
-    "worker-core",
-    "inference",
-    "training",
-    "rag",
-    "agent",
-    "analytics",
-    "observability",
+WORKER_CPU_GROUPS: list[str] = [
+    "runtime-worker-core",
+    "runtime-inference",
+    "runtime-training",
+    "runtime-rag",
+    "runtime-agent",
+    "runtime-analytics",
+    "runtime-observability",
 ]
 
 # Worker GPU-only deltas, installed in the cuda.builder stage.
-WORKER_GPU_EXTRAS: list[str] = [
-    "inference-gpu",
-    "training-gpu",
+WORKER_GPU_GROUPS: list[str] = [
+    "runtime-inference-gpu",
+    "runtime-training-gpu",
 ]
 
 # The only alternate index this project vends from — flashinfer wheels built
@@ -71,18 +71,22 @@ HEADER = (
 _PKG_RE = re.compile(r"^([A-Za-z0-9_.-]+)(\[[^\]]+\])?(?:\s*[@<>=!~].*)?$")
 
 
-def _direct_deps(extras: list[str]) -> dict[str, str]:
+def _direct_deps(groups: list[str]) -> dict[str, str]:
     with PYPROJECT.open("rb") as f:
         data = tomllib.load(f)
-    optional = data["project"]["optional-dependencies"]
+    dependency_groups = data["dependency-groups"]
     deps: dict[str, str] = {}
-    for extra in extras:
-        if extra not in optional:
+    for group in groups:
+        if group not in dependency_groups:
             raise SystemExit(
-                f"Extra {extra!r} not found in pyproject.toml "
-                "[project.optional-dependencies]."
+                f"Group {group!r} not found in pyproject.toml " "[dependency-groups]."
             )
-        for spec in optional[extra]:
+        for spec in dependency_groups[group]:
+            if not isinstance(spec, str):
+                raise SystemExit(
+                    f"Group {group!r} contains an include or non-string entry. "
+                    "Use leaf runtime groups when generating requirements."
+                )
             m = _PKG_RE.match(spec.strip())
             if not m:
                 continue
@@ -95,19 +99,20 @@ def _direct_deps(extras: list[str]) -> dict[str, str]:
     return deps
 
 
-def _uv_export(extras: list[str]) -> list[str]:
+def _uv_export(groups: list[str]) -> list[str]:
     cmd = [
         "uv",
         "export",
         "--frozen",
         "--no-dev",
+        "--no-default-groups",
         "--no-hashes",
         "--no-emit-project",
         "--format",
         "requirements-txt",
     ]
-    for extra in extras:
-        cmd += ["--extra", extra]
+    for group in groups:
+        cmd += ["--group", group]
     result = subprocess.run(
         cmd, cwd=REPO_ROOT, capture_output=True, text=True, check=True
     )
@@ -143,20 +148,20 @@ def _filter_direct(pins: list[str], keep: dict[str, str]) -> list[str]:
     return sorted(out, key=str.lower)
 
 
-def render(extras: list[str]) -> str:
-    direct = _direct_deps(extras)
-    lines = _filter_direct(_uv_export(extras), direct)
+def render(groups: list[str]) -> str:
+    direct = _direct_deps(groups)
+    lines = _filter_direct(_uv_export(groups), direct)
     return HEADER + "\n".join(lines) + "\n"
 
 
 def render_worker_gpu() -> str:
-    cpu_direct = _direct_deps(WORKER_CPU_EXTRAS)
+    cpu_direct = _direct_deps(WORKER_CPU_GROUPS)
     gpu_direct = {
         name: marker
-        for name, marker in _direct_deps(WORKER_GPU_EXTRAS).items()
+        for name, marker in _direct_deps(WORKER_GPU_GROUPS).items()
         if name not in cpu_direct
     }
-    pins = _uv_export(WORKER_CPU_EXTRAS + WORKER_GPU_EXTRAS)
+    pins = _uv_export(WORKER_CPU_GROUPS + WORKER_GPU_GROUPS)
     lines = _filter_direct(pins, gpu_direct)
     flashinfer_version = next(
         (p.split("==", 1)[1] for p in pins if _line_pkg(p) == "flashinfer-python"),
@@ -179,8 +184,8 @@ def main() -> int:
     args = parser.parse_args()
 
     targets: list[tuple[Path, str]] = [
-        (SERVER_REQ, render(SERVER_EXTRAS)),
-        (WORKER_CPU_REQ, render(WORKER_CPU_EXTRAS)),
+        (SERVER_REQ, render(SERVER_GROUPS)),
+        (WORKER_CPU_REQ, render(WORKER_CPU_GROUPS)),
         (WORKER_GPU_REQ, render_worker_gpu()),
     ]
 

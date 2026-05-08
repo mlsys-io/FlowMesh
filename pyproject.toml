@@ -7,8 +7,19 @@ requires-python = ">=3.12"
 dependencies = []
 
 [project.optional-dependencies]
-# ── Service-level ------------───────────────────────────────------
-server = [
+# Public PyPI install surface. Runtime/container dependencies live in
+# [dependency-groups] so they do not become published package metadata.
+sdk = ["flowmesh-sdk==0.1.0"]
+cli = ["flowmesh-cli[stack]==0.1.0"]
+hook = ["flowmesh-hook==0.1.0"]
+all = [
+    "flowmesh-cli[stack]==0.1.0",
+    "flowmesh-hook==0.1.0",
+    "flowmesh-sdk==0.1.0",
+]
+
+[dependency-groups]
+runtime-server = [
     "aiohttp>=3.13.4",
     "cryptography>=46.0.7",
     "docker>=7.1.0",
@@ -27,7 +38,7 @@ server = [
     "vastai-sdk>=0.2.5",
     "websockets>=15.0.1",
 ]
-worker-core = [
+runtime-worker-core = [
     "colorama>=0.4.6",
     "colorlog>=6.9.0",
     "docker>=7.1.0",
@@ -38,9 +49,7 @@ worker-core = [
     "python-dotenv>=1.2.2",
     "websocket-client>=1.9.0",
 ]
-
-# ── Executor capability (CPU-runnable) ────────────────────────────
-inference = [
+runtime-inference = [
     "accelerate>=1.12.0",
     "datasets>=4.3.0",
     "diffusers>=0.36.0",
@@ -48,28 +57,24 @@ inference = [
     "torch>=2.10.0",
     "transformers>=4.57.6",  # held at 4.57 by vllm/vllm-omni 0.18 compatibility
 ]
-training = [
+runtime-training = [
     "peft>=0.17.1",
     "trl>=0.23.0",
 ]
-rag = [
+runtime-rag = [
     "fastembed>=0.7.3,<0.8",
     "qdrant-client>=1.15.1",
 ]
-
-# ── Executor capability (GPU-only deltas) ─────────────------------
-inference-gpu = [
+runtime-inference-gpu = [
     "bitsandbytes>=0.49.2",
     "flashinfer-python>=0.6.6",
     "vllm==0.18.0",  # pinned with transformers 4.57; 0.19+ needs transformers 5.x
     "vllm-omni==0.18.0",  # follows vllm pin
 ]
-training-gpu = [
+runtime-training-gpu = [
     "deepspeed>=0.18.1",
 ]
-
-# ── Agent executor ------------------------------------------------
-agent = [
+runtime-agent = [
     "aiofiles>=24.1.0",
     "aiohttp>=3.13.4",
     "art>=6.5",
@@ -97,8 +102,7 @@ agent = [
     "toml>=0.10.2",
     "wikipedia-api>=0.8.1",
 ]
-# Agent tracing
-observability = [
+runtime-observability = [
     "arize-phoenix-client>=1.21.0",
     "arize-phoenix-otel>=0.13.1",
     "openinference-instrumentation-openai>=0.1.39",
@@ -108,17 +112,13 @@ observability = [
     "opentelemetry-sdk>=1.38.0",
     "opentelemetry-semantic-conventions>=0.59b0",
 ]
-
-# ── Worker-side data connectors -----------------------------------
-analytics = [
+runtime-analytics = [
     "boto3>=1.41.5",
     "pandas>=2.3.3",
     "psycopg[binary]>=3.2.12",
     "sqlalchemy>=2.0.44",
     "lumid-data-sdk @ git+https://github.com/mlsys-io/lumid.data.git@a800051#subdirectory=sdk",
 ]
-
-# ── Developer tooling ─────────────────────────────────────────────
 dev = [
     "black>=25.12.0",
     "boto3-stubs>=1.42.14",
@@ -146,24 +146,33 @@ dev = [
     "types-pyyaml>=6.0.12.20250915",
     "types-requests>=2.32.4.20250913",
 ]
-
-# ── Workspace aliases ─────────────────────────────────────────────
-cli = ["flowmesh-cli[stack]"]
-sdk = ["flowmesh-sdk", "flowmesh-sdk-stack"]
-hook = ["flowmesh-hook"]
-
-[project.scripts]
-flowmesh = "flowmesh_cli.cli:main"
+runtime-worker-cpu = [
+    { include-group = "runtime-worker-core" },
+    { include-group = "runtime-inference" },
+    { include-group = "runtime-training" },
+    { include-group = "runtime-rag" },
+    { include-group = "runtime-agent" },
+    { include-group = "runtime-observability" },
+    { include-group = "runtime-analytics" },
+]
+runtime-worker-gpu = [
+    { include-group = "runtime-inference-gpu" },
+    { include-group = "runtime-training-gpu" },
+]
+ci = [
+    { include-group = "dev" },
+    { include-group = "runtime-server" },
+    { include-group = "runtime-worker-cpu" },
+    { include-group = "runtime-worker-gpu" },
+]
 
 [build-system]
 requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-package-dir = {"" = "src"}
-
-[tool.setuptools.packages.find]
-where = ["src"]
+packages = []
+py-modules = []
 
 [tool.isort]
 profile = "black"
@@ -176,6 +185,9 @@ target-version = "py312"
 lint.select = ["E", "F", "UP", "I"]
 lint.ignore = ["I001"]
 extend-exclude = ["__init__.pyi", "*_pb2*"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
 
 [tool.mypy]
 python_version = "3.12"
