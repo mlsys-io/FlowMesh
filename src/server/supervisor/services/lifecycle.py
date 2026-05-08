@@ -47,6 +47,7 @@ class Lifecycle:
         self._stop_event.set()  # Initially stopped
         self._hb_thread: threading.Thread | None = None
         self._hb_lock = threading.Lock()
+        self._unregister_published: bool = False
 
     @property
     def node_id(self) -> str:
@@ -138,6 +139,7 @@ class Lifecycle:
             return self.node_id
 
         self._node_id = self._register()
+        self._unregister_published = False
         self._publish_event("SV_REGISTER")
         self.heartbeat_now()
 
@@ -160,6 +162,12 @@ class Lifecycle:
                 )
             self._stop_event.wait(self.hb_sec)
 
+    def publish_unregister(self) -> None:
+        if self._unregister_published:
+            return
+        self._publish_event("SV_UNREGISTER")
+        self._unregister_published = True
+
     def stop(self) -> None:
         self._stop_event.set()
 
@@ -168,7 +176,7 @@ class Lifecycle:
             self._hb_thread = None
 
         try:
-            self._publish_event("SV_UNREGISTER")
+            self.publish_unregister()
         finally:
             try:
                 self._node_registry.unregister_node(self.node_id)
