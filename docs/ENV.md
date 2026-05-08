@@ -34,6 +34,7 @@ listed here is in `.env.example`.
 | `ENABLE_WORKER_WATCHDOG` | `true` | Worker death detection |
 | `WORKER_DEATH_GRACE_SEC` | `60` | Grace period before marking dead |
 | `FLOWMESH_PLUGINS` | – | Comma-separated plugin module names |
+| `SERVER_CUDA_PROBE_IMAGE` | `nvidia/cuda:12.9.1-base-ubuntu24.04` | CUDA image the server runs briefly to query local GPU names/indices |
 | `LOG_LEVEL` | `INFO` | Server log level |
 
 **Notes:**

@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from server import env
 from server.supervisor.manager import WorkerInitConfig, WorkerManager
 from server.supervisor.resource_manager import GpuArch, MachineEnv, ResourceManager
 
@@ -88,6 +89,27 @@ class TestAvailableGpuCount:
 
     def test_no_gpus(self) -> None:
         assert _resource_manager(set()).available_gpu_count == 0
+
+
+class TestMachineEnvDetection:
+    def test_gpu_probe_uses_configured_cuda_image(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        rm = object.__new__(ResourceManager)
+        containers = MagicMock()
+        containers.run.return_value = b"0, NVIDIA H100\n"
+        rm._docker_client = MagicMock()
+        rm._docker_client.info.return_value = {"NCPU": 32}
+        rm._docker_client.containers = containers
+
+        monkeypatch.setattr(env, "SERVER_CUDA_PROBE_IMAGE", "example/probe:arm64")
+        monkeypatch.setattr(env, "CUDA_VISIBLE_DEVICES", None)
+
+        detected = rm._detect_machine_env()
+
+        assert detected.cpu_count == 32
+        assert detected.available_gpus == {0}
+        assert detected.gpu_families == {0: GpuArch.HOPPER}
+        containers.run.assert_called_once()
+        assert containers.run.call_args.kwargs["image"] == "example/probe:arm64"
 
 
 class TestCapacityChangeReporting:

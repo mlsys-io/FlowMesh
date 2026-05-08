@@ -456,6 +456,15 @@ STACK_ENV_SCHEMA = EnvSchema(
                     url_schemes={"http", "https"},
                 ),
                 EnvVar(
+                    "SERVER_CUDA_PROBE_IMAGE",
+                    "nvidia/cuda:12.9.1-base-ubuntu24.04",
+                    description=[
+                        "Server-side CUDA image used to probe local GPUs via",
+                        "nvidia-smi. Override only if the default image is not",
+                        "compatible with the host Docker/CUDA runtime.",
+                    ],
+                ),
+                EnvVar(
                     "CUDA_VISIBLE_DEVICES", "all", var_type=EnvVarType.CSV_INTS_OR_ALL
                 ),
                 EnvVar("WORKER_UPLOAD_RESULTS", "false", var_type=EnvVarType.BOOL),

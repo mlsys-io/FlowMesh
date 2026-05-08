@@ -86,6 +86,9 @@ LOG_LEVEL: str = (
 
 FLOWMESH_REGISTRY: str = os.getenv("FLOWMESH_REGISTRY", "ghcr.io/mlsys-io")
 FLOWMESH_VERSION: str = os.getenv("FLOWMESH_VERSION", "latest")
+SERVER_CUDA_PROBE_IMAGE: str = os.getenv(
+    "SERVER_CUDA_PROBE_IMAGE", "nvidia/cuda:12.9.1-base-ubuntu24.04"
+)
 
 WORKER_CONFIG_PATH: str = os.getenv("WORKER_CONFIG_PATH", "configs/worker_config.yaml")
 CUDA_VISIBLE_DEVICES: str | None = os.getenv("CUDA_VISIBLE_DEVICES")

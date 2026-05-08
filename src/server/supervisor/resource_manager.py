@@ -110,7 +110,7 @@ class ResourceManager:
             # Detect GPUs using nvidia-smi if available
             try:
                 nvidia_smi_output = self._docker_client.containers.run(
-                    image="nvidia/cuda:12.1.0-base-ubuntu22.04",
+                    image=env.SERVER_CUDA_PROBE_IMAGE,
                     device_requests=[DeviceRequest(count=-1, capabilities=[["gpu"]])],
                     command="nvidia-smi --query-gpu=index,name --format=csv,noheader",
                     remove=True,
