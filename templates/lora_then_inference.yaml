@@ -66,7 +66,6 @@ spec:
         output:
           destination:
             type: "http"
-            url: "http://127.0.0.1:8000/api/v1/results"
             timeoutSec: 1800
           artifacts:
             - "results.json"
@@ -97,7 +96,6 @@ spec:
         output:
           destination:
             type: "http"
-            url: "http://127.0.0.1:8000/api/v1/results"
             timeoutSec: 30
           artifacts:
             - "results.json"

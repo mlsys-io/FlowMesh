@@ -83,7 +83,7 @@ At startup the worker:
 2. The worker keeps a local copy and uploads the archive to the orchestrator.
 3. The orchestrator serves the bundle at
    `GET /api/v1/results/{task_id}/files/<archive>`.
-4. Downstream stages reference the URL via `${stage.result.final_model_archive_url}`
+4. Downstream stages reference the URL via `${stage.result.final_model_archive}`
    (or the LoRA equivalent).
 
 Prefer shared storage? Point both the orchestrator and workers at the same
@@ -94,7 +94,7 @@ templates can reference absolute paths.
 - Inspect `worker.log` for executor output and upload diagnostics.
 - Tail the server logs to confirm worker registration, gRPC connections, and forwarded telemetry.
 - If a pipeline stalls, confirm the Stage 1 task produced the expected
-  `final_*_archive_url` and that the orchestrator results directory contains the
+  `final_*_archive` URL and that the orchestrator results directory contains the
   uploaded `.tar.gz`.
 
 ## SSH Tasks

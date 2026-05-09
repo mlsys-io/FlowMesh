@@ -18,6 +18,7 @@ try:
 except Exception:  # pragma: no cover - optional dependency at import time
     LoRARequest = None  # type: ignore
 
+from shared.tasks.components import AdapterConfig
 from shared.tasks.specs import InferenceSpecStrict
 from worker.config import WorkerConfig
 from worker.lifecycle import Lifecycle
@@ -95,32 +96,31 @@ class VLLMLoRAExecutor(VLLMExecutor):
 
         normalized: list[dict[str, Any]] = []
         for idx, adapter in enumerate(adapters):
-            if not isinstance(adapter, dict):
+            if not isinstance(adapter, AdapterConfig):
                 raise ExecutionError(
-                    "Each entry in spec.model.adapters must be a mapping"
+                    "Each entry in spec.model.adapters must be AdapterConfig"
                 )
-            if str(adapter.get("type", "")).lower() != "lora":
+            if str(adapter.type).lower() != "lora":
                 continue
 
-            name = adapter.get("name") or f"lora_{idx}"
-            apply_mode = str(adapter.get("apply", "runtime")).lower()
+            kwargs = adapter.kwargs or {}
+            name = adapter.name or f"lora_{idx}"
+            apply_mode = str(kwargs.get("apply", "runtime")).lower()
             if apply_mode not in {"runtime", "merge"}:
                 raise ExecutionError(
                     f"LoRA adapter '{name}' has unsupported apply='{apply_mode}'"
                 )
 
-            adapter_id = adapter.get("id") or adapter.get("adapter_id") or (idx + 1)
-            archive_format = str(adapter.get("archive_format", "auto"))
-            headers = {
-                str(k): str(v) for k, v in (adapter.get("headers") or {}).items()
-            }
-            scale = float(adapter.get("scale", 1.0))
-            path_value = adapter.get("path")
-            url_value = adapter.get("url")
-            task_id = adapter.get("taskId") or adapter.get("task_id")
+            adapter_id = kwargs.get("id", idx + 1)
+            archive_format = str(kwargs.get("archive_format", "auto"))
+            headers = {str(k): str(v) for k, v in (kwargs.get("headers") or {}).items()}
+            scale = float(kwargs.get("scale", 1.0))
+            path_value = adapter.path
+            url_value = adapter.url
+            task_id = kwargs.get("task_id")
             if not path_value and not url_value and not task_id:
                 raise ExecutionError(
-                    f"LoRA adapter '{name}' must provide path, url, or taskId"
+                    f"LoRA adapter '{name}' must provide path, url, or task_id"
                 )
 
             normalized.append(

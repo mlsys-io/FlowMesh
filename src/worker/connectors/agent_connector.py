@@ -1,4 +1,4 @@
-"""Agent connector — calls lumid.data ``/retrieve/v1`` for NL-driven retrieval."""
+"""Agent connector — calls lumid.data's data agent for NL-driven retrieval."""
 
 from pathlib import Path
 from typing import Any

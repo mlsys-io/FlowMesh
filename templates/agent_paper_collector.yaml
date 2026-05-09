@@ -3,7 +3,6 @@ kind: AgentTask
 metadata:
   name: academic-paper-collector
   owner: researcher
-  project: literature-review
   annotations:
     description: "Intelligent academic paper collection agent: automatically search and summarize papers in specific domains"
 

@@ -21,6 +21,7 @@ class ModelSourceTemplate(TemplateBaseModel):
 class AdapterConfig(StrictBaseModel):
     type: str
     path: str | None = None
+    url: str | None = None
     name: str | None = None
     kwargs: dict[str, Any] | None = None
 
@@ -28,6 +29,7 @@ class AdapterConfig(StrictBaseModel):
 class AdapterConfigTemplate(TemplateBaseModel):
     type: str
     path: str | None = None
+    url: str | None = None
     name: str | None = None
     kwargs: dict[str, Any] | None = None
 

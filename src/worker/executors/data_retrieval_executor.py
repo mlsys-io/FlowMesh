@@ -221,7 +221,7 @@ class DataRetrievalExecutor(DataMixin, Executor):
         context: dict[str, Any],
         out_dir: Path,
     ) -> dict[str, Any]:
-        """Drive lumid.data ``/retrieve/v1`` for NL-driven retrieval."""
+        """Drive lumid.data's data agent for NL-driven retrieval."""
         validate_keys(
             data_cfg,
             "DataRetrievalExecutor.spec.data",
