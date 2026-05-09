@@ -2,72 +2,111 @@
 
 External integrations (auth, submission policy, usage tracking,
 authorisation, supplier attribution, resource lifecycle) plug into the
-server through six protocol hooks defined in the standalone
-**`flowmesh-hook`** package:
+server through six protocol hooks split across two packages:
 
-- `IdentityProvider` — resolve a bearer token to a `PrincipalContext`.
-  Routers and WebSocket endpoints pull the bearer from the
-  `Authorization` header and run it through the provider chain; the
-  first non-`None` result wins. With no providers registered, auth is
-  a no-op and a default admin principal is used. Workers
-  self-authenticate the same way, sending their `FLOWMESH_API_KEY` as
-  a bearer on every server call.
-- `SubmissionGuard` — pre-submit precondition on the principal; e.g.,
-  reject when the principal has insufficient balance.
-- `UsageSink` — fan-out per-task usage rows after a task completes.
-  Typical consumers: billing, audit, observability.
-- `PermissionChecker` — filter list endpoints (`accessible_ids`) and
-  gate point reads / mutations (`require`) via `resolve_accessible_ids`
-  / `require_permission`. Multiple checkers compose. With no checkers
-  registered the helpers are no-ops. `require` accepts `resource_id=None`
-  for type-level / fleet-level checks (e.g. "may the principal create
+- **[`lumid-hooks`](https://github.com/mlsys-io/lumid.hooks)** — the
+  shared contract surface used by Lumid projects. Carries the five hooks
+  generic enough to share (`IdentityProvider`, `SubmissionGuard`,
+  `PermissionChecker`, `ResourceRegistrar`, `UsageSink`) along with
+  `PrincipalContext` and `ResourceRef`.
+- **`flowmesh-hook`** — FlowMesh-specific extensions: the `HookBindings`
+  Protocol (extending the shared one with `supplier_resolvers`), a
+  `BaseBindings` frozen dataclass plugin authors can return directly,
+  the `ResourceType` / `ResourceAction` enums, `SupplierResolver` and its
+  `WorkerView`, and the FlowMesh `UsageRow` / `FlowMeshUsageSink` typed alias.
+
+The hooks:
+
+- `IdentityProvider` (shared) — resolve a bearer token to a
+  `PrincipalContext`. Routers and WebSocket endpoints pull the bearer
+  from the `Authorization` header and run it through the provider
+  chain; the first non-`None` result wins. With no providers
+  registered, auth is a no-op and a default admin principal is used.
+  Workers self-authenticate the same way, sending their
+  `FLOWMESH_API_KEY` as a bearer on every server call.
+- `SubmissionGuard` (shared) — pre-submit precondition on the
+  principal; e.g., reject when the principal has insufficient balance.
+- `UsageSink[Row]` (shared, generic) — fan-out usage rows after a unit
+  of work completes. FlowMesh parametrizes it as `FlowMeshUsageSink =
+  UsageSink[UsageRow]`; typical consumers: billing, audit,
+  observability.
+- `PermissionChecker` (shared) — filter list endpoints
+  (`accessible_ids(principal, kind, action, logger)`) and gate point
+  reads / mutations (`require(principal, resource: ResourceRef,
+  action, logger)`) via `resolve_accessible_ids` / `require_permission`
+  on the server side. Multiple checkers compose. With no checkers
+  registered the helpers are no-ops. `ResourceRef.id == None` denotes a
+  kind-level / fleet-level check (e.g. "may the principal create
   workflows", "may the principal read system metrics").
-- `SupplierResolver` — map an assigned worker (`WorkerView`) to a
-  supplier id at dispatch time. The first non-`None` result wins and
-  is stamped on `TaskRecord.supplier_id`; `UsageSink`s receive that
-  value. With no resolvers registered, `supplier_id` stays at `""`.
-- `ResourceRegistrar` — observe resource lifecycle. The server fires
-  `register` after a resource is persisted (`WORKFLOW`, `TASK`, `NODE`,
-  `WORKER`) and `deregister` after one is hard-deleted or
-  self-terminated. `principal` on both calls is always a real
-  `PrincipalContext`: the calling admin for request-driven mutations,
-  or a server-resolved *system principal* for boot-time /
-  heartbeat-driven paths. The system principal is `FLOWMESH_API_KEY`
-  run through the `IdentityProvider` chain at startup, falling back
-  to the synthetic admin when no providers are registered. Plugins
-  use these to seed their own ACL / ownership tables so subsequent
-  `PermissionChecker` calls have data to decide on. `RESULT` ownership
-  is inferred from the owning task; `RESULT` permission checks are
-  always paired with a `task_id`, and workflow-level operations check
-  `WORKFLOW`.
+- `SupplierResolver` (FlowMesh-specific) — map an assigned worker
+  (`WorkerView`) to a supplier id at dispatch time. The first non-`None`
+  result wins and is stamped on `TaskRecord.supplier_id`; `FlowMeshUsageSink`s
+  receive that value. With no resolvers registered, `supplier_id` stays
+  at `""`.
+- `ResourceRegistrar` (shared) — observe resource lifecycle. The server
+  fires `register(principal, resource: ResourceRef, logger)` after a
+  resource is persisted (`WORKFLOW`, `TASK`, `NODE`, `WORKER`) and
+  `deregister` after one is hard-deleted or self-terminated. `principal`
+  on both calls is always a real `PrincipalContext`: the calling admin
+  for request-driven mutations, or a server-resolved *system principal*
+  for boot-time / heartbeat-driven paths. The system principal is
+  `FLOWMESH_API_KEY` run through the `IdentityProvider` chain at
+  startup, falling back to the synthetic admin when no providers are
+  registered. Plugins use these to seed their own ACL / ownership
+  tables so subsequent `PermissionChecker` calls have data to decide
+  on. `RESULT` ownership is inferred from the owning task; `RESULT`
+  permission checks are always paired with a `task_id`, and
+  workflow-level operations check `WORKFLOW`.
 
-The `ResourceType` enum covers `WORKFLOW`, `TASK`, `RESULT`, `NODE`,
-`WORKER`, and `SYSTEM`; `ResourceAction` covers `READ`, `WRITE`,
-`CANCEL`, and `ADMIN`. Plugins use `principal.scopes` to discriminate
-user-vs-supplier-vs-admin capabilities.
+The shared protocols treat `kind` and `action` as plain strings —
+`lumid-hooks` does not enumerate kinds. FlowMesh layers the
+`ResourceType` and `ResourceAction` `StrEnum`s on top so call sites
+inside FlowMesh get auto-complete and exhaustiveness checks; values
+like `ResourceType.WORKFLOW` pass straight into the protocol's
+`kind: str` parameter (no `.value` needed).
 
-The `flowmesh-hook` package has no runtime dependencies and does not
-import the server or worker packages, so plugin wheels stay tiny and
-can be installed without the heavy core stack.
+`flowmesh-hook` depends only on `lumid-hooks` (transitively `pydantic`)
+and does not import the server or worker packages, so plugin wheels
+stay tiny and can be installed without the heavy core stack.
+
+## Where plugin authors import from
+
+| Symbol | Package | Notes |
+|--------|---------|-------|
+| `IdentityProvider`, `SubmissionGuard`, `PermissionChecker`, `ResourceRegistrar`, `UsageSink` | `lumid_hooks` | Shared protocols. |
+| `PrincipalContext`, `ResourceRef` | `lumid_hooks` | Shared types. |
+| `HookBindings`, `BaseBindings` | `flowmesh_hook` | Protocol (six fields, gate type) and frozen dataclass (convenience base, returned by `install()`). |
+| `ResourceType`, `ResourceAction` | `flowmesh_hook` | FlowMesh resource and action enums. |
+| `SupplierResolver`, `WorkerView` | `flowmesh_hook` | FlowMesh-specific dispatch hook. |
+| `UsageRow`, `FlowMeshUsageSink` | `flowmesh_hook` | FlowMesh's usage row + parametrized sink alias. |
+
+A plugin that only implements shared hooks may depend on `lumid-hooks`
+alone; FlowMesh-specific plugins additionally depend on `flowmesh-hook`.
 
 ## How plugins are loaded
 
 A plugin is any Python module that exposes a top-level `install()`
-returning a `HookBindings` — the frozen aggregate of the protocol
-implementations the plugin contributes. The server loads
-`FLOWMESH_PLUGINS` (comma-separated module names) inside its FastAPI
-lifespan and treats `install()` as either:
+returning an object that satisfies `lumid_hooks.HookBindings` (the
+shared Protocol describing the five-field aggregate). FlowMesh's
+`BaseBindings` is a frozen dataclass that satisfies the Protocol with
+empty default factories; FlowMesh-only plugins typically return that.
+A cross-host plugin can return any object whose attributes match the
+expected names — structural typing handles the rest. The server
+loads `FLOWMESH_PLUGINS` (comma-separated module names) inside its
+FastAPI lifespan and treats `install()` as either:
 
-- a sync function returning a `HookBindings` directly; or
-- an `@asynccontextmanager async def install()` that yields a
-  `HookBindings`. Use this form for plugins owning resources with a
+- a sync function returning the bindings directly; or
+- an `@asynccontextmanager async def install()` that yields the
+  bindings. Use this form for plugins owning resources with a
   lifecycle (a SQLAlchemy engine, an HTTP client, a background task)
   that need teardown on server shutdown. The loader holds an
   `AsyncExitStack`, enters each ctx-manager `install()` on startup,
   and unwinds them in reverse order on shutdown.
 
-The loader drains every plugin's `HookBindings` into the server's
-runtime registries. Plugins never touch those registries directly.
+The loader drains every plugin's bindings into the server's runtime
+registries; FlowMesh-specific `supplier_resolvers` is drained when the
+returned object also satisfies `flowmesh_hook.HookBindings`. Plugins
+never touch those registries directly.
 
 Plugins live anywhere on `sys.path` — in-tree under
 `src/server/<name>/`, host-mounted under `/app/plugins/<name>/` (the
@@ -120,7 +159,7 @@ via `FLOWMESH_REGISTRY` / `FLOWMESH_VERSION` (or `flowmesh stack up
 
 ```python
 # myorg_supplier_plugin/__init__.py
-from flowmesh_hook import HookBindings, WorkerView
+from flowmesh_hook import BaseBindings, WorkerView
 
 
 class _MyOrgSupplier:
@@ -130,8 +169,8 @@ class _MyOrgSupplier:
         return worker.namespace or None
 
 
-def install() -> HookBindings:
-    return HookBindings(supplier_resolvers=[_MyOrgSupplier()])
+def install() -> BaseBindings:
+    return BaseBindings(supplier_resolvers=[_MyOrgSupplier()])
 ```
 
 ## Plugins with their own DB
@@ -145,7 +184,8 @@ import os
 from contextlib import asynccontextmanager
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from flowmesh_hook import HookBindings
+from flowmesh_hook import BaseBindings
+from lumid_hooks import PrincipalContext
 
 
 class _MyOrgAuth:
@@ -154,7 +194,7 @@ class _MyOrgAuth:
     def __init__(self, sessionmaker):
         self._sm = sessionmaker
 
-    async def resolve(self, raw_token, logger):
+    async def resolve(self, raw_token, logger) -> PrincipalContext | None:
         async with self._sm() as session:
             ...
 
@@ -163,7 +203,7 @@ class _MyOrgAuth:
 async def install():
     engine = create_async_engine(os.environ["MYORG_DATABASE_URL"])
     try:
-        yield HookBindings(
+        yield BaseBindings(
             identity_providers=[_MyOrgAuth(async_sessionmaker(engine))],
         )
     finally:
@@ -174,3 +214,8 @@ async def install():
 
 For a runnable end-to-end example exercising all six hook protocols against
 an in-memory store, see [`examples/plugins/simple_plugin/`](../examples/plugins/simple_plugin/).
+
+For an example exercising **only the shared subset** (no
+`SupplierResolver`, no FlowMesh resource enums) against an in-memory
+store, see [`examples/simple_plugin/`](https://github.com/mlsys-io/lumid.hooks/tree/main/examples/simple_plugin)
+in the `lumid-hooks` repo.
