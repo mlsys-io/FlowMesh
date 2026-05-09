@@ -241,8 +241,10 @@ class TestBuildEnvironment:
 
 
 class TestBuildRunKwargs:
-    def _make_executor(self, tmp_path: Path) -> SSHExecutor:
-        cfg = make_live_worker_config(tmp_path)
+    def _make_executor(
+        self, tmp_path: Path, docker_gpu_runtime: str | None = None
+    ) -> SSHExecutor:
+        cfg = make_live_worker_config(tmp_path, docker_gpu_runtime=docker_gpu_runtime)
         return SSHExecutor(cfg, lifecycle=None)
 
     def test_noninteractive_injects_wrapper_entrypoint_and_command(
@@ -278,6 +280,58 @@ class TestBuildRunKwargs:
         )
         assert "entrypoint" not in kwargs
         assert "command" not in kwargs
+
+    def test_gpu_run_kwargs_omit_runtime_when_not_configured(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        executor = self._make_executor(tmp_path)
+        fake_device_request = MagicMock(name="device_request")
+        monkeypatch.setenv("WORKER_HOST_GPU_ID", "0")
+        monkeypatch.setattr(
+            ssh_executor_module,
+            "DeviceRequest",
+            MagicMock(return_value=fake_device_request),
+        )
+
+        kwargs = executor._build_run_kwargs(
+            image="myimg:latest",
+            container_name="worker-1_ssh-task-1234",
+            environment={},
+            labels={},
+            ports={},
+            volumes=[],
+            command=["python", "train.py"],
+            interactive=False,
+        )
+
+        assert kwargs["device_requests"] == [fake_device_request]
+        assert "runtime" not in kwargs
+
+    def test_gpu_run_kwargs_include_configured_runtime(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        executor = self._make_executor(tmp_path, docker_gpu_runtime="nvidia")
+        fake_device_request = MagicMock(name="device_request")
+        monkeypatch.setenv("WORKER_HOST_GPU_ID", "0")
+        monkeypatch.setattr(
+            ssh_executor_module,
+            "DeviceRequest",
+            MagicMock(return_value=fake_device_request),
+        )
+
+        kwargs = executor._build_run_kwargs(
+            image="myimg:latest",
+            container_name="worker-1_ssh-task-1234",
+            environment={},
+            labels={},
+            ports={},
+            volumes=[],
+            command=["python", "train.py"],
+            interactive=False,
+        )
+
+        assert kwargs["device_requests"] == [fake_device_request]
+        assert kwargs["runtime"] == "nvidia"
 
 
 class TestNoninteractiveContainerStartup:

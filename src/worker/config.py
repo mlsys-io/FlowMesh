@@ -33,6 +33,7 @@ class WorkerConfig:
     network_bandwidth_bytes_per_sec: float | None
     executor_idle_cleanup_sec: float | None
     enable_mp_executors: bool
+    docker_gpu_runtime: str | None
     grpc_keepalive_time_ms: int | None = None
     grpc_keepalive_timeout_ms: int | None = None
     network_mode: str | None = None
@@ -83,6 +84,7 @@ class WorkerConfig:
             raise SystemExit("WORKER_NETWORK_BANDWIDTH_BYTES_PER_SEC must be positive")
 
         enable_mp_executors = parse_bool_env("WORKER_ENABLE_MP_EXECUTORS", True)
+        docker_gpu_runtime = os.getenv("DOCKER_GPU_RUNTIME", "").strip() or None
         grpc_keepalive_time_ms = parse_int_env(
             "SUPERVISOR_GRPC_KEEPALIVE_TIME_MS", 300_000
         )
@@ -113,6 +115,7 @@ class WorkerConfig:
             network_bandwidth_bytes_per_sec=network_bandwidth_bytes_per_sec,
             executor_idle_cleanup_sec=executor_idle_cleanup_sec,
             enable_mp_executors=enable_mp_executors,
+            docker_gpu_runtime=docker_gpu_runtime,
             grpc_keepalive_time_ms=grpc_keepalive_time_ms,
             grpc_keepalive_timeout_ms=grpc_keepalive_timeout_ms,
             network_mode=network_mode,

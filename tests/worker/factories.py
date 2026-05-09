@@ -26,6 +26,7 @@ DEFAULT_WORKER_CONFIG: Final[WorkerConfig] = WorkerConfig(
     network_bandwidth_bytes_per_sec=None,
     executor_idle_cleanup_sec=None,
     enable_mp_executors=False,
+    docker_gpu_runtime=None,
 )
 
 

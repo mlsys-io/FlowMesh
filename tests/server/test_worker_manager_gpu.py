@@ -143,6 +143,8 @@ class TestDockerWorkerRuntimeSelection:
     def _worker(self) -> DockerWorkerAdapter:
         worker = object.__new__(DockerWorkerAdapter)
         worker.config = DockerWorkerConfig(worker_type=WorkerType.GPU, cuda_devices=[3])
+        worker.token = "worker-token"  # type: ignore[assignment]
+        worker.container_name = "worker-gpu-3"
         worker.cuda_devices = [3]
         worker.gpu_arch = GpuArch.BLACKWELL
         return worker
@@ -177,6 +179,16 @@ class TestDockerWorkerRuntimeSelection:
 
         assert runtime == "nvidia"
         assert device_requests is not None
+
+    def test_worker_environment_passes_runtime_override_to_worker(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        worker = self._worker()
+        monkeypatch.setattr(env, "DOCKER_GPU_RUNTIME", "nvidia")
+
+        environment = worker._base_environment()
+
+        assert environment["DOCKER_GPU_RUNTIME"] == "nvidia"
 
 
 class TestCapacityChangeReporting:

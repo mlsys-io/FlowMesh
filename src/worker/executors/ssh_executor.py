@@ -207,6 +207,7 @@ class SSHExecutor(Executor):
             or (lifecycle.worker_id if lifecycle else uuid.uuid4().hex[:8])
         )
         self._docker: DockerClient | None = None
+        self._docker_gpu_runtime: str | None = config.docker_gpu_runtime
         self._ssh_network: str | None = None
         self._cancel_event = threading.Event()
         self._finish_event = threading.Event()
@@ -535,7 +536,8 @@ class SSHExecutor(Executor):
                 kwargs["device_requests"] = [
                     DeviceRequest(device_ids=device_ids, capabilities=[["gpu"]])
                 ]
-                kwargs["runtime"] = "nvidia"
+                if runtime := self._docker_gpu_runtime:
+                    kwargs["runtime"] = runtime
             except Exception:
                 pass
         if self._ssh_network:

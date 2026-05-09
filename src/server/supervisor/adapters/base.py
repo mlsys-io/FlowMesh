@@ -153,6 +153,7 @@ class WorkerAdapter(ABC):
                 config.network_bandwidth
             ),
             "WORKER_UPLOAD_RESULTS": to_env_str(config.upload_results),
+            "DOCKER_GPU_RUNTIME": to_env_str(env.DOCKER_GPU_RUNTIME),
             "FLOWMESH_API_KEY": to_env_str(env.FLOWMESH_API_KEY),
             "OPENAI_API_KEY": to_env_str(config.openai_api_key),
             "GOOGLE_API_KEY": to_env_str(config.google_api_key),
