@@ -221,10 +221,9 @@ async def validate_workflow(
     workflow_format: str = Header(
         default="native", description="Workflow format (native/n8n)"
     ),
-    principal: PrincipalContext = Depends(authenticate_connection),
+    _: PrincipalContext = Depends(authenticate_connection),
     runtime: TaskRuntime = Depends(get_runtime),
 ) -> WorkflowValidateResponse:
-    del principal  # auth gate; payload is not principal-scoped
     raw_body = await request.body()
     if not raw_body:
         raise HTTPException(

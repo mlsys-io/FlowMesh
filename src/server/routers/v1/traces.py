@@ -111,10 +111,9 @@ async def upload_task_trace(
     task_id: str,
     trace_type: str,
     file: UploadFile = File(...),
-    principal: PrincipalContext = Depends(authenticate_connection),
+    _: PrincipalContext = Depends(authenticate_connection),
     results_dir: Path = Depends(get_results_dir),
 ) -> PathResponse:
-    del principal  # auth gate; the supplier-key principal isn't task-scoped
     filename = _TYPE_TO_FILENAME.get(trace_type)
     if filename is None:
         raise HTTPException(
