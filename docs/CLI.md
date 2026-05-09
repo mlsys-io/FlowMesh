@@ -89,6 +89,10 @@ flowmesh stack build flowmesh_worker_cpu flowmesh_worker_gpu
 `flowmesh stack build` loads native images for the local client platform.
 `flowmesh stack push` publishes multi-platform images (`linux/amd64` and
 `linux/arm64`) for the stack bake targets.
+`flowmesh stack push` also refreshes per-target registry build caches so
+subsequent multi-platform pushes can reuse `arm64` and multi-stage layers.
+Set `FLOWMESH_CACHE_VERSION` only when you want to intentionally start a
+new remote cache lineage.
 When pushing multi-platform images from Docker Engine, use either the
 containerd image store or a `buildx` builder with the `docker-container`
 driver.

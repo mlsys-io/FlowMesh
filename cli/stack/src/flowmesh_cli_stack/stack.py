@@ -25,6 +25,7 @@ from flowmesh_stack.images import (
     BUILD_GROUPS,
     BUILD_TARGETS,
     expand_build_targets,
+    get_cache_ref,
     get_image_ref,
     get_push_platforms,
 )
@@ -172,7 +173,7 @@ def _run_bake(mode: str, targets: list[str] | None, env_file: Path) -> None:
     build_created = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     registry = os.getenv("FLOWMESH_REGISTRY", "ghcr.io/mlsys-io")
     version = os.getenv("FLOWMESH_VERSION", "dev")
-    cache_version = os.getenv("FLOWMESH_CACHE_VERSION", "").strip() or version
+    cache_version = os.getenv("FLOWMESH_CACHE_VERSION", "").strip() or "cache"
     env = {
         "REGISTRY": registry,
         "VERSION": version,
@@ -193,12 +194,16 @@ def _run_bake(mode: str, targets: list[str] | None, env_file: Path) -> None:
         else:
             args.append("--load")
         args.extend(batch_targets)
-        args.extend(["--set", "*.args.BUILDKIT_INLINE_CACHE=1"])
 
         selected_targets = _resolve_build_targets(batch_targets)
         for target in selected_targets:
-            image_ref = get_image_ref(registry, cache_version, target)
-            args += ["--set", f"{target}.cache-from=type=registry,ref={image_ref}"]
+            cache_ref = get_cache_ref(registry, cache_version, target)
+            args += ["--set", f"{target}.cache-from=type=registry,ref={cache_ref}"]
+            if mode == "push":
+                args += [
+                    "--set",
+                    f"{target}.cache-to=type=registry,ref={cache_ref},mode=max",
+                ]
         for target, platform in _platform_overrides(mode, selected_targets):
             args += ["--set", f"{target}.platform={platform}"]
 

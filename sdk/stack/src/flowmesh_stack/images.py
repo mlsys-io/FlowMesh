@@ -14,6 +14,16 @@ BUILD_TARGETS: dict[str, str] = {
 }
 """Mapping from build target name to image reference format string."""
 
+CACHE_TARGETS: dict[str, str] = {
+    "flowmesh_server": "{registry}/flowmesh_server:{scope}",
+    "flowmesh_worker_cpu": "{registry}/flowmesh_worker:{scope}-cpu",
+    "flowmesh_worker_gpu_builder": "{registry}/flowmesh_worker_builder:{scope}-gpu",
+    "flowmesh_worker_gpu": "{registry}/flowmesh_worker:{scope}-gpu",
+    "flowmesh_ssh_cpu": "{registry}/flowmesh_ssh:{scope}-cpu",
+    "flowmesh_ssh_gpu": "{registry}/flowmesh_ssh:{scope}-gpu",
+}
+"""Mapping from build target name to registry cache reference format string."""
+
 BUILD_GROUPS: dict[str, list[str]] = {
     "server": ["flowmesh_server"],
     "workers": [
@@ -54,6 +64,21 @@ def get_image_ref(registry: str, version: str, target: str) -> str:
     if target not in BUILD_TARGETS:
         raise ValueError(f"Unknown build target: {target}")
     return BUILD_TARGETS[target].format(registry=registry, version=version)
+
+
+def get_cache_ref(registry: str, scope: str, target: str) -> str:
+    """Resolve a Docker registry cache reference for a build target."""
+
+    if target not in CACHE_TARGETS:
+        raise ValueError(f"Unknown build target: {target}")
+    normalized_scope = (scope or "").strip()
+    if not normalized_scope or normalized_scope == "cache":
+        cache_scope = "cache"
+    elif normalized_scope.startswith("cache-"):
+        cache_scope = normalized_scope
+    else:
+        cache_scope = f"cache-{normalized_scope}"
+    return CACHE_TARGETS[target].format(registry=registry, scope=cache_scope)
 
 
 def expand_build_targets(targets: list[str]) -> list[str]:

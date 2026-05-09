@@ -3,6 +3,7 @@ from flowmesh_cli_stack.stack import (
     _platform_overrides,
     _resolve_build_targets,
 )
+from flowmesh_stack.images import get_cache_ref
 
 
 def test_resolve_build_targets_expands_gpu_builder_dependency() -> None:
@@ -47,3 +48,22 @@ Nodes:
 Name:      default0
 """
     assert _parse_buildx_driver(output) == "docker-container"
+
+
+def test_get_cache_ref_uses_stable_target_specific_tags() -> None:
+    assert (
+        get_cache_ref("ghcr.io/mlsys-io", "cache", "flowmesh_server")
+        == "ghcr.io/mlsys-io/flowmesh_server:cache"
+    )
+    assert (
+        get_cache_ref("ghcr.io/mlsys-io", "cache", "flowmesh_worker_gpu")
+        == "ghcr.io/mlsys-io/flowmesh_worker:cache-gpu"
+    )
+    assert (
+        get_cache_ref("ghcr.io/mlsys-io", "v2", "flowmesh_worker_gpu_builder")
+        == "ghcr.io/mlsys-io/flowmesh_worker_builder:cache-v2-gpu"
+    )
+    assert (
+        get_cache_ref("ghcr.io/mlsys-io", "cache-v2", "flowmesh_worker_gpu_builder")
+        == "ghcr.io/mlsys-io/flowmesh_worker_builder:cache-v2-gpu"
+    )

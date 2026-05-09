@@ -21,7 +21,13 @@ STACK_ENV_SCHEMA = EnvSchema(
             vars=[
                 EnvVar("FLOWMESH_REGISTRY", "ghcr.io/mlsys-io", required=True),
                 EnvVar("FLOWMESH_VERSION", "dev", required=True),
-                EnvVar("FLOWMESH_CACHE_VERSION"),
+                EnvVar(
+                    "FLOWMESH_CACHE_VERSION",
+                    description=[
+                        "Optional registry cache lineage for stack push.",
+                        "Leave empty to use the default stable cache scope.",
+                    ],
+                ),
                 EnvVar("FLOWMESH_BUILD_REF", "local"),
             ],
         ),
