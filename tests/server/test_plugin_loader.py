@@ -21,7 +21,7 @@ from contextlib import AsyncExitStack
 from pathlib import Path
 
 import pytest
-from flowmesh_hook import HookBindings
+from lumid_hooks import HookBindings
 
 from server.hooks import (
     IDENTITY_PROVIDERS,
@@ -94,7 +94,7 @@ def _write_plugin(root: Path, name: str, body: str) -> None:
 
 
 _SYNC_PLUGIN_BODY = """\
-from flowmesh_hook import HookBindings
+from flowmesh_hook import BaseBindings
 
 
 class _Provider:
@@ -105,7 +105,7 @@ class _Provider:
 
 
 def install():
-    return HookBindings(identity_providers=[_Provider()])
+    return BaseBindings(identity_providers=[_Provider()])
 """
 
 
@@ -172,7 +172,7 @@ class TestPluginLoader:
     ) -> None:
         body = """\
 from contextlib import asynccontextmanager
-from flowmesh_hook import HookBindings
+from flowmesh_hook import BaseBindings
 
 
 teardown_called = False
@@ -187,7 +187,7 @@ class _Provider:
 @asynccontextmanager
 async def install():
     try:
-        yield HookBindings(identity_providers=[_Provider()])
+        yield BaseBindings(identity_providers=[_Provider()])
     finally:
         global teardown_called
         teardown_called = True

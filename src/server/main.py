@@ -8,6 +8,7 @@ from contextlib import AsyncExitStack, asynccontextmanager
 
 import uvicorn
 from fastapi import FastAPI
+from lumid_hooks import HookBindings
 
 if __name__ == "__main__" and __package__ is None:
     import sys
@@ -20,7 +21,7 @@ from .auth import resolve_system_principal
 from .clients import RedisClient
 from .config import NodeRole, ServerConfig
 from .dispatcher.factory import create_dispatcher
-from .hooks import HookBindings, register
+from .hooks import register
 from .registries import WorkerRegistry, WorkflowRegistry
 from .registries.node import NodeRegistry
 from .routers import docs, health, v1

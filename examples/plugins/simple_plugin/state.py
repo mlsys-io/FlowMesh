@@ -6,7 +6,8 @@ underscore) because the README documents them as the knobs you tweak when
 poking at the plugin.
 """
 
-from flowmesh_hook import PrincipalContext, ResourceType, UsageRow
+from flowmesh_hook import UsageRow
+from lumid_hooks import PrincipalContext
 
 TOKENS: dict[str, PrincipalContext] = {
     "demo-admin-token": PrincipalContext(
@@ -31,7 +32,7 @@ BLOCKED_PRINCIPALS: set[str] = set()
 
 # Populated by `SimpleResourceRegistrar.register`; read by
 # `SimplePermissionChecker` to gate non-admin access.
-OWNERSHIP: dict[tuple[ResourceType, str], str] = {}
+OWNERSHIP: dict[tuple[str, str], str] = {}
 
 # Appended by `SimpleUsageSink.emit` — kept around for inspection so users
 # can confirm tasks complete and rows fan out as expected.

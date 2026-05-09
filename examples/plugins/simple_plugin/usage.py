@@ -1,6 +1,7 @@
 """`UsageSink` example: append rows to an in-memory ledger and log a summary."""
 
 import logging
+from collections.abc import Sequence
 from decimal import Decimal
 
 from flowmesh_hook import UsageRow
@@ -11,7 +12,7 @@ from . import state
 class SimpleUsageSink:
     name = "simple_plugin.usage"
 
-    async def emit(self, rows: list[UsageRow], logger: logging.Logger) -> None:
+    async def emit(self, rows: Sequence[UsageRow], logger: logging.Logger) -> None:
         if not rows:
             return
         state.USAGE_LEDGER.extend(rows)

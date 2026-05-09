@@ -1,29 +1,34 @@
-"""FlowMesh plugin contract surface.
+"""FlowMesh-specific extension surface.
 
-Plugins return a `HookBindings` from `install()`; the server drains it
-into its runtime registries on startup.
+Carries the bits the FlowMesh server adds on top of `lumid-hooks`:
+
+- `HookBindings` — runtime-checkable Protocol extending the shared one with
+  FlowMesh's `supplier_resolvers`. Used by the server's plugin gate.
+- `BaseBindings` — frozen dataclass extending `lumid_hooks.BaseBindings` with
+  `supplier_resolvers`. Convenience class for FlowMesh-only plugins.
+- `ResourceType` / `ResourceAction` — FlowMesh resource and action enums.
+- `SupplierResolver` / `WorkerView` — supplier attribution at dispatch time.
+- `UsageRow` / `FlowMeshUsageSink` — FlowMesh's usage row shape and parametrized
+  sink alias.
+
+Shared protocols (`IdentityProvider`, `SubmissionGuard`, `PermissionChecker`,
+`ResourceRegistrar`, `UsageSink`) and shared types (`PrincipalContext`,
+`ResourceRef`) come from `lumid-hooks`; import them from there directly.
 """
 
-from .bindings import HookBindings
-from .identity import IdentityProvider
-from .permissions import PermissionChecker
-from .registrar import ResourceRegistrar
-from .submission import SubmissionGuard
+from .bindings import BaseBindings, HookBindings
+from .resource_types import ResourceAction, ResourceType
 from .supplier import SupplierResolver
-from .types import PrincipalContext, ResourceAction, ResourceType, UsageRow, WorkerView
-from .usage import UsageSink
+from .usage import FlowMeshUsageSink, UsageRow
+from .worker_view import WorkerView
 
 __all__ = [
+    "BaseBindings",
+    "FlowMeshUsageSink",
     "HookBindings",
-    "IdentityProvider",
-    "PermissionChecker",
-    "PrincipalContext",
     "ResourceAction",
-    "ResourceRegistrar",
     "ResourceType",
-    "SubmissionGuard",
     "SupplierResolver",
     "UsageRow",
-    "UsageSink",
     "WorkerView",
 ]

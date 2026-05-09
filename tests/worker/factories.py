@@ -4,7 +4,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any, Final
 
-from flowmesh_hook import PrincipalContext
+from lumid_hooks import PrincipalContext
 
 from shared.tasks import TaskType
 from shared.tasks.worker_message import TaskEnvelopeStrict, WorkerTaskMessage

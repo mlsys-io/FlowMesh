@@ -5,7 +5,7 @@ In-memory state lives in `state` and every hook reads/writes it.
 NOT FOR PRODUCTION. See README.md.
 """
 
-from flowmesh_hook import HookBindings
+from flowmesh_hook import BaseBindings
 
 from .identity import SimpleIdentityProvider
 from .permissions import SimplePermissionChecker
@@ -15,8 +15,8 @@ from .supplier import SimpleSupplierResolver
 from .usage import SimpleUsageSink
 
 
-def install() -> HookBindings:
-    return HookBindings(
+def install() -> BaseBindings:
+    return BaseBindings(
         identity_providers=[SimpleIdentityProvider()],
         submission_guards=[SimpleSubmissionGuard()],
         usage_sinks=[SimpleUsageSink()],

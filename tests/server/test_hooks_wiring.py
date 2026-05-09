@@ -7,7 +7,7 @@ disconnected from a call site.
 """
 
 import logging
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
@@ -17,14 +17,14 @@ import pytest
 from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.testclient import TestClient
 from flowmesh_hook import (
-    HookBindings,
-    PrincipalContext,
+    BaseBindings,
+    FlowMeshUsageSink,
     ResourceAction,
     ResourceType,
     UsageRow,
-    UsageSink,
     WorkerView,
 )
+from lumid_hooks import PrincipalContext, ResourceRef
 
 from server.auth.security import (
     authenticate_api_key,
@@ -109,7 +109,7 @@ class TestIdentityProviderWiring:
         )
         first = _FakeIdentityProvider(returns=principal)
         second = _FakeIdentityProvider(returns=None)
-        register(HookBindings(identity_providers=[first, second]))
+        register(BaseBindings(identity_providers=[first, second]))
 
         result = await authenticate_api_key("opaque", logger)
 
@@ -122,7 +122,7 @@ class TestIdentityProviderWiring:
         self, logger: logging.Logger
     ) -> None:
         provider = _FakeIdentityProvider(returns=None)
-        register(HookBindings(identity_providers=[provider]))
+        register(BaseBindings(identity_providers=[provider]))
 
         with pytest.raises(HTTPException) as exc_info:
             await authenticate_api_key("opaque", logger)
@@ -163,7 +163,7 @@ class TestSubmissionGuardWiring:
                     status_code=status.HTTP_402_PAYMENT_REQUIRED, detail="nope"
                 )
 
-        register(HookBindings(submission_guards=[_AllowGuard(), _BlockGuard()]))
+        register(BaseBindings(submission_guards=[_AllowGuard(), _BlockGuard()]))
         principal = PrincipalContext(
             principal_id="p",
             org_id="x",
@@ -196,17 +196,21 @@ class TestUsageSinkWiring:
         class _BoomSink:
             name = "boom"
 
-            async def emit(self, rows: list[UsageRow], logger: logging.Logger) -> None:
+            async def emit(
+                self, rows: Sequence[UsageRow], logger: logging.Logger
+            ) -> None:
                 seen.append("boom")
                 raise RuntimeError("kaboom")
 
         class _OkSink:
             name = "ok"
 
-            async def emit(self, rows: list[UsageRow], logger: logging.Logger) -> None:
+            async def emit(
+                self, rows: Sequence[UsageRow], logger: logging.Logger
+            ) -> None:
                 seen.append("ok")
 
-        sinks: list[UsageSink] = [_BoomSink(), _OkSink()]
+        sinks: list[FlowMeshUsageSink] = [_BoomSink(), _OkSink()]
         rows: list[UsageRow] = [
             UsageRow(
                 org_id="x",
@@ -293,7 +297,7 @@ class TestAuthenticateConnection:
             scopes=[],
         )
         provider = _CapturingProvider(returns=principal)
-        register(HookBindings(identity_providers=[provider]))
+        register(BaseBindings(identity_providers=[provider]))
 
         app = _build_submit_app()
         client = TestClient(app)
@@ -306,7 +310,7 @@ class TestAuthenticateConnection:
 
     def test_missing_authorization_header_falls_through_to_401(self) -> None:
         provider = _CapturingProvider(returns=None)
-        register(HookBindings(identity_providers=[provider]))
+        register(BaseBindings(identity_providers=[provider]))
 
         app = _build_submit_app()
         client = TestClient(app)
@@ -371,7 +375,7 @@ class TestPermissionCheckerComposition:
             async def require(self, *args: Any, **kwargs: Any) -> None:
                 return None
 
-        register(HookBindings(permission_checkers=[_UnionChecker(), _AllChecker()]))
+        register(BaseBindings(permission_checkers=[_UnionChecker(), _AllChecker()]))
 
         ids = await resolve_accessible_ids(
             principal, ResourceType.TASK, ResourceAction.READ, logger
@@ -412,7 +416,7 @@ class TestPermissionCheckerComposition:
             async def require(self, *args: Any, **kwargs: Any) -> None:
                 return None
 
-        register(HookBindings(permission_checkers=[_A(), _B()]))
+        register(BaseBindings(permission_checkers=[_A(), _B()]))
 
         ids = await resolve_accessible_ids(
             principal, ResourceType.TASK, ResourceAction.READ, logger
@@ -458,7 +462,7 @@ class TestPermissionCheckerComposition:
             async def require(self, *args: Any, **kwargs: Any) -> None:
                 seen.append("never")
 
-        register(HookBindings(permission_checkers=[_Block(), _NeverRuns()]))
+        register(BaseBindings(permission_checkers=[_Block(), _NeverRuns()]))
 
         with pytest.raises(HTTPException) as exc_info:
             await require_permission(
@@ -521,7 +525,7 @@ class TestSupplierResolverWiring:
                 raise AssertionError("subsequent resolvers must not run")
 
         register(
-            HookBindings(
+            BaseBindings(
                 supplier_resolvers=[_ReturnsNone(), _ReturnsValue(), _NeverRuns()]
             )
         )
@@ -542,29 +546,24 @@ class _RecordingRegistrar:
     name = "recording"
 
     def __init__(self) -> None:
-        self.registered: list[tuple[str, ResourceType, str, dict[str, Any]]] = []
-        self.deregistered: list[tuple[str, ResourceType, str]] = []
+        self.registered: list[tuple[str, ResourceRef]] = []
+        self.deregistered: list[tuple[str, ResourceRef]] = []
 
     async def register(
         self,
         principal: PrincipalContext,
-        resource_type: ResourceType,
-        resource_id: str,
-        metadata: Any,
+        resource: ResourceRef,
         logger: logging.Logger,
     ) -> None:
-        self.registered.append(
-            (principal.principal_id, resource_type, resource_id, dict(metadata))
-        )
+        self.registered.append((principal.principal_id, resource))
 
     async def deregister(
         self,
         principal: PrincipalContext,
-        resource_type: ResourceType,
-        resource_id: str,
+        resource: ResourceRef,
         logger: logging.Logger,
     ) -> None:
-        self.deregistered.append((principal.principal_id, resource_type, resource_id))
+        self.deregistered.append((principal.principal_id, resource))
 
 
 class TestResourceRegistrarComposition:
@@ -593,27 +592,30 @@ class TestResourceRegistrarComposition:
     ) -> None:
         first = _RecordingRegistrar()
         second = _RecordingRegistrar()
-        register(HookBindings(resource_registrars=[first, second]))
+        register(BaseBindings(resource_registrars=[first, second]))
 
         await register_resource(
             principal, ResourceType.WORKFLOW, "wfl-1", {"name": "n"}, logger
         )
 
+        expected = ResourceRef(
+            kind=ResourceType.WORKFLOW.value, id="wfl-1", metadata={"name": "n"}
+        )
         for r in (first, second):
-            assert r.registered == [
-                ("p-1", ResourceType.WORKFLOW, "wfl-1", {"name": "n"})
-            ]
+            assert r.registered == [("p-1", expected)]
 
     @pytest.mark.anyio
     async def test_deregister_fans_out(
         self, principal: PrincipalContext, logger: logging.Logger
     ) -> None:
         recorder = _RecordingRegistrar()
-        register(HookBindings(resource_registrars=[recorder]))
+        register(BaseBindings(resource_registrars=[recorder]))
 
         await deregister_resource(principal, ResourceType.WORKER, "wkr-1", logger)
 
-        assert recorder.deregistered == [("p-1", ResourceType.WORKER, "wkr-1")]
+        assert recorder.deregistered == [
+            ("p-1", ResourceRef(kind=ResourceType.WORKER.value, id="wkr-1"))
+        ]
 
     @pytest.mark.anyio
     async def test_register_propagates_failure(
@@ -628,7 +630,7 @@ class TestResourceRegistrarComposition:
             async def deregister(self, *args: Any, **kwargs: Any) -> None:
                 return None
 
-        register(HookBindings(resource_registrars=[_Boom()]))
+        register(BaseBindings(resource_registrars=[_Boom()]))
 
         with pytest.raises(RuntimeError, match="plugin failure"):
             await register_resource(

@@ -9,7 +9,7 @@ ownership is read from `state.OWNERSHIP`, populated by
 import logging
 
 from fastapi import HTTPException
-from flowmesh_hook import PrincipalContext, ResourceAction, ResourceType
+from lumid_hooks import PrincipalContext, ResourceRef
 
 from . import state
 
@@ -26,8 +26,8 @@ class SimplePermissionChecker:
     async def accessible_ids(
         self,
         principal: PrincipalContext,
-        resource_type: ResourceType,
-        action: ResourceAction,
+        kind: str,
+        action: str,
         logger: logging.Logger,
     ) -> frozenset[str] | None:
         if _is_admin(principal):
@@ -35,30 +35,29 @@ class SimplePermissionChecker:
                 "%s: admin %s -> no filter on %s/%s",
                 self.name,
                 principal.principal_id,
-                resource_type.value,
-                action.value,
+                kind,
+                action,
             )
             return None
         owned = frozenset(
             rid
-            for (rt, rid), owner in state.OWNERSHIP.items()
-            if rt == resource_type and owner == principal.principal_id
+            for (k, rid), owner in state.OWNERSHIP.items()
+            if k == kind and owner == principal.principal_id
         )
         logger.info(
             "%s: principal_id=%s sees %d %s(s)",
             self.name,
             principal.principal_id,
             len(owned),
-            resource_type.value,
+            kind,
         )
         return owned
 
     async def require(
         self,
         principal: PrincipalContext,
-        resource_type: ResourceType,
-        resource_id: str | None,
-        action: ResourceAction,
+        resource: ResourceRef,
+        action: str,
         logger: logging.Logger,
     ) -> None:
         if _is_admin(principal):
@@ -66,57 +65,57 @@ class SimplePermissionChecker:
                 "%s: admin %s -> allow %s on %s/%s",
                 self.name,
                 principal.principal_id,
-                action.value,
-                resource_type.value,
-                resource_id if resource_id is not None else "<type-level>",
+                action,
+                resource.kind,
+                resource.id if resource.id is not None else "<kind-level>",
             )
             return
-        if resource_id is None:
-            # Type-level / fleet-level check. Allow any principal carrying at
+        if resource.id is None:
+            # Kind-level / fleet-level check. Allow any principal carrying at
             # least one scope; tighten this in real plugins.
             if not principal.scopes:
                 logger.warning(
-                    "%s: deny scope-less type-level %s on %s",
+                    "%s: deny scope-less kind-level %s on %s",
                     self.name,
-                    action.value,
-                    resource_type.value,
+                    action,
+                    resource.kind,
                 )
                 raise HTTPException(
                     status_code=403,
-                    detail="principal has no scopes for type-level action",
+                    detail="principal has no scopes for kind-level action",
                 )
             logger.info(
-                "%s: principal_id=%s allowed type-level %s on %s",
+                "%s: principal_id=%s allowed kind-level %s on %s",
                 self.name,
                 principal.principal_id,
-                action.value,
-                resource_type.value,
+                action,
+                resource.kind,
             )
             return
-        owner = state.OWNERSHIP.get((resource_type, resource_id))
+        owner = state.OWNERSHIP.get((resource.kind, resource.id))
         if owner == principal.principal_id:
             logger.info(
                 "%s: owner %s -> allow %s on %s/%s",
                 self.name,
                 principal.principal_id,
-                action.value,
-                resource_type.value,
-                resource_id,
+                action,
+                resource.kind,
+                resource.id,
             )
             return
         logger.warning(
             "%s: deny %s on %s/%s for principal_id=%s (owner=%s)",
             self.name,
-            action.value,
-            resource_type.value,
-            resource_id,
+            action,
+            resource.kind,
+            resource.id,
             principal.principal_id,
             owner,
         )
         raise HTTPException(
             status_code=403,
             detail=(
-                f"principal {principal.principal_id} may not {action.value} "
-                f"{resource_type.value}/{resource_id}"
+                f"principal {principal.principal_id} may not {action} "
+                f"{resource.kind}/{resource.id}"
             ),
         )

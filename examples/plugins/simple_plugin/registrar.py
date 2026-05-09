@@ -1,10 +1,8 @@
 """`ResourceRegistrar` example: maintain an in-memory ownership table."""
 
 import logging
-from collections.abc import Mapping
-from typing import Any
 
-from flowmesh_hook import PrincipalContext, ResourceType
+from lumid_hooks import PrincipalContext, ResourceRef
 
 from . import state
 
@@ -15,34 +13,40 @@ class SimpleResourceRegistrar:
     async def register(
         self,
         principal: PrincipalContext,
-        resource_type: ResourceType,
-        resource_id: str,
-        metadata: Mapping[str, Any],
+        resource: ResourceRef,
         logger: logging.Logger,
     ) -> None:
-        state.OWNERSHIP[(resource_type, resource_id)] = principal.principal_id
+        if resource.id is None:
+            logger.warning(
+                "%s: skipping register for kind-level ref kind=%s",
+                self.name,
+                resource.kind,
+            )
+            return
+        state.OWNERSHIP[(resource.kind, resource.id)] = principal.principal_id
         logger.info(
             "%s: register %s/%s -> principal_id=%s (metadata_keys=%s)",
             self.name,
-            resource_type.value,
-            resource_id,
+            resource.kind,
+            resource.id,
             principal.principal_id,
-            sorted(metadata.keys()),
+            sorted(resource.metadata.keys()),
         )
 
     async def deregister(
         self,
         principal: PrincipalContext,
-        resource_type: ResourceType,
-        resource_id: str,
+        resource: ResourceRef,
         logger: logging.Logger,
     ) -> None:
-        owner = state.OWNERSHIP.pop((resource_type, resource_id), None)
+        if resource.id is None:
+            return
+        owner = state.OWNERSHIP.pop((resource.kind, resource.id), None)
         logger.info(
             "%s: deregister %s/%s (was_owner=%s, actor=%s)",
             self.name,
-            resource_type.value,
-            resource_id,
+            resource.kind,
+            resource.id,
             owner,
             principal.principal_id,
         )

@@ -1,4 +1,4 @@
-"""Supplier-resolver hook.
+"""Supplier-resolver hook (FlowMesh-specific).
 
 Maps an assigned worker to the supplier responsible for the underlying
 hardware (e.g. cloud account id, vendor identifier). The runtime calls every
@@ -10,7 +10,7 @@ With no resolvers registered, the supplier id stays at its `""` default.
 
 from typing import Protocol, runtime_checkable
 
-from .types import WorkerView
+from .worker_view import WorkerView
 
 
 @runtime_checkable

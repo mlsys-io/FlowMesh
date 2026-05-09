@@ -21,7 +21,8 @@ from collections.abc import Mapping
 from typing import Any
 
 from fastapi import HTTPException, WebSocket, WebSocketException, status
-from flowmesh_hook import PrincipalContext, ResourceAction, ResourceType
+from flowmesh_hook import ResourceAction, ResourceType
+from lumid_hooks import PrincipalContext, ResourceRef
 from starlette.requests import HTTPConnection
 
 from ..hooks import IDENTITY_PROVIDERS, PERMISSION_CHECKERS, RESOURCE_REGISTRARS
@@ -142,7 +143,9 @@ async def resolve_accessible_ids(
 
     accumulated: set[str] = set()
     for checker in PERMISSION_CHECKERS:
-        result = await checker.accessible_ids(principal, resource_type, action, logger)
+        result = await checker.accessible_ids(
+            principal, resource_type.value, action.value, logger
+        )
         if result is None:
             return None
         accumulated.update(result)
@@ -162,8 +165,9 @@ async def require_permission(
     principal create workflows" before a `wfl-` id has been minted, or any
     `SYSTEM`-scoped check).
     """
+    resource = ResourceRef(kind=resource_type.value, id=resource_id)
     for checker in PERMISSION_CHECKERS:
-        await checker.require(principal, resource_type, resource_id, action, logger)
+        await checker.require(principal, resource, action.value, logger)
 
 
 async def register_resource(
@@ -179,10 +183,9 @@ async def register_resource(
     is inferred from the owning task and does not fire. With no registrars
     registered this is a no-op.
     """
+    resource = ResourceRef(kind=resource_type.value, id=resource_id, metadata=metadata)
     for registrar in RESOURCE_REGISTRARS:
-        await registrar.register(
-            principal, resource_type, resource_id, metadata, logger
-        )
+        await registrar.register(principal, resource, logger)
 
 
 async def deregister_resource(
@@ -197,5 +200,6 @@ async def deregister_resource(
     request-driven destructions, the resolved system principal (see
     `resolve_system_principal`) for heartbeat reaps and self-shutdown.
     """
+    resource = ResourceRef(kind=resource_type.value, id=resource_id)
     for registrar in RESOURCE_REGISTRARS:
-        await registrar.deregister(principal, resource_type, resource_id, logger)
+        await registrar.deregister(principal, resource, logger)

@@ -4,7 +4,7 @@ import threading
 from collections.abc import Callable
 
 import httpx
-from flowmesh_hook import PrincipalContext
+from lumid_hooks import PrincipalContext
 
 from shared.schemas.event import NodeEvent, serialize_event
 from shared.schemas.node import NodeInfo

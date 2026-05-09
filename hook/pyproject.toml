@@ -5,11 +5,11 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "flowmesh-hook"
 version = "0.1.0"
-description = "FlowMesh plugin contract surface (protocols, types, bindings)"
+description = "FlowMesh-specific plugin extension surface (bindings, resource enums, supplier resolver, usage row)"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "pydantic>=2.12.3",
+    "lumid-hooks",
 ]
 
 [tool.setuptools]

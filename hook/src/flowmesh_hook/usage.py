@@ -1,20 +1,29 @@
-"""Usage-sink hook.
+"""FlowMesh's usage row + sink alias.
 
-Fan-out for per-task usage rows after a task completes. Each sink decides
-which rows it consumes and how to deliver them. Sink failures are isolated by
-the caller — they must not break the dispatch path.
+`lumid_hooks.UsageSink` is generic over the row type; FlowMesh ships a
+concrete `UsageRow` shape and exposes `FlowMeshUsageSink` as the parametrized
+alias plugins type against.
 """
 
-import logging
-from typing import Protocol, runtime_checkable
+from datetime import datetime
+from decimal import Decimal
+from typing import TypedDict
 
-from .types import UsageRow
+from lumid_hooks import UsageSink
 
 
-@runtime_checkable
-class UsageSink(Protocol):
-    name: str
+class UsageRow(TypedDict):
+    """One usage row emitted to `FlowMeshUsageSink` after a task completes."""
 
-    async def emit(self, rows: list[UsageRow], logger: logging.Logger) -> None:
-        """Deliver per-task usage rows to a downstream sink."""
-        ...
+    org_id: str
+    principal_id: str
+    supplier_id: str | None
+    occurred_at: datetime
+    cost: Decimal
+    task_id: str
+    runtime_sec: float
+    cost_per_hour: float
+    task_status: str
+
+
+type FlowMeshUsageSink = UsageSink[UsageRow]

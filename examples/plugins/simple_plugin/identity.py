@@ -2,7 +2,7 @@
 
 import logging
 
-from flowmesh_hook import PrincipalContext
+from lumid_hooks import PrincipalContext
 
 from . import state
 

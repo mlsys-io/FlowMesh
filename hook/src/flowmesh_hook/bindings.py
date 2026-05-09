@@ -1,26 +1,35 @@
-"""`HookBindings` — the value a plugin returns from `install()`.
+"""FlowMesh's bindings shape — Protocol contract + concrete convenience class.
 
-Frozen aggregate of the protocol implementations a plugin contributes. The
-server drains each field into its runtime registries on startup; plugins
-never touch the registries directly.
+`HookBindings` is a runtime-checkable Protocol extending
+`lumid_hooks.HookBindings` with FlowMesh's `supplier_resolvers` field. The
+server gates plugin load against the shared Protocol (so shared-only plugins
+pass) and narrows on this Protocol to drain `supplier_resolvers` from
+FlowMesh-extended plugins. The field is declared read-only so frozen dataclass
+instances satisfy the Protocol under mypy.
+
+`BaseBindings` is a frozen dataclass extending `lumid_hooks.BaseBindings` with
+`supplier_resolvers` default-factoried. FlowMesh-only plugins return
+`BaseBindings(...)` directly. Cross-host plugins skip both and return their own
+dataclass that names `supplier_resolvers` alongside other hosts' fields —
+structural typing handles it.
 """
 
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from typing import Protocol, runtime_checkable
 
-from .identity import IdentityProvider
-from .permissions import PermissionChecker
-from .registrar import ResourceRegistrar
-from .submission import SubmissionGuard
+from lumid_hooks import BaseBindings as SharedBaseBindings
+from lumid_hooks import HookBindings as SharedHookBindings
+
 from .supplier import SupplierResolver
-from .usage import UsageSink
+
+
+@runtime_checkable
+class HookBindings(SharedHookBindings, Protocol):
+    @property
+    def supplier_resolvers(self) -> Sequence[SupplierResolver]: ...
 
 
 @dataclass(frozen=True)
-class HookBindings:
-    identity_providers: Sequence[IdentityProvider] = field(default_factory=tuple)
-    submission_guards: Sequence[SubmissionGuard] = field(default_factory=tuple)
-    usage_sinks: Sequence[UsageSink] = field(default_factory=tuple)
-    permission_checkers: Sequence[PermissionChecker] = field(default_factory=tuple)
+class BaseBindings(SharedBaseBindings):
     supplier_resolvers: Sequence[SupplierResolver] = field(default_factory=tuple)
-    resource_registrars: Sequence[ResourceRegistrar] = field(default_factory=tuple)
