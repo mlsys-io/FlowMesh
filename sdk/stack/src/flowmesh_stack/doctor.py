@@ -120,7 +120,10 @@ def validate_docker_availability(report: DoctorReport) -> None:
 
     try:
         version = subprocess.run(
-            [docker_bin, "--version"],  # nosec B603: argv list, no shell, absolute path.
+            [
+                docker_bin,
+                "--version",
+            ],  # nosec B603: argv list, no shell, absolute path.
             capture_output=True,
             text=True,
             check=False,

@@ -379,7 +379,7 @@ class WorkerRegistry:
             hardware = worker.hardware
             gpu_entries = [] if hardware is None else hardware.gpu.gpus
             gpu_count = len(gpu_entries)
-            total_vram = sum((entry.memory_total_bytes or 0) for entry in gpu_entries)
+            total_vram = dedicated_gpu_memory_total_bytes(hardware)
             sys_ram = 0 if hardware is None else (hardware.memory.total_bytes or 0)
             cpu_cores = 0 if hardware is None else hardware.cpu.logical_cores
             decorated.append((worker, gpu_count, total_vram, sys_ram, cpu_cores))
@@ -535,13 +535,15 @@ def _gpu_meets_requirements(hw: WorkerHardware, gpu_req: GPURequirements) -> boo
             if not any(pattern.search(entry.name) for entry in entries):
                 return False
         if required_memory_bytes:
+            needed = required_count or 1
             eligible = sum(
                 1
                 for entry in entries
                 if (entry.memory_total_bytes or 0) >= required_memory_bytes
             )
-            needed = required_count or 1
-            if eligible < needed:
+            if eligible < needed and not _unified_gpu_memory_satisfies(
+                hw, required_memory_bytes, needed
+            ):
                 return False
         return True
 
@@ -559,6 +561,10 @@ def _gpu_meets_requirements(hw: WorkerHardware, gpu_req: GPURequirements) -> boo
 
     if required_memory_bytes:
         total_mem = 0 if first_gpu is None else (first_gpu.memory_total_bytes or 0)
+        if total_mem <= 0 and _unified_gpu_memory_satisfies(
+            hw, required_memory_bytes, required_count or 1
+        ):
+            return True
         if total_mem <= 0:
             return False
         needed = required_count or 1
@@ -567,6 +573,27 @@ def _gpu_meets_requirements(hw: WorkerHardware, gpu_req: GPURequirements) -> boo
             return False
 
     return True
+
+
+def dedicated_gpu_memory_total_bytes(hw: WorkerHardware | None) -> int:
+    if hw is None:
+        return 0
+    total = 0
+    for entry in hw.gpu.gpus:
+        total += entry.memory_total_bytes or 0
+    return total
+
+
+def _unified_gpu_memory_satisfies(
+    hw: WorkerHardware, required_memory_bytes: int, required_count: int
+) -> bool:
+    if not hw.gpu.memory_is_unified:
+        return False
+    shared_total = hw.gpu.shared_memory_total_bytes or 0
+    if shared_total <= 0:
+        return False
+    per_gpu_share = shared_total / max(required_count, 1)
+    return per_gpu_share >= required_memory_bytes
 
 
 def _parse_worker_from_redis(

@@ -3,7 +3,7 @@ import logging
 from collections.abc import Iterable
 from typing import Any
 
-from ..registries.worker import Worker
+from ..registries.worker import Worker, dedicated_gpu_memory_total_bytes
 
 DEFAULT_WORKER_SELECTION = "best_fit"
 
@@ -215,15 +215,21 @@ def _collect_worker_metrics(worker: Worker) -> dict[str, Any]:
     hardware = worker.hardware
     gpus = [] if hardware is None else hardware.gpu.gpus
     gpu_count = len(gpus)
-    total_vram = 0
-    for gpu in gpus:
-        total_vram += gpu.memory_total_bytes or 0
+    total_vram = dedicated_gpu_memory_total_bytes(hardware)
     sys_ram = 0 if hardware is None else (hardware.memory.total_bytes or 0)
     cpu_cores = 0 if hardware is None else hardware.cpu.logical_cores
+    if hardware is not None and hardware.gpu.memory_is_unified:
+        shared_gpu_mem = hardware.gpu.shared_memory_total_bytes or 0
+        gpu_mem_score = shared_gpu_mem
+        sys_mem_score = 0.0
+    else:
+        shared_gpu_mem = 0
+        gpu_mem_score = total_vram
+        sys_mem_score = sys_ram / 2
     throughput = (
         gpu_count * 100.0
-        + (total_vram or 0) / (1 << 30)
-        + sys_ram / (1 << 31)
+        + gpu_mem_score / (1 << 30)
+        + sys_mem_score / (1 << 30)
         + cpu_cores * 0.5
     )
     cost = worker.cost_per_hour if worker.cost_per_hour is not None else 1.0
@@ -234,6 +240,7 @@ def _collect_worker_metrics(worker: Worker) -> dict[str, Any]:
         "cost": cost,
         "gpu_count": float(gpu_count),
         "vram_gb": float((total_vram or 0) / (1 << 30)),
+        "shared_gpu_mem_gb": float((shared_gpu_mem or 0) / (1 << 30)),
         "cpu_cores": float(cpu_cores),
         "sys_ram_gb": float(sys_ram / (1 << 30)),
     }

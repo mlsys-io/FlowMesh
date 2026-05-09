@@ -149,7 +149,8 @@ class TestDoctorGpuRuntimeChecks:
                 return SimpleNamespace(
                     returncode=1,
                     stdout="",
-                    stderr="docker: Error response from daemon: unknown or invalid runtime name: nvidia",
+                    stderr="docker: Error response from daemon: unknown or invalid "
+                    "runtime name: nvidia",
                 )
             raise AssertionError(f"Unexpected command: {args}")
 
@@ -159,7 +160,9 @@ class TestDoctorGpuRuntimeChecks:
         validate_gpu_visibility(report, {"DOCKER_GPU_RUNTIME": "nvidia"})
 
         assert "nvidia-smi output:" in report.notes
-        assert any("DOCKER_GPU_RUNTIME='nvidia'" in warning for warning in report.warnings)
+        assert any(
+            "DOCKER_GPU_RUNTIME='nvidia'" in warning for warning in report.warnings
+        )
         assert any("DGX Spark" in warning for warning in report.warnings)
 
     def test_accepts_empty_runtime_when_docker_gpu_probe_succeeds(

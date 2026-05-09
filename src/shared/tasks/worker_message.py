@@ -85,6 +85,14 @@ class GpuPlatformInfo(BaseModel):
     driver_version: str | None = Field(description="GPU driver version.")
     cuda_version: str | None = Field(description="CUDA version.")
     gpus: list[GpuInfo] = Field(description="List of GPUs.")
+    memory_is_unified: bool = Field(
+        default=False,
+        description="Whether GPU memory is a unified/shared system memory pool.",
+    )
+    shared_memory_total_bytes: int | None = Field(
+        default=None,
+        description="Total shared GPU/system memory pool in bytes when unified.",
+    )
 
 
 class NetworkInfo(BaseModel):

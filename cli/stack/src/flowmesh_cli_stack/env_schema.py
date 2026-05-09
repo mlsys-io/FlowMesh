@@ -463,7 +463,7 @@ STACK_ENV_SCHEMA = EnvSchema(
                 EnvVar(
                     "DOCKER_GPU_RUNTIME",
                     "nvidia",
-                    description="Optional Docker runtime name for GPU containers."
+                    description="Optional Docker runtime name for GPU containers.",
                 ),
                 EnvVar(
                     "CUDA_VISIBLE_DEVICES", "all", var_type=EnvVarType.CSV_INTS_OR_ALL

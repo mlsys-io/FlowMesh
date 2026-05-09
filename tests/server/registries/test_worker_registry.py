@@ -25,6 +25,8 @@ def _worker(
     gpu_name: str = "A100",
     sys_mem: int = 0,
     cpu_cores: int = 4,
+    gpu_memory_is_unified: bool = False,
+    gpu_shared_memory_total_bytes: int | None = None,
 ) -> Worker:
     gpus = [
         GpuInfo(index=i, name=gpu_name, uuid=f"GPU-{i}", memory_total_bytes=gpu_mem)
@@ -33,7 +35,13 @@ def _worker(
     hw = WorkerHardware(
         cpu=CPUInfo(logical_cores=cpu_cores, model="CPU"),
         memory=MemoryInfo(total_bytes=sys_mem),
-        gpu=GpuPlatformInfo(driver_version=None, cuda_version=None, gpus=gpus),
+        gpu=GpuPlatformInfo(
+            driver_version=None,
+            cuda_version=None,
+            gpus=gpus,
+            memory_is_unified=gpu_memory_is_unified,
+            shared_memory_total_bytes=gpu_shared_memory_total_bytes,
+        ),
         network=NetworkInfo(ip=None, bandwidth_bytes_per_sec=None),
     )
     return Worker(
@@ -94,6 +102,30 @@ class TestHwSatisfies:
 
     def test_gpu_memory_not_satisfied(self) -> None:
         w = _worker(gpu_count=1, gpu_mem=16_000_000_000)
+        t = _task(gpu_count=1, gpu_memory="40GB")
+        assert hw_satisfies(w, t) is False
+
+    def test_gpu_memory_satisfied_by_unified_pool(self) -> None:
+        w = _worker(
+            gpu_count=1,
+            gpu_mem=0,
+            gpu_name="NVIDIA GB10",
+            sys_mem=128 * (1 << 30),
+            gpu_memory_is_unified=True,
+            gpu_shared_memory_total_bytes=128 * (1 << 30),
+        )
+        t = _task(gpu_count=1, gpu_memory="40GB")
+        assert hw_satisfies(w, t) is True
+
+    def test_gpu_memory_not_satisfied_by_unified_pool(self) -> None:
+        w = _worker(
+            gpu_count=1,
+            gpu_mem=0,
+            gpu_name="NVIDIA GB10",
+            sys_mem=32 * (1 << 30),
+            gpu_memory_is_unified=True,
+            gpu_shared_memory_total_bytes=32 * (1 << 30),
+        )
         t = _task(gpu_count=1, gpu_memory="40GB")
         assert hw_satisfies(w, t) is False
 

@@ -781,16 +781,23 @@ class MetricsRecorder:
             "gpu_energy_kwh": 0.0,
             "workers_with_energy": 0,
             "gpu_memory_total_bytes": 0,
+            "gpu_shared_memory_total_bytes": 0,
         }
         detailed = {}
         for worker_id, meta in self._worker_meta.items():
             info = self._prepare_worker_summary(worker_id, meta)
             gpu_mem_bytes = self._extract_gpu_memory_bytes(info)
+            gpu_shared_mem_bytes = self._extract_gpu_shared_memory_bytes(info)
             if gpu_mem_bytes is not None:
                 totals["gpu_memory_total_bytes"] += gpu_mem_bytes
                 info["gpu_memory_total_bytes"] = gpu_mem_bytes
             else:
                 info["gpu_memory_total_bytes"] = None
+            if gpu_shared_mem_bytes is not None:
+                totals["gpu_shared_memory_total_bytes"] += gpu_shared_mem_bytes
+                info["gpu_shared_memory_total_bytes"] = gpu_shared_mem_bytes
+            else:
+                info["gpu_shared_memory_total_bytes"] = None
             breakdown: dict[str, Any] | None = None
             cost = _safe_float(info.get("cost_per_hour"))
             uptime = _safe_float(info.get("uptime_sec"))
@@ -826,6 +833,8 @@ class MetricsRecorder:
             totals["gpu_energy_kwh"] = None
         if totals["gpu_memory_total_bytes"] == 0:
             totals["gpu_memory_total_bytes"] = None
+        if totals["gpu_shared_memory_total_bytes"] == 0:
+            totals["gpu_shared_memory_total_bytes"] = None
         return {
             "totals": totals,
             "workers": detailed,
@@ -891,3 +900,15 @@ class MetricsRecorder:
         if found:
             return total
         return None
+
+    def _extract_gpu_shared_memory_bytes(self, info: dict[str, Any]) -> int | None:
+        hardware_dict = info.get("hardware")
+        if not isinstance(hardware_dict, dict):
+            return None
+        hardware = WorkerHardware.model_validate(hardware_dict)
+        if not hardware.gpu.memory_is_unified:
+            return None
+        shared_total = hardware.gpu.shared_memory_total_bytes
+        if shared_total is None or shared_total <= 0:
+            return None
+        return int(shared_total)

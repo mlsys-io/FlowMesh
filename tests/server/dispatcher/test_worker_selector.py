@@ -24,6 +24,8 @@ def _worker(
     sys_mem: int = 0,
     cpu_cores: int = 1,
     cost: float = 1.0,
+    gpu_memory_is_unified: bool = False,
+    gpu_shared_memory_total_bytes: int | None = None,
 ) -> Worker:
     gpus = [
         GpuInfo(index=i, name="GPU", uuid=f"GPU-{i}", memory_total_bytes=gpu_mem)
@@ -32,7 +34,13 @@ def _worker(
     hw = WorkerHardware(
         cpu=CPUInfo(logical_cores=cpu_cores, model="CPU"),
         memory=MemoryInfo(total_bytes=sys_mem),
-        gpu=GpuPlatformInfo(driver_version=None, cuda_version=None, gpus=gpus),
+        gpu=GpuPlatformInfo(
+            driver_version=None,
+            cuda_version=None,
+            gpus=gpus,
+            memory_is_unified=gpu_memory_is_unified,
+            shared_memory_total_bytes=gpu_shared_memory_total_bytes,
+        ),
         network=NetworkInfo(ip=None, bandwidth_bytes_per_sec=None),
     )
     return Worker(
@@ -135,3 +143,37 @@ class TestCollectMetrics:
         assert m.get("vram_total", 0) == 0
         assert m.get("sys_ram", 0) == 0
         assert m.get("cpu_cores", 0) == 0
+
+    def test_unified_memory_worker_does_not_double_count_vram(self) -> None:
+        w = _worker(
+            "w-uma",
+            gpu_count=1,
+            gpu_mem=0,
+            sys_mem=128 * (1 << 30),
+            gpu_memory_is_unified=True,
+            gpu_shared_memory_total_bytes=128 * (1 << 30),
+        )
+        m = _collect_worker_metrics(w)
+        assert m["gpu_count"] == 1.0
+        assert m["vram_gb"] == 0.0
+        assert m["shared_gpu_mem_gb"] == 128.0
+        assert m["sys_ram_gb"] == 128.0
+        assert m["throughput"] == 100.0 + 128.0 + 0.5
+
+    def test_best_fit_prefers_unified_gpu_memory_over_small_vram(self) -> None:
+        w_small = _worker(
+            "w-small", gpu_count=1, gpu_mem=16 * (1 << 30), sys_mem=64 * (1 << 30)
+        )
+        w_unified = _worker(
+            "w-unified",
+            gpu_count=1,
+            gpu_mem=0,
+            sys_mem=200 * (1 << 30),
+            gpu_memory_is_unified=True,
+            gpu_shared_memory_total_bytes=200 * (1 << 30),
+        )
+        worker, _ = select_worker(
+            [w_small, w_unified], strategy="best_fit", task_id="t-1"
+        )
+        assert worker is not None
+        assert worker.id == "w-unified"

@@ -28,6 +28,8 @@ class GpuPlatformInfo(BaseModel):
     driver_version: str | None = None
     cuda_version: str | None = None
     gpus: list[GpuInfo] = Field(default_factory=list)
+    memory_is_unified: bool = False
+    shared_memory_total_bytes: int | None = None
     gpu_arch: str | None = None
     compute_cap: int | None = None
     bw_nvlink: float | None = None
