@@ -3,6 +3,7 @@
 import copy
 from dataclasses import asdict
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
 
 import httpx
@@ -10,7 +11,12 @@ import pytest
 from flowmesh._base_client import BaseAsyncClient, BaseClient
 from flowmesh.exceptions import FlowMeshConnectionError, NotFoundError
 from flowmesh.params import append_param, extend_params
-from flowmesh_stack.doctor import DoctorFinding, DoctorReport, run_doctor_checks
+from flowmesh_stack.doctor import (
+    DoctorFinding,
+    DoctorReport,
+    run_doctor_checks,
+    validate_gpu_visibility,
+)
 from flowmesh_stack.env_schema import EnvSchema
 
 from .helpers import AsyncHTTP, AsyncResponse, SyncHTTP, SyncResponse
@@ -94,7 +100,7 @@ def test_run_doctor_checks_preserves_cross_category_order(
     )
     monkeypatch.setattr(
         "flowmesh_stack.doctor.validate_gpu_visibility",
-        lambda report: report.warning("gpu missing"),
+        lambda report, env_values: report.warning("gpu missing"),
     )
 
     report = run_doctor_checks(
@@ -110,6 +116,87 @@ def test_run_doctor_checks_preserves_cross_category_order(
         DoctorFinding("warning", "gpu missing"),
     ]
     assert callback_findings == report.findings
+
+
+class TestDoctorGpuRuntimeChecks:
+    def test_warns_when_configured_runtime_is_not_available(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        report = DoctorReport()
+
+        def fake_which(name: str) -> str | None:
+            mapping = {
+                "nvidia-smi": "/usr/bin/nvidia-smi",
+                "docker": "/usr/bin/docker",
+            }
+            return mapping.get(name)
+
+        def fake_run(
+            args: list[str], capture_output: bool, text: bool, check: bool
+        ) -> SimpleNamespace:
+            if args[0] == "/usr/bin/nvidia-smi":
+                return SimpleNamespace(
+                    returncode=0, stdout="0, NVIDIA GB10\n", stderr=""
+                )
+            if args[:6] == [
+                "/usr/bin/docker",
+                "run",
+                "--rm",
+                "--runtime",
+                "nvidia",
+                "--gpus",
+            ]:
+                return SimpleNamespace(
+                    returncode=1,
+                    stdout="",
+                    stderr="docker: Error response from daemon: unknown or invalid runtime name: nvidia",
+                )
+            raise AssertionError(f"Unexpected command: {args}")
+
+        monkeypatch.setattr("flowmesh_stack.doctor.shutil.which", fake_which)
+        monkeypatch.setattr("flowmesh_stack.doctor.subprocess.run", fake_run)
+
+        validate_gpu_visibility(report, {"DOCKER_GPU_RUNTIME": "nvidia"})
+
+        assert "nvidia-smi output:" in report.notes
+        assert any("DOCKER_GPU_RUNTIME='nvidia'" in warning for warning in report.warnings)
+        assert any("DGX Spark" in warning for warning in report.warnings)
+
+    def test_accepts_empty_runtime_when_docker_gpu_probe_succeeds(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        report = DoctorReport()
+        commands: list[list[str]] = []
+
+        def fake_which(name: str) -> str | None:
+            mapping = {
+                "nvidia-smi": "/usr/bin/nvidia-smi",
+                "docker": "/usr/bin/docker",
+            }
+            return mapping.get(name)
+
+        def fake_run(
+            args: list[str], capture_output: bool, text: bool, check: bool
+        ) -> SimpleNamespace:
+            commands.append(args)
+            if args[0] == "/usr/bin/nvidia-smi":
+                return SimpleNamespace(
+                    returncode=0, stdout="0, NVIDIA GB10\n", stderr=""
+                )
+            if args[0] == "/usr/bin/docker":
+                return SimpleNamespace(
+                    returncode=0, stdout="0, NVIDIA GB10\n", stderr=""
+                )
+            raise AssertionError(f"Unexpected command: {args}")
+
+        monkeypatch.setattr("flowmesh_stack.doctor.shutil.which", fake_which)
+        monkeypatch.setattr("flowmesh_stack.doctor.subprocess.run", fake_run)
+
+        validate_gpu_visibility(report, {"DOCKER_GPU_RUNTIME": ""})
+
+        docker_run = next(args for args in commands if args[0] == "/usr/bin/docker")
+        assert "--runtime" not in docker_run
+        assert "Docker GPU probe succeeded." in report.notes
 
 
 class TestBaseClientTransport:

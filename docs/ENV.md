@@ -35,6 +35,7 @@ listed here is in `.env.example`.
 | `WORKER_DEATH_GRACE_SEC` | `60` | Grace period before marking dead |
 | `FLOWMESH_PLUGINS` | – | Comma-separated plugin module names |
 | `SERVER_CUDA_PROBE_IMAGE` | `nvidia/cuda:12.9.1-base-ubuntu24.04` | CUDA image the server runs briefly to query local GPU names/indices |
+| `DOCKER_GPU_RUNTIME` | nvidia | Optional Docker runtime name for GPU probe/worker containers; leave empty unless the host requires a named runtime such as `nvidia` |
 | `LOG_LEVEL` | `INFO` | Server log level |
 
 **Notes:**
@@ -49,6 +50,9 @@ in the dispatching loop indefinitely.
 - When multiple deployments share one host, you can set `FLOWMESH_STACK_SUFFIX`
 in `.env` to differentiate the deployments so that FlowMesh stack CLI does
 not interfere with each other.
+- `DOCKER_GPU_RUNTIME` defaults to `nvidia`. On hosts where Docker GPU access
+works with `--gpus all` but fails with `--runtime=nvidia` (for example, DGX
+Spark), set `DOCKER_GPU_RUNTIME=` in the stack env.
 
 ## Worker
 

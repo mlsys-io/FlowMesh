@@ -16,6 +16,9 @@ from .env_schema import EnvSchema, schema_keys, validate_env_values
 
 type FindingLevel = Literal["note", "warning", "error"]
 
+_DEFAULT_CUDA_PROBE_IMAGE = "nvidia/cuda:12.9.1-base-ubuntu24.04"
+_DEFAULT_DOCKER_GPU_RUNTIME = "nvidia"
+
 
 @dataclass(frozen=True)
 class DoctorFinding:
@@ -89,7 +92,7 @@ def run_doctor_checks(
         report.extend_warnings(warnings)
     validate_config_file(report)
     validate_docker_availability(report)
-    validate_gpu_visibility(report)
+    validate_gpu_visibility(report, env_values or {})
     return report
 
 
@@ -113,10 +116,14 @@ def validate_docker_availability(report: DoctorReport) -> None:
         report.error(str(exc))
         return
     report.note("Docker is available")
+    docker_bin = _require_bin("docker")
 
     try:
         version = subprocess.run(
-            ["docker", "--version"], capture_output=True, text=True, check=False
+            [docker_bin, "--version"],  # nosec B603: argv list, no shell, absolute path.
+            capture_output=True,
+            text=True,
+            check=False,
         )
         if version.stdout:
             report.note(version.stdout.strip())
@@ -127,7 +134,10 @@ def validate_docker_availability(report: DoctorReport) -> None:
         return
 
     docker_info = subprocess.run(
-        ["docker", "info"], capture_output=True, text=True, check=False
+        [docker_bin, "info"],  # nosec B603: argv list, no shell, absolute path.
+        capture_output=True,
+        text=True,
+        check=False,
     )
     if docker_info.returncode == 0:
         report.note("Docker daemon: reachable")
@@ -140,14 +150,75 @@ def validate_docker_availability(report: DoctorReport) -> None:
         report.note("Using docker compose plugin.")
 
 
-def validate_gpu_visibility(report: DoctorReport) -> None:
-    """Validate whether GPUs are visible to the local docker host."""
-    if shutil.which("nvidia-smi"):
+def validate_gpu_visibility(report: DoctorReport, env_values: dict[str, str]) -> None:
+    """Validate whether GPUs are visible to the host and Docker runtime."""
+    nvidia_smi_bin = shutil.which("nvidia-smi")
+    if nvidia_smi_bin:
         smi = subprocess.run(
-            ["nvidia-smi"], capture_output=True, text=True, check=False
+            [nvidia_smi_bin],  # nosec B603: argv list, no shell, absolute path.
+            capture_output=True,
+            text=True,
+            check=False,
         )
         if smi.stdout:
             report.note("nvidia-smi output:")
             report.note(smi.stdout)
+        if smi.returncode != 0:
+            detail = (smi.stderr or smi.stdout).strip()
+            report.warning(f"nvidia-smi failed on host: {detail or 'unknown error'}")
+            return
+        validate_docker_gpu_runtime(report, env_values)
         return
     report.warning("nvidia-smi not found; GPU visibility not verified.")
+
+
+def validate_docker_gpu_runtime(
+    report: DoctorReport, env_values: dict[str, str]
+) -> None:
+    """Validate that the configured Docker GPU runtime works with the probe image."""
+    docker_bin = shutil.which("docker")
+    if docker_bin is None:
+        return
+
+    probe_image = env_values.get("SERVER_CUDA_PROBE_IMAGE", _DEFAULT_CUDA_PROBE_IMAGE)
+    runtime = env_values.get("DOCKER_GPU_RUNTIME", _DEFAULT_DOCKER_GPU_RUNTIME).strip()
+    command = [docker_bin, "run", "--rm"]
+    if runtime:
+        command += ["--runtime", runtime]
+    command += [
+        "--gpus",
+        "all",
+        probe_image,
+        "nvidia-smi",
+        "--query-gpu=index,name",
+        "--format=csv,noheader",
+    ]
+    result = subprocess.run(
+        command,  # nosec B603: argv list, no shell, absolute path.
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode == 0:
+        report.note("Docker GPU probe succeeded.")
+        return
+
+    stderr = (result.stderr or "").strip()
+    stdout = (result.stdout or "").strip()
+    detail = stderr or stdout or f"exit code {result.returncode}"
+    lowered = detail.lower()
+    if runtime and "unknown or invalid runtime name" in lowered:
+        report.warning(
+            f"DOCKER_GPU_RUNTIME={runtime!r} is not available to Docker on this host. "
+            "If `docker run --rm --gpus all ...` works without `--runtime`, set "
+            "`DOCKER_GPU_RUNTIME=` in the stack env. This is common on DGX Spark."
+        )
+        return
+    report.warning(f"Docker GPU probe failed: {detail}")
+
+
+def _require_bin(name: str) -> str:
+    path = shutil.which(name)
+    if path is None:
+        raise FileNotFoundError(name)
+    return path

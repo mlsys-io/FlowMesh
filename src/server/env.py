@@ -89,6 +89,7 @@ FLOWMESH_VERSION: str = os.getenv("FLOWMESH_VERSION", "latest")
 SERVER_CUDA_PROBE_IMAGE: str = os.getenv(
     "SERVER_CUDA_PROBE_IMAGE", "nvidia/cuda:12.9.1-base-ubuntu24.04"
 )
+DOCKER_GPU_RUNTIME: str | None = os.getenv("DOCKER_GPU_RUNTIME", "").strip() or None
 
 WORKER_CONFIG_PATH: str = os.getenv("WORKER_CONFIG_PATH", "configs/worker_config.yaml")
 CUDA_VISIBLE_DEVICES: str | None = os.getenv("CUDA_VISIBLE_DEVICES")

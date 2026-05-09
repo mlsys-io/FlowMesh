@@ -458,11 +458,12 @@ STACK_ENV_SCHEMA = EnvSchema(
                 EnvVar(
                     "SERVER_CUDA_PROBE_IMAGE",
                     "nvidia/cuda:12.9.1-base-ubuntu24.04",
-                    description=[
-                        "Server-side CUDA image used to probe local GPUs via",
-                        "nvidia-smi. Override only if the default image is not",
-                        "compatible with the host Docker/CUDA runtime.",
-                    ],
+                    description="Server-side CUDA image used to probe local GPUs.",
+                ),
+                EnvVar(
+                    "DOCKER_GPU_RUNTIME",
+                    "nvidia",
+                    description="Optional Docker runtime name for GPU containers."
                 ),
                 EnvVar(
                     "CUDA_VISIBLE_DEVICES", "all", var_type=EnvVarType.CSV_INTS_OR_ALL

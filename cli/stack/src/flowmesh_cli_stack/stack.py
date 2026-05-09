@@ -106,7 +106,11 @@ def _parse_buildx_driver(output: str) -> str | None:
 
 def _ensure_multiplatform_builder_support(docker_bin: str) -> None:
     inspect = subprocess.run(
-        [docker_bin, "buildx", "inspect"],  # nosec B603: argv list, absolute binary path.
+        [
+            docker_bin,
+            "buildx",
+            "inspect",
+        ],  # nosec B603: argv list, absolute binary path.
         capture_output=True,
         text=True,
         check=False,
@@ -141,7 +145,11 @@ def _run_bake(mode: str, targets: list[str] | None, env_file: Path) -> None:
     docker_bin = _require_bin("docker")
 
     buildx_check = subprocess.run(
-        [docker_bin, "buildx", "version"],  # nosec B603: argv list, absolute binary path.
+        [
+            docker_bin,
+            "buildx",
+            "version",
+        ],  # nosec B603: argv list, absolute binary path.
         capture_output=True,
         text=True,
         check=False,

@@ -292,10 +292,11 @@ class DockerWorkerAdapter(WorkerAdapter):
                 "volumes": volumes,
                 "network_mode": "host",
                 "device_requests": device_requests,
-                "runtime": runtime,
                 "restart_policy": {"Name": "unless-stopped"},
                 "detach": True,
             }
+            if runtime is not None:
+                run_kwargs["runtime"] = runtime
             if docker_gid:
                 run_kwargs["group_add"] = [docker_gid]
             self._docker.containers.run(**run_kwargs)
@@ -326,17 +327,19 @@ class DockerWorkerAdapter(WorkerAdapter):
                 environment, None
             )
             try:
-                output = self._docker.containers.run(
-                    image=self.get_image_name(),
-                    command=cmd,
-                    environment=environment,
-                    network_mode="host",
-                    device_requests=device_requests,
-                    runtime=runtime,
-                    remove=True,
-                    stdout=True,
-                    stderr=True,
-                )
+                run_kwargs: dict[str, Any] = {
+                    "image": self.get_image_name(),
+                    "command": cmd,
+                    "environment": environment,
+                    "network_mode": "host",
+                    "device_requests": device_requests,
+                    "remove": True,
+                    "stdout": True,
+                    "stderr": True,
+                }
+                if runtime is not None:
+                    run_kwargs["runtime"] = runtime
+                output = self._docker.containers.run(**run_kwargs)
             except Exception as exc:
                 logger.warning(
                     "Failed to run hardware probe for worker %s: %s",
@@ -515,7 +518,7 @@ class DockerWorkerAdapter(WorkerAdapter):
                 device_requests = [
                     DeviceRequest(device_ids=cuda_devices_str, capabilities=[["gpu"]])
                 ]
-                runtime = "nvidia"
+                runtime = env.DOCKER_GPU_RUNTIME
             case _:
                 raise ValueError(f"Unsupported worker type: {self.config.worker_type}")
         return device_requests, runtime
