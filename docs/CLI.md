@@ -87,8 +87,12 @@ flowmesh stack build flowmesh_worker_cpu flowmesh_worker_gpu
 ```
 
 `flowmesh stack build` loads native images for the local client platform.
+Use `flowmesh stack build --no-builder` to skip exporting the standalone
+GPU builder image when you only need the runtime images locally.
 `flowmesh stack push` publishes multi-platform images (`linux/amd64` and
 `linux/arm64`) for the stack bake targets.
+Use `flowmesh stack push --no-builder` to skip publishing the standalone
+GPU builder image while still building GPU runtime images.
 `flowmesh stack push` also refreshes per-target registry build caches so
 subsequent multi-platform pushes can reuse `arm64` and multi-stage layers.
 Set `FLOWMESH_CACHE_VERSION` only when you want to intentionally start a

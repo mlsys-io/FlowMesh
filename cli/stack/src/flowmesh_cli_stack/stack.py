@@ -89,6 +89,23 @@ def _platform_overrides(mode: str, targets: list[str]) -> list[tuple[str, str]]:
     return [(target, get_push_platforms(target)) for target in targets]
 
 
+def _resolve_bake_batches(
+    targets: list[str] | None, no_builder: bool = False
+) -> list[list[str]]:
+    if targets is None:
+        default_targets = ["server", "workers"]
+        if no_builder:
+            return [default_targets]
+        return [["builders"], default_targets]
+
+    builder_targets = {"builders", "flowmesh_worker_gpu_builder"}
+    if no_builder and any(target in builder_targets for target in targets):
+        logging.error("--no-builder cannot be used with explicit builder targets.")
+        raise typer.Exit(code=1)
+
+    return [targets]
+
+
 def _require_bin(name: str) -> str:
     path = shutil.which(name)
     if path is None:
@@ -134,7 +151,9 @@ def _ensure_multiplatform_builder_support(docker_bin: str) -> None:
     raise typer.Exit(code=1)
 
 
-def _run_bake(mode: str, targets: list[str] | None, env_file: Path) -> None:
+def _run_bake(
+    mode: str, targets: list[str] | None, env_file: Path, no_builder: bool = False
+) -> None:
     ensure_env_file(env_file, stack_env_example())
     load_env(env_file, base_dir=Path.cwd(), path_keys=STACK_PATH_KEYS)
 
@@ -181,13 +200,7 @@ def _run_bake(mode: str, targets: list[str] | None, env_file: Path) -> None:
         "BUILD_CREATED": build_created,
     }
 
-    batches: list[list[str]] = []
-    if targets is None:
-        batches = [["builders"], ["server", "workers"]]
-    else:
-        batches = [targets]
-
-    for batch_targets in batches:
+    for batch_targets in _resolve_bake_batches(targets, no_builder=no_builder):
         args = [docker_bin, "buildx", "bake", "-f", str(bake_file)]
         if mode == "push":
             args.append("--push")
@@ -235,9 +248,14 @@ def build(
     env_file: Path = typer.Option(
         DEFAULT_ENV_FILE, "--env-file", help="Env file for stack compose/bake"
     ),
+    no_builder: bool = typer.Option(
+        False,
+        "--no-builder",
+        help="Skip exporting the standalone GPU builder image.",
+    ),
 ) -> None:
     """Build FlowMesh Docker images locally using buildx."""
-    _run_bake("load", targets, env_file)
+    _run_bake("load", targets, env_file, no_builder=no_builder)
     logging.success("Images built locally.")
 
 
@@ -249,9 +267,14 @@ def push(
     env_file: Path = typer.Option(
         DEFAULT_ENV_FILE, "--env-file", help="Env file for stack compose/bake"
     ),
+    no_builder: bool = typer.Option(
+        False,
+        "--no-builder",
+        help="Skip publishing the standalone GPU builder image.",
+    ),
 ) -> None:
     """Build FlowMesh Docker images and push them to the container registry."""
-    _run_bake("push", targets, env_file)
+    _run_bake("push", targets, env_file, no_builder=no_builder)
     logging.success("Images pushed.")
 
 
