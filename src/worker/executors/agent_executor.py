@@ -37,6 +37,21 @@ DEFAULT_CONFIG_NAME = "default"
 DEFAULT_SHUFFLE_SEED = 42
 DEFAULT_DATASET_SPLIT = "train"
 DEFAULT_DATASET_COLUMN = "text"
+DEFAULT_AGENT_TASK_TIMEOUT_SEC = 600
+
+
+def _resolve_task_timeout(agent: dict[str, Any] | None) -> int:
+    if not agent:
+        return DEFAULT_AGENT_TASK_TIMEOUT_SEC
+    raw = agent.get("timeout")
+    if raw is None:
+        return DEFAULT_AGENT_TASK_TIMEOUT_SEC
+    if not isinstance(raw, (int, float)) or isinstance(raw, bool) or raw <= 0:
+        raise ExecutionError(
+            f"spec.agent.timeout must be a positive number, got {raw!r}"
+        )
+    return int(raw)
+
 
 logger = logging.getLogger("worker.agent")
 
@@ -221,6 +236,7 @@ class AgentExecutor(Executor):
 
         spec = self.require_spec(task, AgentSpecStrict)
         agent_config_name = spec.configName or DEFAULT_CONFIG_NAME
+        task_timeout = _resolve_task_timeout(spec.agent)
 
         # Prepare tasks from various data sources
         self.prepare_data(spec)
@@ -232,7 +248,9 @@ class AgentExecutor(Executor):
             if len(self._tasks) == 1:
                 # Single task execution (backward compatible)
                 result = asyncio.run(
-                    self._run_agent_task(agent_config_name, self._tasks[0], out_dir)
+                    self._run_agent_task(
+                        agent_config_name, self._tasks[0], out_dir, task_timeout
+                    )
                 )
 
                 output: dict[str, Any] = {
@@ -263,7 +281,9 @@ class AgentExecutor(Executor):
             else:
                 # Batch execution for multiple tasks
                 results = asyncio.run(
-                    self._run_agent_tasks_batch(agent_config_name, self._tasks, out_dir)
+                    self._run_agent_tasks_batch(
+                        agent_config_name, self._tasks, out_dir, task_timeout
+                    )
                 )
 
                 # Transform batch results to standard format
@@ -332,10 +352,17 @@ class AgentExecutor(Executor):
             raise ExecutionError(f"Agent execution failed: {e}") from e
 
     async def _run_agent_task(
-        self, config_name: str, task_input: str, out_dir: Path
+        self,
+        config_name: str,
+        task_input: str,
+        out_dir: Path,
+        task_timeout: int,
     ) -> dict[str, Any]:
-        """Execute agent task using utu framework with detailed logging and timeout
-        control"""
+        """Execute a single agent task end-to-end via the utu framework.
+
+        Streams progress events, enforces ``task_timeout`` on the streaming
+        run, and writes the final agent output to ``artifacts/agent_output.txt``.
+        """
         import asyncio
 
         from utu.agents import get_agent  # type: ignore # noqa: F401
@@ -361,8 +388,6 @@ class AgentExecutor(Executor):
 
         execution_log = []
         usage_stats: dict[str, Any] = {}
-
-        task_timeout = 600  # 10 minute timeout
 
         try:
             # Load agent configuration
@@ -546,9 +571,17 @@ class AgentExecutor(Executor):
         }
 
     async def _run_agent_tasks_batch(
-        self, config_name: str, tasks: list[str], out_dir: Path
+        self,
+        config_name: str,
+        tasks: list[str],
+        out_dir: Path,
+        task_timeout: int,
     ) -> dict[str, Any]:
-        """Execute multiple agent tasks in batch"""
+        """Execute multiple agent tasks in batch under a shared agent build.
+
+        Each task runs under the same ``task_timeout`` as the single-task
+        path; failures are recorded per task without aborting the batch.
+        """
         from utu.agents import get_agent  # type: ignore # noqa: F401
         from utu.config import AgentConfig, ConfigLoader  # type: ignore # noqa: F401
         from utu.tracing.setup import setup_tracing  # type: ignore # noqa: F401
@@ -594,7 +627,9 @@ class AgentExecutor(Executor):
                             logger.debug(f"Task {i+1}: Agent switched to {agent_name}")
 
                     # Wait for completion
-                    await asyncio.wait_for(result_streaming._run_impl_task, timeout=300)
+                    await asyncio.wait_for(
+                        result_streaming._run_impl_task, timeout=task_timeout
+                    )
                     result = result_streaming
 
                     # Extract output
