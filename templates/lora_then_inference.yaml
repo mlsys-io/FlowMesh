@@ -65,7 +65,7 @@ spec:
           bf16: true
         output:
           destination:
-            type: "local"
+            type: "http"
           artifacts:
             - "results.json"
             - "final_lora"
@@ -77,7 +77,7 @@ spec:
         model:
           adapters:
             - type: "lora"
-              path: "${lora-train.final_lora_archive}"
+              url: "${lora-train.final_lora_archive}"
         data:
           type: "dataset"
           url: "openai/gsm8k"
