@@ -109,6 +109,22 @@ def _ensure_destroy_torch_process_group() -> None:
 atexit.register(_ensure_destroy_torch_process_group)
 
 
+def _resolve_engine_revision(
+    vllm_revision: Any, source_revision: str | None
+) -> str | None:
+    """Pick the vLLM ``revision`` arg, preferring ``model.vllm.revision``.
+
+    Falls back to ``model.source.revision`` when the vllm-scoped key is
+    absent. Returns ``None`` when neither is set so the caller can omit
+    the kwarg entirely.
+    """
+    if vllm_revision is not None:
+        return str(vllm_revision)
+    if source_revision:
+        return str(source_revision)
+    return None
+
+
 class VLLMExecutor(InferenceMixin, Executor):
     """Executor that runs text generation using vLLM based on a YAML spec."""
 
@@ -349,6 +365,11 @@ Summary:"""
         for arg, arg_type in accepted_engine_args.items():
             if arg in vllm_cfg:
                 kwargs_base[arg] = arg_type(vllm_cfg.pop(arg))
+        revision = _resolve_engine_revision(
+            kwargs_base.get("revision"), spec.model_revision
+        )
+        if revision is not None:
+            kwargs_base["revision"] = revision
         hf_overrides: dict[str, Any] = {}
         if "rope_scaling" in vllm_cfg:
             hf_overrides["rope_scaling"] = vllm_cfg.pop("rope_scaling")
