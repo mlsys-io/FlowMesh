@@ -77,9 +77,7 @@ class ResourceManager:
                 raise ValueError("Invalid number of GPUs")
             if n > len(available_gpus):
                 raise ValueError("Not enough available GPUs")
-            picked = (
-                [min(available_gpus)] if n == 1 else sorted(available_gpus)[:n]
-            )
+            picked = [min(available_gpus)] if n == 1 else sorted(available_gpus)[:n]
         else:
             assert devices is not None
             if not devices:

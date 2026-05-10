@@ -6,7 +6,6 @@ must never raise out of the handler (which would kill the listener thread).
 
 import asyncio
 import logging
-import threading
 from unittest.mock import AsyncMock, MagicMock
 
 from server.supervisor.services.command_listener import CommandListener
@@ -35,19 +34,8 @@ def _cmd(command: CommandType, payload: dict | None = None) -> CommandMessage:
     return CommandMessage(command=command, payload=payload)
 
 
-class _RunningLoop:
-    """Event loop running in a background thread — required because handlers
-    use asyncio.run_coroutine_threadsafe(...).result() which needs a live loop."""
-
-    def __init__(self) -> None:
-        self.loop = asyncio.new_event_loop()
-        self._thread = threading.Thread(target=self.loop.run_forever, daemon=True)
-        self._thread.start()
-
-    def close(self) -> None:
-        self.loop.call_soon_threadsafe(self.loop.stop)
-        self._thread.join(timeout=5)
-        self.loop.close()
+def _run(coro: object) -> CommandResponse:
+    return asyncio.run(coro)  # type: ignore[arg-type]
 
 
 # ------------------------------------------------------------------ #
@@ -58,14 +46,10 @@ class _RunningLoop:
 class TestHandleCreateWorkerCmd:
     def setup_method(self) -> None:
         self.cl = _listener()
-        self._rl = _RunningLoop()
-
-    def teardown_method(self) -> None:
-        self._rl.close()
 
     def _handle(self, payload: dict | None) -> CommandResponse:
         cmd = _cmd(CommandType.CREATE_WORKER, payload)
-        return self.cl._handle_create_worker_cmd(cmd, self._rl.loop)
+        return _run(self.cl._handle_create_worker_cmd(cmd))
 
     def test_valid_init_config(self) -> None:
         info = MagicMock()
@@ -101,14 +85,10 @@ class TestHandleCreateWorkerCmd:
 class TestHandleCreateWorkerOnNodeCmd:
     def setup_method(self) -> None:
         self.cl = _listener()
-        self._rl = _RunningLoop()
-
-    def teardown_method(self) -> None:
-        self._rl.close()
 
     def _handle(self, payload: dict | None) -> CommandResponse:
         cmd = _cmd(CommandType.CREATE_WORKER_ON_NODE, payload)
-        return self.cl._handle_create_worker_on_node_cmd(cmd, self._rl.loop)
+        return _run(self.cl._handle_create_worker_on_node_cmd(cmd))
 
     # --- Malformed payloads ---
 
@@ -256,14 +236,10 @@ class TestHandleCreateWorkerOnNodeCmd:
 class TestHandleDestroyWorkerCmd:
     def setup_method(self) -> None:
         self.cl = _listener()
-        self._rl = _RunningLoop()
-
-    def teardown_method(self) -> None:
-        self._rl.close()
 
     def _handle(self, payload: dict | None) -> CommandResponse:
         cmd = _cmd(CommandType.DESTROY_WORKER, payload)
-        return self.cl._handle_destroy_worker_cmd(cmd, self._rl.loop)
+        return _run(self.cl._handle_destroy_worker_cmd(cmd))
 
     def test_none_payload_returns_error(self) -> None:
         resp = self._handle(None)
@@ -285,3 +261,133 @@ class TestHandleDestroyWorkerCmd:
 
         assert resp.success
         self.cl._wm.destroy_worker.assert_called_once_with("worker-abc123")
+
+
+# ------------------------------------------------------------------ #
+# Parallel dispatch — different workers run concurrently; same-worker
+# commands serialize via per-worker locks.
+# ------------------------------------------------------------------ #
+
+
+class TestParallelDispatch:
+    def _setup(self) -> CommandListener:
+        cl = _listener()
+        cl._sem = asyncio.Semaphore(32)
+        return cl
+
+    def test_distinct_workers_run_concurrently(self) -> None:
+        cl = self._setup()
+
+        async def slow_start(name: str) -> bool:
+            await asyncio.sleep(0.2)
+            return True
+
+        cl._wm.start_worker = AsyncMock(side_effect=slow_start)  # type: ignore[method-assign]
+
+        async def go() -> tuple[float, list[CommandResponse]]:
+            cmds = [
+                _cmd(CommandType.START_WORKER, {"worker_name": f"w-{i}"})
+                for i in range(4)
+            ]
+            t0 = asyncio.get_event_loop().time()
+            results = await asyncio.gather(*(cl._dispatch(c) for c in cmds))
+            return asyncio.get_event_loop().time() - t0, results
+
+        elapsed, results = asyncio.run(go())
+        assert all(r.success for r in results)
+        # Sequential would be ~0.8s; parallel should be ~0.2s. Pad for CI.
+        assert elapsed < 0.6, f"dispatch did not parallelize (elapsed={elapsed:.2f}s)"
+
+    def test_same_worker_serializes(self) -> None:
+        cl = self._setup()
+
+        order: list[str] = []
+        gate = asyncio.Event()
+
+        async def slow_stop(name: str) -> bool:
+            order.append(f"stop-start-{name}")
+            await gate.wait()
+            order.append(f"stop-end-{name}")
+            return True
+
+        async def fast_destroy(name: str) -> bool:
+            order.append(f"destroy-start-{name}")
+            order.append(f"destroy-end-{name}")
+            return True
+
+        cl._wm.stop_worker = AsyncMock(side_effect=slow_stop)  # type: ignore[method-assign]
+        cl._wm.destroy_worker = AsyncMock(side_effect=fast_destroy)  # type: ignore[method-assign]
+
+        async def go() -> tuple[CommandResponse, CommandResponse]:
+            stop_task = asyncio.create_task(
+                cl._dispatch(_cmd(CommandType.STOP_WORKER, {"worker_name": "w-1"}))
+            )
+            await asyncio.sleep(0.05)
+            destroy_task = asyncio.create_task(
+                cl._dispatch(_cmd(CommandType.DESTROY_WORKER, {"worker_name": "w-1"}))
+            )
+            # Destroy must NOT have started while stop is blocked.
+            await asyncio.sleep(0.05)
+            assert "destroy-start-w-1" not in order
+            gate.set()
+            return await asyncio.gather(stop_task, destroy_task)
+
+        results = asyncio.run(go())
+        assert all(r.success for r in results)
+        assert order == [
+            "stop-start-w-1",
+            "stop-end-w-1",
+            "destroy-start-w-1",
+            "destroy-end-w-1",
+        ]
+
+    def test_destroy_clears_worker_lock(self) -> None:
+        cl = self._setup()
+        cl._wm.destroy_worker = AsyncMock(return_value=True)  # type: ignore[method-assign]
+
+        async def go() -> None:
+            await cl._dispatch(
+                _cmd(CommandType.DESTROY_WORKER, {"worker_name": "w-gone"})
+            )
+
+        asyncio.run(go())
+        assert "w-gone" not in cl._worker_locks
+
+
+# ------------------------------------------------------------------ #
+# Target worker name resolution
+# ------------------------------------------------------------------ #
+
+
+class TestTargetWorkerNames:
+    def test_single_worker_commands(self) -> None:
+        for cmd_type in (
+            CommandType.START_WORKER,
+            CommandType.STOP_WORKER,
+            CommandType.DESTROY_WORKER,
+        ):
+            assert CommandListener._target_worker_names(
+                _cmd(cmd_type, {"worker_name": "w-1"})
+            ) == ["w-1"]
+
+    def test_destroy_workers_sorts_names(self) -> None:
+        names = CommandListener._target_worker_names(
+            _cmd(CommandType.DESTROY_WORKERS, {"worker_names": ["w-3", "w-1", "w-2"]})
+        )
+        assert names == ["w-1", "w-2", "w-3"]
+
+    def test_destroy_workers_no_names(self) -> None:
+        assert (
+            CommandListener._target_worker_names(_cmd(CommandType.DESTROY_WORKERS, {}))
+            == []
+        )
+
+    def test_create_and_get_skip_locks(self) -> None:
+        for cmd_type in (
+            CommandType.CREATE_WORKER,
+            CommandType.CREATE_WORKER_ON_NODE,
+            CommandType.GET_WORKERS,
+            CommandType.START_SSH_RELAY,
+        ):
+            payload = {"worker_name": "w-1"}
+            assert CommandListener._target_worker_names(_cmd(cmd_type, payload)) == []

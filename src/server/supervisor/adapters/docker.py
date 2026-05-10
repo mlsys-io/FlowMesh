@@ -680,9 +680,7 @@ class DockerWorkerFactory(WorkerFactory):
                 gpu_arch = None
             case WorkerType.GPU:
                 if config.cuda_devices is None:
-                    cuda_devices, gpu_arch = self._rm.reserve_gpus(
-                        n=config.gpu_count
-                    )
+                    cuda_devices, gpu_arch = self._rm.reserve_gpus(n=config.gpu_count)
                 else:
                     cuda_devices, gpu_arch = self._rm.reserve_gpus(
                         devices=config.cuda_devices

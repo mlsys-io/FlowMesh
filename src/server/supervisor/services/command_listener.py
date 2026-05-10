@@ -1,4 +1,6 @@
 import asyncio
+import concurrent.futures
+import contextlib
 import logging
 import queue
 import secrets
@@ -26,6 +28,14 @@ from ..manager import WorkerInitConfig, WorkerManager
 from .ssh_relay import SshRelayService
 
 type ResponseHandler = Callable[[CommandResponse], None]
+
+_MAX_INFLIGHT_CMDS = 32
+_STOP_DRAIN_TIMEOUT = 10.0
+_START_WORKER_TIMEOUT = 120.0
+_STOP_WORKER_TIMEOUT = 60.0
+_CREATE_WORKER_TIMEOUT = 600.0
+_DESTROY_WORKER_TIMEOUT = 60.0
+_DESTROY_WORKERS_TIMEOUT = 120.0
 
 
 def _cmd_receiver_loop(
@@ -121,6 +131,11 @@ class _CommandStream:
 
 
 class CommandListener:
+    """Routes commands to async handlers running concurrently on the
+    supervisor's event loop, with per-worker serialization for ops that
+    target a named worker.
+    """
+
     def __init__(
         self,
         redis: SyncRedisClient,
@@ -129,6 +144,7 @@ class CommandListener:
         logger: logging.Logger,
         cmd_receiver: TaskReceiver[CommandMessage, CommandResponse] | None = None,
         ssh_relay: SshRelayService | None = None,
+        max_inflight: int = _MAX_INFLIGHT_CMDS,
     ) -> None:
         self.logger = logger
         self._redis = redis
@@ -136,11 +152,17 @@ class CommandListener:
         self._wm = worker_manager
         self._ssh_relay = ssh_relay
         self._cmd_receiver = cmd_receiver
+        self._max_inflight = max_inflight
 
         self._cmd_stream: _CommandStream | None = None
         self._thread: Thread | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._running: bool = False
+
+        # Async-side state — created on the loop in start().
+        self._sem: asyncio.Semaphore | None = None
+        self._worker_locks: dict[str, asyncio.Lock] = {}
+        self._inflight: set[concurrent.futures.Future[CommandResponse]] = set()
 
     def start(self) -> None:
         if self._thread is not None:
@@ -158,6 +180,9 @@ class CommandListener:
             return
         assert not self._running
         self._running = True
+        self._sem = asyncio.Semaphore(self._max_inflight)
+        self._worker_locks = {}
+        self._inflight = set()
         self._cmd_stream = _CommandStream(
             node_id=self._node_id,
             redis=self._redis,
@@ -170,7 +195,9 @@ class CommandListener:
             daemon=True,
         )
         self._thread.start()
-        self.logger.info("Command listener started")
+        self.logger.info(
+            "Command listener started (max_inflight=%d)", self._max_inflight
+        )
 
     def stop(self) -> None:
         if self._thread is None or self._cmd_stream is None:
@@ -182,8 +209,32 @@ class CommandListener:
         self._cmd_stream = None
         self._thread.join()
         self._thread = None
+
+        self._drain_inflight()
+
+        self._sem = None
+        self._worker_locks = {}
         self._loop = None
         self.logger.info("Command listener stopped")
+
+    def _drain_inflight(self) -> None:
+        inflight = list(self._inflight)
+        if not inflight:
+            return
+        self.logger.info(
+            "Draining %d inflight command(s) (timeout=%.1fs)",
+            len(inflight),
+            _STOP_DRAIN_TIMEOUT,
+        )
+        done, not_done = concurrent.futures.wait(inflight, timeout=_STOP_DRAIN_TIMEOUT)
+        for fut in not_done:
+            fut.cancel()
+        if not_done:
+            self.logger.warning(
+                "Cancelled %d command(s) that did not finish within drain timeout",
+                len(not_done),
+            )
+        self._inflight.clear()
 
     def _run(self) -> None:
         cmd_stream = self._cmd_stream
@@ -192,40 +243,118 @@ class CommandListener:
             self.logger.error("Command listener not properly initialized")
             return
         try:
-            resp: CommandResponse | None
             for cmd, resp_handler in cmd_stream.iter_stream():
-                match cmd.command:
-                    case CommandType.START_WORKER:
-                        resp = self._handle_start_worker_cmd(cmd, loop)
-                    case CommandType.CREATE_WORKER:
-                        resp = self._handle_create_worker_cmd(cmd, loop)
-                    case CommandType.CREATE_WORKER_ON_NODE:
-                        resp = self._handle_create_worker_on_node_cmd(cmd, loop)
-                    case CommandType.GET_WORKERS:
-                        resp = self._handle_get_workers_cmd(cmd)
-                    case CommandType.STOP_WORKER:
-                        resp = self._handle_stop_worker_cmd(cmd, loop)
-                    case CommandType.DESTROY_WORKER:
-                        resp = self._handle_destroy_worker_cmd(cmd, loop)
-                    case CommandType.DESTROY_WORKERS:
-                        resp = self._handle_destroy_workers_cmd(cmd, loop)
-                    case CommandType.START_SSH_RELAY:
-                        resp = self._handle_start_ssh_relay_cmd(cmd)
-                    case _:
-                        resp = CommandResponse.error(
-                            cmd, f"Unknown command: {cmd.command}"
-                        )
-
-                if resp is not None:
-                    resp_handler(resp)
-
+                fut = asyncio.run_coroutine_threadsafe(self._dispatch(cmd), loop)
+                self._inflight.add(fut)
+                fut.add_done_callback(self._make_done_callback(cmd, resp_handler))
         except Exception as exc:
             if self._running:
                 self.logger.error("Command listener loop error: %s", exc)
 
-    def _handle_start_worker_cmd(
-        self, cmd: CommandMessage, loop: asyncio.AbstractEventLoop
-    ) -> CommandResponse:
+    def _make_done_callback(
+        self, cmd: CommandMessage, resp_handler: ResponseHandler
+    ) -> Callable[[concurrent.futures.Future[CommandResponse]], None]:
+        def _on_done(fut: concurrent.futures.Future[CommandResponse]) -> None:
+            self._inflight.discard(fut)
+            try:
+                resp = fut.result()
+            except concurrent.futures.CancelledError:
+                resp = CommandResponse.error(cmd, "Command cancelled during shutdown")
+            except Exception as exc:
+                self.logger.exception("Command dispatch raised: %s", cmd.command)
+                resp = CommandResponse.error(cmd, f"Dispatch failed: {exc}")
+            loop = self._loop
+            if loop is None or loop.is_closed():
+                # Loop is gone (shutdown). Send synchronously so we don't drop
+                # the response on the floor for the IPC-side caller.
+                self._safe_call_response_handler(resp_handler, resp)
+                return
+            loop.run_in_executor(
+                None, self._safe_call_response_handler, resp_handler, resp
+            )
+
+        return _on_done
+
+    def _safe_call_response_handler(
+        self, resp_handler: ResponseHandler, resp: CommandResponse
+    ) -> None:
+        try:
+            resp_handler(resp)
+        except Exception:
+            self.logger.exception("Failed to deliver command response")
+
+    # ------------------------------------------------------------------ #
+    # Dispatch — semaphore-bounded, per-worker-serialized
+    # ------------------------------------------------------------------ #
+
+    async def _dispatch(self, cmd: CommandMessage) -> CommandResponse:
+        sem = self._sem
+        if sem is None:
+            return CommandResponse.error(cmd, "Command listener not initialized")
+        try:
+            async with sem:
+                names = self._target_worker_names(cmd)
+                if not names:
+                    return await self._invoke(cmd)
+                async with contextlib.AsyncExitStack() as stack:
+                    for name in names:
+                        lock = self._worker_locks.setdefault(name, asyncio.Lock())
+                        await stack.enter_async_context(lock)
+                    return await self._invoke(cmd)
+        except Exception as exc:
+            self.logger.exception("Command dispatch failed: %s", cmd.command)
+            return CommandResponse.error(cmd, f"Dispatch failed: {exc}")
+
+    @staticmethod
+    def _target_worker_names(cmd: CommandMessage) -> list[str]:
+        """Names whose per-worker lock the dispatch must hold for FIFO
+        ordering against concurrent ops on the same worker. CREATE
+        commands generate names internally, so locking them is not
+        meaningful (the registry already rejects collisions atomically).
+        """
+        payload = cmd.payload or {}
+        match cmd.command:
+            case (
+                CommandType.START_WORKER
+                | CommandType.STOP_WORKER
+                | CommandType.DESTROY_WORKER
+            ):
+                name = payload.get("worker_name")
+                return [str(name)] if name else []
+            case CommandType.DESTROY_WORKERS:
+                raw = payload.get("worker_names")
+                if not raw:
+                    return []
+                return sorted(str(n) for n in raw)
+            case _:
+                return []
+
+    async def _invoke(self, cmd: CommandMessage) -> CommandResponse:
+        match cmd.command:
+            case CommandType.START_WORKER:
+                return await self._handle_start_worker_cmd(cmd)
+            case CommandType.CREATE_WORKER:
+                return await self._handle_create_worker_cmd(cmd)
+            case CommandType.CREATE_WORKER_ON_NODE:
+                return await self._handle_create_worker_on_node_cmd(cmd)
+            case CommandType.GET_WORKERS:
+                return self._handle_get_workers_cmd(cmd)
+            case CommandType.STOP_WORKER:
+                return await self._handle_stop_worker_cmd(cmd)
+            case CommandType.DESTROY_WORKER:
+                return await self._handle_destroy_worker_cmd(cmd)
+            case CommandType.DESTROY_WORKERS:
+                return await self._handle_destroy_workers_cmd(cmd)
+            case CommandType.START_SSH_RELAY:
+                return self._handle_start_ssh_relay_cmd(cmd)
+            case _:
+                return CommandResponse.error(cmd, f"Unknown command: {cmd.command}")
+
+    # ------------------------------------------------------------------ #
+    # Handlers
+    # ------------------------------------------------------------------ #
+
+    async def _handle_start_worker_cmd(self, cmd: CommandMessage) -> CommandResponse:
         if cmd.payload is None:
             return CommandResponse.error(
                 cmd, "Missing payload for START_WORKER command"
@@ -238,16 +367,14 @@ class CommandListener:
             )
 
         try:
-            result = asyncio.run_coroutine_threadsafe(
-                self._wm.start_worker(worker_name), loop
-            ).result()
+            result = await asyncio.wait_for(
+                self._wm.start_worker(worker_name), timeout=_START_WORKER_TIMEOUT
+            )
             return CommandResponse.ok(cmd, data={"success": result})
         except Exception as exc:
             return CommandResponse.error(cmd, f"Failed to start worker: {exc}")
 
-    def _handle_stop_worker_cmd(
-        self, cmd: CommandMessage, loop: asyncio.AbstractEventLoop
-    ) -> CommandResponse:
+    async def _handle_stop_worker_cmd(self, cmd: CommandMessage) -> CommandResponse:
         if cmd.payload is None:
             return CommandResponse.error(cmd, "Missing payload for STOP_WORKER command")
 
@@ -258,9 +385,9 @@ class CommandListener:
             )
 
         try:
-            result = asyncio.run_coroutine_threadsafe(
-                self._wm.stop_worker(worker_name), loop
-            ).result()
+            result = await asyncio.wait_for(
+                self._wm.stop_worker(worker_name), timeout=_STOP_WORKER_TIMEOUT
+            )
             return CommandResponse.ok(cmd, data={"success": result})
         except Exception as exc:
             return CommandResponse.error(cmd, f"Failed to stop worker: {exc}")
@@ -314,21 +441,19 @@ class CommandListener:
         except Exception as exc:
             return CommandResponse.error(cmd, f"Failed to start SSH relay: {exc}")
 
-    def _handle_create_worker_cmd(
-        self, cmd: CommandMessage, loop: asyncio.AbstractEventLoop
-    ) -> CommandResponse:
+    async def _handle_create_worker_cmd(self, cmd: CommandMessage) -> CommandResponse:
         """Handle CREATE_WORKER: payload is a WorkerInitConfig dict."""
         try:
             init_config = WorkerInitConfig.model_validate(cmd.payload)
-            info = asyncio.run_coroutine_threadsafe(
-                self._wm.create_worker(init_config), loop
-            ).result(timeout=600.0)
+            info = await asyncio.wait_for(
+                self._wm.create_worker(init_config), timeout=_CREATE_WORKER_TIMEOUT
+            )
             return CommandResponse.ok(cmd, data=info.model_dump())
         except Exception as exc:
             return CommandResponse.error(cmd, f"Failed to create worker: {exc}")
 
-    def _handle_create_worker_on_node_cmd(
-        self, cmd: CommandMessage, loop: asyncio.AbstractEventLoop
+    async def _handle_create_worker_on_node_cmd(
+        self, cmd: CommandMessage
     ) -> CommandResponse:
         """Handle CREATE_WORKER_ON_NODE: DockerWorkerConfig payload with GPU
         allocation hint. The factory atomically reserves GPUs."""
@@ -369,36 +494,39 @@ class CommandListener:
                 init_on_start=True,
                 worker_config=worker_config.model_dump(exclude_unset=True),
             )
-            info = asyncio.run_coroutine_threadsafe(
-                self._wm.create_worker(init_config), loop
-            ).result(timeout=600.0)
+            info = await asyncio.wait_for(
+                self._wm.create_worker(init_config), timeout=_CREATE_WORKER_TIMEOUT
+            )
             return CommandResponse.ok(cmd, data={"worker_name": info.name})
         except Exception as exc:
             return CommandResponse.error(cmd, f"Failed to create worker: {exc}")
 
-    def _handle_destroy_worker_cmd(
-        self, cmd: CommandMessage, loop: asyncio.AbstractEventLoop
-    ) -> CommandResponse:
+    async def _handle_destroy_worker_cmd(self, cmd: CommandMessage) -> CommandResponse:
         worker_name = (cmd.payload or {}).get("worker_name")
         if not worker_name:
             return CommandResponse.error(cmd, "Missing worker_name")
         try:
-            success = asyncio.run_coroutine_threadsafe(
-                self._wm.destroy_worker(worker_name), loop
-            ).result(timeout=60.0)
+            success = await asyncio.wait_for(
+                self._wm.destroy_worker(worker_name),
+                timeout=_DESTROY_WORKER_TIMEOUT,
+            )
+            self._worker_locks.pop(worker_name, None)
             return CommandResponse.ok(cmd, data={"success": success})
         except Exception as exc:
             return CommandResponse.error(cmd, f"Failed to destroy worker: {exc}")
 
-    def _handle_destroy_workers_cmd(
-        self, cmd: CommandMessage, loop: asyncio.AbstractEventLoop
-    ) -> CommandResponse:
+    async def _handle_destroy_workers_cmd(self, cmd: CommandMessage) -> CommandResponse:
         raw_names = (cmd.payload or {}).get("worker_names")
         names: set[str] | None = set(raw_names) if raw_names is not None else None
         try:
-            asyncio.run_coroutine_threadsafe(
-                self._wm.destroy_workers(names), loop
-            ).result(timeout=120.0)
+            await asyncio.wait_for(
+                self._wm.destroy_workers(names), timeout=_DESTROY_WORKERS_TIMEOUT
+            )
+            if names is not None:
+                for name in names:
+                    self._worker_locks.pop(name, None)
+            else:
+                self._worker_locks.clear()
             return CommandResponse.ok(cmd)
         except Exception as exc:
             return CommandResponse.error(cmd, f"Failed to destroy workers: {exc}")
