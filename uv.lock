@@ -1846,7 +1846,7 @@ requires-dist = [
     { name = "isort", marker = "extra == 'dev'", specifier = ">=7.0.0" },
     { name = "jinja2", marker = "extra == 'agent'", specifier = ">=3.1.6" },
     { name = "lumid-data-sdk", marker = "extra == 'analytics'", git = "https://github.com/mlsys-io/lumid.data.git?subdirectory=sdk&rev=a800051" },
-    { name = "lumid-hooks", marker = "extra == 'server'", git = "https://github.com/mlsys-io/lumid.hooks.git?rev=60e383bc73926f0622e0188379d84b9f1f45b7d8" },
+    { name = "lumid-hooks", marker = "extra == 'server'", git = "https://github.com/mlsys-io/lumid.hooks.git?rev=fdb9ddb9bf4203b18d073e5bab84f1173f32561a" },
     { name = "matplotlib", marker = "extra == 'agent'", specifier = ">=3.10.6" },
     { name = "mcp", marker = "extra == 'agent'", specifier = ">=1.23.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.19.1" },
@@ -3196,7 +3196,7 @@ dependencies = [
 [[package]]
 name = "lumid-hooks"
 version = "0.1.0"
-source = { git = "https://github.com/mlsys-io/lumid.hooks.git?rev=60e383bc73926f0622e0188379d84b9f1f45b7d8#60e383bc73926f0622e0188379d84b9f1f45b7d8" }
+source = { git = "https://github.com/mlsys-io/lumid.hooks.git?rev=fdb9ddb9bf4203b18d073e5bab84f1173f32561a#fdb9ddb9bf4203b18d073e5bab84f1173f32561a" }
 dependencies = [
     { name = "pydantic" },
 ]

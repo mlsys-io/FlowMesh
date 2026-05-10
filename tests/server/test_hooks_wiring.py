@@ -342,16 +342,16 @@ class TestPermissionCheckerComposition:
         assert ids is None
 
     @pytest.mark.anyio
-    async def test_all_short_circuits_union(
+    async def test_none_checker_imposes_no_filter(
         self, principal: PrincipalContext, logger: logging.Logger
     ) -> None:
-        class _UnionChecker:
-            name = "union"
+        class _BoundChecker:
+            name = "bound"
 
             async def accessible_ids(
                 self,
                 principal: PrincipalContext,
-                resource_type: str,
+                kind: str,
                 action: str,
                 logger: logging.Logger,
             ) -> frozenset[str] | None:
@@ -360,13 +360,13 @@ class TestPermissionCheckerComposition:
             async def require(self, *args: Any, **kwargs: Any) -> None:
                 return None
 
-        class _AllChecker:
-            name = "allowall"
+        class _NoFilterChecker:
+            name = "nofilter"
 
             async def accessible_ids(
                 self,
                 principal: PrincipalContext,
-                resource_type: str,
+                kind: str,
                 action: str,
                 logger: logging.Logger,
             ) -> frozenset[str] | None:
@@ -375,7 +375,31 @@ class TestPermissionCheckerComposition:
             async def require(self, *args: Any, **kwargs: Any) -> None:
                 return None
 
-        register(BaseBindings(permission_checkers=[_UnionChecker(), _AllChecker()]))
+        register(
+            BaseBindings(permission_checkers=[_BoundChecker(), _NoFilterChecker()])
+        )
+
+        ids = await resolve_accessible_ids(
+            principal, ResourceType.TASK, ResourceAction.READ, logger
+        )
+        assert ids == frozenset({"tsk-A"})
+
+    @pytest.mark.anyio
+    async def test_all_none_results_yields_no_filter(
+        self, principal: PrincipalContext, logger: logging.Logger
+    ) -> None:
+        class _NoFilter:
+            name = "nofilter"
+
+            async def accessible_ids(
+                self, *args: Any, **kwargs: Any
+            ) -> frozenset[str] | None:
+                return None
+
+            async def require(self, *args: Any, **kwargs: Any) -> None:
+                return None
+
+        register(BaseBindings(permission_checkers=[_NoFilter(), _NoFilter()]))
 
         ids = await resolve_accessible_ids(
             principal, ResourceType.TASK, ResourceAction.READ, logger
@@ -383,7 +407,7 @@ class TestPermissionCheckerComposition:
         assert ids is None
 
     @pytest.mark.anyio
-    async def test_set_results_are_unioned(
+    async def test_set_results_are_intersected(
         self, principal: PrincipalContext, logger: logging.Logger
     ) -> None:
         class _A:
@@ -392,7 +416,7 @@ class TestPermissionCheckerComposition:
             async def accessible_ids(
                 self,
                 principal: PrincipalContext,
-                resource_type: str,
+                kind: str,
                 action: str,
                 logger: logging.Logger,
             ) -> frozenset[str] | None:
@@ -407,7 +431,7 @@ class TestPermissionCheckerComposition:
             async def accessible_ids(
                 self,
                 principal: PrincipalContext,
-                resource_type: str,
+                kind: str,
                 action: str,
                 logger: logging.Logger,
             ) -> frozenset[str] | None:
@@ -421,7 +445,40 @@ class TestPermissionCheckerComposition:
         ids = await resolve_accessible_ids(
             principal, ResourceType.TASK, ResourceAction.READ, logger
         )
-        assert ids == frozenset({"tsk-1", "tsk-2", "tsk-3"})
+        assert ids == frozenset({"tsk-2"})
+
+    @pytest.mark.anyio
+    async def test_disjoint_set_results_yield_empty(
+        self, principal: PrincipalContext, logger: logging.Logger
+    ) -> None:
+        class _A:
+            name = "a"
+
+            async def accessible_ids(
+                self, *args: Any, **kwargs: Any
+            ) -> frozenset[str] | None:
+                return frozenset({"tsk-1"})
+
+            async def require(self, *args: Any, **kwargs: Any) -> None:
+                return None
+
+        class _B:
+            name = "b"
+
+            async def accessible_ids(
+                self, *args: Any, **kwargs: Any
+            ) -> frozenset[str] | None:
+                return frozenset({"tsk-2"})
+
+            async def require(self, *args: Any, **kwargs: Any) -> None:
+                return None
+
+        register(BaseBindings(permission_checkers=[_A(), _B()]))
+
+        ids = await resolve_accessible_ids(
+            principal, ResourceType.TASK, ResourceAction.READ, logger
+        )
+        assert ids == frozenset()
 
     @pytest.mark.anyio
     async def test_require_passes_when_no_checkers(

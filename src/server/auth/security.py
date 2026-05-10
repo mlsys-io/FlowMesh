@@ -134,22 +134,24 @@ async def resolve_accessible_ids(
 ) -> frozenset[str] | None:
     """Compose `PermissionChecker.accessible_ids` across registered checkers.
 
-    Returns `None` to indicate "no filter" — either no checkers are
-    registered, or some checker explicitly returned `None`. Otherwise
-    returns the union of all checker-permitted id sets.
+    Conjunctive: returns the intersection of the id sets returned by every
+    checker. A checker returning `None` imposes no filter and is skipped.
+    Returns `None` ("no filter") only when no checkers are registered or
+    every checker returns `None`; otherwise returns a (possibly empty)
+    `frozenset[str]`.
     """
     if not PERMISSION_CHECKERS:
         return None
 
-    accumulated: set[str] = set()
+    accumulated: frozenset[str] | None = None
     for checker in PERMISSION_CHECKERS:
         result = await checker.accessible_ids(
             principal, resource_type.value, action.value, logger
         )
         if result is None:
-            return None
-        accumulated.update(result)
-    return frozenset(accumulated)
+            continue
+        accumulated = result if accumulated is None else accumulated & result
+    return accumulated
 
 
 async def require_permission(

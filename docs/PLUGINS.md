@@ -34,9 +34,12 @@ The hooks:
   (`accessible_ids(principal, kind, action, logger)`) and gate point
   reads / mutations (`require(principal, resource: ResourceRef,
   action, logger)`) via `resolve_accessible_ids` / `require_permission`
-  on the server side. Multiple checkers compose. With no checkers
-  registered the helpers are no-ops. `ResourceRef.id == None` denotes a
-  kind-level / fleet-level check (e.g. "may the principal create
+  on the server side. Multiple checkers compose conjunctively: `require`
+  denies if any checker denies, and `accessible_ids` returns the
+  intersection of returned id sets (checkers returning `None` impose no
+  filter and are skipped). With no checkers registered, or every checker
+  returning `None`, both helpers are no-ops. `ResourceRef.id == None`
+  denotes a kind-level / fleet-level check (e.g. "may the principal create
   workflows", "may the principal read system metrics").
 - `SupplierResolver` (FlowMesh-specific) — map an assigned worker
   (`WorkerView`) to a supplier id at dispatch time. The first non-`None`
