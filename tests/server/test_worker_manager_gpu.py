@@ -45,45 +45,114 @@ def _worker_manager() -> WorkerManager:
 
 
 # ------------------------------------------------------------------ #
-# ResourceManager.next_available_gpus
+# ResourceManager.reserve_gpus
 # ------------------------------------------------------------------ #
 
 
-class TestNextAvailableGpus:
-    def test_single_gpu_returns_lowest_index(self) -> None:
+class TestReserveGpusByCount:
+    def test_single_gpu_returns_lowest_index_and_reserves(self) -> None:
         rm = _resource_manager({0, 1, 2, 3})
-        assert rm.next_available_gpus(1) == [0]
+        devices, _ = rm.reserve_gpus(n=1)
+        assert devices == [0]
+        assert rm.available_gpu_count == 3
+        assert 0 not in rm._env.available_gpus
 
     def test_single_gpu_picks_minimum_when_indices_nonzero(self) -> None:
         rm = _resource_manager({2, 3})
-        assert rm.next_available_gpus(1) == [2]
+        devices, _ = rm.reserve_gpus(n=1)
+        assert devices == [2]
 
     def test_two_gpus_returns_two_lowest_sorted(self) -> None:
         rm = _resource_manager({0, 1, 2, 3})
-        assert rm.next_available_gpus(2) == [0, 1]
+        devices, _ = rm.reserve_gpus(n=2)
+        assert devices == [0, 1]
+        assert rm.available_gpu_count == 2
 
     def test_two_gpus_sparse_indices(self) -> None:
         rm = _resource_manager({1, 3})
-        assert rm.next_available_gpus(2) == [1, 3]
+        devices, _ = rm.reserve_gpus(n=2)
+        assert devices == [1, 3]
 
     def test_four_gpus_returns_all_sorted(self) -> None:
         rm = _resource_manager({0, 1, 2, 3})
-        assert rm.next_available_gpus(4) == [0, 1, 2, 3]
+        devices, _ = rm.reserve_gpus(n=4)
+        assert devices == [0, 1, 2, 3]
+        assert rm.available_gpu_count == 0
 
     def test_requesting_more_than_available_raises(self) -> None:
         rm = _resource_manager({0, 1})
         with pytest.raises(ValueError, match="Not enough available GPUs"):
-            rm.next_available_gpus(3)
+            rm.reserve_gpus(n=3)
+        assert rm.available_gpu_count == 2
 
     def test_zero_raises(self) -> None:
         rm = _resource_manager({0, 1})
         with pytest.raises(ValueError, match="Invalid number of GPUs"):
-            rm.next_available_gpus(0)
+            rm.reserve_gpus(n=0)
 
     def test_negative_raises(self) -> None:
         rm = _resource_manager({0, 1})
         with pytest.raises(ValueError, match="Invalid number of GPUs"):
-            rm.next_available_gpus(-1)
+            rm.reserve_gpus(n=-1)
+
+
+class TestReserveGpusByDevices:
+    def test_explicit_devices_reserve_and_remove(self) -> None:
+        rm = _resource_manager({0, 1, 2, 3})
+        devices, _ = rm.reserve_gpus(devices=[1, 2])
+        assert devices == [1, 2]
+        assert rm._env.available_gpus == {0, 3}
+
+    def test_unavailable_device_raises(self) -> None:
+        rm = _resource_manager({0, 1})
+        with pytest.raises(ValueError, match="Requested GPUs are not available"):
+            rm.reserve_gpus(devices=[5])
+        assert rm.available_gpu_count == 2
+
+    def test_partially_unavailable_raises_without_partial_reserve(self) -> None:
+        rm = _resource_manager({0, 1})
+        with pytest.raises(ValueError, match="Requested GPUs are not available"):
+            rm.reserve_gpus(devices=[0, 5])
+        assert rm._env.available_gpus == {0, 1}
+
+    def test_empty_device_list_raises(self) -> None:
+        rm = _resource_manager({0, 1})
+        with pytest.raises(ValueError, match="Empty device list"):
+            rm.reserve_gpus(devices=[])
+
+
+class TestReserveGpusArgs:
+    def test_neither_arg_raises(self) -> None:
+        rm = _resource_manager({0, 1})
+        with pytest.raises(ValueError, match="exactly one of n or devices"):
+            rm.reserve_gpus()
+
+    def test_both_args_raises(self) -> None:
+        rm = _resource_manager({0, 1})
+        with pytest.raises(ValueError, match="exactly one of n or devices"):
+            rm.reserve_gpus(n=1, devices=[0])
+
+
+class TestReserveGpusAtomicity:
+    def test_repeated_calls_yield_disjoint_devices(self) -> None:
+        rm = _resource_manager({0, 1, 2, 3})
+        d1, _ = rm.reserve_gpus(n=2)
+        d2, _ = rm.reserve_gpus(n=2)
+        assert set(d1).isdisjoint(d2)
+        assert sorted(d1 + d2) == [0, 1, 2, 3]
+        assert rm.available_gpu_count == 0
+
+    def test_mixed_arch_raises(self) -> None:
+        rm = object.__new__(ResourceManager)
+        rm._env = MachineEnv(
+            cpu_count=16,
+            gpu_families={0: GpuArch.HOPPER, 1: GpuArch.BLACKWELL},
+            available_gpus={0, 1},
+        )
+        with pytest.raises(ValueError, match="different architectures"):
+            rm.reserve_gpus(devices=[0, 1])
+        # No partial reservation on failure.
+        assert rm._env.available_gpus == {0, 1}
 
 
 class TestAvailableGpuCount:

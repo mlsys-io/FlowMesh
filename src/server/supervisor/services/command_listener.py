@@ -23,7 +23,6 @@ from ...utils.concurrent import Sentinel, TaskReceiver
 from ...utils.helpers import iter_pubsub_messages
 from ..adapters.docker import DockerWorkerConfig
 from ..manager import WorkerInitConfig, WorkerManager
-from ..resource_manager import ResourceManager
 from .ssh_relay import SshRelayService
 
 type ResponseHandler = Callable[[CommandResponse], None]
@@ -332,14 +331,12 @@ class CommandListener:
         self, cmd: CommandMessage, loop: asyncio.AbstractEventLoop
     ) -> CommandResponse:
         """Handle CREATE_WORKER_ON_NODE: DockerWorkerConfig payload with GPU
-        allocation hint."""
+        allocation hint. The factory atomically reserves GPUs."""
         try:
             payload = (cmd.payload or {}).copy()
 
             gpu_count = int(payload.pop("gpu_count", 0))
             if gpu_count > 0:
-                rm = ResourceManager.get_instance()
-                # Validate or set worker_type
                 worker_type = payload.get("worker_type")
                 if worker_type is None:
                     payload["worker_type"] = "gpu"
@@ -349,12 +346,9 @@ class CommandListener:
                         f"Invalid worker_type {worker_type} for gpu_count > 0; "
                         "must be 'gpu'",
                     )
-                # Validate or set cuda_devices
                 cuda_devices = payload.get("cuda_devices")
                 if cuda_devices is None:
-                    # Preselect N GPUs; factory will call allocate_gpus() on them.
-                    # Raises ValueError if fewer than gpu_count GPUs are available.
-                    payload["cuda_devices"] = rm.next_available_gpus(gpu_count)
+                    payload["gpu_count"] = gpu_count
                 elif len(cuda_devices) != gpu_count:
                     return CommandResponse.error(
                         cmd,

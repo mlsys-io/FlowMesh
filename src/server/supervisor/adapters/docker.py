@@ -134,6 +134,9 @@ class DockerWorkerConfig(WorkerConfig):
     """Type of worker (cpu or gpu)"""
     cuda_devices: list[int] | None = None
     """List of CUDA devices to use (if any)"""
+    gpu_count: int = 1
+    """Number of GPUs to auto-pick when ``cuda_devices`` is unset
+    (only consulted for GPU workers)."""
     docker_registry: str = env.FLOWMESH_REGISTRY
     """Docker registry to pull worker images from"""
     version: str = env.FLOWMESH_VERSION
@@ -669,17 +672,21 @@ class DockerWorkerFactory(WorkerFactory):
     def create_worker(
         self, token: WorkerTokenType, config: DockerWorkerConfig
     ) -> DockerWorkerAdapter:
+        cuda_devices: list[int] | None
+        gpu_arch: GpuArch | None
         match config.worker_type:
             case WorkerType.CPU:
                 cuda_devices = None
+                gpu_arch = None
             case WorkerType.GPU:
-                cuda_devices = (
-                    self._rm.next_available_gpus(1)
-                    if config.cuda_devices is None
-                    else config.cuda_devices
-                )
-
-        gpu_arch = self._rm.allocate_gpus(cuda_devices) if cuda_devices else None
+                if config.cuda_devices is None:
+                    cuda_devices, gpu_arch = self._rm.reserve_gpus(
+                        n=config.gpu_count
+                    )
+                else:
+                    cuda_devices, gpu_arch = self._rm.reserve_gpus(
+                        devices=config.cuda_devices
+                    )
 
         name = self._resolve_worker_name(config)
         container_name = (

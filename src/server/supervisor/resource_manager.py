@@ -57,34 +57,45 @@ class ResourceManager:
     def available_gpu_count(self) -> int:
         return len(self._env.available_gpus)
 
-    def next_available_gpus(self, n: int = 1) -> list[int]:
-        available_gpus = self._env.available_gpus
-        if n <= 0:
-            raise ValueError("Invalid number of GPUs")
-        if n > len(available_gpus):
-            raise ValueError("Not enough available GPUs")
-        if n == 1:
-            return [min(available_gpus)]
-        return sorted(available_gpus)[:n]
+    def reserve_gpus(
+        self, n: int | None = None, devices: list[int] | None = None
+    ) -> tuple[list[int], GpuArch]:
+        """Atomically reserve GPUs and return their indices and architecture.
 
-    def allocate_gpus(self, devices: list[int]) -> GpuArch:
-        # Check availability
-        available_gpus = self._env.available_gpus
-        invalid_devices: list[int] = []
-        for dev in devices:
-            if dev not in available_gpus:
-                invalid_devices.append(dev)
-        if invalid_devices:
-            raise ValueError(f"Requested GPUs are not available: {invalid_devices}")
+        Either ``n`` (auto-pick the lowest N free indices) or ``devices``
+        (validate that the explicit set is free) must be given, not both.
+        Selection, arch-consistency check, and removal from the available set
+        run as one synchronous block, so concurrent callers on the same event
+        loop never observe the same indices.
+        """
+        if (n is None) == (devices is None):
+            raise ValueError("Provide exactly one of n or devices")
 
-        # Check architecture consistency
-        gpu_archs = {self._env.gpu_families[dev] for dev in devices}
-        if len(gpu_archs) != 1:
+        available_gpus = self._env.available_gpus
+        if n is not None:
+            if n <= 0:
+                raise ValueError("Invalid number of GPUs")
+            if n > len(available_gpus):
+                raise ValueError("Not enough available GPUs")
+            picked = (
+                [min(available_gpus)] if n == 1 else sorted(available_gpus)[:n]
+            )
+        else:
+            assert devices is not None
+            if not devices:
+                raise ValueError("Empty device list")
+            invalid = [d for d in devices if d not in available_gpus]
+            if invalid:
+                raise ValueError(f"Requested GPUs are not available: {invalid}")
+            picked = list(devices)
+
+        archs = {self._env.gpu_families[d] for d in picked}
+        if len(archs) != 1:
             raise ValueError("Selected CUDA devices have different architectures.")
-        gpu_arch = gpu_archs.pop()
+        arch = archs.pop()
 
-        available_gpus.difference_update(devices)
-        return gpu_arch
+        available_gpus.difference_update(picked)
+        return picked, arch
 
     def deallocate_gpus(self, devices: list[int]) -> None:
         self._env.available_gpus.update(devices)

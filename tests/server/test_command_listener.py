@@ -7,9 +7,8 @@ must never raise out of the handler (which would kill the listener thread).
 import asyncio
 import logging
 import threading
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
-from server.supervisor.resource_manager import ResourceManager
 from server.supervisor.services.command_listener import CommandListener
 from shared.schemas.command import (
     CommandMessage,
@@ -34,14 +33,6 @@ def _listener() -> CommandListener:
 
 def _cmd(command: CommandType, payload: dict | None = None) -> CommandMessage:
     return CommandMessage(command=command, payload=payload)
-
-
-def _mock_rm(available_count: int) -> MagicMock:
-    """Build a mock ResourceManager with controllable GPU availability."""
-    rm = MagicMock(spec=ResourceManager)
-    rm.available_gpu_count = available_count
-    rm.next_available_gpus.side_effect = lambda n: list(range(n))
-    return rm
 
 
 class _RunningLoop:
@@ -150,52 +141,42 @@ class TestHandleCreateWorkerOnNodeCmd:
         call_args = self.cl._wm.create_worker.call_args[0][0]
         assert "cuda_devices" not in call_args.worker_config
 
-    # --- GPU workers ---
+    # --- GPU workers (handler forwards gpu_count; factory reserves) ---
 
-    def test_two_gpu_worker_sets_type_and_devices(self) -> None:
+    def test_two_gpu_worker_sets_type_and_gpu_count(self) -> None:
         info = MagicMock()
         info.name = "w-gpu"
         self.cl._wm.create_worker = AsyncMock(return_value=info)  # type: ignore[method-assign]
 
-        with patch(
-            "server.supervisor.services.command_listener.ResourceManager"
-        ) as MockRM:
-            MockRM.get_instance.return_value = _mock_rm(4)
-            resp = self._handle({"gpu_count": "2", "worker_alias": "my-worker"})
+        resp = self._handle({"gpu_count": "2", "worker_alias": "my-worker"})
 
         assert resp.success
         cfg = self.cl._wm.create_worker.call_args[0][0].worker_config
         assert cfg["worker_type"] == "gpu"
-        assert cfg["cuda_devices"] == [0, 1]
+        assert cfg["gpu_count"] == 2
+        assert "cuda_devices" not in cfg
 
     def test_four_gpu_worker(self) -> None:
         info = MagicMock()
         info.name = "w-gpu"
         self.cl._wm.create_worker = AsyncMock(return_value=info)  # type: ignore[method-assign]
 
-        with patch(
-            "server.supervisor.services.command_listener.ResourceManager"
-        ) as MockRM:
-            MockRM.get_instance.return_value = _mock_rm(4)
-            resp = self._handle({"gpu_count": "4"})
+        resp = self._handle({"gpu_count": "4"})
 
         assert resp.success
         cfg = self.cl._wm.create_worker.call_args[0][0].worker_config
         assert cfg["worker_type"] == "gpu"
-        assert cfg["cuda_devices"] == [0, 1, 2, 3]
+        assert cfg["gpu_count"] == 4
+        assert "cuda_devices" not in cfg
 
-    # --- No GPUs available ---
+    # --- Reservation failures surface via WorkerManager ---
 
-    def test_no_gpus_available_returns_error(self) -> None:
-        no_gpu_rm = _mock_rm(0)
-        no_gpu_rm.next_available_gpus.side_effect = ValueError(
-            "Not enough available GPUs"
+    def test_reserve_failure_surfaces_as_error(self) -> None:
+        self.cl._wm.create_worker = AsyncMock(  # type: ignore[method-assign]
+            side_effect=ValueError("Not enough available GPUs")
         )
-        with patch(
-            "server.supervisor.services.command_listener.ResourceManager"
-        ) as MockRM:
-            MockRM.get_instance.return_value = no_gpu_rm
-            resp = self._handle({"gpu_count": "1"})
+
+        resp = self._handle({"gpu_count": "1"})
 
         assert not resp.success
         assert "Not enough available GPUs" in (resp.message or "")
@@ -203,11 +184,7 @@ class TestHandleCreateWorkerOnNodeCmd:
     # --- Validation: worker_type vs gpu_count ---
 
     def test_invalid_worker_type_for_gpu_count_returns_error(self) -> None:
-        with patch(
-            "server.supervisor.services.command_listener.ResourceManager"
-        ) as MockRM:
-            MockRM.get_instance.return_value = _mock_rm(4)
-            resp = self._handle({"gpu_count": "2", "worker_type": "cpu"})
+        resp = self._handle({"gpu_count": "2", "worker_type": "cpu"})
 
         assert not resp.success
         assert "Invalid worker_type" in (resp.message or "")
@@ -215,11 +192,7 @@ class TestHandleCreateWorkerOnNodeCmd:
     # --- Validation: cuda_devices vs gpu_count ---
 
     def test_cuda_devices_length_mismatch_returns_error(self) -> None:
-        with patch(
-            "server.supervisor.services.command_listener.ResourceManager"
-        ) as MockRM:
-            MockRM.get_instance.return_value = _mock_rm(4)
-            resp = self._handle({"gpu_count": "2", "cuda_devices": [0]})
+        resp = self._handle({"gpu_count": "2", "cuda_devices": [0]})
 
         assert not resp.success
         assert "must match gpu_count" in (resp.message or "")
@@ -229,15 +202,12 @@ class TestHandleCreateWorkerOnNodeCmd:
         info.name = "w-gpu"
         self.cl._wm.create_worker = AsyncMock(return_value=info)  # type: ignore[method-assign]
 
-        with patch(
-            "server.supervisor.services.command_listener.ResourceManager"
-        ) as MockRM:
-            MockRM.get_instance.return_value = _mock_rm(4)
-            resp = self._handle({"gpu_count": "2", "cuda_devices": [2, 3]})
+        resp = self._handle({"gpu_count": "2", "cuda_devices": [2, 3]})
 
         assert resp.success
         cfg = self.cl._wm.create_worker.call_args[0][0].worker_config
         assert cfg["cuda_devices"] == [2, 3]
+        assert "gpu_count" not in cfg
 
     # --- Worker alias ---
 
