@@ -4,19 +4,19 @@ metadata:
   name: search-task
   owner: researcher
   annotations:
-    description: "Search agent configuration for query processing and information retrieval."
+    description: Search agent configuration for query processing and information retrieval.
 
 spec:
-  taskType: "agent"
-  configName: "simple_search"
-  task: "Search for the latest trends in artificial intelligence and summarize 3 key points"
+  taskType: agent
+  configName: simple_search
+  task: Search for the latest trends in artificial intelligence and summarize 3 key points
 
   resources:
     hardware:
-      cpu: "1"
-      memory: "2Gi"
+      cpu: 1
+      memory: 2Gi
       gpu:
-        type: "any"
+        type: any
         count: 0  
   
   agent:
@@ -24,7 +24,7 @@ spec:
 
   output:
     destination:
-      type: "local"
+      type: local
     artifacts:
-      - "results.json"
-      - "agent_output.txt"
+      - results.json
+      - agent_output.txt

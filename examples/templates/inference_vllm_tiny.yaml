@@ -4,26 +4,26 @@ metadata:
   name: inference-vllm-tiny
   owner: alice
   annotations:
-    description: "Run text-generation inference using vLLM (TinyLlama-1.1B-Chat model from Hugging Face) on the GSM8K dataset."
+    description: Run text-generation inference using vLLM (TinyLlama-1.1B-Chat model from Hugging Face) on the GSM8K dataset.
 
 spec:
-  taskType: "inference"
+  taskType: inference
 
   # Resource requirements used by the orchestrator scheduler
   resources:
     hardware:
-      cpu: "8"
-      memory: "32Gi"
+      cpu: 8
+      memory: 32Gi
       gpu:
-        type: "any"         # or a specific model, e.g. "nvidia-a100-80gb"
+        type: any         # or a specific model, e.g. "nvidia-a100-80gb"
         count: 1
 
   # Model configuration and vLLM runtime options
   model:
     source:
-      type: "huggingface"
-      identifier: "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
-      revision: "main"
+      type: huggingface
+      identifier: TinyLlama/TinyLlama-1.1B-Chat-v1.0
+      revision: main
     vllm:
       tensor_parallel_size: 1
       gpu_memory_utilization: 0.9
@@ -31,11 +31,11 @@ spec:
 
   # Data resource
   data:
-    type: "dataset"
-    url: "openai/gsm8k"
-    name: "main"
+    type: dataset
+    url: openai/gsm8k
+    name: main
     split: "train[:1%]"
-    column: "question"
+    column: question
     shuffle: true
     seed: 42
 
@@ -48,8 +48,8 @@ spec:
   # Output configuration (current worker writes locally to RESULTS_DIR/<task_id>/results.json)
   output:
     destination:
-      type: "local"
+      type: local
     artifacts:
-      - "results.json"
-      - "logs"
+      - results.json
+      - logs
 

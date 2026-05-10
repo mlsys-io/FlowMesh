@@ -9,30 +9,30 @@ metadata:
   name: gpt2-sft-demo
   owner: research
   annotations:
-    description: "Supervised fine-tuning demo using TRL SFTExecutor"
+    description: Supervised fine-tuning demo using TRL SFTExecutor
 
 spec:
-  taskType: "sft"
+  taskType: sft
 
   resources:
     hardware:
-      cpu: "8"
-      memory: "32Gi"
+      cpu: 8
+      memory: 32Gi
       gpu:
         count: 1
-        type: "any"
+        type: any
 
   model:
     source:
-      type: "huggingface"
-      identifier: "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
+      type: huggingface
+      identifier: TinyLlama/TinyLlama-1.1B-Chat-v1.0
 
   data:
-    dataset_name: "openai/gsm8k"
-    config_name: "main"
+    dataset_name: openai/gsm8k
+    config_name: main
     split: "train[:5%]"
-    prompt_column: "question"
-    response_column: "answer"
+    prompt_column: question
+    response_column: answer
     separator: "\n\nAnswer: "
     max_samples: 200
 
@@ -53,8 +53,8 @@ spec:
 
   output:
     destination:
-      type: "local"
+      type: local
     artifacts:
-      - "results.json"
-      - "logs"
-      - "artifacts/checkpoints"
+      - results.json
+      - logs
+      - artifacts/checkpoints

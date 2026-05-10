@@ -11,28 +11,28 @@ metadata:
   name: mistral-http-callback
 
 spec:
-  taskType: "inference"
+  taskType: inference
 
   resources:
     hardware:
-      cpu: "4"
-      memory: "16GiB"
+      cpu: 4
+      memory: 16GiB
       gpu:
         count: 1
-        type: "any"            # let the scheduler pick any available GPU
+        type: any            # let the scheduler pick any available GPU
 
   model:
     source:
-      identifier: "mistralai/Mistral-7B-Instruct-v0.3"
+      identifier: mistralai/Mistral-7B-Instruct-v0.3
     vllm:
       tensor_parallel_size: 1
       max_model_len: 4096
 
   data:
-    type: "list"
+    type: list
     items:
-      - "Explain the key differences between superconductors and regular conductors."
-      - "Summarise the advantages of distributed inference for LLM workloads."
+      - Explain the key differences between superconductors and regular conductors.
+      - Summarise the advantages of distributed inference for LLM workloads.
 
   inference:
     max_tokens: 256
@@ -41,12 +41,12 @@ spec:
 
   output:
     destination:
-      type: "http"
+      type: http
       url: "http://server:8000/api/v1/results"   # update host/port to your server endpoint
-      method: "POST"
+      method: POST
       timeoutSec: 10
       headers:
-        Authorization: "Bearer replace-with-server-token"
-        Content-Type: "application/json"
+        Authorization: Bearer replace-with-server-token
+        Content-Type: application/json
     artifacts:
-      - "results.json"         # still persisted locally under RESULTS_DIR/<task_id>/
+      - results.json         # still persisted locally under RESULTS_DIR/<task_id>/

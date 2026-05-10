@@ -9,52 +9,52 @@ metadata:
   name: dag-two-branch-demo
 
 spec:
-  taskType: "inference"
+  taskType: inference
 
   resources:
     hardware:
-      cpu: "4"
-      memory: "16GiB"
+      cpu: 4
+      memory: 16GiB
 
   model:
     source:
-      type: "huggingface"
-      identifier: "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
+      type: huggingface
+      identifier: TinyLlama/TinyLlama-1.1B-Chat-v1.0
 
   graph:
     nodes:
       - name: branch-a
         spec:
-          taskType: "inference"
+          taskType: inference
           data:
-            type: "list"
+            type: list
             items:
-              - "List three long-term benefits of transitioning to renewable energy."
+              - List three long-term benefits of transitioning to renewable energy.
       - name: branch-b
         spec:
-          taskType: "inference"
+          taskType: inference
           data:
-            type: "list"
+            type: list
             items:
-              - "Identify two major challenges organizations face when adopting renewable energy."
+              - Identify two major challenges organizations face when adopting renewable energy.
       - name: synthesis
         dependsOn: ["branch-a", "branch-b"]
         spec:
-          taskType: "inference"
+          taskType: inference
           data:
-            type: "graph_template"
+            type: graph_template
             template:
-              name: "two_column_briefing"
+              name: two_column_briefing
               columns:
-                - label: "Benefits insight"
-                  node: "branch-a"
+                - label: Benefits insight
+                  node: branch-a
                   path: "items[0].output"
-                - label: "Challenges insight"
-                  node: "branch-b"
+                - label: Challenges insight
+                  node: branch-b
                   path: "items[0].output"
 
   output:
     destination:
-      type: "local"
+      type: local
     artifacts:
-      - "results.json"
+      - results.json

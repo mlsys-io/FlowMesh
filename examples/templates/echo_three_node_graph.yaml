@@ -10,50 +10,50 @@ metadata:
   name: echo-three-node-graph
   owner: smoke-test
   annotations:
-    description: "Three-node graph demo for EchoExecutor aggregation"
+    description: Three-node graph demo for EchoExecutor aggregation
 
 spec:
-  taskType: "echo"
+  taskType: echo
 
   resources:
     hardware:
-      cpu: "1"
-      memory: "1Gi"
+      cpu: 1
+      memory: 1Gi
 
   graph:
     nodes:
       - name: echo-a
         spec:
-          taskType: "echo"
+          taskType: echo
           data:
-            type: "list"
+            type: list
             items:
-              - "literal_from_a"
+              - literal_from_a
 
       - name: echo-b
         spec:
-          taskType: "echo"
+          taskType: echo
           data:
-            type: "list"
+            type: list
             items:
-              - "literal_from_b"
+              - literal_from_b
 
       - name: echo-merge
         dependsOn: ["echo-a", "echo-b"]
         spec:
-          taskType: "echo"
+          taskType: echo
           data:
-            type: "list"
+            type: list
             items:
-              - node: "echo-a"
+              - node: echo-a
                 path: "items[0].output"
-              - node: "echo-b"
+              - node: echo-b
                 path: "items[0].output"
 
   output:
     destination:
-      type: "http"
+      type: http
     artifacts:
-      - "results.json"
-      - "logs"
-      - "artifacts"
+      - results.json
+      - logs
+      - artifacts

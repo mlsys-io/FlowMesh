@@ -3,7 +3,7 @@ kind: SSHTask
 metadata:
   name: ssh-with-inputs
   annotations:
-    description: "Workflow template for testing SSH upstream result mounts and writable sshOutput"
+    description: Workflow template for testing SSH upstream result mounts and writable sshOutput
 
 spec:
   stages:
@@ -13,27 +13,27 @@ spec:
         data:
           type: list
           items:
-            - "ssh result mounting smoke test"
-            - "inspect /mnt/flowmesh/inputs/preprocess/results.json from the SSH session"
+            - ssh result mounting smoke test
+            - inspect /mnt/flowmesh/inputs/preprocess/results.json from the SSH session
         output:
           destination:
             type: http
           artifacts:
-            - "results.json"
-            - "logs"
-            - "artifacts"
+            - results.json
+            - logs
+            - artifacts
 
     - name: annotate
       dependsOn: [preprocess]
       spec:
         taskType: ssh
-        user: "flowmesh"
+        user: flowmesh
         # Replace with your own public key before submitting.
         authorizedKeys:
-          - "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExamplePublicKeyReplaceWithYours user@laptop"
+          - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExamplePublicKeyReplaceWithYours user@laptop
         ttlSeconds: 3600
         idleTimeoutSeconds: 900
-        accessMode: "direct"
+        accessMode: direct
         inputs:
           - stage: preprocess
             mountPath: /mnt/flowmesh/inputs/preprocess
@@ -41,11 +41,11 @@ spec:
           mountPath: /mnt/flowmesh/output
           maxBytes: 1073741824
         env:
-          FLOWMESH_TEST_HINT: "Write a file to /mnt/flowmesh/output and verify the upstream mount is read-only"
+          FLOWMESH_TEST_HINT: Write a file to /mnt/flowmesh/output and verify the upstream mount is read-only
         output:
           destination:
             type: http
           artifacts:
-            - "results.json"
-            - "logs"
-            - "artifacts"
+            - results.json
+            - logs
+            - artifacts

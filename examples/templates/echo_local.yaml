@@ -4,23 +4,23 @@ metadata:
   name: echo-demo
   owner: smoke-test
   annotations:
-    description: "Use EchoExecutor to verify dispatch pipeline"
+    description: Use EchoExecutor to verify dispatch pipeline
 
 spec:
-  taskType: "echo"
+  taskType: echo
   resources:
     hardware:
-      cpu: "1"
-      memory: "1Gi"
+      cpu: 1
+      memory: 1Gi
   data:
-    type: "list"
+    type: list
     items:
-      - "hello echo"
-      - "second message"
+      - hello echo
+      - second message
   output:
     destination:
-      type: "local"
+      type: local
     artifacts:
-      - "results.json"
-      - "logs"
-      - "artifacts"
+      - results.json
+      - logs
+      - artifacts

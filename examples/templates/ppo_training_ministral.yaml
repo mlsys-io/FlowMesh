@@ -4,32 +4,32 @@ metadata:
   name: ministral-3b-ppo-training
   owner: alice
   annotations:
-    description: "PPO training for Ministral-3B using reinforcement learning"
+    description: PPO training for Ministral-3B using reinforcement learning
 
 spec:
-  taskType: "ppo"   # Worker will execute with the PPO module
+  taskType: ppo   # Worker will execute with the PPO module
 
   # Resource requirements used by the orchestrator scheduler
   resources:
     hardware:
-      cpu: "16"
-      memory: "64Gi"
+      cpu: 16
+      memory: 64Gi
       gpu:
-        type: "any"       # or a specific model, e.g. "nvidia-a100-80gb"
+        type: any       # or a specific model, e.g. "nvidia-a100-80gb"
         count: 1
 
   # Base model configuration
   model:
     source:
-      type: "huggingface"
-      identifier: "mistralai/Ministral-3-3B-Instruct-2512"
-      revision: "main"
+      type: huggingface
+      identifier: mistralai/Ministral-3-3B-Instruct-2512
+      revision: main
       trust_remote_code: false
 
   # Reward model configuration (optional)
   reward_model:
-    identifier: "cardiffnlp/twitter-roberta-base-sentiment-latest"
-    type: "sentiment"
+    identifier: cardiffnlp/twitter-roberta-base-sentiment-latest
+    type: sentiment
 
   # Training dataset configuration
   data:
@@ -59,13 +59,13 @@ spec:
     ppo_epochs: 4
     target_kl: 0.1
     seed: 42
-    padding_side: "left"
+    padding_side: left
     early_stopping: false
-    save_strategy: "steps"
+    save_strategy: steps
     save_model: true
     save_freq: 25               # Save checkpoint every 25 steps
     log_with: null              # Options: "tensorboard", "wandb", null
-    tracker_project_name: "ministral-ppo-training"
+    tracker_project_name: ministral-ppo-training
     fp16: false
     bf16: true
 
@@ -77,8 +77,8 @@ spec:
   # Output configuration
   output:
     destination:
-      type: "local"
+      type: local
     artifacts:
-      - "results.json"
-      - "logs"
-      - "artifacts/checkpoints"
+      - results.json
+      - logs
+      - artifacts/checkpoints

@@ -7,15 +7,15 @@ metadata:
     description: vLLM structured-output demo — raw JSON schema (nested objects and arrays).
 
 spec:
-  taskType: "inference"
+  taskType: inference
   resources:
     hardware:
-      cpu: "8"
-      memory: "16Gi"
+      cpu: 8
+      memory: 16Gi
       gpu:
-        type: "any"         # or a specific model, e.g. "nvidia-a100-80gb"
+        type: any         # or a specific model, e.g. "nvidia-a100-80gb"
         count: 1
-        memory: "8Gi"
+        memory: 8Gi
   model:
     source:
       type: huggingface
@@ -93,7 +93,7 @@ spec:
 
   output:
     destination:
-      type: "http"
+      type: http
     artifacts:
-      - "results.json"
-      - "logs"
+      - results.json
+      - logs

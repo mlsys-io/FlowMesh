@@ -4,21 +4,21 @@ metadata:
   name: agent-simple-test
   owner: researcher
   annotations:
-    description: "Simple agent test with basic AI query"
+    description: Simple agent test with basic AI query
 
 spec:
-  taskType: "agent"
+  taskType: agent
 
-  configName: "default"
+  configName: default
 
-  task: "Please provide a brief introduction to artificial intelligence"
+  task: Please provide a brief introduction to artificial intelligence
 
   resources:
     hardware:
-      cpu: "4"
-      memory: "8Gi"
+      cpu: 4
+      memory: 8Gi
       gpu:
-        type: "any"
+        type: any
         count: 0
 
   agent:
@@ -26,7 +26,7 @@ spec:
 
   output:
     destination:
-      type: "local"
+      type: local
     artifacts:
-      - "results.json"
-      - "agent_output.txt"
+      - results.json
+      - agent_output.txt

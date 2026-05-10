@@ -13,15 +13,15 @@ spec:
         data:
           type: list
           items:
-            - "upstream data for non-interactive processing"
-            - "inspect /mnt/flowmesh/inputs/preprocess/results.json inside the container"
+            - upstream data for non-interactive processing
+            - inspect /mnt/flowmesh/inputs/preprocess/results.json inside the container
         output:
           destination:
             type: http
           artifacts:
-            - "results.json"
-            - "logs"
-            - "artifacts"
+            - results.json
+            - logs
+            - artifacts
 
     - name: process
       dependsOn: [preprocess]
@@ -51,6 +51,6 @@ spec:
           destination:
             type: http
           artifacts:
-            - "results.json"
-            - "logs"
-            - "artifacts"
+            - results.json
+            - logs
+            - artifacts

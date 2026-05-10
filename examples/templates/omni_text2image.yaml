@@ -4,31 +4,31 @@ metadata:
   name: omni-text2image
 
 spec:
-  taskType: "omni_text2image"
+  taskType: omni_text2image
 
   resources:
     hardware:
       gpu:
         count: 1
-        memory: "24GB"
+        memory: 24GB
 
   model:
     source:
-      type: "huggingface"
-      identifier: "Qwen/Qwen-Image-2512"
+      type: huggingface
+      identifier: Qwen/Qwen-Image-2512
 
   data:
-    type: "list"
+    type: list
     items:
       - "A futuristic city skyline at sunset, photorealistic"
-      - "A cat wearing a space helmet on the moon"
+      - A cat wearing a space helmet on the moon
 
   omni:
-    output_format: "png"
+    output_format: png
 
   output:
     destination:
-      type: "http"
+      type: http
     artifacts:
-      - "results.json"
-      - "artifacts/"
+      - results.json
+      - artifacts/

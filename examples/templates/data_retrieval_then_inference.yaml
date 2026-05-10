@@ -10,41 +10,41 @@ metadata:
   name: data-retrieval-then-inference
 
 spec:
-  taskType: "inference"
+  taskType: inference
 
   graph:
     nodes:
       - name: sql-param-generator
         spec:
-          taskType: "inference"
+          taskType: inference
           resources:
             hardware:
-              cpu: "2"
-              memory: "8GiB"
+              cpu: 2
+              memory: 8GiB
               gpu:
                 type: any
                 count: 1
           model:
             source:
-              type: "huggingface"
-              identifier: "Qwen/Qwen2.5-1.5B-Instruct"
+              type: huggingface
+              identifier: Qwen/Qwen2.5-1.5B-Instruct
           inference:
             max_tokens: 64
             temperature: 0.0
             templates:
               - name: date
-                type: "datetime"
-                min: "2024-06-01"
-                max: "2025-03-31"
+                type: datetime
+                min: 2024-06-01
+                max: 2025-03-31
               - name: table_name
                 candidates:
-                  - "fact_news-metadata"
+                  - fact_news-metadata
               - name: limit
-                type: "integer"
+                type: integer
                 min: 1
                 max: 10
           data:
-            type: "list"
+            type: list
             items:
               - Suggest a starting date and number of news articles for financial news in the first quarter of 2025.
               - Suggest a starting date and number of news articles for financial news in the last quarter of 2024.
@@ -52,13 +52,13 @@ spec:
       - name: news-metadata
         dependsOn: ["sql-param-generator"]
         spec:
-          taskType: "data_retrieval"
+          taskType: data_retrieval
           resources:
             hardware:
-              cpu: "4"
-              memory: "16GiB"
+              cpu: 4
+              memory: 16GiB
           data:
-            type: "sql"
+            type: sql
             connection_string: "postgresql://$PG_USER:$PG_PASS@$PG_HOST:$PG_PORT/$PG_DB"
             template: "SELECT id, symbol, \"publishedDate\", title FROM star.\"{table_name}\" WHERE symbol='{symbol}' AND \"publishedDate\" >= '{publishedDateMin}' ORDER BY \"publishedDate\" DESC LIMIT {limit}"
             params:
@@ -68,48 +68,48 @@ spec:
                   items:
                   - NVDA
               - label: limit
-                node: "sql-param-generator"
-                path: "items.output.limit"
+                node: sql-param-generator
+                path: items.output.limit
               - label: publishedDateMin
-                node: "sql-param-generator"
-                path: "items.output.date"
+                node: sql-param-generator
+                path: items.output.date
               - label: table_name
-                node: "sql-param-generator"
-                path: "items.output.table_name"
+                node: sql-param-generator
+                path: items.output.table_name
 
       - name: news-html
         dependsOn: ["news-metadata"]
         spec:
-          taskType: "data_retrieval"
+          taskType: data_retrieval
           resources:
             hardware:
-              cpu: "4"
-              memory: "16GiB"
+              cpu: 4
+              memory: 16GiB
           data:
-            type: "s3"
+            type: s3
             connection_string: "s3://$S3_USER:$S3_PASS@$S3_HOST:$S3_PORT/$S3_BUCKET"
             template: "unstructured/news-html/{id}.html"
             params:
             - label: id
-              node: "news-metadata"
-              path: "items.table.id"
-            encoding: "utf-8"
+              node: news-metadata
+              path: items.table.id
+            encoding: utf-8
 
       - name: summarize
         dependsOn: ["news-metadata", "news-html"]
         spec:
-          taskType: "inference"
+          taskType: inference
           resources:
             hardware:
-              cpu: "4"
-              memory: "16GiB"
+              cpu: 4
+              memory: 16GiB
               gpu:
                 type: any
                 count: 1
           model:
             source:
-              type: "huggingface"
-              identifier: "Qwen/Qwen2.5-1.5B-Instruct"
+              type: huggingface
+              identifier: Qwen/Qwen2.5-1.5B-Instruct
           inference:
             max_tokens: 512
             temperature: 0.4
@@ -117,17 +117,17 @@ spec:
           data:
             type: dataframe
             columns:
-              - label: "title"
-                node: "news-metadata"
-                path: "items.table.title"
-              - label: "publishedDate"
-                node: "news-metadata"
-                path: "items.table.publishedDate"
-              - label: "html"
-                node: "news-html"
-                path: "items.content"
+              - label: title
+                node: news-metadata
+                path: items.table.title
+              - label: publishedDate
+                node: news-metadata
+                path: items.table.publishedDate
+              - label: html
+                node: news-html
+                path: items.content
             messages:
-              - role: "user"
+              - role: user
                 content: |
                   Summarize the following news article in three sentences concisely.
                   Title: {title}
@@ -138,18 +138,18 @@ spec:
       - name: aggregation
         dependsOn: ["news-metadata", "summarize"]
         spec:
-          taskType: "inference"
+          taskType: inference
           resources:
             hardware:
-              cpu: "4"
-              memory: "16GiB"
+              cpu: 4
+              memory: 16GiB
               gpu:
                 type: any
                 count: 1
           model:
             source:
-              type: "huggingface"
-              identifier: "Qwen/Qwen2.5-1.5B-Instruct"
+              type: huggingface
+              identifier: Qwen/Qwen2.5-1.5B-Instruct
           inference:
             max_tokens: 512
             temperature: 0.4
@@ -159,19 +159,19 @@ spec:
             template:
               name: format
               columns:
-              - label: "df"
+              - label: df
                 data:
                   type: dataframe
                   columns:
-                    - label: "title"
-                      node: "news-metadata"
-                      path: "items.table.title"
-                    - label: "publishedDate"
-                      node: "news-metadata"
-                      path: "items.table.publishedDate"
-                    - label: "summary"
-                      node: "summarize"
-                      path: "items.output"
+                    - label: title
+                      node: news-metadata
+                      path: items.table.title
+                    - label: publishedDate
+                      node: news-metadata
+                      path: items.table.publishedDate
+                    - label: summary
+                      node: summarize
+                      path: items.output
               options:
                 format:
                   messages:
@@ -182,6 +182,6 @@ spec:
 
   output:
     destination:
-      type: "http"
+      type: http
     artifacts:
-      - "results.json"
+      - results.json

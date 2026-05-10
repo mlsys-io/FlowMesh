@@ -4,26 +4,26 @@ metadata:
   name: omni-text2general-narration
 
 spec:
-  taskType: "omni_text2general"
+  taskType: omni_text2general
 
   resources:
     hardware:
       gpu:
         count: 1
-        memory: "24GB"
+        memory: 24GB
 
   model:
     source:
-      type: "huggingface"
-      identifier: "Qwen/Qwen3-Omni-30B-A3B-Instruct"
+      type: huggingface
+      identifier: Qwen/Qwen3-Omni-30B-A3B-Instruct
 
   data:
     text: "Please read the following passage in a calm, professional tone: FlowMesh is a distributed GPU workflow engine."
 
   omni:
-    output_format: "wav"
+    output_format: wav
     sample_rate: 24000
-    modalities: "audio"
+    modalities: audio
     stage_init_timeout: 600
     init_timeout: 600
     # Inline stage configuration for single-GPU execution.
@@ -44,7 +44,7 @@ spec:
             enforce_eager: false
             trust_remote_code: true
             engine_output_type: latent
-            distributed_executor_backend: "mp"
+            distributed_executor_backend: mp
             enable_prefix_caching: false
             max_num_batched_tokens: 32768
             hf_config_name: thinker_config
@@ -77,7 +77,7 @@ spec:
             engine_output_type: latent
             enable_prefix_caching: false
             max_num_batched_tokens: 32768
-            distributed_executor_backend: "mp"
+            distributed_executor_backend: mp
             hf_config_name: talker_config
           engine_input_source: [0]
           custom_process_input_func: vllm_omni.model_executor.stage_input_processors.qwen3_omni.thinker2talker
@@ -106,7 +106,7 @@ spec:
             enable_prefix_caching: false
             engine_output_type: audio
             gpu_memory_utilization: 0.1
-            distributed_executor_backend: "mp"
+            distributed_executor_backend: mp
             max_num_batched_tokens: 1000000
             hf_config_name: thinker_config
           engine_input_source: [1]
@@ -124,7 +124,7 @@ spec:
 
   output:
     destination:
-      type: "http"
+      type: http
     artifacts:
-      - "results.json"
-      - "artifacts/"
+      - results.json
+      - artifacts/

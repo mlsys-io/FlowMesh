@@ -15,11 +15,11 @@ spec:
     mountPath: /mnt/flowmesh/output
     maxBytes: 1073741824
   env:
-    MY_CUSTOM_VAR: "hello"
+    MY_CUSTOM_VAR: hello
   output:
     destination:
       type: http
     artifacts:
-      - "results.json"
-      - "logs"
-      - "artifacts"
+      - results.json
+      - logs
+      - artifacts

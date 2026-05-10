@@ -7,11 +7,11 @@ metadata:
     description: "Intelligent academic paper collection agent: automatically search and summarize papers in specific domains"
 
 spec:
-  taskType: "agent"
+  taskType: agent
 
   # Requires agent LLM/search keys on the worker, including UTU_LLM_TYPE,
   # UTU_LLM_MODEL, UTU_LLM_BASE_URL, UTU_LLM_API_KEY, SERPER_API_KEY, and JINA_API_KEY.
-  configName: "examples/paper_collector"
+  configName: examples/paper_collector
 
   task: |
     Please search for 2 latest papers about reinforcement learning agents and provide summaries:
@@ -20,10 +20,10 @@ spec:
 
   resources:
     hardware:
-      cpu: "4"
-      memory: "8Gi"
+      cpu: 4
+      memory: 8Gi
       gpu:
-        type: "any"
+        type: any
         count: 0
 
   agent:
@@ -31,8 +31,8 @@ spec:
 
   output:
     destination:
-      type: "local"
+      type: local
     artifacts:
-      - "results.json"             # FlowMesh standard output format
-      - "agent_output.txt"         # Agent execution log
-      - "paper_summary.md"         # Paper search results
+      - results.json             # FlowMesh standard output format
+      - agent_output.txt         # Agent execution log
+      - paper_summary.md         # Paper search results

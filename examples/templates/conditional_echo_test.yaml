@@ -26,66 +26,66 @@ metadata:
       the upstream verdict does not equal the condition value.
 
 spec:
-  taskType: "echo"
+  taskType: echo
 
   resources:
     hardware:
-      cpu: "1"
-      memory: "256Mi"
+      cpu: 1
+      memory: 256Mi
 
   graph:
     nodes:
       # --- Node 1: emits the "verdict" ---
       - name: echo-upstream
         spec:
-          taskType: "echo"
+          taskType: echo
           resources:
             hardware:
-              cpu: "1"
-              memory: "256Mi"
+              cpu: 1
+              memory: 256Mi
           data:
-            type: "list"
+            type: list
             items:
-              - "skip-me"
+              - skip-me
 
       # --- Node 2: CONDITIONAL — only run when upstream says "run-me" ---
       # Since upstream says "skip-me", this should be skipped by the host.
       - name: echo-conditional
         dependsOn: ["echo-upstream"]
         spec:
-          taskType: "echo"
+          taskType: echo
           resources:
             hardware:
-              cpu: "1"
-              memory: "256Mi"
+              cpu: 1
+              memory: 256Mi
           condition:
-            node: "echo-upstream"
-            field: "items.0.output"
-            equals: "run-me"
+            node: echo-upstream
+            field: items.0.output
+            equals: run-me
           # Note: condition.field uses _dig_path (dot-separated, int coercion)
           # while data.items path uses _evaluate_expr (bracket notation)
           data:
-            type: "list"
+            type: list
             items:
-              - "this-should-not-appear"
+              - this-should-not-appear
 
       # --- Node 3: always runs, reads upstream output ---
       - name: echo-always
         dependsOn: ["echo-upstream", "echo-conditional"]
         spec:
-          taskType: "echo"
+          taskType: echo
           resources:
             hardware:
-              cpu: "1"
-              memory: "256Mi"
+              cpu: 1
+              memory: 256Mi
           data:
-            type: "list"
+            type: list
             items:
-              - node: "echo-upstream"
+              - node: echo-upstream
                 path: "items[0].output"
 
   output:
     destination:
-      type: "http"
+      type: http
     artifacts:
-      - "results.json"
+      - results.json

@@ -4,15 +4,15 @@ metadata:
   name: diffusion-to-vlm-pipeline
 
 spec:
-  taskType: "inference"
+  taskType: inference
 
   resources:
     hardware:
-      cpu: "8"
-      memory: "32Gi"
+      cpu: 8
+      memory: 32Gi
       gpu:
         count: 1
-        type: "any"
+        type: any
 
   graph:
     nodes:
@@ -22,10 +22,10 @@ spec:
           
           model:
             source:
-              type: "huggingface"
-              identifier: "stabilityai/stable-diffusion-3.5-large"
+              type: huggingface
+              identifier: stabilityai/stable-diffusion-3.5-large
             diffusers:
-              dtype: "bf16"
+              dtype: bf16
               use_safetensors: true
 
           inference:
@@ -37,16 +37,16 @@ spec:
             seed: 42
 
           data:
-            type: "list"
+            type: list
             items:
               - "A futuristic city with flying cars at night, cyberpunk style, high detail"
 
           output:
             destination:
-              type: "http"
+              type: http
             artifacts:
-              - "results.json"
-              - "images/"
+              - results.json
+              - images/
 
       - name: image-embedding
         dependsOn: ["diffusion"]

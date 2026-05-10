@@ -4,7 +4,7 @@ metadata:
   name: vllm-all-args
   owner: regression-test
   annotations:
-    description: "Exercise all vLLM engine args and sampling params"
+    description: Exercise all vLLM engine args and sampling params
 
 spec:
   taskType: inference
@@ -14,29 +14,29 @@ spec:
       identifier: Qwen/Qwen3-8B-AWQ    # quantized + Qwen3 chat template (enable_thinking)
     vllm:
       # Engine configuration
-      quantization: "awq"             # awq, gptq, fp8, bitsandbytes
-      kv_cache_dtype: "auto"          # auto or fp8 (fp8 saves ~50% KV cache memory)
+      quantization: awq             # awq, gptq, fp8, bitsandbytes
+      kv_cache_dtype: auto          # auto or fp8 (fp8 saves ~50% KV cache memory)
       enforce_eager: true             # disable CUDA graphs for this test
       swap_space: 4                   # CPU swap space in GB for KV cache offloading
       cpu_offload_gb: 0               # GB of model weights to offload to CPU
       max_model_len: 2048             # cap context length to save memory
       max_num_batched_tokens: 2048    # chunked prefill budget
       gpu_memory_utilization: 0.9     # fraction of GPU memory for KV cache
-      dtype: "auto"                   # model precision (auto, float16, bfloat16)
-      revision: "main"               # model revision/branch
-      tokenizer_revision: "main"     # tokenizer revision/branch
+      dtype: auto                   # model precision (auto, float16, bfloat16)
+      revision: main               # model revision/branch
+      tokenizer_revision: main     # tokenizer revision/branch
       rope_scaling:                   # RoPE scaling config (via hf_overrides)
-        type: "dynamic"
+        type: dynamic
         factor: 1.0
       rope_theta: 10000.0            # RoPE base frequency (via hf_overrides)
   resources:
     hardware:
-      cpu: "4"
-      memory: "16Gi"
+      cpu: 4
+      memory: 16Gi
       gpu:
         type: any
         count: 1
-        memory: "16Gi"
+        memory: 16Gi
   inference:
     # Core sampling
     temperature: 0.8                  # higher = more creative
@@ -57,8 +57,8 @@ spec:
       - "###"
     stop_token_ids: []                # additional stop token IDs
     bad_words:                        # tokens to suppress entirely
-      - "fuck"
-      - "shit"
+      - fuck
+      - shit
     # Output control
     skip_special_tokens: true         # strip <|endoftext|> etc from output
     logprobs: 3                       # return top-3 log probabilities per token
@@ -73,15 +73,15 @@ spec:
         candidates: [positive, negative, neutral]
       - name: published_on
         type: date
-        min: "2024-01-01"
-        max: "2025-12-31"
+        min: 2024-01-01
+        max: 2025-12-31
     chat_template_kwargs:
       enable_thinking: false
   data:
     type: list
     items:
-      - "Explain quantum entanglement in exactly three sentences."
-      - "Write a haiku about machine learning."
+      - Explain quantum entanglement in exactly three sentences.
+      - Write a haiku about machine learning.
   output:
     destination:
       type: http

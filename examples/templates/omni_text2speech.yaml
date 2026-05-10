@@ -4,31 +4,31 @@ metadata:
   name: omni-text2speech
 
 spec:
-  taskType: "omni_text2speech"
+  taskType: omni_text2speech
 
   resources:
     hardware:
       gpu:
         count: 1
-        memory: "16GB"
+        memory: 16GB
 
   model:
     source:
-      type: "huggingface"
-      identifier: "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice"
+      type: huggingface
+      identifier: Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice
 
   data:
     text: "Hello, welcome to FlowMesh. This is a text-to-speech demo."
 
   omni:
-    output_format: "wav"
+    output_format: wav
     sample_rate: 24000
-    speaker: "Vivian"
-    language: "Auto"
+    speaker: Vivian
+    language: Auto
 
   output:
     destination:
-      type: "http"
+      type: http
     artifacts:
-      - "results.json"
-      - "artifacts/"
+      - results.json
+      - artifacts/

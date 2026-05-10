@@ -9,14 +9,14 @@ spec:
   taskType: rag
   resources:
     hardware:
-      cpu: "2"
-      memory: "4Gi"
+      cpu: 2
+      memory: 4Gi
   qdrant:
     url: "https://YOUR-CLUSTER-ID.us-east.aws.cloud.qdrant.io:6333"
     api_key: "${QDRANT_API_KEY}"
-    collection: "demo_collection"
+    collection: demo_collection
   embedding:
-    model: "sentence-transformers/all-MiniLM-L6-v2"
+    model: sentence-transformers/all-MiniLM-L6-v2
   search:
     top_k: 5
   
@@ -43,13 +43,13 @@ spec:
   data:
     type: list
     items:
-      - "What is Qdrant?"
-      - "How does server-side embedding work in Qdrant?"
+      - What is Qdrant?
+      - How does server-side embedding work in Qdrant?
 
   output:
     destination:
-      type: "local"
+      type: local
     artifacts:
-      - "results.json"
-      - "logs"
-      - "artifacts"
+      - results.json
+      - logs
+      - artifacts

@@ -4,27 +4,27 @@ metadata:
   name: agent-dataset-batch
   owner: researcher
   annotations:
-    description: "Agent batch processing from HuggingFace dataset"
+    description: Agent batch processing from HuggingFace dataset
 
 spec:
-  taskType: "agent"
+  taskType: agent
 
-  configName: "examples/search_agent"
+  configName: examples/search_agent
 
   data:
-    type: "dataset"
-    url: "hoanganhpham/qwen235_search_agent_sample"
+    type: dataset
+    url: hoanganhpham/qwen235_search_agent_sample
     split: "train[:5]"
-    column: "question"
+    column: question
     shuffle: true
     seed: 42
 
   resources:
     hardware:
-      cpu: "4"
-      memory: "8Gi"
+      cpu: 4
+      memory: 8Gi
       gpu:
-        type: "any"
+        type: any
         count: 0
 
   agent:
@@ -32,8 +32,8 @@ spec:
 
   output:
     destination:
-      type: "local"
+      type: local
     artifacts:
-      - "results.json"
-      - "batch_logs/"
-      - "batch_summary.json"
+      - results.json
+      - batch_logs/
+      - batch_summary.json

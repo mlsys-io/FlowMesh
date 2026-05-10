@@ -5,27 +5,27 @@ metadata:
   name: llama-3b-sft-deepspeed
 
 spec:
-  taskType: "sft"
+  taskType: sft
 
   resources:
     hardware:
-      cpu: "8"
-      memory: "32GiB"
+      cpu: 8
+      memory: 32GiB
       gpu:
         count: 2
-        type: "any"
+        type: any
 
   model:
     source:
-      type: "huggingface"
-      identifier: "meta-llama/Llama-3.2-3B-Instruct"
+      type: huggingface
+      identifier: meta-llama/Llama-3.2-3B-Instruct
 
   data:
-    dataset_name: "openai/gsm8k"
-    config_name: "main"
+    dataset_name: openai/gsm8k
+    config_name: main
     split: "train[:5%]"
-    prompt_column: "question"
-    response_column: "answer"
+    prompt_column: question
+    response_column: answer
     separator: "\n\nAnswer: "
     max_samples: 200
 
@@ -42,7 +42,7 @@ spec:
     max_seq_length: 512
     logging_steps: 5
     save_steps: 50
-    save_strategy: "steps"
+    save_strategy: steps
     save_model: false  # enable to save locally and ship a zipped checkpoint when HTTP output is configured
 
     # Memory tuning.
@@ -69,6 +69,6 @@ spec:
 
   output:
     destination:
-      type: "local"
+      type: local
     artifacts:
-      - "results.json"
+      - results.json

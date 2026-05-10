@@ -9,54 +9,54 @@ metadata:
   name: llama-lora-two-stage
 
 spec:
-  taskType: "lora_sft"
+  taskType: lora_sft
 
   resources:
     hardware:
-      cpu: "8"
-      memory: "48GiB"
+      cpu: 8
+      memory: 48GiB
       gpu:
         count: 1
-        type: "any"
+        type: any
 
   model:
     source:
-      type: "huggingface"
-      identifier: "meta-llama/Llama-3.2-3B-Instruct"
+      type: huggingface
+      identifier: meta-llama/Llama-3.2-3B-Instruct
 
   lora:
     r: 16
     alpha: 32
     dropout: 0.05
-    bias: "none"
+    bias: none
     target_modules:
-      - "q_proj"
-      - "k_proj"
-      - "v_proj"
-      - "o_proj"
-    task_type: "CAUSAL_LM"
+      - q_proj
+      - k_proj
+      - v_proj
+      - o_proj
+    task_type: CAUSAL_LM
     use_rslora: false
 
   output:
     destination:
-      type: "http"
-      method: "POST"
+      type: http
+      method: POST
       timeoutSec: 15
       headers:
-        Authorization: "Bearer dev-token"
+        Authorization: Bearer dev-token
     artifacts:
-      - "results.json"
-      - "final_lora"
+      - results.json
+      - final_lora
 
   stages:
     - name: gsm8k-stage
       spec:
         data:
-          dataset_name: "openai/gsm8k"
-          config_name: "main"
+          dataset_name: openai/gsm8k
+          config_name: main
           split: "train[:2%]"
-          prompt_column: "question"
-          response_column: "answer"
+          prompt_column: question
+          response_column: answer
           separator: "\n\nAnswer: "
           max_samples: 120
         training:
@@ -75,13 +75,13 @@ spec:
       spec:
         checkpoint:
           load:
-            type: "http"
+            type: http
             url: "${gsm8k-stage.final_lora_archive}"
         data:
-          dataset_name: "openai/openai_humaneval"
-          split: "test"
-          prompt_column: "prompt"
-          response_column: "canonical_solution"
+          dataset_name: openai/openai_humaneval
+          split: test
+          prompt_column: prompt
+          response_column: canonical_solution
           separator: "\n\nSolution:\n"
           max_samples: 164
         training:

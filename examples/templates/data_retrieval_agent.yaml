@@ -7,68 +7,68 @@ metadata:
   name: agent-retrieval-demo
   owner: smoke-test
   annotations:
-    description: "data_retrieval(type=agent) → inference; downstream consumes access_chain"
+    description: data_retrieval(type=agent) → inference; downstream consumes access_chain
 
 spec:
-  taskType: "inference"
+  taskType: inference
 
   graph:
     nodes:
       - name: fundamentals
         spec:
-          taskType: "data_retrieval"
+          taskType: data_retrieval
           resources:
             hardware:
-              cpu: "2"
-              memory: "4GiB"
+              cpu: 2
+              memory: 4GiB
           data:
-            type: "agent"
+            type: agent
             lumid_data_url: "http://127.0.0.1:9102"
             description: "Show me {symbol}'s last 10 quarters of fundamentals and key financial-health ratios."
-            output_format: "jsonl"
+            output_format: jsonl
             max_steps: 20
             verify: false
             params:
               - label: symbol
                 data:
-                  type: "list"
+                  type: list
                   items:
-                    - "NVDA"
+                    - NVDA
 
       - name: summary
         dependsOn: ["fundamentals"]
         spec:
-          taskType: "inference"
+          taskType: inference
           resources:
             hardware:
-              cpu: "2"
-              memory: "8GiB"
+              cpu: 2
+              memory: 8GiB
               gpu:
                 type: any
                 count: 1
           model:
             source:
-              type: "huggingface"
-              identifier: "Qwen/Qwen2.5-1.5B-Instruct"
+              type: huggingface
+              identifier: Qwen/Qwen2.5-1.5B-Instruct
           inference:
             max_tokens: 256
             temperature: 0.3
           data:
             type: dataframe
             columns:
-              - label: "goal"
-                node: "fundamentals"
-                path: "items.description"
-              - label: "chain"
-                node: "fundamentals"
-                path: "items.access_chain"
-              - label: "table"
-                node: "fundamentals"
-                path: "items.table"
+              - label: goal
+                node: fundamentals
+                path: items.description
+              - label: chain
+                node: fundamentals
+                path: items.access_chain
+              - label: table
+                node: fundamentals
+                path: items.table
             messages:
-              - role: "system"
-                content: "Concise financial-data writing. Exactly two sentences."
-              - role: "user"
+              - role: system
+                content: Concise financial-data writing. Exactly two sentences.
+              - role: user
                 content: |
                   Goal: {goal}
 
@@ -84,7 +84,7 @@ spec:
 
   output:
     destination:
-      type: "local"
+      type: local
     artifacts:
-      - "results.json"
-      - "artifacts"
+      - results.json
+      - artifacts

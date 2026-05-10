@@ -4,35 +4,35 @@ metadata:
   name: omni-text2audio-bgm
 
 spec:
-  taskType: "omni_text2audio"
+  taskType: omni_text2audio
 
   resources:
     hardware:
       gpu:
         count: 1
-        memory: "16GB"
+        memory: 16GB
 
   model:
     source:
-      type: "huggingface"
-      identifier: "stabilityai/stable-audio-open-1.0"
+      type: huggingface
+      identifier: stabilityai/stable-audio-open-1.0
 
   data:
-    text: "Upbeat electronic music with synth pads and a driving beat"
+    text: Upbeat electronic music with synth pads and a driving beat
 
   omni:
-    output_format: "wav"
+    output_format: wav
     sample_rate: 44100
     audio_length: 10.0
     num_waveforms: 1
     guidance_scale: 7.0
     num_inference_steps: 100
     seed: 42
-    negative_prompt: "Low quality."
+    negative_prompt: Low quality.
 
   output:
     destination:
-      type: "http"
+      type: http
     artifacts:
-      - "results.json"
-      - "artifacts/"
+      - results.json
+      - artifacts/

@@ -4,30 +4,30 @@ metadata:
   name: tinyllama-ppo-multi-gpu
   owner: research
   annotations:
-    description: "Multi-GPU PPO smoke (TinyLlama 1.1B via torchrun)."
+    description: Multi-GPU PPO smoke (TinyLlama 1.1B via torchrun).
 
 spec:
-  taskType: "ppo"
+  taskType: ppo
 
   resources:
     hardware:
-      cpu: "16"
-      memory: "64Gi"
+      cpu: 16
+      memory: 64Gi
       gpu:
-        type: "any"
+        type: any
         count: 2
-        memory: "32Gi"
+        memory: 32Gi
 
   model:
     source:
-      type: "huggingface"
-      identifier: "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
-      revision: "main"
+      type: huggingface
+      identifier: TinyLlama/TinyLlama-1.1B-Chat-v1.0
+      revision: main
       trust_remote_code: false
 
   reward_model:
-    identifier: "cardiffnlp/twitter-roberta-base-sentiment-latest"
-    type: "sentiment"
+    identifier: cardiffnlp/twitter-roberta-base-sentiment-latest
+    type: sentiment
 
   data:
     prompts:
@@ -50,13 +50,13 @@ spec:
     ppo_epochs: 2
     target_kl: 0.1
     seed: 42
-    padding_side: "left"
+    padding_side: left
     early_stopping: false
     save_strategy: "no"
     save_model: false
     save_freq: 25
     log_with: null
-    tracker_project_name: "tinyllama-ppo-multi-gpu"
+    tracker_project_name: tinyllama-ppo-multi-gpu
     fp16: false
     bf16: true
 
@@ -66,8 +66,8 @@ spec:
 
   output:
     destination:
-      type: "local"
+      type: local
     artifacts:
-      - "results.json"
-      - "logs"
-      - "artifacts/checkpoints"
+      - results.json
+      - logs
+      - artifacts/checkpoints

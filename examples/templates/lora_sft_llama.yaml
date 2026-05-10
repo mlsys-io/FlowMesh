@@ -9,43 +9,43 @@ metadata:
   name: llama-lora-demo
   owner: research
   annotations:
-    description: "LoRA fine-tuning pipeline for Llama models"
+    description: LoRA fine-tuning pipeline for Llama models
 
 spec:
-  taskType: "lora_sft"
+  taskType: lora_sft
 
   resources:
     hardware:
-      cpu: "8"
-      memory: "48Gi"
+      cpu: 8
+      memory: 48Gi
       gpu:
         count: 1
-        type: "any"
+        type: any
 
   model:
     source:
-      type: "huggingface"
-      identifier: "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
+      type: huggingface
+      identifier: TinyLlama/TinyLlama-1.1B-Chat-v1.0
 
   lora:
     r: 16
     alpha: 32
     dropout: 0.05
-    bias: "none"
+    bias: none
     target_modules:
-      - "q_proj"
-      - "k_proj"
-      - "v_proj"
-      - "o_proj"
-    task_type: "CAUSAL_LM"
+      - q_proj
+      - k_proj
+      - v_proj
+      - o_proj
+    task_type: CAUSAL_LM
     use_rslora: false
 
   data:
-    dataset_name: "openai/gsm8k"
-    config_name: "main"
+    dataset_name: openai/gsm8k
+    config_name: main
     split: "train[:2%]"
-    prompt_column: "question"
-    response_column: "answer"
+    prompt_column: question
+    response_column: answer
     separator: "\n\nAnswer: "
     max_samples: 200
 
@@ -65,8 +65,8 @@ spec:
 
   output:
     destination:
-      type: "local"
+      type: local
     artifacts:
-      - "results.json"
-      - "logs"
-      - "artifacts/lora_adapter"
+      - results.json
+      - logs
+      - artifacts/lora_adapter

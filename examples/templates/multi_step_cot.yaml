@@ -8,24 +8,24 @@ metadata:
 
 spec:
   # The scheduler treats this as an inference pipeline (no data-parallel enabled).
-  taskType: "inference"
+  taskType: inference
 
   # Common defaults (can be overridden per stage).
   resources:
     hardware:
-      cpu: "8"
-      memory: "16Gi"
+      cpu: 8
+      memory: 16Gi
       # gpu:            # Default to CPU; GPU stages will override.
       #   type: "any"
       #   count: 0
 
   # Shared dataset config (stages can override split/column if needed).
   data:
-    type: "dataset"
-    url: "openai/gsm8k"
-    name: "main"
+    type: dataset
+    url: openai/gsm8k
+    name: main
     split: "train[:1%]"
-    column: "question"
+    column: question
     shuffle: true
     seed: 42
 
@@ -39,22 +39,22 @@ spec:
   stages:
 
     # ---------- Stage 1: Draft reasoning (small CPU model, CoT-style draft) ----------
-    - name: "draft-cot"
+    - name: draft-cot
       spec:
         resources:
           hardware:
-            cpu: "8"
-            memory: "16Gi"
+            cpu: 8
+            memory: 16Gi
             # CPU-only (omit gpu or set count: 0)
 
         model:
           source:
-            type: "huggingface"
-            identifier: "meta-llama/Llama-3.2-1B-Instruct"
-            revision: "main"
+            type: huggingface
+            identifier: meta-llama/Llama-3.2-1B-Instruct
+            revision: main
           transformers:
-            device_map: "cpu"
-            dtype: "float32"
+            device_map: cpu
+            dtype: float32
             trust_remote_code: false
             low_cpu_mem_usage: true
 
@@ -68,27 +68,27 @@ spec:
 
         output:
           destination:
-            type: "local"
+            type: local
           artifacts:
-            - "results.json"
-            - "logs"
+            - results.json
+            - logs
 
     # ---------- Stage 2: Refine answer (strong GPU model, edits the draft) ----------
-    - name: "refine-gpu"
+    - name: refine-gpu
       spec:
         resources:
           hardware:
-            cpu: "8"
-            memory: "32Gi"
+            cpu: 8
+            memory: 32Gi
             gpu:
-              type: "any"    # Or a specific model, e.g., "nvidia-a100-80gb"
+              type: any    # Or a specific model, e.g., "nvidia-a100-80gb"
               count: 1
 
         model:
           source:
-            type: "huggingface"
-            identifier: "mistralai/Mistral-7B-Instruct-v0.1"
-            revision: "main"
+            type: huggingface
+            identifier: mistralai/Mistral-7B-Instruct-v0.1
+            revision: main
           vllm:
             tensor_parallel_size: 1
             gpu_memory_utilization: 0.9
@@ -103,28 +103,28 @@ spec:
 
         output:
           destination:
-            type: "local"
+            type: local
           artifacts:
-            - "results.json"
-            - "logs"
+            - results.json
+            - logs
 
     # ---------- Stage 3: Format output (produce strict JSON) ----------
-    - name: "format-json"
+    - name: format-json
       spec:
         resources:
           hardware:
-            cpu: "8"
-            memory: "16Gi"
+            cpu: 8
+            memory: 16Gi
             # CPU-only
 
         model:
           source:
-            type: "huggingface"
-            identifier: "meta-llama/Llama-3.2-1B-Instruct"
-            revision: "main"
+            type: huggingface
+            identifier: meta-llama/Llama-3.2-1B-Instruct
+            revision: main
           transformers:
-            device_map: "cpu"
-            dtype: "float32"
+            device_map: cpu
+            dtype: float32
             trust_remote_code: false
             low_cpu_mem_usage: true
 
@@ -143,7 +143,7 @@ spec:
 
         output:
           destination:
-            type: "local"
+            type: local
           artifacts:
-            - "results.json"
-            - "logs"
+            - results.json
+            - logs

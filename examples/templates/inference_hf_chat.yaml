@@ -4,45 +4,45 @@ metadata:
   name: inference-hf-chat
   owner: alice
   annotations:
-    description: "Chat-style inference via HF Transformers (TinyLlama-1.1B-Chat) with per-item metadata and JSONL postprocess export."
+    description: Chat-style inference via HF Transformers (TinyLlama-1.1B-Chat) with per-item metadata and JSONL postprocess export.
 
 spec:
-  taskType: "inference"
+  taskType: inference
 
   resources:
     hardware:
-      cpu: "8"
-      memory: "16Gi"
+      cpu: 8
+      memory: 16Gi
       gpu:
-        type: "any"
+        type: any
         count: 1
 
   model:
     source:
-      type: "huggingface"
-      identifier: "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
-      revision: "main"
+      type: huggingface
+      identifier: TinyLlama/TinyLlama-1.1B-Chat-v1.0
+      revision: main
     transformers:
-      device_map: "cuda"
-      dtype: "float16"
+      device_map: cuda
+      dtype: float16
       trust_remote_code: false
 
   data:
-    type: "list"
+    type: list
     items:
       - - role: system
-          content: "You are a terse assistant. Answer in one sentence."
+          content: You are a terse assistant. Answer in one sentence.
         - role: user
-          content: "What is the capital of France?"
+          content: What is the capital of France?
       - - role: system
-          content: "You are a terse assistant. Answer in one sentence."
+          content: You are a terse assistant. Answer in one sentence.
         - role: user
-          content: "Name one programming language created in the 1970s."
+          content: Name one programming language created in the 1970s.
     metadata:
-      - row_id: "geo-001"
-        topic: "geography"
-      - row_id: "lang-002"
-        topic: "history-of-computing"
+      - row_id: geo-001
+        topic: geography
+      - row_id: lang-002
+        topic: history-of-computing
 
   inference:
     max_new_tokens: 64
@@ -52,23 +52,23 @@ spec:
 
   postprocess:
     jsonl_export:
-      path: "rows.jsonl"
+      path: rows.jsonl
       fields:
-        row_id: "metadata.row_id"
-        topic: "metadata.topic"
-        question: "prompt"
+        row_id: metadata.row_id
+        topic: metadata.topic
+        question: prompt
         messages:
-          from: "metadata"
-          key: "prompt"
-        answer: "output"
+          from: metadata
+          key: prompt
+        answer: output
       required_fields:
-        - "row_id"
-        - "answer"
+        - row_id
+        - answer
 
   output:
     destination:
-      type: "local"
+      type: local
     artifacts:
-      - "results.json"
-      - "artifacts"
-      - "logs"
+      - results.json
+      - artifacts
+      - logs

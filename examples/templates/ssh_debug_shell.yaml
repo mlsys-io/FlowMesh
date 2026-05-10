@@ -3,22 +3,22 @@ kind: SSHTask
 metadata:
   name: ssh-debug-shell
   annotations:
-    description: "Start an interactive SSH debug shell on a worker node"
+    description: Start an interactive SSH debug shell on a worker node
 spec:
   taskType: ssh
   resources:
     hardware:
       cpu: 1
-      memory: "2Gi"
-  user: "flowmesh"
+      memory: 2Gi
+  user: flowmesh
   # Public key(s) allowed to connect.  Replace with your own public key.
   authorizedKeys:
-    - "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExamplePublicKeyReplaceWithYours user@laptop"
+    - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExamplePublicKeyReplaceWithYours user@laptop
   ttlSeconds: 3600
   idleTimeoutSeconds: 900
-  accessMode: "direct"
+  accessMode: direct
   env:
-    HF_HOME: "/mnt/hf"
+    HF_HOME: /mnt/hf
   output:
     destination:
       type: http

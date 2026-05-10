@@ -4,22 +4,22 @@ metadata:
   name: diffusers-text-to-image
 
 spec:
-  taskType: "diffusion"
+  taskType: diffusion
 
   resources:
     hardware:
-      cpu: "4"
-      memory: "16Gi"
+      cpu: 4
+      memory: 16Gi
       gpu:
         count: 1
-        type: "any"
+        type: any
 
   model:
     source:
-      type: "huggingface"
-      identifier: "stabilityai/stable-diffusion-3.5-large"
+      type: huggingface
+      identifier: stabilityai/stable-diffusion-3.5-large
     diffusers:
-      dtype: "bf16"
+      dtype: bf16
       use_safetensors: true
 
   inference:
@@ -33,14 +33,14 @@ spec:
     seed: 42
 
   data:
-    type: "list"
+    type: list
     items:
-      - "A futuristic city with flying cars at night"
-      - "A serene mountain lake reflecting the sunset"
+      - A futuristic city with flying cars at night
+      - A serene mountain lake reflecting the sunset
 
   output:
     destination:
-      type: "http"
+      type: http
     artifacts:
-      - "results.json"
-      - "images/"
+      - results.json
+      - images/

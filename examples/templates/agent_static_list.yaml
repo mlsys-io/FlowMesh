@@ -4,27 +4,27 @@ metadata:
   name: agent-static-list
   owner: researcher
   annotations:
-    description: "Agent execution with predefined static task list"
+    description: Agent execution with predefined static task list
 
 spec:
-  taskType: "agent"
+  taskType: agent
 
-  configName: "examples/search_agent"
+  configName: examples/search_agent
 
   data:
-    type: "list"
+    type: list
     items:
-      - "Search for the latest artificial intelligence research trends"
-      - "Find information about top machine learning conferences"
-      - "Search for deep learning applications in healthcare"
-      - "Find recent breakthroughs in natural language processing"
+      - Search for the latest artificial intelligence research trends
+      - Find information about top machine learning conferences
+      - Search for deep learning applications in healthcare
+      - Find recent breakthroughs in natural language processing
 
   resources:
     hardware:
-      cpu: "4"
-      memory: "8Gi"
+      cpu: 4
+      memory: 8Gi
       gpu:
-        type: "any"
+        type: any
         count: 0
 
   agent:
@@ -32,8 +32,8 @@ spec:
 
   output:
     destination:
-      type: "local"
+      type: local
     artifacts:
-      - "results.json"
-      - "batch_logs/"
-      - "batch_summary.json"
+      - results.json
+      - batch_logs/
+      - batch_summary.json

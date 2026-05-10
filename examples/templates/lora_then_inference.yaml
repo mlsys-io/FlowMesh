@@ -6,47 +6,47 @@ metadata:
   name: llama1b-lora-transfer-eval
   owner: demo
   annotations:
-    description: "LoRA adaptation on GSM8K followed by merged-weight inference on GSM8K"
+    description: LoRA adaptation on GSM8K followed by merged-weight inference on GSM8K
 
 spec:
-  taskType: "lora_sft"
+  taskType: lora_sft
 
   resources:
     hardware:
-      cpu: "12"
-      memory: "46Gi"
+      cpu: 12
+      memory: 46Gi
       gpu:
-        type: "any"
+        type: any
         count: 1
-        memory: "46Gi"
+        memory: 46Gi
 
   model:
     source:
-      type: "huggingface"
-      identifier: "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
-      revision: "main"
+      type: huggingface
+      identifier: TinyLlama/TinyLlama-1.1B-Chat-v1.0
+      revision: main
 
   stages:
     - name: lora-train
       spec:
-        taskType: "lora_sft"
+        taskType: lora_sft
         lora:
           r: 16
           alpha: 32
           dropout: 0.05
-          bias: "none"
+          bias: none
           target_modules:
-            - "q_proj"
-            - "k_proj"
-            - "v_proj"
-            - "o_proj"
-          task_type: "CAUSAL_LM"
+            - q_proj
+            - k_proj
+            - v_proj
+            - o_proj
+          task_type: CAUSAL_LM
         data:
-          dataset_name: "openai/gsm8k"
-          config_name: "main"
+          dataset_name: openai/gsm8k
+          config_name: main
           split: "train[:1%]"
-          prompt_column: "question"
-          response_column: "answer"
+          prompt_column: question
+          response_column: answer
           separator: "\n\nReference answer: "
           max_samples: 200
         training:
@@ -64,25 +64,25 @@ spec:
           bf16: true
         output:
           destination:
-            type: "http"
+            type: http
           artifacts:
-            - "results.json"
-            - "final_lora"
-            - "logs"
+            - results.json
+            - final_lora
+            - logs
 
     - name: gsm8k-inference
       spec:
-        taskType: "inference"
+        taskType: inference
         model:
           adapters:
-            - type: "lora"
+            - type: lora
               url: "${lora-train.final_lora_archive}"
         data:
-          type: "dataset"
-          url: "openai/gsm8k"
-          name: "main"
+          type: dataset
+          url: openai/gsm8k
+          name: main
           split: "train[:200]"
-          column: "question"
+          column: question
           shuffle: true
           seed: 11
         inference:
@@ -93,7 +93,7 @@ spec:
           top_p: 0.9
         output:
           destination:
-            type: "local"
+            type: local
           artifacts:
-            - "results.json"
-            - "logs"
+            - results.json
+            - logs

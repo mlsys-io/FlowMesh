@@ -4,15 +4,15 @@ metadata:
   name: vlm-embedding-inference-test
 
 spec:
-  taskType: "inference"
+  taskType: inference
 
   resources:
     hardware:
-      cpu: "8"
-      memory: "24Gi"
+      cpu: 8
+      memory: 24Gi
       gpu:
         count: 1
-        type: "any"
+        type: any
 
   graph:
     nodes:

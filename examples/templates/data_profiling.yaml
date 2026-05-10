@@ -7,9 +7,9 @@ spec:
     nodes:
       - name: sql-profile
         spec:
-          taskType: "data_profiling"
+          taskType: data_profiling
           data:
-            type: "sql"
+            type: sql
             connection_string: "postgresql://$PG_USER:$PG_PASS@$PG_HOST:$PG_PORT/$PG_DB"
             template: "SELECT id, symbol, \"publishedDate\", title FROM star.\"{table_name}\" WHERE symbol='{symbol}' AND \"publishedDate\" >= '{publishedDateMin}' ORDER BY \"publishedDate\" DESC LIMIT {limit}"
             params:
@@ -20,19 +20,19 @@ spec:
                 - NVDA
             constraints:
             - name: publishedDateMin
-              type: "datetime"
-              min: "2024-06-01"
-              max: "2025-03-31"
+              type: datetime
+              min: 2024-06-01
+              max: 2025-03-31
             - name: table_name
               candidates:
-                - "fact_news-metadata"
+                - fact_news-metadata
             - name: limit
-              type: "integer"
+              type: integer
               min: 1
               max: 10
             num_test_queries: 3
   output:
     destination:
-      type: "http"
+      type: http
     artifacts:
-      - "results.json"
+      - results.json

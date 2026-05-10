@@ -4,34 +4,34 @@ metadata:
   name: hf-tiny-demo
   owner: smoke-test
   annotations:
-    description: "Run transformers text-generation using tiny GPT2"
+    description: Run transformers text-generation using tiny GPT2
 
 spec:
-  taskType: "inference"
+  taskType: inference
   resources:
     hardware:
-      cpu: "2"
-      memory: "4Gi"
+      cpu: 2
+      memory: 4Gi
   model:
     source:
-      type: "huggingface"
-      identifier: "sshleifer/tiny-gpt2"
-      revision: "main"
+      type: huggingface
+      identifier: sshleifer/tiny-gpt2
+      revision: main
     transformers:
-      device_map: "auto"
+      device_map: auto
       trust_remote_code: false
   data:
-    type: "list"
+    type: list
     items:
-      - "FlowMesh orchestrator smoke test"
+      - FlowMesh orchestrator smoke test
   inference:
     max_tokens: 16
     temperature: 0.1
     top_p: 0.95
   output:
     destination:
-      type: "local"
+      type: local
     artifacts:
-      - "results.json"
-      - "logs"
-      - "artifacts"
+      - results.json
+      - logs
+      - artifacts

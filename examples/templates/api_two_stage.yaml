@@ -13,20 +13,20 @@ metadata:
   name: api-two-stage
 
 spec:
-  taskType: "api"
+  taskType: api
 
   stages:
     - name: stage-1
       spec:
         api:
-          method: "POST"
+          method: POST
           headers:
-            Content-Type: "application/json"
+            Content-Type: application/json
           body:
-            model: "gpt-4o"
+            model: gpt-4o
             messages:
-              - role: "user"
-                content: "Please explain vector databases in simple terms."
+              - role: user
+                content: Please explain vector databases in simple terms.
           response:
             parse_json: false
             # return_body is a JSON backdoor: keep raw text when JSON isn't usable.
@@ -36,13 +36,13 @@ spec:
     - name: stage-2
       spec:
         api:
-          method: "POST"
+          method: POST
           headers:
-            Content-Type: "application/json"
+            Content-Type: application/json
           body:
-            model: "gpt-4o"
+            model: gpt-4o
             messages:
-              - role: "user"
+              - role: user
                 content: "The previous stage's response is as follows. Please provide a simpler explanation: \n${stage-1.text}"
           response:
             parse_json: true
@@ -52,6 +52,6 @@ spec:
 
   output:
     destination:
-      type: "http"
+      type: http
     artifacts:
-      - "results.json"
+      - results.json
