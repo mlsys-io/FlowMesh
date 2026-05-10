@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from server import env
+from server.hooks import PrincipalContext
 from server.supervisor.adapters.docker import (
     DockerWorkerAdapter,
     DockerWorkerConfig,
@@ -144,6 +145,13 @@ class TestDockerWorkerRuntimeSelection:
         worker = object.__new__(DockerWorkerAdapter)
         worker.config = DockerWorkerConfig(worker_type=WorkerType.GPU, cuda_devices=[3])
         worker.token = "worker-token"  # type: ignore[assignment]
+        worker.owner = PrincipalContext(
+            principal_id="test-user",
+            org_id="test-org",
+            external_id="test-user",
+            principal_type="user",
+            scopes=[],
+        )
         worker.container_name = "worker-gpu-3"
         worker.cuda_devices = [3]
         worker.gpu_arch = GpuArch.BLACKWELL
