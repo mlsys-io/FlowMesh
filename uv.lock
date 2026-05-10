@@ -1715,6 +1715,7 @@ ci = [
     { name = "isort" },
     { name = "jinja2" },
     { name = "lumid-data-sdk" },
+    { name = "lumid-hooks" },
     { name = "matplotlib" },
     { name = "mcp" },
     { name = "mypy" },
@@ -2022,6 +2023,7 @@ ci = [
     { name = "isort", specifier = ">=7.0.0" },
     { name = "jinja2", specifier = ">=3.1.6" },
     { name = "lumid-data-sdk", git = "https://github.com/mlsys-io/lumid.data.git?subdirectory=sdk&rev=a800051" },
+    { name = "lumid-hooks", git = "https://github.com/mlsys-io/lumid.hooks.git?rev=fdb9ddb9bf4203b18d073e5bab84f1173f32561a" },
     { name = "matplotlib", specifier = ">=3.10.6" },
     { name = "mcp", specifier = ">=1.23.0" },
     { name = "mypy", specifier = ">=1.19.1" },
@@ -2183,6 +2185,7 @@ runtime-server = [
     { name = "flowmesh-hook", editable = "hook" },
     { name = "grpcio", specifier = ">=1.76.0" },
     { name = "httpx", specifier = ">=0.28.1" },
+    { name = "lumid-hooks", git = "https://github.com/mlsys-io/lumid.hooks.git?rev=fdb9ddb9bf4203b18d073e5bab84f1173f32561a" },
     { name = "protobuf", specifier = ">=5.29.6" },
     { name = "pydantic", specifier = ">=2.12.3" },
     { name = "python-multipart", specifier = ">=0.0.26" },
@@ -2333,7 +2336,7 @@ dependencies = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "lumid-hooks" }]
+requires-dist = [{ name = "lumid-hooks", git = "https://github.com/mlsys-io/lumid.hooks.git?rev=fdb9ddb9bf4203b18d073e5bab84f1173f32561a" }]
 
 [[package]]
 name = "flowmesh-sdk"

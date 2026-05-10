@@ -9,7 +9,7 @@ description = "FlowMesh-specific plugin extension surface (bindings, resource en
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "lumid-hooks",
+    "lumid-hooks @ git+https://github.com/mlsys-io/lumid.hooks.git@fdb9ddb9bf4203b18d073e5bab84f1173f32561a",
 ]
 
 [tool.setuptools]
