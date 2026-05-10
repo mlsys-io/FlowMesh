@@ -296,3 +296,24 @@ def test_collect_upstream_results_excludes_unrelated_completed_stages(
     )
 
     assert set(upstream_results) == {"preprocess"}
+
+
+def test_render_artifact_ref_uses_wrapped_result_artifact_context() -> None:
+    rendered = Dispatcher._render_artifact_ref(  # noqa: SLF001
+        {"path": "final_lora.tar.gz"},
+        {
+            "task_id": "task-pre",
+            "result": {
+                "final_lora_archive": {"path": "final_lora.tar.gz"},
+                "_artifacts": {
+                    "base_dir": "/var/lib/flowmesh-results/task-pre",
+                    "base_url": "http://flowmesh.example",
+                },
+            },
+        },
+    )
+
+    assert (
+        rendered
+        == "http://flowmesh.example/api/v1/results/task-pre/files/final_lora.tar.gz"
+    )

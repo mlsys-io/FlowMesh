@@ -853,6 +853,10 @@ class Dispatcher:
             return None
         ctx = stage_result.get("_artifacts")
         if not isinstance(ctx, dict):
+            result = stage_result.get("result")
+            if isinstance(result, dict):
+                ctx = result.get("_artifacts")
+        if not isinstance(ctx, dict):
             return None
         base_url = ctx.get("base_url")
         base_dir = ctx.get("base_dir")
