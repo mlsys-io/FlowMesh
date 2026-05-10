@@ -8,7 +8,6 @@ metadata:
 spec:
   taskType: dpo
   resources:
-    replicas: 1
     hardware:
       cpu: "16"
       memory: "64Gi"

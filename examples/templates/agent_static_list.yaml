@@ -20,7 +20,6 @@ spec:
       - "Find recent breakthroughs in natural language processing"
 
   resources:
-    replicas: 1
     hardware:
       cpu: "4"
       memory: "8Gi"

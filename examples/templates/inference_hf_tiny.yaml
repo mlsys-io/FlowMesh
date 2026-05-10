@@ -9,7 +9,6 @@ metadata:
 spec:
   taskType: "inference"
   resources:
-    replicas: 1
     hardware:
       cpu: "2"
       memory: "4Gi"

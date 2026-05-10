@@ -12,7 +12,6 @@ spec:
   task: "Search for the latest trends in artificial intelligence and summarize 3 key points"
 
   resources:
-    replicas: 1
     hardware:
       cpu: "1"
       memory: "2Gi"

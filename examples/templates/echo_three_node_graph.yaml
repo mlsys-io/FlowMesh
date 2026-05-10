@@ -16,7 +16,6 @@ spec:
   taskType: "echo"
 
   resources:
-    replicas: 1
     hardware:
       cpu: "1"
       memory: "1Gi"

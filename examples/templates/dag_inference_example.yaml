@@ -12,7 +12,6 @@ spec:
   taskType: "inference"
 
   resources:
-    replicas: 1
     hardware:
       cpu: "4"
       memory: "16GiB"
@@ -21,9 +20,6 @@ spec:
     source:
       type: "huggingface"
       identifier: "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
-
-  parallel:
-    enabled: false
 
   graph:
     nodes:

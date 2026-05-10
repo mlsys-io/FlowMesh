@@ -8,14 +8,9 @@ metadata:
 
 spec:
   taskType: "inference"
-  sloSeconds: 10
-  parallel:
-    enabled: true           # false or remove to disable data-parallel
-    max_shards: 8           # optional cap; scheduler also considers capacity/ratio
 
   # Resource requirements used by the orchestrator scheduler
   resources:
-    replicas: 1
     hardware:
       cpu: "8"
       memory: "32Gi"
@@ -34,12 +29,12 @@ spec:
       gpu_memory_utilization: 0.9
       trust_remote_code: true
 
-  # Data resource (this split will be evenly partitioned across shards when parallel.enabled=true)
+  # Data resource
   data:
     type: "dataset"
     url: "openai/gsm8k"
     name: "main"
-    split: "train[:1%]"     # scheduler will produce per-shard sub-splits like train[0%:0.5%], train[0.5%:1%], ...
+    split: "train[:1%]"
     column: "question"
     shuffle: true
     seed: 42

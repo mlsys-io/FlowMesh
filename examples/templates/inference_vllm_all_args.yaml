@@ -30,7 +30,6 @@ spec:
         factor: 1.0
       rope_theta: 10000.0            # RoPE base frequency (via hf_overrides)
   resources:
-    replicas: 1
     hardware:
       cpu: "4"
       memory: "16Gi"

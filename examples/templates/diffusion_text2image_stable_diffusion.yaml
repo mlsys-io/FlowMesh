@@ -7,7 +7,6 @@ spec:
   taskType: "diffusion"
 
   resources:
-    replicas: 1
     hardware:
       cpu: "4"
       memory: "16Gi"

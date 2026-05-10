@@ -12,7 +12,6 @@ spec:
   taskType: "lora_sft"
 
   resources:
-    replicas: 1
     hardware:
       cpu: "8"
       memory: "48GiB"

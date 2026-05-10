@@ -18,7 +18,6 @@ spec:
         spec:
           taskType: "inference"
           resources:
-            replicas: 1
             hardware:
               cpu: "2"
               memory: "8GiB"
@@ -55,7 +54,6 @@ spec:
         spec:
           taskType: "data_retrieval"
           resources:
-            replicas: 1
             hardware:
               cpu: "4"
               memory: "16GiB"
@@ -84,7 +82,6 @@ spec:
         spec:
           taskType: "data_retrieval"
           resources:
-            replicas: 1
             hardware:
               cpu: "4"
               memory: "16GiB"
@@ -103,7 +100,6 @@ spec:
         spec:
           taskType: "inference"
           resources:
-            replicas: 1
             hardware:
               cpu: "4"
               memory: "16GiB"
@@ -144,7 +140,6 @@ spec:
         spec:
           taskType: "inference"
           resources:
-            replicas: 1
             hardware:
               cpu: "4"
               memory: "16GiB"

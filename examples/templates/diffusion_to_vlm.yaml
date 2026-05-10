@@ -7,7 +7,6 @@ spec:
   taskType: "inference"
 
   resources:
-    replicas: 1
     hardware:
       cpu: "8"
       memory: "32Gi"

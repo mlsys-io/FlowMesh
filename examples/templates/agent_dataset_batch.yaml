@@ -20,7 +20,6 @@ spec:
     seed: 42
 
   resources:
-    replicas: 1
     hardware:
       cpu: "4"
       memory: "8Gi"

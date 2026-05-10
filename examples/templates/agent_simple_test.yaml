@@ -14,7 +14,6 @@ spec:
   task: "Please provide a brief introduction to artificial intelligence"
 
   resources:
-    replicas: 1
     hardware:
       cpu: "4"
       memory: "8Gi"

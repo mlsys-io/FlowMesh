@@ -14,16 +14,12 @@ spec:
   taskType: "inference"
 
   resources:
-    replicas: 1
     hardware:
       cpu: "4"
       memory: "16GiB"
       gpu:
         count: 1
         type: "any"            # let the scheduler pick any available GPU
-
-  parallel:
-    enabled: false             # data-parallel sharding not required for this demo
 
   model:
     source:
