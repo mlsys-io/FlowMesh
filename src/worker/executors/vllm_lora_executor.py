@@ -4,6 +4,7 @@
 import logging
 import os
 import shutil
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +20,7 @@ except Exception:  # pragma: no cover - optional dependency at import time
     LoRARequest = None  # type: ignore
 
 from shared.tasks.components import AdapterConfig
+from shared.tasks.components.model import AdapterApplyMode
 from shared.tasks.specs import InferenceSpecStrict
 from worker.config import WorkerConfig
 from worker.lifecycle import Lifecycle
@@ -34,6 +36,18 @@ from .vllm_executor import VLLMExecutor
 logger = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True)
+class LoRAAdapterSpec:
+    name: str
+    id: int
+    apply: AdapterApplyMode
+    path: str | None
+    url: str | None
+    task_id: str | None
+    headers: dict[str, str]
+    archive_format: str
+
+
 class VLLMLoRAExecutor(VLLMExecutor):
     """vLLM executor with explicit LoRA adapter handling."""
 
@@ -43,8 +57,8 @@ class VLLMLoRAExecutor(VLLMExecutor):
         self, config: WorkerConfig, lifecycle: Lifecycle | None = None
     ) -> None:
         super().__init__(config, lifecycle)
-        self._adapter_specs: list[dict[str, Any]] = []
-        self._runtime_specs: list[dict[str, Any]] = []
+        self._adapter_specs: list[LoRAAdapterSpec] = []
+        self._runtime_specs: list[LoRAAdapterSpec] = []
 
     def _build_inference_spec(
         self,
@@ -89,62 +103,52 @@ class VLLMLoRAExecutor(VLLMExecutor):
     # ------------------------------------------------------------------ #
     # Adapter utilities
     # ------------------------------------------------------------------ #
-    def _extract_adapter_specs(self, spec: InferenceSpecStrict) -> list[dict[str, Any]]:
+    def _extract_adapter_specs(
+        self, spec: InferenceSpecStrict
+    ) -> list[LoRAAdapterSpec]:
         adapters = spec.adapters or []
         if not isinstance(adapters, list):
             raise ExecutionError("spec.model.adapters must be a list when provided")
 
-        normalized: list[dict[str, Any]] = []
+        normalized: list[LoRAAdapterSpec] = []
         for idx, adapter in enumerate(adapters):
             if not isinstance(adapter, AdapterConfig):
                 raise ExecutionError(
                     "Each entry in spec.model.adapters must be AdapterConfig"
                 )
-            if str(adapter.type).lower() != "lora":
+            if adapter.type.lower() != "lora":
                 continue
 
-            kwargs = adapter.kwargs or {}
             name = adapter.name or f"lora_{idx}"
-            apply_mode = str(kwargs.get("apply", "runtime")).lower()
-            if apply_mode not in {"runtime", "merge"}:
-                raise ExecutionError(
-                    f"LoRA adapter '{name}' has unsupported apply='{apply_mode}'"
-                )
-
-            adapter_id = kwargs.get("id", idx + 1)
-            archive_format = str(kwargs.get("archive_format", "auto"))
-            headers = {str(k): str(v) for k, v in (kwargs.get("headers") or {}).items()}
-            scale = float(kwargs.get("scale", 1.0))
             path_value = adapter.path
             url_value = adapter.url
-            task_id = kwargs.get("task_id")
+            task_id = adapter.task_id
             if not path_value and not url_value and not task_id:
                 raise ExecutionError(
                     f"LoRA adapter '{name}' must provide path, url, or task_id"
                 )
 
             normalized.append(
-                {
-                    "name": str(name),
-                    "id": int(adapter_id),
-                    "apply": apply_mode,
-                    "path": path_value,
-                    "url": url_value,
-                    "task_id": task_id,
-                    "headers": headers,
-                    "archive_format": archive_format,
-                    "scale": scale,
-                }
+                LoRAAdapterSpec(
+                    name=str(name),
+                    id=adapter.id if adapter.id is not None else idx + 1,
+                    apply=adapter.apply,
+                    path=path_value,
+                    url=url_value,
+                    task_id=task_id,
+                    headers=adapter.headers or {},
+                    archive_format=adapter.archive_format,
+                )
             )
 
         self._adapter_specs = normalized
         return normalized
 
     def _prepare_adapters(self, spec: InferenceSpecStrict, out_dir: Path) -> None:
-        runtime_specs: list[dict[str, Any]] = []
-        merge_specs: list[dict[str, Any]] = []
+        runtime_specs: list[LoRAAdapterSpec] = []
+        merge_specs: list[LoRAAdapterSpec] = []
         for adapter in self._extract_adapter_specs(spec):
-            if adapter["apply"] == "merge":
+            if adapter.apply == "merge":
                 merge_specs.append(adapter)
             else:
                 runtime_specs.append(adapter)
@@ -165,10 +169,10 @@ class VLLMLoRAExecutor(VLLMExecutor):
 
         for adapter in merge_specs:
             adapter_dir = self._resolve_adapter_directory(adapter, out_dir)
-            load_fn(adapter_name=adapter["name"], adapter_path=adapter_dir.as_posix())
-            merge_fn(adapter_name=adapter["name"])
+            load_fn(adapter_name=adapter.name, adapter_path=adapter_dir.as_posix())
+            merge_fn(adapter_name=adapter.name)
             if unload_fn is not None:
-                unload_fn(adapter_name=adapter["name"])
+                unload_fn(adapter_name=adapter.name)
 
     def _build_lora_requests(self, out_dir: Path) -> Any | None:
         if not self._runtime_specs:
@@ -179,9 +183,7 @@ class VLLMLoRAExecutor(VLLMExecutor):
         requests: list[Any] = []
         for adapter in self._runtime_specs:
             adapter_dir = self._resolve_adapter_directory(adapter, out_dir)
-            request = LoRARequest(
-                adapter["name"], adapter["id"], adapter_dir.as_posix()
-            )
+            request = LoRARequest(adapter.name, adapter.id, adapter_dir.as_posix())
             requests.append(request)
 
         if len(requests) == 1:
@@ -189,22 +191,21 @@ class VLLMLoRAExecutor(VLLMExecutor):
         return requests
 
     def _resolve_adapter_directory(
-        self, adapter: dict[str, Any], out_dir: Path
+        self, adapter: LoRAAdapterSpec, out_dir: Path
     ) -> Path:
-        name = adapter["name"]
-        path_value = adapter.get("path")
-        url_value = adapter.get("url")
-        archive_format = adapter.get("archive_format", "auto")
+        name = adapter.name
+        path_value = adapter.path
+        url_value = adapter.url
+        archive_format = adapter.archive_format
 
         if path_value:
-            path = Path(str(path_value)).expanduser()
+            path = Path(path_value).expanduser()
             # `path` is treated as a local hint: if it resolves to an existing
             # file or directory, use it directly.
             if path.exists():
                 return self._ensure_or_extract(path, out_dir, name, archive_format)
 
-        task_id = adapter.get("task_id")
-        if task_id:
+        if task_id := adapter.task_id:
             base_dir = (
                 Path(os.getenv("RESULTS_DIR", "").strip() or "./results")
                 .expanduser()
@@ -235,7 +236,7 @@ class VLLMLoRAExecutor(VLLMExecutor):
         load_cfg = {
             "url": url_value,
             "archive_format": archive_format,
-            "headers": adapter.get("headers") or {},
+            "headers": adapter.headers,
         }
         extracted = download_and_unpack(load_cfg, download_root)
         return self._ensure_adapter_root(extracted)

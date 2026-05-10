@@ -4,18 +4,19 @@ metadata:
   name: academic-paper-collector
   owner: researcher
   annotations:
-    description: "Agent example that summarizes supplied paper notes without external search tools"
+    description: "Intelligent academic paper collection agent: automatically search and summarize papers in specific domains"
 
 spec:
   taskType: "agent"
 
-  configName: "base"
+  # Requires agent LLM/search keys on the worker, including UTU_LLM_TYPE,
+  # UTU_LLM_MODEL, UTU_LLM_BASE_URL, UTU_LLM_API_KEY, SERPER_API_KEY, and JINA_API_KEY.
+  configName: "examples/paper_collector"
 
   task: |
-    Summarize these paper notes in three concise bullets:
-    - Reinforcement learning agents can learn decision policies from reward signals.
-    - Tool-using language agents combine planning, retrieval, and action execution.
-    - Evaluation should measure task success, robustness, and safety constraints.
+    Please search for 2 latest papers about reinforcement learning agents and provide summaries:
+    - Search keywords: reinforcement learning agent
+    - Provide paper titles, authors, and summaries
 
   resources:
     replicas: 1
