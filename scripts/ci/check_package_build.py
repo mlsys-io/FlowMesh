@@ -1,7 +1,6 @@
 """Validate built FlowMesh distributions and umbrella extras."""
 
 import argparse
-import os
 import subprocess
 import tempfile
 import venv
@@ -11,15 +10,7 @@ from zipfile import ZipFile
 RUNTIME_TOP_LEVELS = {"server", "shared", "worker"}
 
 
-def _python_bin(env_dir: Path) -> Path:
-    if os.name == "nt":
-        return env_dir / "Scripts" / "python.exe"
-    return env_dir / "bin" / "python"
-
-
 def _script_bin(env_dir: Path, name: str) -> Path:
-    if os.name == "nt":
-        return env_dir / "Scripts" / f"{name}.exe"
     return env_dir / "bin" / name
 
 
@@ -50,7 +41,7 @@ def _check_root_wheel(root_wheel: Path) -> None:
 
 def _create_venv(env_dir: Path) -> Path:
     venv.EnvBuilder(with_pip=True).create(env_dir)
-    return _python_bin(env_dir)
+    return _script_bin(env_dir, "python")
 
 
 def _smoke_extra(
