@@ -25,6 +25,10 @@ spec:
               gpu:
                 type: any
                 count: 1
+          model:
+            source:
+              type: "huggingface"
+              identifier: "Qwen/Qwen2.5-1.5B-Instruct"
           inference:
             max_tokens: 64
             temperature: 0.0
