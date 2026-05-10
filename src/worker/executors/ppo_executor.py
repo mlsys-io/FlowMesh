@@ -321,6 +321,26 @@ class _RewardAdapter(torch.nn.Module):
             return getattr(self.__dict__.get("_lm", object()), name)
 
 
+def _resolve_report_to(log_with: Any) -> str | list[str]:
+    """Translate the template ``training.log_with`` value into PPOConfig.report_to.
+
+    ``None`` or empty disables logging integrations (TRL accepts
+    ``"none"``); a string or list selects integrations such as
+    ``tensorboard`` or ``wandb``.
+    """
+    if log_with is None:
+        return "none"
+    if isinstance(log_with, str):
+        value = log_with.strip()
+        return [value] if value else "none"
+    if isinstance(log_with, (list, tuple)):
+        cleaned = [str(v).strip() for v in log_with if str(v).strip()]
+        return cleaned if cleaned else "none"
+    raise ExecutionError(
+        f"training.log_with must be null, str, or list[str]; got {log_with!r}"
+    )
+
+
 class PPOExecutor(TrainingMixin, Executor):
     """PPO training executor using TRL library."""
 
@@ -1112,6 +1132,14 @@ class PPOExecutor(TrainingMixin, Executor):
             ppo_ctor_kwargs["save_total_limit"] = save_total_limit
         if save_only_model is not None:
             ppo_ctor_kwargs["save_only_model"] = bool(save_only_model)
+
+        if "log_with" in training_config:
+            ppo_ctor_kwargs["report_to"] = _resolve_report_to(
+                training_config["log_with"]
+            )
+        project = training_config.get("tracker_project_name")
+        if isinstance(project, str) and project:
+            ppo_ctor_kwargs["project"] = project
 
         ppo_config = PPOConfig(
             learning_rate=learning_rate,
