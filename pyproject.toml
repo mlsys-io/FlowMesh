@@ -117,7 +117,7 @@ runtime-analytics = [
     "pandas>=2.3.3",
     "psycopg[binary]>=3.2.12",
     "sqlalchemy>=2.0.44",
-    "lumid-data-sdk @ git+https://github.com/mlsys-io/lumid.data.git@a800051#subdirectory=sdk",
+    "lumid-data-sdk @ git+https://github.com/mlsys-io/lumid.data.git@5e309c856486b5f5cc22073488fabcc76595e78c#subdirectory=sdk",
 ]
 runtime-worker-cpu = [
     { include-group = "runtime-worker-core" },
