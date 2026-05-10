@@ -61,7 +61,6 @@ spec:
     seed: 42
     padding_side: "left"
     early_stopping: false
-    optimize_cuda_cache: true
     save_strategy: "steps"
     save_model: true
     save_freq: 25               # Save checkpoint every 25 steps
@@ -74,7 +73,6 @@ spec:
   generation:
     max_new_tokens: 128
     temperature: 0.7
-    do_sample: true
 
   # Output configuration
   output:

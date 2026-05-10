@@ -52,7 +52,6 @@ spec:
     seed: 42
     padding_side: "left"
     early_stopping: false
-    optimize_cuda_cache: true
     save_strategy: "no"
     save_model: false
     save_freq: 25
@@ -64,7 +63,6 @@ spec:
   generation:
     max_new_tokens: 128
     temperature: 0.7
-    do_sample: true
 
   output:
     destination:
