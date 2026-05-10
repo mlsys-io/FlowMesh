@@ -85,9 +85,11 @@ jobs:
         with:
           version: "0.11.8"
       - name: Run pip-audit (server)
+        # Drop ``@ git+`` deps before auditing — not on PyPI, no CVE feed.
         run: |
+          grep -v '@ git+' src/server/requirements.txt > /tmp/requirements-server-audit.txt
           uvx pip-audit==2.9.0 --strict \
-            -r src/server/requirements.txt
+            -r /tmp/requirements-server-audit.txt
       - name: Run pip-audit (worker CPU)
         # Drop ``@ git+`` deps before auditing — not on PyPI, no CVE feed.
         run: |
