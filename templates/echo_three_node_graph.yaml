@@ -47,9 +47,9 @@ spec:
             type: "list"
             items:
               - node: "echo-a"
-                path: "result.items[0].output"
+                path: "items[0].output"
               - node: "echo-b"
-                path: "result.items[0].output"
+                path: "items[0].output"
 
   output:
     destination:

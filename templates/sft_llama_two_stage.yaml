@@ -68,7 +68,7 @@ spec:
         checkpoint:
           load:
             type: "http"
-            url: "${gsm8k-stage.result.final_model_archive}"
+            url: "${gsm8k-stage.final_model_archive}"
         data:
           dataset_name: "openai/openai_humaneval"
           split: "test"

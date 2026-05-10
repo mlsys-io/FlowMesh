@@ -162,7 +162,7 @@
     {
       "parameters": {
         "mode": "raw",
-        "jsonOutput": "{\n    \"type\": \"graph_template\",\n    \"template\": {\n      \"name\": \"two_column_briefing\",\n      \"columns\": [\n        {\n          \"label\": \"Benefits insight\",\n          \"node\": \"Inference A\",\n          \"path\": \"result.items[0].output\"\n        },\n        {\n          \"label\": \"Challenges insight\",\n          \"node\": \"Inference B\",\n          \"path\": \"result.items[0].output\"\n        }\n      ]\n    }\n  }",
+        "jsonOutput": "{\n    \"type\": \"graph_template\",\n    \"template\": {\n      \"name\": \"two_column_briefing\",\n      \"columns\": [\n        {\n          \"label\": \"Benefits insight\",\n          \"node\": \"Inference A\",\n          \"path\": \"items[0].output\"\n        },\n        {\n          \"label\": \"Challenges insight\",\n          \"node\": \"Inference B\",\n          \"path\": \"items[0].output\"\n        }\n      ]\n    }\n  }",
         "options": {}
       },
       "type": "n8n-nodes-base.set",

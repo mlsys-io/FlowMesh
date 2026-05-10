@@ -36,9 +36,9 @@ spec:
   #     columns:
   #       - label: "q1"
   #         node: "<root>"
-  #         path: "result.items[0].output"
+  #         path: "items[0].output"
   #       - label: "q2"
-  #         expr: "<root>.result.items[1].output"
+  #         expr: "<root>.items[1].output"
 
   # Option C: Hugging Face dataset (one query per row)
   data:

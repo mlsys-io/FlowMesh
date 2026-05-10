@@ -1,5 +1,6 @@
 """SSH result mounting's parser and dispatch helper tests."""
 
+import json
 import logging
 import textwrap
 from pathlib import Path
@@ -298,22 +299,80 @@ def test_collect_upstream_results_excludes_unrelated_completed_stages(
     assert set(upstream_results) == {"preprocess"}
 
 
-def test_render_artifact_ref_uses_wrapped_result_artifact_context() -> None:
-    rendered = Dispatcher._render_artifact_ref(  # noqa: SLF001
-        {"path": "final_lora.tar.gz"},
-        {
-            "task_id": "task-pre",
-            "result": {
+def test_stage_reference_uses_payload_root_for_local_and_http_results(
+    tmp_path: Path,
+) -> None:
+    local_dir = tmp_path / "task-local"
+    local_dir.mkdir()
+    (local_dir / "results.json").write_text(
+        json.dumps(
+            {
                 "final_lora_archive": {"path": "final_lora.tar.gz"},
                 "_artifacts": {
-                    "base_dir": "/var/lib/flowmesh-results/task-pre",
-                    "base_url": "http://flowmesh.example",
+                    "base_dir": local_dir.as_posix(),
+                    "base_url": None,
                 },
-            },
-        },
+            }
+        ),
+        encoding="utf-8",
+    )
+    http_dir = tmp_path / "task-http"
+    http_dir.mkdir()
+    (http_dir / "results.json").write_text(
+        json.dumps(
+            {
+                "task_id": "task-http",
+                "worker_id": "worker-1",
+                "metadata": None,
+                "received_at": "2026-05-10T00:00:00+00:00",
+                "result": {
+                    "final_lora_archive": {"path": "final_lora.tar.gz"},
+                    "_artifacts": {
+                        "base_dir": http_dir.as_posix(),
+                        "base_url": "http://flowmesh.example",
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
     )
 
+    local_record = TaskRecord(
+        task_id="task-local",
+        workflow_id="wf-1",
+        owner_id="owner",
+        raw_yaml="raw",
+        task=_task_template(TaskType.ECHO),
+        status=TaskStatus.DONE,
+        task_type="echo",
+        local_name="local",
+    )
+    http_record = TaskRecord(
+        task_id="task-http",
+        workflow_id="wf-1",
+        owner_id="owner",
+        raw_yaml="raw",
+        task=_task_template(TaskType.ECHO),
+        status=TaskStatus.DONE,
+        task_type="echo",
+        local_name="http",
+    )
+    dispatcher = Dispatcher(
+        runtime=cast(TaskRuntime, _DummyRuntime({})),
+        worker_registry=cast(WorkerRegistry, object()),
+        results_dir=tmp_path,
+        logger=logging.getLogger("test-stage-reference-root"),
+    )
+
+    local_value = dispatcher._resolve_reference(  # noqa: SLF001
+        "local.final_lora_archive", {"local": local_record}
+    )
+    http_value = dispatcher._resolve_reference(  # noqa: SLF001
+        "http.final_lora_archive", {"http": http_record}
+    )
+
+    assert local_value == (local_dir / "artifacts" / "final_lora.tar.gz").as_posix()
     assert (
-        rendered
-        == "http://flowmesh.example/api/v1/results/task-pre/files/final_lora.tar.gz"
+        http_value
+        == "http://flowmesh.example/api/v1/results/task-http/files/final_lora.tar.gz"
     )

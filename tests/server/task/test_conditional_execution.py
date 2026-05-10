@@ -24,30 +24,28 @@ class TestConditionSpecValidation:
     """ConditionSpec Pydantic model validation."""
 
     def test_valid_condition(self) -> None:
-        spec = ConditionSpec(
-            node="judge_0", field="result.verdict", equals="insufficient"
-        )
+        spec = ConditionSpec(node="judge_0", field="verdict", equals="insufficient")
         assert spec.node == "judge_0"
-        assert spec.field == "result.verdict"
+        assert spec.field == "verdict"
         assert spec.equals == "insufficient"
 
     def test_missing_required_field_raises(self) -> None:
         with pytest.raises(ValidationError):
-            ConditionSpec(node="judge_0", field="result.verdict")  # type: ignore[call-arg]
+            ConditionSpec(node="judge_0", field="verdict")  # type: ignore[call-arg]
 
     def test_extra_field_rejected(self) -> None:
         with pytest.raises(ValidationError):
             ConditionSpec(
                 node="judge_0",
-                field="result.verdict",
+                field="verdict",
                 equals="insufficient",
                 extra_field="bad",  # type: ignore[call-arg]
             )
 
     def test_serialization_round_trip(self) -> None:
-        spec = ConditionSpec(node="a", field="result.x", equals="yes")
+        spec = ConditionSpec(node="a", field="x", equals="yes")
         data = spec.model_dump()
-        assert data == {"node": "a", "field": "result.x", "equals": "yes"}
+        assert data == {"node": "a", "field": "x", "equals": "yes"}
         restored = ConditionSpec.model_validate(data)
         assert restored == spec
 
@@ -71,28 +69,28 @@ class TestConditionEvaluation:
         return str(actual) == condition.equals
 
     def test_condition_met(self) -> None:
-        result = {"result": {"verdict": "insufficient"}}
-        cond = ConditionSpec(node="j", field="result.verdict", equals="insufficient")
+        result = {"verdict": "insufficient"}
+        cond = ConditionSpec(node="j", field="verdict", equals="insufficient")
         assert self._evaluate(result, cond) is True
 
     def test_condition_not_met(self) -> None:
-        result = {"result": {"verdict": "sufficient"}}
-        cond = ConditionSpec(node="j", field="result.verdict", equals="insufficient")
+        result = {"verdict": "sufficient"}
+        cond = ConditionSpec(node="j", field="verdict", equals="insufficient")
         assert self._evaluate(result, cond) is False
 
     def test_missing_field_returns_none(self) -> None:
-        result: dict[str, Any] = {"result": {}}
-        cond = ConditionSpec(node="j", field="result.verdict", equals="insufficient")
+        result: dict[str, Any] = {}
+        cond = ConditionSpec(node="j", field="verdict", equals="insufficient")
         assert self._evaluate(result, cond) is False
 
     def test_nested_field_path(self) -> None:
-        result = {"result": {"deep": {"nested": "value"}}}
-        cond = ConditionSpec(node="j", field="result.deep.nested", equals="value")
+        result = {"deep": {"nested": "value"}}
+        cond = ConditionSpec(node="j", field="deep.nested", equals="value")
         assert self._evaluate(result, cond) is True
 
     def test_numeric_value_as_string(self) -> None:
-        result = {"result": {"count": 42}}
-        cond = ConditionSpec(node="j", field="result.count", equals="42")
+        result = {"count": 42}
+        cond = ConditionSpec(node="j", field="count", equals="42")
         assert self._evaluate(result, cond) is True
 
 
@@ -104,7 +102,7 @@ class TestConditionInTaskSpec:
             taskType=TaskType.INFERENCE,
             dependsOn=["upstream_task"],
             condition=ConditionSpec(
-                node="upstream_task", field="result.verdict", equals="insufficient"
+                node="upstream_task", field="verdict", equals="insufficient"
             ),
         )
         assert spec.condition is not None
@@ -121,7 +119,7 @@ class TestConditionInTaskSpec:
             taskType=TaskType.DATA_RETRIEVAL,
             dependsOn=["judge"],
             condition=ConditionSpec(
-                node="judge", field="result.verdict", equals="insufficient"
+                node="judge", field="verdict", equals="insufficient"
             ),
         )
         assert spec.condition is not None
@@ -130,7 +128,7 @@ class TestConditionInTaskSpec:
         spec = InferenceSpecStrict(
             taskType=TaskType.INFERENCE,
             dependsOn=["j"],
-            condition=ConditionSpec(node="j", field="result.v", equals="no"),
+            condition=ConditionSpec(node="j", field="v", equals="no"),
         )
         data = spec.model_dump(exclude_none=True)
         assert "condition" in data
@@ -141,13 +139,13 @@ class TestConditionInTaskSpec:
             InferenceSpecStrict(
                 taskType=TaskType.INFERENCE,
                 dependsOn=["other_task"],
-                condition=ConditionSpec(node="missing", field="result.v", equals="yes"),
+                condition=ConditionSpec(node="missing", field="v", equals="yes"),
             )
 
     def test_model_skips_check_when_no_spec_level_depends_on(self) -> None:
         spec = InferenceSpecStrict(
             taskType=TaskType.INFERENCE,
-            condition=ConditionSpec(node="upstream", field="result.v", equals="yes"),
+            condition=ConditionSpec(node="upstream", field="v", equals="yes"),
         )
         assert spec.condition is not None
 
@@ -173,7 +171,7 @@ spec:
           taskType: echo
           condition:
             node: missing_node
-            field: result.items.0.output
+            field: items.0.output
             equals: "yes"
           data:
             type: list

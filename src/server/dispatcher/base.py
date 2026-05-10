@@ -24,7 +24,7 @@ from shared.tasks.specs import (
 from shared.tasks.worker_message import WorkerStatus, WorkerTaskMessage
 
 from ..registries.worker import Worker, WorkerRegistry
-from ..schemas.result import result_file_path, write_result
+from ..schemas.result import ResultPayload, result_file_path, write_result
 from ..services.metrics import MetricsRecorder
 from ..task.metadata import extract_model_dataset_names
 from ..task.models import TaskRecord, TaskStatus
@@ -853,10 +853,6 @@ class Dispatcher:
             return None
         ctx = stage_result.get("_artifacts")
         if not isinstance(ctx, dict):
-            result = stage_result.get("result")
-            if isinstance(result, dict):
-                ctx = result.get("_artifacts")
-        if not isinstance(ctx, dict):
             return None
         base_url = ctx.get("base_url")
         base_dir = ctx.get("base_dir")
@@ -926,6 +922,12 @@ class Dispatcher:
                 f"Result for task {stage_task_id} not found at {path}"
             )
         content = json.loads(path.read_text(encoding="utf-8"))
+        if (
+            isinstance(content, dict)
+            and isinstance(content.get("result"), dict)
+            and "received_at" in content
+        ):
+            return ResultPayload.model_validate(content).result
         return content
 
     def _dig_path(self, data: Any, parts: list[str]) -> Any:

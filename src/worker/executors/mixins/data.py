@@ -457,7 +457,7 @@ class DataMixin(GovernanceMixin):
                             raise ExecutionError(
                                 "When fetch_images is True, dict items must "
                                 "include a string 'url' field. Use a placeholder "
-                                "expression (e.g. ${stage.result.images}) so "
+                                "expression (e.g. ${stage.images}) so "
                                 "artifact refs are substituted to URL strings."
                             )
                         images.append(self._load_image_from_artifact(artifact_url))
@@ -668,7 +668,7 @@ class DataMixin(GovernanceMixin):
                 source_node = expr.split(".", 1)[0]
             if isinstance(source_node, str) and source_node:
                 upstream_group_sizes = safe_get(
-                    context, f"{source_node}.result.image_group_sizes"
+                    context, f"{source_node}.image_group_sizes"
                 )
                 if upstream_group_sizes is not None:
                     try:

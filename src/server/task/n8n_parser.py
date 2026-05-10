@@ -108,7 +108,7 @@ def translate_n8n_workflow(payload: dict[str, Any]) -> dict[str, Any]:
                     spec["checkpoint"] = {
                         "load": {
                             "type": "http",
-                            "url": f"${{{parent_name}.result.final_model_archive}}",
+                            "url": f"${{{parent_name}.final_model_archive}}",
                         }
                     }
                 else:
@@ -411,9 +411,9 @@ def _inject_dependency_prompt(prompt_text: str, placeholder: str) -> str:
 
 def _dependency_placeholder(dep_name: str, dep_task_type: str) -> str:
     if dep_task_type == "api":
-        return f"${{{dep_name}.result.text}}"
+        return f"${{{dep_name}.text}}"
     if dep_task_type == "inference":
-        return f"${{{dep_name}.result.items.0.output}}"
+        return f"${{{dep_name}.items.0.output}}"
     raise ValueError(
         f"API nodes cannot depend on taskType '{dep_task_type}' (node '{dep_name}')"
     )

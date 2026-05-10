@@ -5,14 +5,14 @@
 #
 # Graph:
 #   echo-upstream   — emits the string "skip-me" (simulates a judge verdict)
-#   echo-conditional — CONDITIONAL on echo-upstream.result.items.0.output == "run-me"
+#   echo-conditional — CONDITIONAL on echo-upstream.items.0.output == "run-me"
 #                      Since the upstream emits "skip-me", this node should be
 #                      skipped (marked DONE without dispatch).
 #   echo-always     — depends on both; always runs and reads upstream output
 #
 # Expected behaviour:
 #   echo-upstream    → DONE  (output: "skip-me")
-#   echo-conditional → DONE  (skipped by host, result.metadata.skipped == true)
+#   echo-conditional → DONE  (skipped by host, metadata.skipped == true)
 #   echo-always      → DONE  (output: "skip-me")
 
 apiVersion: flowmesh/v1
@@ -61,7 +61,7 @@ spec:
               memory: "256Mi"
           condition:
             node: "echo-upstream"
-            field: "result.items.0.output"
+            field: "items.0.output"
             equals: "run-me"
           # Note: condition.field uses _dig_path (dot-separated, int coercion)
           # while data.items path uses _evaluate_expr (bracket notation)
@@ -83,7 +83,7 @@ spec:
             type: "list"
             items:
               - node: "echo-upstream"
-                path: "result.items[0].output"
+                path: "items[0].output"
 
   output:
     destination:

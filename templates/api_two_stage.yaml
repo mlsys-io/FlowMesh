@@ -48,7 +48,7 @@ spec:
             model: "gpt-4o"
             messages:
               - role: "user"
-                content: "The previous stage's response is as follows. Please provide a simpler explanation: \n${stage-1.result.text}"
+                content: "The previous stage's response is as follows. Please provide a simpler explanation: \n${stage-1.text}"
           response:
             parse_json: true
             # return_body is a JSON backdoor: keep raw text when JSON isn't usable.

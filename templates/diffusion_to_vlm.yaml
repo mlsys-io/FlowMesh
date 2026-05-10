@@ -64,7 +64,7 @@ spec:
           data:
             type: list
             node: diffusion
-            path: result.images
+            path: images
 
           output:
             destination:
@@ -99,7 +99,7 @@ spec:
                     content: Describe the image in detail. What is the overall atmosphere?
             image_embedding: 
               node: image-embedding
-              path: result.embedding_file
+              path: embedding_file
 
           inference:
             max_tokens: 512

@@ -65,7 +65,7 @@ spec:
                     content: Describe the content of the menu shown in the image. Which one would you suggest?
             image_embedding: 
               node: image-embedding
-              path: result.embedding_file
+              path: embedding_file
 
           inference:
             max_tokens: 512

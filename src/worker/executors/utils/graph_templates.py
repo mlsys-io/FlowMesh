@@ -107,10 +107,7 @@ def _resolve_image_embedding_count(
     upstream = context.get(node)
     if not isinstance(upstream, dict):
         return None
-    result = upstream.get("result")
-    if not isinstance(result, dict):
-        return None
-    count = result.get("count")
+    count = upstream.get("count")
     if isinstance(count, int) and count > 0:
         return count
     return None
