@@ -1,5 +1,6 @@
 import datetime
 import json
+import logging
 import time
 from pathlib import Path
 from threading import RLock
@@ -35,7 +36,7 @@ class MetricsRecorder:
     def __init__(
         self,
         base_dir: Path,
-        logger,
+        logger: logging.Logger,
         *,
         enable_density_plot: bool = False,
         density_bucket_seconds: int = 60,
@@ -909,6 +910,11 @@ class MetricsRecorder:
         if not hardware.gpu.memory_is_unified:
             return None
         shared_total = hardware.gpu.shared_memory_total_bytes
-        if shared_total is None or shared_total <= 0:
+        if shared_total is None or shared_total == 0:
+            return None
+        if shared_total < 0:
+            self._logger.debug(
+                "Ignoring negative shared GPU memory total: %s", shared_total
+            )
             return None
         return int(shared_total)
