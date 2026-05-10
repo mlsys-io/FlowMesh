@@ -353,6 +353,24 @@ class TestParallelDispatch:
         asyncio.run(go())
         assert "w-gone" not in cl._worker_locks
 
+    def test_destroy_workers_duplicate_names_does_not_deadlock(self) -> None:
+        cl = self._setup()
+        cl._wm.destroy_workers = AsyncMock(return_value=None)  # type: ignore[method-assign]
+
+        async def go() -> CommandResponse:
+            return await asyncio.wait_for(
+                cl._dispatch(
+                    _cmd(
+                        CommandType.DESTROY_WORKERS,
+                        {"worker_names": ["w-1", "w-1", "w-2", "w-2"]},
+                    )
+                ),
+                timeout=2.0,
+            )
+
+        resp = asyncio.run(go())
+        assert resp.success
+
 
 # ------------------------------------------------------------------ #
 # Target worker name resolution
@@ -373,6 +391,15 @@ class TestTargetWorkerNames:
     def test_destroy_workers_sorts_names(self) -> None:
         names = CommandListener._target_worker_names(
             _cmd(CommandType.DESTROY_WORKERS, {"worker_names": ["w-3", "w-1", "w-2"]})
+        )
+        assert names == ["w-1", "w-2", "w-3"]
+
+    def test_destroy_workers_dedupes_names(self) -> None:
+        names = CommandListener._target_worker_names(
+            _cmd(
+                CommandType.DESTROY_WORKERS,
+                {"worker_names": ["w-2", "w-1", "w-2", "w-1", "w-3"]},
+            )
         )
         assert names == ["w-1", "w-2", "w-3"]
 

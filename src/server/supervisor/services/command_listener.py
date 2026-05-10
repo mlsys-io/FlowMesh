@@ -1,10 +1,10 @@
 import asyncio
-import concurrent.futures
 import contextlib
 import logging
 import queue
 import secrets
 from collections.abc import Callable, Iterable
+from concurrent import futures
 from threading import Thread
 
 from pydantic import ValidationError
@@ -31,7 +31,7 @@ type ResponseHandler = Callable[[CommandResponse], None]
 
 _MAX_INFLIGHT_CMDS = 32
 _STOP_DRAIN_TIMEOUT = 10.0
-_START_WORKER_TIMEOUT = 120.0
+_START_WORKER_TIMEOUT = 600.0
 _STOP_WORKER_TIMEOUT = 60.0
 _CREATE_WORKER_TIMEOUT = 600.0
 _DESTROY_WORKER_TIMEOUT = 60.0
@@ -159,10 +159,10 @@ class CommandListener:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._running: bool = False
 
-        # Async-side state — created on the loop in start().
+        # Async-side state
         self._sem: asyncio.Semaphore | None = None
         self._worker_locks: dict[str, asyncio.Lock] = {}
-        self._inflight: set[concurrent.futures.Future[CommandResponse]] = set()
+        self._inflight: set[futures.Future[CommandResponse]] = set()
 
     def start(self) -> None:
         if self._thread is not None:
@@ -226,7 +226,7 @@ class CommandListener:
             len(inflight),
             _STOP_DRAIN_TIMEOUT,
         )
-        done, not_done = concurrent.futures.wait(inflight, timeout=_STOP_DRAIN_TIMEOUT)
+        _, not_done = futures.wait(inflight, timeout=_STOP_DRAIN_TIMEOUT)
         for fut in not_done:
             fut.cancel()
         if not_done:
@@ -253,12 +253,12 @@ class CommandListener:
 
     def _make_done_callback(
         self, cmd: CommandMessage, resp_handler: ResponseHandler
-    ) -> Callable[[concurrent.futures.Future[CommandResponse]], None]:
-        def _on_done(fut: concurrent.futures.Future[CommandResponse]) -> None:
+    ) -> Callable[[futures.Future[CommandResponse]], None]:
+        def on_done(fut: futures.Future[CommandResponse]) -> None:
             self._inflight.discard(fut)
             try:
                 resp = fut.result()
-            except concurrent.futures.CancelledError:
+            except futures.CancelledError:
                 resp = CommandResponse.error(cmd, "Command cancelled during shutdown")
             except Exception as exc:
                 self.logger.exception("Command dispatch raised: %s", cmd.command)
@@ -273,7 +273,7 @@ class CommandListener:
                 None, self._safe_call_response_handler, resp_handler, resp
             )
 
-        return _on_done
+        return on_done
 
     def _safe_call_response_handler(
         self, resp_handler: ResponseHandler, resp: CommandResponse
@@ -298,7 +298,11 @@ class CommandListener:
                     return await self._invoke(cmd)
                 async with contextlib.AsyncExitStack() as stack:
                     for name in names:
-                        lock = self._worker_locks.setdefault(name, asyncio.Lock())
+                        if name in self._worker_locks:
+                            lock = self._worker_locks[name]
+                        else:
+                            lock = asyncio.Lock()
+                            self._worker_locks[name] = lock
                         await stack.enter_async_context(lock)
                     return await self._invoke(cmd)
         except Exception as exc:
@@ -320,12 +324,10 @@ class CommandListener:
                 | CommandType.DESTROY_WORKER
             ):
                 name = payload.get("worker_name")
-                return [str(name)] if name else []
+                return [] if name is None else [str(name)]
             case CommandType.DESTROY_WORKERS:
                 raw = payload.get("worker_names")
-                if not raw:
-                    return []
-                return sorted(str(n) for n in raw)
+                return [] if raw is None else sorted(set(str(n) for n in raw))
             case _:
                 return []
 
@@ -507,8 +509,7 @@ class CommandListener:
             return CommandResponse.error(cmd, "Missing worker_name")
         try:
             success = await asyncio.wait_for(
-                self._wm.destroy_worker(worker_name),
-                timeout=_DESTROY_WORKER_TIMEOUT,
+                self._wm.destroy_worker(worker_name), timeout=_DESTROY_WORKER_TIMEOUT
             )
             self._worker_locks.pop(worker_name, None)
             return CommandResponse.ok(cmd, data={"success": success})

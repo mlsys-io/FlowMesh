@@ -58,35 +58,41 @@ class ResourceManager:
         return len(self._env.available_gpus)
 
     def reserve_gpus(
-        self, n: int | None = None, devices: list[int] | None = None
+        self, devices: list[int] | None = None, n: int | None = None
     ) -> tuple[list[int], GpuArch]:
         """Atomically reserve GPUs and return their indices and architecture.
 
-        Either ``n`` (auto-pick the lowest N free indices) or ``devices``
-        (validate that the explicit set is free) must be given, not both.
+        Either ``devices``(validate that the explicit set is free) or ``n``
+        (auto-pick the lowest N free indices) must be given, not both.
         Selection, arch-consistency check, and removal from the available set
         run as one synchronous block, so concurrent callers on the same event
         loop never observe the same indices.
+
+        Note: the atomicity guarantee is per event loop, not across threads —
+        callers must invoke this from the supervisor's main loop thread (do
+        not wrap in ``asyncio.to_thread`` or call from a worker thread).
         """
         if (n is None) == (devices is None):
             raise ValueError("Provide exactly one of n or devices")
 
         available_gpus = self._env.available_gpus
-        if n is not None:
-            if n <= 0:
-                raise ValueError("Invalid number of GPUs")
-            if n > len(available_gpus):
-                raise ValueError("Not enough available GPUs")
-            picked = [min(available_gpus)] if n == 1 else sorted(available_gpus)[:n]
-        else:
-            assert devices is not None
+        # Pick devices
+        if devices is not None:
             if not devices:
                 raise ValueError("Empty device list")
             invalid = [d for d in devices if d not in available_gpus]
             if invalid:
                 raise ValueError(f"Requested GPUs are not available: {invalid}")
-            picked = list(devices)
+            picked = devices.copy()
+        else:
+            assert n is not None
+            if n <= 0:
+                raise ValueError("Invalid number of GPUs")
+            if n > len(available_gpus):
+                raise ValueError("Not enough available GPUs")
+            picked = [min(available_gpus)] if n == 1 else sorted(available_gpus)[:n]
 
+        # Check architecture consistency
         archs = {self._env.gpu_families[d] for d in picked}
         if len(archs) != 1:
             raise ValueError("Selected CUDA devices have different architectures.")
