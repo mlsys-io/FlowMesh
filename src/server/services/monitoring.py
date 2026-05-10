@@ -40,7 +40,7 @@ from ..hooks import (
     RESOURCE_REGISTRARS,
     USAGE_SINKS,
     PrincipalContext,
-    ResourceType,
+    ResourceKind,
     UsageRow,
 )
 from ..registries.node import NodeRegistry
@@ -454,7 +454,7 @@ class EventMonitor:
                 # Registry is already populated by the supervisor's lifecycle
                 # Fire the register hook with the actor stamped on the event.
                 self._schedule_register(
-                    ResourceType.NODE,
+                    ResourceKind.NODE,
                     event.node_id,
                     self._actor_from_event(event),
                     {"tags": list(event.tags or [])},
@@ -478,7 +478,7 @@ class EventMonitor:
                 if self._own_node_id is not None and event.node_id == self._own_node_id:
                     self._schedule_own_node_deregister(event.node_id, actor)
                 else:
-                    self._schedule_deregister(ResourceType.NODE, event.node_id, actor)
+                    self._schedule_deregister(ResourceKind.NODE, event.node_id, actor)
             case _:
                 self._logger.debug(
                     "Ignoring node event type=%s payload=%s",
@@ -514,7 +514,7 @@ class EventMonitor:
                 worker_id = (event.worker_id or "").strip()
                 if worker_id:
                     self._schedule_register(
-                        ResourceType.WORKER,
+                        ResourceKind.WORKER,
                         worker_id,
                         self._actor_from_event(event),
                         {"tags": list(event.tags or [])},
@@ -534,7 +534,7 @@ class EventMonitor:
                 self._worker_registry.unregister_workers(worker_id)
                 if worker_id:
                     self._schedule_deregister(
-                        ResourceType.WORKER, worker_id, self._actor_from_event(event)
+                        ResourceKind.WORKER, worker_id, self._actor_from_event(event)
                     )
                     if self._watchdog.enabled and self._watchdog.is_marked_dead(
                         worker_id
@@ -661,7 +661,7 @@ class EventMonitor:
 
     def _schedule_register(
         self,
-        resource_type: ResourceType,
+        resource_kind: ResourceKind,
         resource_id: str,
         principal: PrincipalContext,
         metadata: Mapping[str, Any],
@@ -671,14 +671,14 @@ class EventMonitor:
         try:
             fut = asyncio.run_coroutine_threadsafe(
                 register_resource(
-                    principal, resource_type, resource_id, metadata, self._logger
+                    principal, resource_kind, resource_id, metadata, self._logger
                 ),
                 self._loop,
             )
         except RuntimeError as exc:
             self._logger.debug(
                 "Failed to schedule %s/%s register: %s",
-                resource_type.value,
+                resource_kind.value,
                 resource_id,
                 exc,
             )
@@ -686,21 +686,21 @@ class EventMonitor:
         self._track_pending(fut)
 
     def _schedule_deregister(
-        self, resource_type: ResourceType, resource_id: str, principal: PrincipalContext
+        self, resource_kind: ResourceKind, resource_id: str, principal: PrincipalContext
     ) -> None:
         if not RESOURCE_REGISTRARS or not resource_id or self._loop is None:
             return
         try:
             fut = asyncio.run_coroutine_threadsafe(
                 deregister_resource(
-                    principal, resource_type, resource_id, self._logger
+                    principal, resource_kind, resource_id, self._logger
                 ),
                 self._loop,
             )
         except RuntimeError as exc:
             self._logger.debug(
                 "Failed to schedule %s/%s deregister: %s",
-                resource_type.value,
+                resource_kind.value,
                 resource_id,
                 exc,
             )
@@ -724,7 +724,7 @@ class EventMonitor:
         try:
             fut = asyncio.run_coroutine_threadsafe(
                 deregister_resource(
-                    principal, ResourceType.NODE, node_id, self._logger
+                    principal, ResourceKind.NODE, node_id, self._logger
                 ),
                 self._loop,
             )

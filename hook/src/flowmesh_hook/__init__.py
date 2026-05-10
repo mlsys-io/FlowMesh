@@ -6,7 +6,7 @@ Carries the bits the FlowMesh server adds on top of `lumid-hooks`:
   FlowMesh's `supplier_resolvers`. Used by the server's plugin gate.
 - `BaseBindings` — frozen dataclass extending `lumid_hooks.BaseBindings` with
   `supplier_resolvers`. Convenience class for FlowMesh-only plugins.
-- `ResourceType` / `ResourceAction` — FlowMesh resource and action enums.
+- `ResourceKind` / `ResourceAction` — FlowMesh resource and action enums.
 - `SupplierResolver` / `WorkerView` — supplier attribution at dispatch time.
 - `UsageRow` / `FlowMeshUsageSink` — FlowMesh's usage row shape and parametrized
   sink alias.
@@ -17,7 +17,7 @@ Shared protocols (`IdentityProvider`, `SubmissionGuard`, `PermissionChecker`,
 """
 
 from .bindings import BaseBindings, HookBindings
-from .resource_types import ResourceAction, ResourceType
+from .resource_kinds import ResourceAction, ResourceKind
 from .supplier import SupplierResolver
 from .usage import FlowMeshUsageSink, UsageRow
 from .worker_view import WorkerView
@@ -27,7 +27,7 @@ __all__ = [
     "FlowMeshUsageSink",
     "HookBindings",
     "ResourceAction",
-    "ResourceType",
+    "ResourceKind",
     "SupplierResolver",
     "UsageRow",
     "WorkerView",

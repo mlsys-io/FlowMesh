@@ -14,7 +14,7 @@ from ...auth.security import (
     authenticate_connection,
     require_permission,
 )
-from ...hooks import ResourceAction, ResourceType
+from ...hooks import ResourceAction, ResourceKind
 from ...supervisor import WorkerSupervisor
 from ...supervisor.manager import WorkerInitConfig
 from ...supervisor.schemas import WorkerInfo
@@ -55,7 +55,7 @@ async def list_workers(
     logger: logging.Logger = Depends(get_logger),
 ) -> list[WorkerInfo]:
     await require_permission(
-        principal, ResourceType.NODE, node_id, ResourceAction.READ, logger
+        principal, ResourceKind.NODE, node_id, ResourceAction.READ, logger
     )
     cmd = CommandMessage(command=CommandType.GET_WORKERS)
     data = await _exec(supervisor, cmd)
@@ -72,7 +72,7 @@ async def create_worker(
     logger: logging.Logger = Depends(get_logger),
 ) -> WorkerInfo:
     await require_permission(
-        principal, ResourceType.NODE, node_id, ResourceAction.WRITE, logger
+        principal, ResourceKind.NODE, node_id, ResourceAction.WRITE, logger
     )
     cmd = CommandMessage(
         command=CommandType.CREATE_WORKER, payload=init_config.model_dump()
@@ -90,7 +90,7 @@ async def get_worker(
     logger: logging.Logger = Depends(get_logger),
 ) -> WorkerInfo:
     await require_permission(
-        principal, ResourceType.NODE, node_id, ResourceAction.READ, logger
+        principal, ResourceKind.NODE, node_id, ResourceAction.READ, logger
     )
     cmd = CommandMessage(command=CommandType.GET_WORKERS, payload={"worker_name": name})
     data = await _exec(supervisor, cmd)
@@ -110,7 +110,7 @@ async def start_worker(
     logger: logging.Logger = Depends(get_logger),
 ) -> None:
     await require_permission(
-        principal, ResourceType.NODE, node_id, ResourceAction.WRITE, logger
+        principal, ResourceKind.NODE, node_id, ResourceAction.WRITE, logger
     )
     cmd = CommandMessage(
         command=CommandType.START_WORKER, payload={"worker_name": name}
@@ -132,7 +132,7 @@ async def stop_worker(
     logger: logging.Logger = Depends(get_logger),
 ) -> None:
     await require_permission(
-        principal, ResourceType.NODE, node_id, ResourceAction.WRITE, logger
+        principal, ResourceKind.NODE, node_id, ResourceAction.WRITE, logger
     )
     cmd = CommandMessage(command=CommandType.STOP_WORKER, payload={"worker_name": name})
     data = await _exec(supervisor, cmd)
@@ -152,7 +152,7 @@ async def destroy_worker(
     logger: logging.Logger = Depends(get_logger),
 ) -> None:
     await require_permission(
-        principal, ResourceType.NODE, node_id, ResourceAction.WRITE, logger
+        principal, ResourceKind.NODE, node_id, ResourceAction.WRITE, logger
     )
     cmd = CommandMessage(
         command=CommandType.DESTROY_WORKER, payload={"worker_name": name}
@@ -169,7 +169,7 @@ async def destroy_all_workers(
     logger: logging.Logger = Depends(get_logger),
 ) -> None:
     await require_permission(
-        principal, ResourceType.NODE, node_id, ResourceAction.WRITE, logger
+        principal, ResourceKind.NODE, node_id, ResourceAction.WRITE, logger
     )
     body = await request.body()
     names: list[str] | None = None

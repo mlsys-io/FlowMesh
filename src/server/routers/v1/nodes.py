@@ -18,7 +18,7 @@ from ...auth.security import (
     require_permission,
     resolve_accessible_ids,
 )
-from ...hooks import ResourceAction, ResourceType
+from ...hooks import ResourceAction, ResourceKind
 from ...registries import Node, NodeRegistry, WorkerRegistry
 from ...schemas.node import (
     NodeInfo,
@@ -47,7 +47,7 @@ async def list_nodes(
     queries = request.query_params
     nodes = await node_registry.list_nodes_async()
     allowed = await resolve_accessible_ids(
-        principal, ResourceType.NODE, ResourceAction.READ, logger
+        principal, ResourceKind.NODE, ResourceAction.READ, logger
     )
     if allowed is not None:
         nodes = [node for node in nodes if node.id in allowed]
@@ -93,7 +93,7 @@ async def list_all_workers(
         all_workers.extend(result)
 
     allowed = await resolve_accessible_ids(
-        principal, ResourceType.WORKER, ResourceAction.READ, logger
+        principal, ResourceKind.WORKER, ResourceAction.READ, logger
     )
     if allowed is not None:
         all_workers = [w for w in all_workers if w.id in allowed]
@@ -115,7 +115,7 @@ async def register_node(
     logger: logging.Logger = Depends(get_logger),
 ) -> NodeRegisterResponse:
     await require_permission(
-        principal, ResourceType.NODE, None, ResourceAction.WRITE, logger
+        principal, ResourceKind.NODE, None, ResourceAction.WRITE, logger
     )
     node_id = await node_registry.register_node_async(node_info)
     return NodeRegisterResponse(node_id=node_id)
@@ -144,11 +144,11 @@ async def list_node_workers(
     logger: logging.Logger = Depends(get_logger),
 ) -> list[NodeWorkerInfo]:
     await require_permission(
-        principal, ResourceType.NODE, node_id, ResourceAction.READ, logger
+        principal, ResourceKind.NODE, node_id, ResourceAction.READ, logger
     )
     workers = await _fetch_node_workers(node_id, node_registry, worker_registry, logger)
     allowed = await resolve_accessible_ids(
-        principal, ResourceType.WORKER, ResourceAction.READ, logger
+        principal, ResourceKind.WORKER, ResourceAction.READ, logger
     )
     if allowed is not None:
         workers = [w for w in workers if w.id in allowed]
@@ -172,7 +172,7 @@ async def register_worker(
     logger: logging.Logger = Depends(get_logger),
 ) -> WorkerRegisterResponse:
     await require_permission(
-        principal, ResourceType.NODE, node_id, ResourceAction.WRITE, logger
+        principal, ResourceKind.NODE, node_id, ResourceAction.WRITE, logger
     )
     node = await node_registry.get_node_async(node_id)
     if node is None:
@@ -200,7 +200,7 @@ async def start_node_worker(
     logger: logging.Logger = Depends(get_logger),
 ) -> None:
     await require_permission(
-        principal, ResourceType.NODE, node_id, ResourceAction.WRITE, logger
+        principal, ResourceKind.NODE, node_id, ResourceAction.WRITE, logger
     )
     cmd = CommandMessage(
         command=CommandType.START_WORKER, payload={"worker_name": worker_name}
@@ -240,7 +240,7 @@ async def stop_node_worker(
     logger: logging.Logger = Depends(get_logger),
 ) -> None:
     await require_permission(
-        principal, ResourceType.NODE, node_id, ResourceAction.WRITE, logger
+        principal, ResourceKind.NODE, node_id, ResourceAction.WRITE, logger
     )
     cmd = CommandMessage(
         command=CommandType.STOP_WORKER, payload={"worker_name": worker_name}
@@ -279,7 +279,7 @@ async def get_node(
     logger: logging.Logger = Depends(get_logger),
 ) -> Node:
     await require_permission(
-        principal, ResourceType.NODE, node_id, ResourceAction.READ, logger
+        principal, ResourceKind.NODE, node_id, ResourceAction.READ, logger
     )
     node = await node_registry.get_node_async(node_id)
     if not node:

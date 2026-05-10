@@ -9,7 +9,7 @@ protocols' `kind: str` / `action: str` parameters with no `.value`.
 from enum import StrEnum
 
 
-class ResourceType(StrEnum):
+class ResourceKind(StrEnum):
     """Resource kinds in FlowMesh's permission contract.
 
     `RESULT` checks are always paired with a `task_id`; workflow-level

@@ -35,7 +35,7 @@ from ...clients.redis import (
     workflow_log_closed_key,
     workflow_log_stream_key,
 )
-from ...hooks import SUBMISSION_GUARDS, ResourceAction, ResourceType
+from ...hooks import SUBMISSION_GUARDS, ResourceAction, ResourceKind
 from ...registries.workflow import Workflow, WorkflowRegistry
 from ...schemas.logs import LogEntry, LogEvent, LogQueryResponse
 from ...schemas.workflow import (
@@ -132,7 +132,7 @@ async def submit_workflow(
         )
 
     await require_permission(
-        principal, ResourceType.WORKFLOW, None, ResourceAction.WRITE, logger
+        principal, ResourceKind.WORKFLOW, None, ResourceAction.WRITE, logger
     )
     for guard in SUBMISSION_GUARDS:
         await guard.check(principal, logger)
@@ -154,7 +154,7 @@ async def submit_workflow(
 
     await register_resource(
         principal,
-        ResourceType.WORKFLOW,
+        ResourceKind.WORKFLOW,
         workflow_id,
         {"format": workflow_format, "task_count": len(entries)},
         logger,
@@ -162,7 +162,7 @@ async def submit_workflow(
     for entry in entries:
         await register_resource(
             principal,
-            ResourceType.TASK,
+            ResourceKind.TASK,
             entry.task_id,
             {"workflow_id": workflow_id},
             logger,
@@ -276,7 +276,7 @@ async def get_workflow(
     logger: logging.Logger = Depends(get_logger),
 ) -> Workflow:
     await require_permission(
-        principal, ResourceType.WORKFLOW, workflow_id, ResourceAction.READ, logger
+        principal, ResourceKind.WORKFLOW, workflow_id, ResourceAction.READ, logger
     )
     workflow = await registry.get_workflow_async(workflow_id)
     if not workflow:
@@ -323,7 +323,7 @@ async def get_workflow_logs(
     logger: logging.Logger = Depends(get_logger),
 ) -> LogQueryResponse:
     await require_permission(
-        principal, ResourceType.WORKFLOW, workflow_id, ResourceAction.READ, logger
+        principal, ResourceKind.WORKFLOW, workflow_id, ResourceAction.READ, logger
     )
     limit = max(1, min(10_000, int(limit)))
     if before and after:
@@ -417,7 +417,7 @@ async def stream_workflow_logs(
     logger: logging.Logger = Depends(get_logger),
 ):
     await require_permission(
-        principal, ResourceType.WORKFLOW, workflow_id, ResourceAction.READ, logger
+        principal, ResourceKind.WORKFLOW, workflow_id, ResourceAction.READ, logger
     )
     key = workflow_log_stream_key(workflow_id)
     if not await redis.asyncio.exists_telemetry(key):
@@ -499,7 +499,7 @@ async def cancel_workflow(
     logger: logging.Logger = Depends(get_logger),
 ) -> Workflow:
     await require_permission(
-        principal, ResourceType.WORKFLOW, workflow_id, ResourceAction.CANCEL, logger
+        principal, ResourceKind.WORKFLOW, workflow_id, ResourceAction.CANCEL, logger
     )
     runtime.cancel_workflow(workflow_id)
     workflow = await registry.get_workflow_async(workflow_id)
@@ -525,7 +525,7 @@ async def list_workflows(
 ) -> list[Workflow]:
     workflow_ids = await registry.get_workflow_ids_async()
     allowed = await resolve_accessible_ids(
-        principal, ResourceType.WORKFLOW, ResourceAction.READ, logger
+        principal, ResourceKind.WORKFLOW, ResourceAction.READ, logger
     )
     if allowed is not None:
         workflow_ids = workflow_ids & allowed

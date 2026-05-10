@@ -16,7 +16,7 @@ against an in-memory store.
 | `usage.py` | `UsageSink` | Appends each `UsageRow` to `state.USAGE_LEDGER`; logs row count and total cost. |
 | `permissions.py` | `PermissionChecker` | Admin scope bypasses every check. Otherwise `accessible_ids` returns the resources the principal owns; `require` allows type-level (`resource_id is None`) actions for any non-empty scope and concrete-id actions only when the principal is the registered owner. |
 | `supplier.py` | `SupplierResolver` | Returns `worker.namespace`. |
-| `registrar.py` | `ResourceRegistrar` | Records `(resource_type, resource_id) -> principal_id` in `state.OWNERSHIP` on `register`; drops the row on `deregister`. |
+| `registrar.py` | `ResourceRegistrar` | Records `(resource_kind, resource_id) -> principal_id` in `state.OWNERSHIP` on `register`; drops the row on `deregister`. |
 
 `state.py` holds every shared dict / set / list. `__init__.py` wires the six
 hook classes into a `HookBindings` and exposes `install()`.
@@ -81,7 +81,7 @@ You should see one line per `resolve` / `check` / `emit` / `accessible_ids`
   better: write your own plugin and don't ship secrets in the repo).
 - `PermissionChecker` here is intentionally permissive (any non-empty scope
   passes type-level checks). Real plugins should map specific scopes to
-  specific (resource_type, action) pairs.
+  specific (resource_kind, action) pairs.
 - All six hooks are implemented purely for demonstration. Real plugins
   ship the subset they need; absent hooks fall through to the runtime's
   documented default.

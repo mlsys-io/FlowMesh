@@ -1,7 +1,7 @@
 """Server-side runtime registries for the plugin hooks.
 
 The protocols and shared types live in `lumid_hooks`; FlowMesh-specific
-extensions (`HookBindings`, `BaseBindings`, `ResourceType`, `ResourceAction`,
+extensions (`HookBindings`, `BaseBindings`, `ResourceKind`, `ResourceAction`,
 `SupplierResolver`, `WorkerView`, `UsageRow`, `FlowMeshUsageSink`) live in
 `flowmesh_hook`. This module owns the mutable lists the plugin loader drains
 plugin bindings into and that the server iterates at call time.
@@ -16,7 +16,7 @@ from flowmesh_hook import (
     FlowMeshUsageSink,
     HookBindings,
     ResourceAction,
-    ResourceType,
+    ResourceKind,
     SupplierResolver,
     UsageRow,
     WorkerView,
@@ -64,7 +64,7 @@ __all__ = [
     "ResourceAction",
     "ResourceRef",
     "ResourceRegistrar",
-    "ResourceType",
+    "ResourceKind",
     "SUBMISSION_GUARDS",
     "SUPPLIER_RESOLVERS",
     "SubmissionGuard",

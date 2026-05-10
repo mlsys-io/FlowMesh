@@ -12,7 +12,7 @@ server through six protocol hooks split across two packages:
 - **`flowmesh-hook`** — FlowMesh-specific extensions: the `HookBindings`
   Protocol (extending the shared one with `supplier_resolvers`), a
   `BaseBindings` frozen dataclass plugin authors can return directly,
-  the `ResourceType` / `ResourceAction` enums, `SupplierResolver` and its
+  the `ResourceKind` / `ResourceAction` enums, `SupplierResolver` and its
   `WorkerView`, and the FlowMesh `UsageRow` / `FlowMeshUsageSink` typed alias.
 
 The hooks:
@@ -63,9 +63,9 @@ The hooks:
 
 The shared protocols treat `kind` and `action` as plain strings —
 `lumid-hooks` does not enumerate kinds. FlowMesh layers the
-`ResourceType` and `ResourceAction` `StrEnum`s on top so call sites
+`ResourceKind` and `ResourceAction` `StrEnum`s on top so call sites
 inside FlowMesh get auto-complete and exhaustiveness checks; values
-like `ResourceType.WORKFLOW` pass straight into the protocol's
+like `ResourceKind.WORKFLOW` pass straight into the protocol's
 `kind: str` parameter (no `.value` needed).
 
 `flowmesh-hook` depends only on `lumid-hooks` (transitively `pydantic`)
@@ -79,7 +79,7 @@ stay tiny and can be installed without the heavy core stack.
 | `IdentityProvider`, `SubmissionGuard`, `PermissionChecker`, `ResourceRegistrar`, `UsageSink` | `lumid_hooks` | Shared protocols. |
 | `PrincipalContext`, `ResourceRef` | `lumid_hooks` | Shared types. |
 | `HookBindings`, `BaseBindings` | `flowmesh_hook` | Protocol (six fields, gate type) and frozen dataclass (convenience base, returned by `install()`). |
-| `ResourceType`, `ResourceAction` | `flowmesh_hook` | FlowMesh resource and action enums. |
+| `ResourceKind`, `ResourceAction` | `flowmesh_hook` | FlowMesh resource and action enums. |
 | `SupplierResolver`, `WorkerView` | `flowmesh_hook` | FlowMesh-specific dispatch hook. |
 | `UsageRow`, `FlowMeshUsageSink` | `flowmesh_hook` | FlowMesh's usage row + parametrized sink alias. |
 

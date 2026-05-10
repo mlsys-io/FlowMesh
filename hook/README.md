@@ -5,7 +5,7 @@ on top of [`lumid-hooks`](https://github.com/mlsys-io/lumid.hooks):
 
 - `HookBindings` — concrete dataclass with FlowMesh's six fields (the five
   shared from `lumid-hooks` plus `supplier_resolvers`).
-- `ResourceType` / `ResourceAction` — FlowMesh resource and action enums.
+- `ResourceKind` / `ResourceAction` — FlowMesh resource and action enums.
 - `SupplierResolver` / `WorkerView` — supplier attribution at dispatch time.
 - `UsageRow` / `FlowMeshUsageSink` — FlowMesh's usage row shape and the
   parametrized sink alias.

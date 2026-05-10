@@ -21,7 +21,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from fastapi import HTTPException, WebSocket, WebSocketException, status
-from flowmesh_hook import ResourceAction, ResourceType
+from flowmesh_hook import ResourceAction, ResourceKind
 from lumid_hooks import PrincipalContext, ResourceRef
 from starlette.requests import HTTPConnection
 
@@ -128,7 +128,7 @@ async def authenticate_websocket(
 
 async def resolve_accessible_ids(
     principal: PrincipalContext,
-    resource_type: ResourceType,
+    resource_kind: ResourceKind,
     action: ResourceAction,
     logger: logging.Logger,
 ) -> frozenset[str] | None:
@@ -146,7 +146,7 @@ async def resolve_accessible_ids(
     accumulated: frozenset[str] | None = None
     for checker in PERMISSION_CHECKERS:
         result = await checker.accessible_ids(
-            principal, resource_type.value, action.value, logger
+            principal, resource_kind.value, action.value, logger
         )
         if result is None:
             continue
@@ -156,7 +156,7 @@ async def resolve_accessible_ids(
 
 async def require_permission(
     principal: PrincipalContext,
-    resource_type: ResourceType,
+    resource_kind: ResourceKind,
     resource_id: str | None,
     action: ResourceAction,
     logger: logging.Logger,
@@ -167,14 +167,14 @@ async def require_permission(
     principal create workflows" before a `wfl-` id has been minted, or any
     `SYSTEM`-scoped check).
     """
-    resource = ResourceRef(kind=resource_type.value, id=resource_id)
+    resource = ResourceRef(kind=resource_kind.value, id=resource_id)
     for checker in PERMISSION_CHECKERS:
         await checker.require(principal, resource, action.value, logger)
 
 
 async def register_resource(
     principal: PrincipalContext,
-    resource_type: ResourceType,
+    resource_kind: ResourceKind,
     resource_id: str,
     metadata: Mapping[str, Any],
     logger: logging.Logger,
@@ -185,14 +185,14 @@ async def register_resource(
     is inferred from the owning task and does not fire. With no registrars
     registered this is a no-op.
     """
-    resource = ResourceRef(kind=resource_type.value, id=resource_id, metadata=metadata)
+    resource = ResourceRef(kind=resource_kind.value, id=resource_id, metadata=metadata)
     for registrar in RESOURCE_REGISTRARS:
         await registrar.register(principal, resource, logger)
 
 
 async def deregister_resource(
     principal: PrincipalContext,
-    resource_type: ResourceType,
+    resource_kind: ResourceKind,
     resource_id: str,
     logger: logging.Logger,
 ) -> None:
@@ -202,6 +202,6 @@ async def deregister_resource(
     request-driven destructions, the resolved system principal (see
     `resolve_system_principal`) for heartbeat reaps and self-shutdown.
     """
-    resource = ResourceRef(kind=resource_type.value, id=resource_id)
+    resource = ResourceRef(kind=resource_kind.value, id=resource_id)
     for registrar in RESOURCE_REGISTRARS:
         await registrar.deregister(principal, resource, logger)

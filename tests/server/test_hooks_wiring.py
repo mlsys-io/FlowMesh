@@ -20,7 +20,7 @@ from flowmesh_hook import (
     BaseBindings,
     FlowMeshUsageSink,
     ResourceAction,
-    ResourceType,
+    ResourceKind,
     UsageRow,
     WorkerView,
 )
@@ -337,7 +337,7 @@ class TestPermissionCheckerComposition:
         self, principal: PrincipalContext, logger: logging.Logger
     ) -> None:
         ids = await resolve_accessible_ids(
-            principal, ResourceType.TASK, ResourceAction.READ, logger
+            principal, ResourceKind.TASK, ResourceAction.READ, logger
         )
         assert ids is None
 
@@ -380,7 +380,7 @@ class TestPermissionCheckerComposition:
         )
 
         ids = await resolve_accessible_ids(
-            principal, ResourceType.TASK, ResourceAction.READ, logger
+            principal, ResourceKind.TASK, ResourceAction.READ, logger
         )
         assert ids == frozenset({"tsk-A"})
 
@@ -402,7 +402,7 @@ class TestPermissionCheckerComposition:
         register(BaseBindings(permission_checkers=[_NoFilter(), _NoFilter()]))
 
         ids = await resolve_accessible_ids(
-            principal, ResourceType.TASK, ResourceAction.READ, logger
+            principal, ResourceKind.TASK, ResourceAction.READ, logger
         )
         assert ids is None
 
@@ -443,7 +443,7 @@ class TestPermissionCheckerComposition:
         register(BaseBindings(permission_checkers=[_A(), _B()]))
 
         ids = await resolve_accessible_ids(
-            principal, ResourceType.TASK, ResourceAction.READ, logger
+            principal, ResourceKind.TASK, ResourceAction.READ, logger
         )
         assert ids == frozenset({"tsk-2"})
 
@@ -476,7 +476,7 @@ class TestPermissionCheckerComposition:
         register(BaseBindings(permission_checkers=[_A(), _B()]))
 
         ids = await resolve_accessible_ids(
-            principal, ResourceType.TASK, ResourceAction.READ, logger
+            principal, ResourceKind.TASK, ResourceAction.READ, logger
         )
         assert ids == frozenset()
 
@@ -485,7 +485,7 @@ class TestPermissionCheckerComposition:
         self, principal: PrincipalContext, logger: logging.Logger
     ) -> None:
         await require_permission(
-            principal, ResourceType.TASK, "tsk-1", ResourceAction.READ, logger
+            principal, ResourceKind.TASK, "tsk-1", ResourceAction.READ, logger
         )
 
     @pytest.mark.anyio
@@ -523,7 +523,7 @@ class TestPermissionCheckerComposition:
 
         with pytest.raises(HTTPException) as exc_info:
             await require_permission(
-                principal, ResourceType.TASK, "tsk-1", ResourceAction.READ, logger
+                principal, ResourceKind.TASK, "tsk-1", ResourceAction.READ, logger
             )
 
         assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
@@ -639,9 +639,9 @@ class TestResourceRegistrarComposition:
         self, principal: PrincipalContext, logger: logging.Logger
     ) -> None:
         await register_resource(
-            principal, ResourceType.WORKFLOW, "wfl-1", {"name": "n"}, logger
+            principal, ResourceKind.WORKFLOW, "wfl-1", {"name": "n"}, logger
         )
-        await deregister_resource(principal, ResourceType.WORKFLOW, "wfl-1", logger)
+        await deregister_resource(principal, ResourceKind.WORKFLOW, "wfl-1", logger)
 
     @pytest.mark.anyio
     async def test_register_fans_out_in_registration_order(
@@ -652,11 +652,11 @@ class TestResourceRegistrarComposition:
         register(BaseBindings(resource_registrars=[first, second]))
 
         await register_resource(
-            principal, ResourceType.WORKFLOW, "wfl-1", {"name": "n"}, logger
+            principal, ResourceKind.WORKFLOW, "wfl-1", {"name": "n"}, logger
         )
 
         expected = ResourceRef(
-            kind=ResourceType.WORKFLOW.value, id="wfl-1", metadata={"name": "n"}
+            kind=ResourceKind.WORKFLOW.value, id="wfl-1", metadata={"name": "n"}
         )
         for r in (first, second):
             assert r.registered == [("p-1", expected)]
@@ -668,10 +668,10 @@ class TestResourceRegistrarComposition:
         recorder = _RecordingRegistrar()
         register(BaseBindings(resource_registrars=[recorder]))
 
-        await deregister_resource(principal, ResourceType.WORKER, "wkr-1", logger)
+        await deregister_resource(principal, ResourceKind.WORKER, "wkr-1", logger)
 
         assert recorder.deregistered == [
-            ("p-1", ResourceRef(kind=ResourceType.WORKER.value, id="wkr-1"))
+            ("p-1", ResourceRef(kind=ResourceKind.WORKER.value, id="wkr-1"))
         ]
 
     @pytest.mark.anyio
@@ -691,5 +691,5 @@ class TestResourceRegistrarComposition:
 
         with pytest.raises(RuntimeError, match="plugin failure"):
             await register_resource(
-                principal, ResourceType.WORKFLOW, "wfl-1", {}, logger
+                principal, ResourceKind.WORKFLOW, "wfl-1", {}, logger
             )

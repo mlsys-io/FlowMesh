@@ -24,7 +24,7 @@ from ...auth.security import (
     resolve_accessible_ids,
 )
 from ...clients.redis import RedisClient, task_log_closed_key, task_log_stream_key
-from ...hooks import ResourceAction, ResourceType
+from ...hooks import ResourceAction, ResourceKind
 from ...registries.worker import WorkerRegistry
 from ...schemas.common import OkResponse
 from ...schemas.logs import LogEntry, LogEvent, LogQueryResponse
@@ -63,7 +63,7 @@ async def list_tasks(
 ) -> list[TaskInfo]:
     tasks = runtime.list_tasks()
     allowed = await resolve_accessible_ids(
-        principal, ResourceType.TASK, ResourceAction.READ, logger
+        principal, ResourceKind.TASK, ResourceAction.READ, logger
     )
     if allowed is not None:
         tasks = [task for task in tasks if task.task_id in allowed]
@@ -85,7 +85,7 @@ async def get_task(
     logger: logging.Logger = Depends(get_logger),
 ) -> TaskInfo:
     await require_permission(
-        principal, ResourceType.TASK, task_id, ResourceAction.READ, logger
+        principal, ResourceKind.TASK, task_id, ResourceAction.READ, logger
     )
     info = runtime.describe_task(task_id)
     if not info:
@@ -113,7 +113,7 @@ async def stop_task(
     logger: logging.Logger = Depends(get_logger),
 ) -> OkResponse:
     await require_permission(
-        principal, ResourceType.TASK, task_id, ResourceAction.CANCEL, logger
+        principal, ResourceKind.TASK, task_id, ResourceAction.CANCEL, logger
     )
     record = runtime.get_record(task_id)
     if record is None:
@@ -185,7 +185,7 @@ async def get_task_logs(
     logger: logging.Logger = Depends(get_logger),
 ) -> LogQueryResponse:
     await require_permission(
-        principal, ResourceType.RESULT, task_id, ResourceAction.READ, logger
+        principal, ResourceKind.RESULT, task_id, ResourceAction.READ, logger
     )
     limit = max(1, min(10_000, int(limit)))
     if before and after:
@@ -278,7 +278,7 @@ async def stream_task_logs(
     logger: logging.Logger = Depends(get_logger),
 ):
     await require_permission(
-        principal, ResourceType.RESULT, task_id, ResourceAction.READ, logger
+        principal, ResourceKind.RESULT, task_id, ResourceAction.READ, logger
     )
     key = task_log_stream_key(task_id)
     if not await redis.asyncio.exists_telemetry(key):

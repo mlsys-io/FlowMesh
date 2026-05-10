@@ -17,7 +17,7 @@ from ...auth.security import (
     require_permission,
 )
 from ...governance import ProfileSummary, analyze
-from ...hooks import ResourceAction, ResourceType
+from ...hooks import ResourceAction, ResourceKind
 from ...registries.workflow import WorkflowRegistry
 from ...schemas.common import PathResponse
 from ...schemas.result import result_file_path
@@ -66,7 +66,7 @@ async def analyze_workflow_trace(
     logger: logging.Logger = Depends(get_logger),
 ) -> ProfileSummary:
     await require_permission(
-        principal, ResourceType.WORKFLOW, workflow_id, ResourceAction.READ, logger
+        principal, ResourceKind.WORKFLOW, workflow_id, ResourceAction.READ, logger
     )
     task_ids = await _resolve_task_ids(workflow_id, registry)
     spans = list(_iter_workflow_jsonl(results_dir, task_ids, "spans.jsonl"))
@@ -88,7 +88,7 @@ async def get_workflow_trace(
     logger: logging.Logger = Depends(get_logger),
 ) -> StreamingResponse:
     await require_permission(
-        principal, ResourceType.WORKFLOW, workflow_id, ResourceAction.READ, logger
+        principal, ResourceKind.WORKFLOW, workflow_id, ResourceAction.READ, logger
     )
     filename = _TYPE_TO_FILENAME.get(trace_type)
     if filename is None:

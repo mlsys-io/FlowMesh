@@ -9,7 +9,7 @@ from ...auth.security import (
     authenticate_connection,
     require_permission,
 )
-from ...hooks import ResourceAction, ResourceType
+from ...hooks import ResourceAction, ResourceKind
 from ...services.metrics import MetricsRecorder
 
 router = APIRouter(prefix="/system", tags=["System"])
@@ -27,6 +27,6 @@ async def get_metrics_snapshot(
     logger: logging.Logger = Depends(get_logger),
 ) -> dict[str, Any]:
     await require_permission(
-        principal, ResourceType.SYSTEM, None, ResourceAction.ADMIN, logger
+        principal, ResourceKind.SYSTEM, None, ResourceAction.ADMIN, logger
     )
     return metrics.snapshot()

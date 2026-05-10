@@ -32,7 +32,7 @@ from ...auth.security import (
     authenticate_connection,
     require_permission,
 )
-from ...hooks import ResourceAction, ResourceType
+from ...hooks import ResourceAction, ResourceKind
 from ...schemas.common import PathResponse
 from ...schemas.result import ResultPayload, read_result, result_file_path, write_result
 from ...services.monitoring import EventMonitor
@@ -124,7 +124,7 @@ async def get_result(
             status_code=status.HTTP_400_BAD_REQUEST, detail="task_id is required"
         )
     await require_permission(
-        principal, ResourceType.RESULT, task_id, ResourceAction.READ, logger
+        principal, ResourceKind.RESULT, task_id, ResourceAction.READ, logger
     )
     try:
         raw = read_result(results_dir, task_id)
@@ -202,7 +202,7 @@ async def download_result_file(
     logger: logging.Logger = Depends(get_logger),
 ) -> FileResponse:
     await require_permission(
-        principal, ResourceType.RESULT, task_id, ResourceAction.READ, logger
+        principal, ResourceKind.RESULT, task_id, ResourceAction.READ, logger
     )
     sanitized = Path(filename)
     base_dir = result_file_path(results_dir, task_id).parent
@@ -254,7 +254,7 @@ async def download_result_bundle(
     logger: logging.Logger = Depends(get_logger),
 ) -> FileResponse:
     await require_permission(
-        principal, ResourceType.RESULT, task_id, ResourceAction.READ, logger
+        principal, ResourceKind.RESULT, task_id, ResourceAction.READ, logger
     )
     sections = _resolve_bundle_sections(include)
 
@@ -307,7 +307,7 @@ async def download_task_logs(
     logger: logging.Logger = Depends(get_logger),
 ) -> FileResponse:
     await require_permission(
-        principal, ResourceType.RESULT, task_id, ResourceAction.READ, logger
+        principal, ResourceKind.RESULT, task_id, ResourceAction.READ, logger
     )
     base_dir = result_file_path(results_dir, task_id).parent
     target_path = (base_dir / LOGS_DIR / "logs.jsonl").resolve()

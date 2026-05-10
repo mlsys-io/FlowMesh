@@ -31,7 +31,7 @@ from ...auth.security import (
     require_permission,
 )
 from ...clients.redis import RedisClient, ssh_down_key, ssh_up_key
-from ...hooks import ResourceAction, ResourceType
+from ...hooks import ResourceAction, ResourceKind
 from ...registries.node import NodeRegistry
 from ...registries.worker import Worker, WorkerRegistry
 from ...schemas.ssh import SSHConnectionInfo
@@ -113,7 +113,7 @@ async def ssh_proxy(
     """
     try:
         await require_permission(
-            principal, ResourceType.TASK, task_id, ResourceAction.READ, logger
+            principal, ResourceKind.TASK, task_id, ResourceAction.READ, logger
         )
     except Exception:
         await websocket.close(code=4403, reason="forbidden")
@@ -257,7 +257,7 @@ async def list_ssh_connections(
     logger: logging.Logger = Depends(get_logger),
 ) -> list[SSHConnectionInfo]:
     await require_permission(
-        principal, ResourceType.SYSTEM, None, ResourceAction.ADMIN, logger
+        principal, ResourceKind.SYSTEM, None, ResourceAction.ADMIN, logger
     )
     if ssh_audit is None:
         return []

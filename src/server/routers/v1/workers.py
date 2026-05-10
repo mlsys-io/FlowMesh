@@ -12,7 +12,7 @@ from ...auth.security import (
     require_permission,
     resolve_accessible_ids,
 )
-from ...hooks import ResourceAction, ResourceType
+from ...hooks import ResourceAction, ResourceKind
 from ...registries.worker import WorkerInfo, WorkerRegistry
 from ...utils.misc import filter_models_by_queries
 
@@ -34,7 +34,7 @@ async def list_workers(
     queries = request.query_params
     workers = await registry.list_workers_async()
     allowed = await resolve_accessible_ids(
-        principal, ResourceType.WORKER, ResourceAction.READ, logger
+        principal, ResourceKind.WORKER, ResourceAction.READ, logger
     )
     if allowed is not None:
         workers = [w for w in workers if w.id in allowed]
@@ -54,7 +54,7 @@ async def get_worker(
     logger: logging.Logger = Depends(get_logger),
 ) -> WorkerInfo:
     await require_permission(
-        principal, ResourceType.WORKER, worker_id, ResourceAction.READ, logger
+        principal, ResourceKind.WORKER, worker_id, ResourceAction.READ, logger
     )
     worker = await registry.get_worker_async(worker_id)
     if not worker:
