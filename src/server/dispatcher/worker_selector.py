@@ -234,15 +234,16 @@ def _collect_worker_metrics(worker: Worker) -> dict[str, Any]:
     )
     cost = worker.cost_per_hour if worker.cost_per_hour is not None else 1.0
 
+    gb = 1 << 30
     return {
         "worker_id": worker.id,
         "throughput": throughput,
         "cost": cost,
         "gpu_count": float(gpu_count),
-        "vram_gb": float((total_vram or 0) / (1 << 30)),
-        "shared_gpu_mem_gb": float((shared_gpu_mem or 0) / (1 << 30)),
+        "vram_gb": total_vram / gb,
+        "shared_gpu_mem_gb": shared_gpu_mem / gb,
         "cpu_cores": float(cpu_cores),
-        "sys_ram_gb": float(sys_ram / (1 << 30)),
+        "sys_ram_gb": sys_ram / gb,
     }
 
 

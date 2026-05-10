@@ -29,7 +29,7 @@ _CUDA_DEV_ATTR_INTEGRATED = 18
 
 
 def _is_unified_memory_gpu(name: str) -> bool:
-    return bool(_UNIFIED_GPU_NAME_PATTERN.search(name or ""))
+    return bool(_UNIFIED_GPU_NAME_PATTERN.search(name))
 
 
 @cache
