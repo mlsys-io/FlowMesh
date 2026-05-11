@@ -23,6 +23,7 @@ from flowmesh.models import (
     NodeRegisterResponse,
     NodeWorkerInfo,
     OkResponse,
+    ResultEnvelope,
     StorageInfo,
     TaskInfo,
     TaskType,
@@ -75,6 +76,7 @@ from server.schemas.workflow import (
 )
 from server.task.models import TaskInfo as SrvTaskInfo
 from server.task.models import TaskUsage as SrvTaskUsage
+from shared.schemas.result import ResultEnvelope as SrvResultEnvelope
 from shared.tasks.task_type import TaskType as SrvTaskType
 
 from .helpers import assert_enum_members_match, assert_fields_match
@@ -115,6 +117,8 @@ MODEL_PAIRS = [
     (SrvLogQueryResponse, LogQueryResponse),
     # Common
     (SrvOkResponse, OkResponse),
+    # Results
+    (SrvResultEnvelope, ResultEnvelope),
 ]
 
 

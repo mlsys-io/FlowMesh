@@ -18,7 +18,7 @@ from .nodes import (
     NodeWorkerInfo,
     WorkerRegisterResponse,
 )
-from .results import PathResponse
+from .results import PathResponse, ResultEnvelope
 from .tasks import HardwareUsage, TaskInfo, TaskUsage
 from .traces import (
     ActiveWaitBreakdown,
@@ -75,6 +75,7 @@ __all__ = [
     "NodeRegisterResponse",
     "NodeWorkerInfo",
     "ProfileSummary",
+    "ResultEnvelope",
     "StorageInfo",
     "TaskInfo",
     "TaskStatus",
