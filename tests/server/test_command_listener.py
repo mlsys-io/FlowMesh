@@ -6,6 +6,7 @@ must never raise out of the handler (which would kill the listener thread).
 
 import asyncio
 import logging
+import threading
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -377,13 +378,24 @@ class TestParallelDispatch:
         cl._wm.start_worker = AsyncMock(side_effect=slow_start)  # type: ignore[method-assign]
 
         async def go() -> bool:
-            cl._loop = asyncio.get_running_loop()
-            fut = asyncio.run_coroutine_threadsafe(
-                cl._dispatch(_cmd(CommandType.START_WORKER, {"worker_name": "w-1"})),
-                cl._loop,
-            )
-            cl._inflight.add(fut)
+            loop = asyncio.get_running_loop()
+            cl._loop = loop
+            cmd_obj = _cmd(CommandType.START_WORKER, {"worker_name": "w-1"})
+            submitted = threading.Event()
+            captured: list = []
+
+            def submit_from_producer() -> None:
+                fut = asyncio.run_coroutine_threadsafe(cl._dispatch(cmd_obj), loop)
+                cl._inflight.add(fut)
+                fut.add_done_callback(cl._make_done_callback(cmd_obj, lambda _r: None))
+                captured.append(fut)
+                submitted.set()
+
+            threading.Thread(target=submit_from_producer, daemon=True).start()
+            await asyncio.to_thread(submitted.wait)
+
             await cl._drain_inflight()
+            fut = captured[0]
             return fut.done() and not fut.cancelled()
 
         completed = asyncio.run(go())
