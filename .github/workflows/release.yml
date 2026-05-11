@@ -50,13 +50,13 @@ jobs:
         run: uv sync --all-packages --group dev --frozen
 
       - name: Validate release versions
-        run: uv run python scripts/ci/check_release_version.py --tag "$RELEASE_TAG"
+        run: uv run scripts/ci/check_release_version.py --tag "$RELEASE_TAG"
 
       - name: Build distributions
         run: uv build --all-packages --out-dir dist
 
       - name: Verify distributions
-        run: uv run python scripts/ci/check_package_build.py --dist dist
+        run: uv run scripts/ci/check_package_build.py --dist dist
 
       - name: Upload distributions
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4

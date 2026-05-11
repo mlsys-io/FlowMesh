@@ -44,7 +44,7 @@ the production publish job.
 2. Update package versions and first-party pins:
 
    ```bash
-   uv run python scripts/dev/bump_version.py 0.1.1
+   uv run scripts/dev/bump_version.py 0.1.1
    ```
 
 3. Re-lock:
@@ -56,7 +56,7 @@ the production publish job.
 4. Validate the release metadata:
 
    ```bash
-   uv run python scripts/ci/check_release_version.py --tag v0.1.1
+   uv run scripts/ci/check_release_version.py --tag v0.1.1
    ```
 
 5. Build and smoke-test the distributions:
@@ -64,7 +64,7 @@ the production publish job.
    ```bash
    uv sync --all-packages --group dev --frozen
    uv build --all-packages --out-dir dist
-   uv run python scripts/ci/check_package_build.py --dist dist
+   uv run scripts/ci/check_package_build.py --dist dist
    ```
 
 6. Run the normal validation suite:
@@ -82,7 +82,7 @@ the production publish job.
 After the release prep PR lands, create and push a signed or annotated tag:
 
 ```bash
-git tag -a v0.1.1 -m "v0.1.1"
+git tag -a v0.1.1 -m "chore: release v0.1.1"
 git push origin v0.1.1
 ```
 

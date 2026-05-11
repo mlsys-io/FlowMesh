@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 """Validate built FlowMesh distributions and umbrella extras."""
 
 import argparse
