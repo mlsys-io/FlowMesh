@@ -60,10 +60,10 @@ def test_collect_hw_marks_gb10_as_unified_memory() -> None:
     assert hardware.gpu.cuda_version == "13.0"
     assert hardware.gpu.memory_is_unified is True
     assert hardware.gpu.shared_memory_total_bytes == 131072000 * 1024
-    assert len(hardware.gpu.gpus) == 1
-    assert hardware.gpu.gpus[0].name == "NVIDIA GB10"
-    assert hardware.gpu.gpus[0].uuid == "GPU-GB10"
-    assert hardware.gpu.gpus[0].memory_total_bytes is None
+    assert len(hardware.gpu.devices) == 1
+    assert hardware.gpu.devices[0].name == "NVIDIA GB10"
+    assert hardware.gpu.devices[0].uuid == "GPU-GB10"
+    assert hardware.gpu.devices[0].memory_total_bytes is None
 
 
 class _FallbackNamePynvml(_FakePynvml):
@@ -84,5 +84,5 @@ def test_collect_hw_falls_back_to_name_heuristic_for_integrated_families() -> No
 
     assert hardware.gpu.memory_is_unified is True
     assert hardware.gpu.shared_memory_total_bytes == 131072000 * 1024
-    assert hardware.gpu.gpus[0].name == "NVIDIA Tegra Thor"
-    assert hardware.gpu.gpus[0].memory_total_bytes is None
+    assert hardware.gpu.devices[0].name == "NVIDIA Tegra Thor"
+    assert hardware.gpu.devices[0].memory_total_bytes is None

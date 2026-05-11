@@ -112,7 +112,7 @@ def collect_hw(*, bandwidth_bytes_per_sec: float | None = None) -> WorkerHardwar
     # GPU (NVIDIA)
     driver_version: str | None = None
     cuda_version: str | None = None
-    gpus: list[GpuInfo] = []
+    devices: list[GpuInfo] = []
     unified_memory = False
     try:
         pynvml.nvmlInit()
@@ -136,7 +136,7 @@ def collect_hw(*, bandwidth_bytes_per_sec: float | None = None) -> WorkerHardwar
                     mem_total_raw = None
                 if mem_total_raw:
                     mem_total = int(mem_total_raw)
-            gpus.append(
+            devices.append(
                 GpuInfo(
                     index=idx,
                     name=name,
@@ -149,7 +149,7 @@ def collect_hw(*, bandwidth_bytes_per_sec: float | None = None) -> WorkerHardwar
     gpu = GpuPlatformInfo(
         driver_version=driver_version,
         cuda_version=cuda_version,
-        gpus=gpus,
+        devices=devices,
         memory_is_unified=unified_memory,
         shared_memory_total_bytes=mem.total_bytes if unified_memory else None,
     )

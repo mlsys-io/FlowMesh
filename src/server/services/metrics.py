@@ -891,8 +891,8 @@ class MetricsRecorder:
         gpu_info = hardware.gpu
         total = 0
         found = False
-        gpus = gpu_info.gpus
-        for entry in gpus:
+        devices = gpu_info.devices
+        for entry in devices:
             mem_bytes = entry.memory_total_bytes
             if mem_bytes is not None:
                 if mem_bytes > 0:

@@ -370,7 +370,7 @@ class WorkerRegistry:
         decorated: list[tuple[Worker, int, int, int, int]] = []
         for worker in workers:
             hardware = worker.hardware
-            gpu_entries = [] if hardware is None else hardware.gpu.gpus
+            gpu_entries = [] if hardware is None else hardware.gpu.devices
             gpu_count = len(gpu_entries)
             total_vram = dedicated_gpu_memory_total_bytes(hardware)
             sys_ram = 0 if hardware is None else (hardware.memory.total_bytes or 0)
@@ -519,7 +519,7 @@ def _gpu_meets_requirements(hw: WorkerHardware, gpu_req: GPURequirements) -> boo
         parse_mem_to_bytes(str(required_memory)) if required_memory else None
     )
 
-    entries = hw.gpu.gpus
+    entries = hw.gpu.devices
     if entries:
         if required_count is not None and len(entries) < required_count:
             return False
@@ -541,11 +541,11 @@ def _gpu_meets_requirements(hw: WorkerHardware, gpu_req: GPURequirements) -> boo
         return True
 
     # Fallback when workers report aggregate GPU data instead of per-device entries.
-    count = 0 if hw is None else len(hw.gpu.gpus)
+    count = 0 if hw is None else len(hw.gpu.devices)
     if required_count is not None and count < required_count:
         return False
 
-    first_gpu = hw.gpu.gpus[0] if hw and hw.gpu.gpus else None
+    first_gpu = hw.gpu.devices[0] if hw and hw.gpu.devices else None
     type_value = first_gpu.name if first_gpu else None
     if required_type and not str(type_value or "").strip().lower().startswith(
         required_type
@@ -572,7 +572,7 @@ def dedicated_gpu_memory_total_bytes(hw: WorkerHardware | None) -> int:
     if hw is None:
         return 0
     total = 0
-    for entry in hw.gpu.gpus:
+    for entry in hw.gpu.devices:
         total += entry.memory_total_bytes or 0
     return total
 

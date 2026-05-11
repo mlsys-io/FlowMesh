@@ -213,8 +213,8 @@ def _select_min_capacity(
 
 def _collect_worker_metrics(worker: Worker) -> dict[str, Any]:
     hardware = worker.hardware
-    gpus = [] if hardware is None else hardware.gpu.gpus
-    gpu_count = len(gpus)
+    devices = [] if hardware is None else hardware.gpu.devices
+    gpu_count = len(devices)
     total_vram = dedicated_gpu_memory_total_bytes(hardware)
     sys_ram = 0 if hardware is None else (hardware.memory.total_bytes or 0)
     cpu_cores = 0 if hardware is None else hardware.cpu.logical_cores

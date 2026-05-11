@@ -87,7 +87,7 @@ _SRV_HARDWARE = SrvWorkerHardware(
     cpu=SrvCPUInfo(logical_cores=16, model="AMD EPYC", arch="x86_64"),
     memory=SrvMemoryInfo(total_bytes=68719476736),
     gpu=SrvGpuPlatformInfo(
-        gpus=[
+        devices=[
             SrvGpuInfo(
                 index=0, name="A100", memory_total_bytes=85899345920, uuid="GPU-0"
             )
@@ -115,7 +115,7 @@ _SRV_TASK_USAGE = SrvTaskUsage(
     finished_at="2025-01-15T10:31:00Z",
     runtime_sec=60.0,
     hardware=SharedHardwareUsage(
-        gpu=SharedGpuPlatformInfo(driver_version=None, cuda_version=None, gpus=[])
+        gpu=SharedGpuPlatformInfo(driver_version=None, cuda_version=None, devices=[])
     ),
     cost_per_hour=2.5,
     total_cost=0.042,
@@ -154,7 +154,7 @@ _SHARED_HARDWARE = SharedWorkerHardware(
     gpu=SharedGpuPlatformInfo(
         driver_version=None,
         cuda_version=None,
-        gpus=[
+        devices=[
             SharedGpuInfo(
                 index=0, name="A100", uuid="GPU-0", memory_total_bytes=85899345920
             )

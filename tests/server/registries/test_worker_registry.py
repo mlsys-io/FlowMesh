@@ -28,7 +28,7 @@ def _worker(
     gpu_memory_is_unified: bool = False,
     gpu_shared_memory_total_bytes: int | None = None,
 ) -> Worker:
-    gpus = [
+    devices = [
         GpuInfo(index=i, name=gpu_name, uuid=f"GPU-{i}", memory_total_bytes=gpu_mem)
         for i in range(gpu_count)
     ]
@@ -38,7 +38,7 @@ def _worker(
         gpu=GpuPlatformInfo(
             driver_version=None,
             cuda_version=None,
-            gpus=gpus,
+            devices=devices,
             memory_is_unified=gpu_memory_is_unified,
             shared_memory_total_bytes=gpu_shared_memory_total_bytes,
         ),

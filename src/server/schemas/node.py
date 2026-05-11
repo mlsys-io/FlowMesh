@@ -51,7 +51,9 @@ class GpuInfo(BaseModel):
 class GpuPlatformInfo(BaseModel):
     driver_version: str | None = Field(default=None, description="GPU driver version.")
     cuda_version: str | None = Field(default=None, description="CUDA version.")
-    gpus: list[GpuInfo] = Field(default_factory=list, description="List of GPUs.")
+    devices: list[GpuInfo] = Field(
+        default_factory=list, description="List of GPU devices."
+    )
     memory_is_unified: bool = Field(
         default=False,
         description="Whether GPU memory is a unified/shared system memory pool.",
