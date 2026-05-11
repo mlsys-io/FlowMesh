@@ -321,23 +321,24 @@ class _RewardAdapter(torch.nn.Module):
             return getattr(self.__dict__.get("_lm", object()), name)
 
 
-def _resolve_report_to(log_with: Any) -> str | list[str]:
-    """Translate the template ``training.log_with`` value into PPOConfig.report_to.
+def _resolve_report_to(value: Any) -> str | list[str]:
+    """Translate ``training.report_to`` into the value PPOConfig expects.
 
-    ``None`` or empty disables logging integrations (TRL accepts
-    ``"none"``); a string or list selects integrations such as
-    ``tensorboard`` or ``wandb``.
+    ``None`` (YAML ``null``) and empty strings/lists disable integrations
+    via TRL's ``"none"`` sentinel; strings and lists pass through.
     """
-    if log_with is None:
+    if value is None:
         return "none"
-    if isinstance(log_with, str):
-        value = log_with.strip()
-        return [value] if value else "none"
-    if isinstance(log_with, (list, tuple)):
-        cleaned = [str(v).strip() for v in log_with if str(v).strip()]
+    if isinstance(value, str):
+        stripped = value.strip()
+        return stripped if stripped else "none"
+    if isinstance(value, list):
+        cleaned = [
+            item.strip() for item in value if isinstance(item, str) and item.strip()
+        ]
         return cleaned if cleaned else "none"
     raise ExecutionError(
-        f"training.log_with must be null, str, or list[str]; got {log_with!r}"
+        f"training.report_to must be null, str, or list[str]; got {value!r}"
     )
 
 
@@ -1133,11 +1134,11 @@ class PPOExecutor(TrainingMixin, Executor):
         if save_only_model is not None:
             ppo_ctor_kwargs["save_only_model"] = bool(save_only_model)
 
-        if "log_with" in training_config:
+        if "report_to" in training_config:
             ppo_ctor_kwargs["report_to"] = _resolve_report_to(
-                training_config["log_with"]
+                training_config["report_to"]
             )
-        project = training_config.get("tracker_project_name")
+        project = training_config.get("project")
         if isinstance(project, str) and project:
             ppo_ctor_kwargs["project"] = project
 
@@ -1379,9 +1380,9 @@ class PPOExecutor(TrainingMixin, Executor):
             output_dir: str | None = None, _internal_call: bool = False
         ) -> None:
             backup_model = ppo_trainer.model
-            backup_deepspeed = getattr(ppo_trainer, "deepspeed", None)
             ppo_trainer.model = self._resolve_model_for_save(backup_model)
             if ppo_trainer.is_deepspeed_enabled:
+                backup_deepspeed = ppo_trainer.deepspeed
                 ppo_trainer.deepspeed = ppo_trainer.model  # type: ignore[assignment]
             try:
                 Trainer.save_model(ppo_trainer, output_dir, _internal_call)

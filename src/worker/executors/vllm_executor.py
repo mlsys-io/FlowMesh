@@ -110,19 +110,16 @@ atexit.register(_ensure_destroy_torch_process_group)
 
 
 def _resolve_engine_revision(
-    vllm_revision: Any, source_revision: str | None
+    vllm_revision: str | None, source_revision: str | None
 ) -> str | None:
     """Pick the vLLM ``revision`` arg, preferring ``model.vllm.revision``.
 
     Falls back to ``model.source.revision`` when the vllm-scoped key is
-    absent. Returns ``None`` when neither is set so the caller can omit
-    the kwarg entirely.
+    absent.
     """
     if vllm_revision is not None:
-        return str(vllm_revision)
-    if source_revision:
-        return str(source_revision)
-    return None
+        return vllm_revision
+    return source_revision or None
 
 
 class VLLMExecutor(InferenceMixin, Executor):

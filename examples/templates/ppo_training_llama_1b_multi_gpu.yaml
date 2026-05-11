@@ -55,8 +55,8 @@ spec:
     save_strategy: "no"
     save_model: false
     save_freq: 25
-    log_with: null
-    tracker_project_name: tinyllama-ppo-multi-gpu
+    report_to: null
+    project: tinyllama-ppo-multi-gpu
     fp16: false
     bf16: true
 

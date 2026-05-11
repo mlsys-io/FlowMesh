@@ -40,9 +40,9 @@ class TestResolveReportTo:
         assert _resolve_report_to("") == "none"
         assert _resolve_report_to("   ") == "none"
 
-    def test_string_wraps_in_list(self) -> None:
-        assert _resolve_report_to("wandb") == ["wandb"]
-        assert _resolve_report_to(" tensorboard ") == ["tensorboard"]
+    def test_string_passes_through(self) -> None:
+        assert _resolve_report_to("wandb") == "wandb"
+        assert _resolve_report_to(" tensorboard ") == "tensorboard"
 
     def test_list_passes_through(self) -> None:
         assert _resolve_report_to(["wandb", "tensorboard"]) == [
@@ -77,27 +77,21 @@ class TestPPOConfigMapping:
     def executor(self) -> PPOExecutor:
         return PPOExecutor.__new__(PPOExecutor)
 
-    def test_log_with_null_disables_logging(self, executor: PPOExecutor) -> None:
-        cfg = _build_config(executor, {"log_with": None})
+    def test_report_to_null_disables_logging(self, executor: PPOExecutor) -> None:
+        cfg = _build_config(executor, {"report_to": None})
         # HF TrainingArguments normalizes "none" to an empty integration list.
         assert cfg.report_to == []
 
-    def test_log_with_string_maps_to_report_to_list(
-        self, executor: PPOExecutor
-    ) -> None:
-        cfg = _build_config(executor, {"log_with": "wandb"})
+    def test_report_to_string_passes_through(self, executor: PPOExecutor) -> None:
+        cfg = _build_config(executor, {"report_to": "wandb"})
         assert cfg.report_to == ["wandb"]
 
-    def test_tracker_project_name_maps_to_project(self, executor: PPOExecutor) -> None:
-        cfg = _build_config(
-            executor, {"tracker_project_name": "tinyllama-ppo-training"}
-        )
+    def test_project_passes_through(self, executor: PPOExecutor) -> None:
+        cfg = _build_config(executor, {"project": "tinyllama-ppo-training"})
         assert cfg.project == "tinyllama-ppo-training"
 
     def test_absent_keys_keep_ppoconfig_defaults(self, executor: PPOExecutor) -> None:
         cfg_default = _build_config(executor, {})
-        cfg_explicit = _build_config(executor, {"log_with": "wandb"})
-        # Default project is the HuggingFace TrainingArguments default.
+        cfg_explicit = _build_config(executor, {"report_to": "wandb"})
         assert cfg_default.project == "huggingface"
-        # Explicit log_with applies; default leaves report_to unchanged from HF.
         assert cfg_default.report_to != cfg_explicit.report_to

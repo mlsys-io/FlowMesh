@@ -64,8 +64,8 @@ spec:
     save_strategy: steps
     save_model: true
     save_freq: 25               # Save checkpoint every 25 steps
-    log_with: null              # Options: "tensorboard", "wandb", null
-    tracker_project_name: tinyllama-ppo-training
+    report_to: null              # Options: "tensorboard", "wandb", null
+    project: tinyllama-ppo-training
     fp16: false
     bf16: true
 
