@@ -320,7 +320,7 @@ def _run_supervisor(
         # timed out
         lifecycle.publish_unregister()
         await grpc_server.stop()
-        command_listener.stop()
+        await command_listener.stop()
         await worker_manager.stop()
         relay_service.stop()
         await ssh_relay.stop()

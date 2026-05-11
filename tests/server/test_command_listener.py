@@ -8,6 +8,8 @@ import asyncio
 import logging
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
+
 from server.supervisor.services.command_listener import CommandListener
 from shared.schemas.command import (
     CommandMessage,
@@ -352,6 +354,40 @@ class TestParallelDispatch:
 
         asyncio.run(go())
         assert "w-gone" not in cl._worker_locks
+
+    def test_drain_does_not_block_event_loop(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Regression: stop() runs on the supervisor loop. _drain_inflight()
+        must await cooperatively so the inflight tasks (also on this loop)
+        keep being scheduled. A blocking concurrent.futures.wait() here would
+        starve them and force a cancellation at the drain timeout."""
+        # Short drain timeout so a regression fails fast instead of hanging
+        # for the full 10s default.
+        monkeypatch.setattr(
+            "server.supervisor.services.command_listener._STOP_DRAIN_TIMEOUT", 0.5
+        )
+
+        cl = self._setup()
+
+        async def slow_start(name: str) -> bool:
+            await asyncio.sleep(0.05)
+            return True
+
+        cl._wm.start_worker = AsyncMock(side_effect=slow_start)  # type: ignore[method-assign]
+
+        async def go() -> bool:
+            cl._loop = asyncio.get_running_loop()
+            fut = asyncio.run_coroutine_threadsafe(
+                cl._dispatch(_cmd(CommandType.START_WORKER, {"worker_name": "w-1"})),
+                cl._loop,
+            )
+            cl._inflight.add(fut)
+            await cl._drain_inflight()
+            return fut.done() and not fut.cancelled()
+
+        completed = asyncio.run(go())
+        assert completed, "inflight task was cancelled — drain blocked the loop"
 
     def test_destroy_workers_duplicate_names_does_not_deadlock(self) -> None:
         cl = self._setup()

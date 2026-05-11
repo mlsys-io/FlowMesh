@@ -199,7 +199,7 @@ class CommandListener:
             "Command listener started (max_inflight=%d)", self._max_inflight
         )
 
-    def stop(self) -> None:
+    async def stop(self) -> None:
         if self._thread is None or self._cmd_stream is None:
             self.logger.warning("Command listener not started")
             return
@@ -207,17 +207,17 @@ class CommandListener:
         self._running = False
         self._cmd_stream.close()
         self._cmd_stream = None
-        self._thread.join()
+        await asyncio.to_thread(self._thread.join)
         self._thread = None
 
-        self._drain_inflight()
+        await self._drain_inflight()
 
         self._sem = None
         self._worker_locks = {}
         self._loop = None
         self.logger.info("Command listener stopped")
 
-    def _drain_inflight(self) -> None:
+    async def _drain_inflight(self) -> None:
         inflight = list(self._inflight)
         if not inflight:
             return
@@ -226,7 +226,8 @@ class CommandListener:
             len(inflight),
             _STOP_DRAIN_TIMEOUT,
         )
-        _, not_done = futures.wait(inflight, timeout=_STOP_DRAIN_TIMEOUT)
+        pending = [asyncio.wrap_future(f) for f in inflight]
+        _, not_done = await asyncio.wait(pending, timeout=_STOP_DRAIN_TIMEOUT)
         for fut in not_done:
             fut.cancel()
         if not_done:
