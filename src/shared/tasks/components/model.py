@@ -35,14 +35,14 @@ class AdapterConfig(StrictBaseModel):
 
     @field_validator("apply", mode="before")
     @classmethod
-    def _normalize_apply(cls, value: object) -> object:
+    def _normalize_apply(cls, value: Any) -> Any:
         if isinstance(value, str):
             return value.lower()
         return value
 
     @field_validator("archive_format", mode="before")
     @classmethod
-    def _normalize_archive_format(cls, value: object) -> object:
+    def _normalize_archive_format(cls, value: Any) -> Any:
         if isinstance(value, str):
             return value.lower()
         return value

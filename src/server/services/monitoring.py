@@ -18,6 +18,7 @@ from shared.schemas.event import (
     WorkerEvent,
     parse_event,
 )
+from shared.schemas.result import result_file_path
 from shared.schemas.worker import WorkerStatus
 from shared.utils.manifest import RESULTS_NAME, sync_manifest
 
@@ -46,7 +47,6 @@ from ..hooks import (
 from ..registries.node import NodeRegistry
 from ..registries.worker import WorkerRegistry
 from ..schemas.logs import LogEvent
-from ..schemas.result import result_file_path
 from ..task.metadata import extract_model_dataset_names
 from ..task.models import TaskStatus, TaskUsage
 from ..task.runtime import TaskRuntime

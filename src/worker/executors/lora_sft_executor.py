@@ -31,6 +31,7 @@ from .utils.checkpoints import (
     artifact_ref,
     determine_resume_path,
     maybe_upload_artifacts,
+    write_executor_result,
 )
 from .utils.huggingface import build_hf_load_kwargs, pick_torch_dtype
 
@@ -350,7 +351,7 @@ class LoRASFTExecutor(TrainingMixin, Executor):
         if training_successful:
             return result
 
-        self.save_json(out_dir / "results.json", result)
+        write_executor_result(out_dir / "results.json", task.task_id, task.spec, result)
         message = error_msg or "LoRA SFT training failed"
         raise ExecutionError(message)
 

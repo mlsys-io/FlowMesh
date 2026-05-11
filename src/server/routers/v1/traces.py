@@ -8,6 +8,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from fastapi.responses import StreamingResponse
 
+from shared.schemas.result import result_file_path
 from shared.utils.json import encode_jsonl_bytes, read_jsonl
 
 from ...app_state import get_logger, get_results_dir, get_workflow_registry
@@ -20,7 +21,6 @@ from ...governance import ProfileSummary, analyze
 from ...hooks import ResourceAction, ResourceKind
 from ...registries.workflow import WorkflowRegistry
 from ...schemas.common import PathResponse
-from ...schemas.result import result_file_path
 
 router = APIRouter(prefix="/traces", tags=["Traces"])
 

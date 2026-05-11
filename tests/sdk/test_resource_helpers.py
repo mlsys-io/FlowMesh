@@ -169,20 +169,15 @@ class TestResultHelpers:
             "b.png",
         }
         # base_dir rewritten to the local extracted dir; base_url dropped.
-        assert materialized["result"]["_artifacts"] == {
+        assert materialized["_artifacts"] == {
             "base_dir": task_root.resolve().as_posix()
         }
-        # Per-ref `path` stays relative.
-        assert materialized["result"]["images"] == [
+        assert materialized["images"] == [
             {"path": "images/a.png"},
             {"path": "images/b.png"},
         ]
-        # Persisted results.json mirrors the mutated payload.
         on_disk = json.loads(json_path.read_text())
-        assert (
-            on_disk["result"]["_artifacts"]["base_dir"]
-            == task_root.resolve().as_posix()
-        )
+        assert on_disk == materialized
 
     def test_sync_materialize_result_only_does_not_rewrite(
         self, tmp_path: Path
@@ -208,8 +203,7 @@ class TestResultHelpers:
         assert client.download_paths == ["/results/task-1/bundle?include=results"]
         assert json_path.is_file()
         assert {p.name for p in extracted} == {"results.json"}
-        # No artifacts extracted → ctx is left intact.
-        assert materialized["result"]["_artifacts"] == {
+        assert materialized["_artifacts"] == {
             "base_dir": "/worker/results/task-1",
             "base_url": "http://host:8010",
         }
@@ -253,7 +247,7 @@ class TestResultHelpers:
         task_root = tmp_path / "task-1"
         assert json_path == task_root / "results.json"
         assert {p.name for p in extracted} == {"results.json", "a.png"}
-        assert materialized["result"]["_artifacts"] == {
+        assert materialized["_artifacts"] == {
             "base_dir": task_root.resolve().as_posix()
         }
         assert [path.name for path in output_paths] == ["a.txt"]

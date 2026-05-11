@@ -129,12 +129,6 @@ class Executor(ABC):
         path.mkdir(parents=True, exist_ok=True)
 
     @staticmethod
-    def save_json(path: Path, data: dict[str, Any]) -> None:
-        Executor.ensure_dir(path.parent)
-        with path.open("w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-
-    @staticmethod
     def load_json(path: Path) -> dict[str, Any]:
         with path.open("r", encoding="utf-8") as f:
             return json.load(f)

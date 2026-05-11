@@ -21,7 +21,11 @@ from worker.config import WorkerConfig
 from worker.lifecycle import Lifecycle
 
 from .base_executor import ExecutionError, Executor, ExecutorTask
-from .utils.checkpoints import artifact_ref, maybe_upload_artifacts
+from .utils.checkpoints import (
+    artifact_ref,
+    maybe_upload_artifacts,
+    write_executor_result,
+)
 from .utils.graph_templates import build_prompts_from_graph_template
 
 # Add agent directory to sys.path for utu imports
@@ -322,7 +326,9 @@ class AgentExecutor(Executor):
                     "execution_log": [],
                 },
             }
-            self.save_json(out_dir / "results.json", error_output)
+            write_executor_result(
+                out_dir / "results.json", task.task_id, task.spec, error_output
+            )
             raise ExecutionError(f"Agent execution failed: {e}") from e
 
     async def _run_agent_task(

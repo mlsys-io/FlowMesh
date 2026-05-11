@@ -9,6 +9,7 @@ from typing import Any
 from pydantic import BaseModel, ValidationError
 
 from shared.schemas.event import TaskEvent
+from shared.schemas.result import ResultPayload, result_file_path, write_result
 from shared.tasks import (
     MergedChildTaskStrict,
     TaskEnvelope,
@@ -24,7 +25,6 @@ from shared.tasks.specs import (
 from shared.tasks.worker_message import WorkerStatus, WorkerTaskMessage
 
 from ..registries.worker import Worker, WorkerRegistry
-from ..schemas.result import ResultPayload, result_file_path, write_result
 from ..services.metrics import MetricsRecorder
 from ..task.metadata import extract_model_dataset_names
 from ..task.models import TaskRecord, TaskStatus
@@ -922,13 +922,7 @@ class Dispatcher:
                 f"Result for task {stage_task_id} not found at {path}"
             )
         content = json.loads(path.read_text(encoding="utf-8"))
-        if (
-            isinstance(content, dict)
-            and isinstance(content.get("result"), dict)
-            and "received_at" in content
-        ):
-            return ResultPayload.model_validate(content).result
-        return content
+        return ResultPayload.model_validate(content).result
 
     def _dig_path(self, data: Any, parts: list[str]) -> Any:
         current = data
@@ -996,10 +990,10 @@ class Dispatcher:
                 condition.equals,
                 actual_value,
             )
-            skip_result: dict[str, Any] = {
-                "task_id": task_id,
-                "result": {},
-                "metadata": {
+            skip_result = ResultPayload(
+                task_id=task_id,
+                result={},
+                metadata={
                     "skipped": True,
                     "reason": "condition_not_met",
                     "condition_node": condition.node,
@@ -1007,8 +1001,8 @@ class Dispatcher:
                     "condition_expected": condition.equals,
                     "condition_actual": str(actual_value),
                 },
-            }
-            write_result(self._results_dir, task_id, skip_result)
+            )
+            write_result(self._results_dir, skip_result)
             self._runtime.release_merge(task_id)
             ts = now_iso()
             self._runtime.mark_succeeded(

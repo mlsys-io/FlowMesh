@@ -232,12 +232,21 @@ def test_collect_upstream_results_excludes_unrelated_completed_stages(
     pre_dir = tmp_path / "task-pre"
     pre_dir.mkdir()
     (pre_dir / "results.json").write_text(
-        '{"responses": [{"output": "pre"}]}', encoding="utf-8"
+        json.dumps(
+            {"task_id": "task-pre", "result": {"responses": [{"output": "pre"}]}}
+        ),
+        encoding="utf-8",
     )
     other_dir = tmp_path / "task-other"
     other_dir.mkdir()
     (other_dir / "results.json").write_text(
-        '{"responses": [{"output": "other"}]}', encoding="utf-8"
+        json.dumps(
+            {
+                "task_id": "task-other",
+                "result": {"responses": [{"output": "other"}]},
+            }
+        ),
+        encoding="utf-8",
     )
 
     upstream = TaskRecord(
@@ -307,10 +316,13 @@ def test_stage_reference_uses_payload_root_for_local_and_http_results(
     (local_dir / "results.json").write_text(
         json.dumps(
             {
-                "final_lora_archive": {"path": "final_lora.tar.gz"},
-                "_artifacts": {
-                    "base_dir": local_dir.as_posix(),
-                    "base_url": None,
+                "task_id": "task-local",
+                "result": {
+                    "final_lora_archive": {"path": "final_lora.tar.gz"},
+                    "_artifacts": {
+                        "base_dir": local_dir.as_posix(),
+                        "base_url": None,
+                    },
                 },
             }
         ),

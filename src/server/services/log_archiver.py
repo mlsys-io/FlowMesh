@@ -6,6 +6,7 @@ from pathlib import Path
 from threading import Event
 from typing import Any
 
+from shared.schemas.result import result_file_path
 from shared.utils.manifest import sync_manifest
 
 from ..clients.redis import (
@@ -14,7 +15,6 @@ from ..clients.redis import (
     task_log_archive_last_id_key,
     task_log_stream_key,
 )
-from ..schemas.result import result_file_path
 from ..task.models import TaskStatus
 from ..task.runtime import TaskRuntime
 

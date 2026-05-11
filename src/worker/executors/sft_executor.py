@@ -36,6 +36,7 @@ from .utils.checkpoints import (
     determine_resume_path,
     get_http_destination,
     maybe_upload_artifacts,
+    write_executor_result,
 )
 from .utils.data_utils import resolve_jsonl_path
 from .utils.distributed import deepspeed_available, run_deepspeed, run_torchrun
@@ -504,7 +505,7 @@ class SFTExecutor(TrainingMixin, Executor):
                 str(resume_path) if "resume_path" in locals() and resume_path else None
             ),
         }
-        self.save_json(out_dir / "results.json", result)
+        write_executor_result(out_dir / "results.json", task.task_id, task.spec, result)
         if caught_exc is not None:
             self._task_out_dir = None
             raise ExecutionError(error_msg or "SFT training failed") from caught_exc

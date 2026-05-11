@@ -11,6 +11,7 @@ from urllib.parse import urlparse
 
 import requests
 
+from shared.schemas.result import write_result_envelope
 from shared.tasks.specs import TaskSpecStrictBase
 from shared.utils.parsing import parse_bool_env
 
@@ -410,6 +411,17 @@ def build_artifact_context(spec: TaskSpecStrictBase, out_dir: Path) -> dict[str,
         if parsed.scheme and parsed.netloc:
             base_url = f"{parsed.scheme}://{parsed.netloc}"
     return {"base_dir": base_dir, "base_url": base_url}
+
+
+def write_executor_result(
+    path: Path,
+    task_id: str,
+    spec: TaskSpecStrictBase,
+    result: dict[str, Any],
+) -> None:
+    """Stamp ``_artifacts`` onto ``result`` and persist the envelope."""
+    result["_artifacts"] = build_artifact_context(spec, path.parent)
+    write_result_envelope(path, task_id, result)
 
 
 def maybe_upload_artifacts(

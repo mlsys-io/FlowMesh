@@ -44,6 +44,7 @@ from .utils.checkpoints import (
     artifact_ref,
     get_http_destination,
     maybe_upload_artifacts,
+    write_executor_result,
 )
 from .utils.data_utils import resolve_jsonl_path
 from .utils.distributed import run_torchrun
@@ -834,7 +835,9 @@ class PPOExecutor(TrainingMixin, Executor):
                 "dataset_size": dataset_size,
                 "output_dir": out_dir.as_posix(),
             }
-            self.save_json(out_dir / "results.json", results)
+            write_executor_result(
+                out_dir / "results.json", task.task_id, task.spec, results
+            )
             self._task_out_dir = None
             raise ExecutionError(error_msg or "PPO training failed") from exc
 

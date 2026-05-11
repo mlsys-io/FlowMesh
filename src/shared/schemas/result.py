@@ -1,4 +1,5 @@
-import json
+"""Result envelope schema shared by server and worker."""
+
 from pathlib import Path
 from typing import Any
 
@@ -6,8 +7,7 @@ from pydantic import BaseModel, Field
 
 from shared.utils.atomic import atomic_write_text
 from shared.utils.manifest import prepare_output_dir
-
-from ..utils.time import now_iso
+from shared.utils.time import now_iso
 
 
 class ResultPayload(BaseModel):
@@ -32,12 +32,19 @@ def result_file_path(base_dir: Path, task_id: str) -> Path:
     return base_dir / _sanitize_task_id(task_id) / "results.json"
 
 
-def write_result(base_dir: Path, task_id: str, content: dict[str, Any]) -> Path:
-    path = result_file_path(base_dir, task_id)
+def write_result(base_dir: Path, payload: ResultPayload) -> Path:
+    path = result_file_path(base_dir, payload.task_id)
     prepare_output_dir(path.parent)
     path.parent.mkdir(parents=True, exist_ok=True)
-    atomic_write_text(path, json.dumps(content, ensure_ascii=False, indent=2))
+    atomic_write_text(path, payload.model_dump_json(indent=2))
     return path
+
+
+def write_result_envelope(path: Path, task_id: str, result: dict[str, Any]) -> None:
+    """Persist ``result`` at ``path`` wrapped in a ``ResultPayload`` envelope."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = ResultPayload(task_id=task_id, result=result)
+    atomic_write_text(path, payload.model_dump_json(indent=2))
 
 
 def read_result(base_dir: Path, task_id: str) -> str:

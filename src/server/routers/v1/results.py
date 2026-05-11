@@ -17,7 +17,14 @@ from fastapi import (
     status,
 )
 from fastapi.responses import FileResponse
+from pydantic import ValidationError
 
+from shared.schemas.result import (
+    ResultPayload,
+    read_result,
+    result_file_path,
+    write_result,
+)
 from shared.utils.atomic import atomic_write_text
 from shared.utils.manifest import ARTIFACTS_DIR, LOGS_DIR, RESULTS_NAME, sync_manifest
 
@@ -34,7 +41,6 @@ from ...auth.security import (
 )
 from ...hooks import ResourceAction, ResourceKind
 from ...schemas.common import PathResponse
-from ...schemas.result import ResultPayload, read_result, result_file_path, write_result
 from ...services.monitoring import EventMonitor
 from ...task.models import TERMINAL_TASK_STATUSES
 from ...task.runtime import TaskRuntime
@@ -78,17 +84,10 @@ async def ingest_result(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="task_id is required"
         )
-
-    content = {
-        "task_id": task_id,
-        "worker_id": payload.worker_id,
-        "metadata": payload.metadata,
-        "received_at": payload.received_at,
-        "result": payload.result,
-    }
+    payload.task_id = task_id
 
     try:
-        path = write_result(results_dir, task_id, content)
+        path = write_result(results_dir, payload)
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -138,9 +137,19 @@ async def get_result(
             detail=f"Failed to read result: {exc}",
         ) from exc
     try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
-        return {"task_id": task_id, "raw": raw}
+        content = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Result file is not valid JSON: {exc}",
+        ) from exc
+    try:
+        return ResultPayload.model_validate(content).result
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Result file does not match ResultPayload: {exc}",
+        ) from exc
 
 
 @router.post(
