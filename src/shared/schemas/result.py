@@ -40,8 +40,8 @@ def write_result(base_dir: Path, envelope: ResultEnvelope) -> Path:
     return path
 
 
-def write_result_envelope(path: Path, task_id: str, result: dict[str, Any]) -> None:
-    """Persist ``result`` at ``path`` wrapped in a ``ResultEnvelope``."""
+def write_result_in_envelope(path: Path, task_id: str, result: dict[str, Any]) -> None:
+    """Wrap ``result`` in a ``ResultEnvelope`` and persist it at ``path``."""
     path.parent.mkdir(parents=True, exist_ok=True)
     envelope = ResultEnvelope(task_id=task_id, result=result)
     atomic_write_text(path, envelope.model_dump_json(indent=2))

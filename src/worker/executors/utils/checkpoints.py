@@ -11,7 +11,7 @@ from urllib.parse import urlparse
 
 import requests
 
-from shared.schemas.result import write_result_envelope
+from shared.schemas.result import write_result_in_envelope
 from shared.tasks.specs import TaskSpecStrictBase
 from shared.utils.parsing import parse_bool_env
 
@@ -421,7 +421,7 @@ def write_executor_result(
 ) -> None:
     """Stamp ``_artifacts`` onto ``result`` and persist the envelope."""
     result["_artifacts"] = build_artifact_context(spec, path.parent)
-    write_result_envelope(path, task_id, result)
+    write_result_in_envelope(path, task_id, result)
 
 
 def maybe_upload_artifacts(
