@@ -1,4 +1,3 @@
-#!/usr/bin/env python
 """Update synchronized FlowMesh package versions and internal pins."""
 
 import argparse

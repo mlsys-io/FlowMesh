@@ -1,4 +1,3 @@
-#!/usr/bin/env python
 """Validate synchronized package versions for a FlowMesh release."""
 
 import argparse
