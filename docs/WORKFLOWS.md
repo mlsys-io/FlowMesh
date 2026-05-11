@@ -1,7 +1,7 @@
 # Workflow YAML format
 
 Workflows are submitted as YAML (or JSON) to `POST /api/v1/workflows`
-(see [`docs/API.md`](API.md)). The `templates/` directory contains
+(see [`docs/API.md`](API.md)). The `examples/templates/` directory contains
 runnable examples for each shape; this page documents the spec
 hierarchy and the cross-cutting features.
 

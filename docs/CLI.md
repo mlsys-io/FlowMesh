@@ -28,7 +28,7 @@ flowmesh stack worker {up, start, stop, down, list, pull}
 Submit a workflow and watch it:
 
 ```bash
-flowmesh workflow submit templates/echo_local.yaml
+flowmesh workflow submit examples/templates/echo_local.yaml
 flowmesh workflow watch <wfl-id>              # blocks until DONE / FAILED
 flowmesh workflow logs show <wfl-id>          # recent log entries
 flowmesh workflow logs stream <wfl-id>        # SSE log stream

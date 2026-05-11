@@ -15,7 +15,7 @@ from flowmesh import FlowMesh
 client = FlowMesh(base_url="http://localhost:8000", api_key="...")
 
 # Submit a workflow from a YAML file.
-workflow_text = open("templates/echo_local.yaml").read()
+workflow_text = open("examples/templates/echo_local.yaml").read()
 wf = client.workflows.submit(workflow_text)
 
 # Stream logs until the workflow finishes.

@@ -60,7 +60,7 @@ Run a simple agent task using one of the bundled templates:
 
 ```bash
 # From the repo root, with the stack already up and a worker running
-uv run flowmesh workflow submit templates/agent_query_search.yaml
+uv run flowmesh workflow submit examples/templates/agent_query_search.yaml
 ```
 
 ## Available Agent Configurations
@@ -76,11 +76,11 @@ The integration supports multiple pre-configured agent types:
 
 ## Task Templates
 
-Use the provided YAML templates in the `templates/` directory:
+Use the provided YAML templates in the `examples/templates/` directory:
 
 ### Basic Search Agent
 ```yaml
-# templates/agent_query_search.yaml
+# examples/templates/agent_query_search.yaml
 apiVersion: flowmesh/v1
 kind: AgentTask
 spec:
@@ -91,7 +91,7 @@ spec:
 
 ### Academic Paper Collector
 ```yaml
-# templates/agent_paper_collector.yaml
+# examples/templates/agent_paper_collector.yaml
 apiVersion: flowmesh/v1
 kind: AgentTask
 spec:

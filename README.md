@@ -70,7 +70,7 @@ uv run flowmesh stack up
 uv run flowmesh stack worker up cpu 1
 
 # 4. Submit a workflow
-uv run flowmesh workflow submit templates/echo_local.yaml
+uv run flowmesh workflow submit examples/templates/echo_local.yaml
 
 # 5. Watch it run
 uv run flowmesh workflow list
@@ -87,8 +87,8 @@ uv run flowmesh stack worker up gpu --targets 0
 For inference templates:
 
 ```bash
-uv run flowmesh workflow submit templates/inference_vllm_chat.yaml
-uv run flowmesh workflow submit templates/inference_hf_chat.yaml
+uv run flowmesh workflow submit examples/templates/inference_vllm_chat.yaml
+uv run flowmesh workflow submit examples/templates/inference_hf_chat.yaml
 ```
 
 Tear down:
@@ -125,7 +125,7 @@ spec:
 ```
 
 Multi-stage DAGs, conditional execution, graph-template prompts, task merging,
-and SSH sessions are all supported. See `templates/` for end-to-end examples
+and SSH sessions are all supported. See `examples/templates/` for end-to-end examples
 and `AGENTS.md` for the full schema reference.
 
 ## Extending FlowMesh

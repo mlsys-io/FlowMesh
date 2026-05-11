@@ -42,7 +42,7 @@ and artifacts.
 - **[`docs/PLUGINS.md`](docs/PLUGINS.md)** — plugin extension contract,
   loader semantics (`FLOWMESH_PLUGINS`), and a worked example.
 
-Concrete examples and runnable workflows live in `templates/`.
+Concrete examples and runnable workflows live in `examples/templates/`.
 When code, APIs, CLI commands, SDK methods, env vars, workflow formats, or
 runtime behavior change, update the corresponding docs in the same PR.
 

@@ -6,7 +6,7 @@ import pytest
 
 from server.task.parser import parse_workflow
 
-TEMPLATE_DIR = Path(__file__).resolve().parents[3] / "templates"
+TEMPLATE_DIR = Path(__file__).resolve().parents[3] / "examples" / "templates"
 TEMPLATE_PATHS = sorted(TEMPLATE_DIR.glob("*.yaml"))
 
 
