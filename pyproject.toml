@@ -4,6 +4,8 @@ version = "0.1.0"
 description = "FlowMesh: A Multi-tenant Service Fabric for LLM Agentic Workflows"
 readme = "README.md"
 requires-python = ">=3.12"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
 dependencies = []
 
 [project.optional-dependencies]
@@ -167,7 +169,7 @@ ci = [
 ]
 
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
