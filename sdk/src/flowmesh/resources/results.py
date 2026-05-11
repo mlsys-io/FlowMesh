@@ -7,20 +7,8 @@ from collections.abc import AsyncIterable, Iterable
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
-
+from ..models.results import ResultEnvelope
 from ._base import AsyncResource, SyncResource
-
-
-class _ResultEnvelope(BaseModel):
-    """Local mirror of server-side ``ResultPayload`` for SDK validation."""
-
-    task_id: str
-    result: dict[str, Any]
-    worker_id: str | None = None
-    metadata: dict[str, Any] | None = None
-    received_at: str | None = Field(default=None)
-
 
 type BundleSection = Literal["results", "artifacts", "logs", "all"]
 
@@ -204,18 +192,19 @@ def _finalize_materialize(
     sections: tuple[BundleSection, ...],
     extracted: list[Path],
 ) -> tuple[dict[str, Any], Path, list[Path]]:
-    """Unwrap the envelope and point _artifacts at the local extracted dir."""
+    """Validate the envelope and point _artifacts at the local extracted dir."""
     json_path = output_dir / task_id / "results.json"
     if not json_path.is_file():
         return {}, json_path, extracted
 
-    result = _ResultEnvelope.model_validate_json(json_path.read_text()).result
+    envelope = ResultEnvelope.model_validate_json(json_path.read_text())
     if _wants_artifacts(sections):
-        ctx = result["_artifacts"]
+        ctx = envelope.result["_artifacts"]
         ctx["base_dir"] = (output_dir / task_id).resolve().as_posix()
         ctx.pop("base_url", None)
-    json_path.write_text(json.dumps(result, indent=2))
-    return result, json_path, extracted
+    payload = envelope.model_dump(mode="json")
+    json_path.write_text(json.dumps(payload, indent=2))
+    return payload, json_path, extracted
 
 
 def _wants_artifacts(sections: tuple[BundleSection, ...]) -> bool:

@@ -168,11 +168,12 @@ class TestResultHelpers:
             "a.png",
             "b.png",
         }
-        # base_dir rewritten to the local extracted dir; base_url dropped.
-        assert materialized["_artifacts"] == {
+        # Full envelope returned; base_dir rewritten, base_url dropped.
+        assert materialized["task_id"] == "task-1"
+        assert materialized["result"]["_artifacts"] == {
             "base_dir": task_root.resolve().as_posix()
         }
-        assert materialized["images"] == [
+        assert materialized["result"]["images"] == [
             {"path": "images/a.png"},
             {"path": "images/b.png"},
         ]
@@ -203,7 +204,7 @@ class TestResultHelpers:
         assert client.download_paths == ["/results/task-1/bundle?include=results"]
         assert json_path.is_file()
         assert {p.name for p in extracted} == {"results.json"}
-        assert materialized["_artifacts"] == {
+        assert materialized["result"]["_artifacts"] == {
             "base_dir": "/worker/results/task-1",
             "base_url": "http://host:8010",
         }
@@ -247,7 +248,7 @@ class TestResultHelpers:
         task_root = tmp_path / "task-1"
         assert json_path == task_root / "results.json"
         assert {p.name for p in extracted} == {"results.json", "a.png"}
-        assert materialized["_artifacts"] == {
+        assert materialized["result"]["_artifacts"] == {
             "base_dir": task_root.resolve().as_posix()
         }
         assert [path.name for path in output_paths] == ["a.txt"]

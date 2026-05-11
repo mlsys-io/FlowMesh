@@ -10,7 +10,7 @@ from shared.utils.manifest import prepare_output_dir
 from shared.utils.time import now_iso
 
 
-class ResultPayload(BaseModel):
+class ResultEnvelope(BaseModel):
     task_id: str = Field(description="Task identifier.")
     result: dict[str, Any] = Field(description="Result payload data.")
     worker_id: str | None = Field(
@@ -32,19 +32,19 @@ def result_file_path(base_dir: Path, task_id: str) -> Path:
     return base_dir / _sanitize_task_id(task_id) / "results.json"
 
 
-def write_result(base_dir: Path, payload: ResultPayload) -> Path:
-    path = result_file_path(base_dir, payload.task_id)
+def write_result(base_dir: Path, envelope: ResultEnvelope) -> Path:
+    path = result_file_path(base_dir, envelope.task_id)
     prepare_output_dir(path.parent)
     path.parent.mkdir(parents=True, exist_ok=True)
-    atomic_write_text(path, payload.model_dump_json(indent=2))
+    atomic_write_text(path, envelope.model_dump_json(indent=2))
     return path
 
 
 def write_result_envelope(path: Path, task_id: str, result: dict[str, Any]) -> None:
-    """Persist ``result`` at ``path`` wrapped in a ``ResultPayload`` envelope."""
+    """Persist ``result`` at ``path`` wrapped in a ``ResultEnvelope``."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    payload = ResultPayload(task_id=task_id, result=result)
-    atomic_write_text(path, payload.model_dump_json(indent=2))
+    envelope = ResultEnvelope(task_id=task_id, result=result)
+    atomic_write_text(path, envelope.model_dump_json(indent=2))
 
 
 def read_result(base_dir: Path, task_id: str) -> str:

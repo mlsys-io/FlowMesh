@@ -9,7 +9,7 @@ from typing import Any
 from pydantic import BaseModel, ValidationError
 
 from shared.schemas.event import TaskEvent
-from shared.schemas.result import ResultPayload, result_file_path, write_result
+from shared.schemas.result import ResultEnvelope, result_file_path, write_result
 from shared.tasks import (
     MergedChildTaskStrict,
     TaskEnvelope,
@@ -922,7 +922,7 @@ class Dispatcher:
                 f"Result for task {stage_task_id} not found at {path}"
             )
         content = json.loads(path.read_text(encoding="utf-8"))
-        return ResultPayload.model_validate(content).result
+        return ResultEnvelope.model_validate(content).result
 
     def _dig_path(self, data: Any, parts: list[str]) -> Any:
         current = data
@@ -990,7 +990,7 @@ class Dispatcher:
                 condition.equals,
                 actual_value,
             )
-            skip_result = ResultPayload(
+            skip_envelope = ResultEnvelope(
                 task_id=task_id,
                 result={},
                 metadata={
@@ -1002,7 +1002,7 @@ class Dispatcher:
                     "condition_actual": str(actual_value),
                 },
             )
-            write_result(self._results_dir, skip_result)
+            write_result(self._results_dir, skip_envelope)
             self._runtime.release_merge(task_id)
             ts = now_iso()
             self._runtime.mark_succeeded(
