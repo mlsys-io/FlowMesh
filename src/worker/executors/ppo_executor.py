@@ -1379,7 +1379,7 @@ class PPOExecutor(TrainingMixin, Executor):
             output_dir: str | None = None, _internal_call: bool = False
         ) -> None:
             backup_model = ppo_trainer.model
-            backup_deepspeed = ppo_trainer.deepspeed
+            backup_deepspeed = getattr(ppo_trainer, "deepspeed", None)
             ppo_trainer.model = self._resolve_model_for_save(backup_model)
             if ppo_trainer.is_deepspeed_enabled:
                 ppo_trainer.deepspeed = ppo_trainer.model  # type: ignore[assignment]
