@@ -62,7 +62,7 @@ class ResourceManager:
     ) -> tuple[list[int], GpuArch]:
         """Atomically reserve GPUs and return their indices and architecture.
 
-        Either ``devices``(validate that the explicit set is free) or ``n``
+        Either ``devices`` (validate that the explicit set is free) or ``n``
         (auto-pick the lowest N free indices) must be given, not both.
         Selection, arch-consistency check, and removal from the available set
         run as one synchronous block, so concurrent callers on the same event

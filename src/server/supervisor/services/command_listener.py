@@ -218,15 +218,14 @@ class CommandListener:
         self.logger.info("Command listener stopped")
 
     async def _drain_inflight(self) -> None:
-        inflight = list(self._inflight)
-        if not inflight:
+        if not self._inflight:
             return
+        pending = [asyncio.wrap_future(f) for f in self._inflight]
         self.logger.info(
             "Draining %d inflight command(s) (timeout=%.1fs)",
-            len(inflight),
+            len(pending),
             _STOP_DRAIN_TIMEOUT,
         )
-        pending = [asyncio.wrap_future(f) for f in inflight]
         _, not_done = await asyncio.wait(pending, timeout=_STOP_DRAIN_TIMEOUT)
         for fut in not_done:
             fut.cancel()
