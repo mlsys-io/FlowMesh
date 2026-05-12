@@ -118,3 +118,131 @@ def test_malformed_inspect_json_raises(retag_module, monkeypatch):
     monkeypatch.setattr(retag_module, "_imagetools_inspect", fake)
     with pytest.raises(retag_module.MissingVersionLabel):
         retag_module._existing_latest_version("/usr/bin/docker", "ghcr.io/foo")
+
+
+def _wire_existing(retag_module, monkeypatch, mapping):
+    def fake(docker: str, latest_ref: str):
+        value = mapping.get(latest_ref, mapping.get("__default__"))
+        if isinstance(value, Exception):
+            raise value
+        return value
+
+    monkeypatch.setattr(retag_module, "_existing_latest_version", fake)
+
+
+def test_plan_retags_invalid_tag_exits(retag_module, monkeypatch, capsys):
+    monkeypatch.setattr(retag_module, "_existing_latest_version", MagicMock())
+    with pytest.raises(SystemExit) as exc:
+        retag_module._plan_retags(
+            "/usr/bin/docker", "not-a-version", "ghcr.io/mlsys-io", force=False
+        )
+    assert exc.value.code == 1
+    assert "is not PEP 440" in capsys.readouterr().err
+
+
+def test_plan_retags_all_missing_plans_full_set(retag_module, monkeypatch):
+    _wire_existing(retag_module, monkeypatch, {"__default__": None})
+    plan = retag_module._plan_retags(
+        "/usr/bin/docker", "v0.1.0", "ghcr.io/mlsys-io", force=False
+    )
+    assert len(plan) == 6
+    for source_ref, latest_ref in plan:
+        assert ":v0.1.0" in source_ref
+        assert ":latest" in latest_ref
+
+
+def test_plan_retags_older_latest_proceeds(retag_module, monkeypatch):
+    _wire_existing(retag_module, monkeypatch, {"__default__": Version("0.0.9")})
+    plan = retag_module._plan_retags(
+        "/usr/bin/docker", "v0.1.0", "ghcr.io/mlsys-io", force=False
+    )
+    assert len(plan) == 6
+
+
+def test_plan_retags_equal_latest_aborts(retag_module, monkeypatch, capsys):
+    _wire_existing(retag_module, monkeypatch, {"__default__": Version("0.1.0")})
+    with pytest.raises(SystemExit) as exc:
+        retag_module._plan_retags(
+            "/usr/bin/docker", "v0.1.0", "ghcr.io/mlsys-io", force=False
+        )
+    assert exc.value.code == 1
+    assert "already points at version 0.1.0" in capsys.readouterr().err
+
+
+def test_plan_retags_newer_latest_aborts(retag_module, monkeypatch, capsys):
+    _wire_existing(retag_module, monkeypatch, {"__default__": Version("0.2.0")})
+    with pytest.raises(SystemExit) as exc:
+        retag_module._plan_retags(
+            "/usr/bin/docker", "v0.1.0", "ghcr.io/mlsys-io", force=False
+        )
+    assert exc.value.code == 1
+    assert "already points at version 0.2.0" in capsys.readouterr().err
+
+
+def test_plan_retags_force_overrides_newer(retag_module, monkeypatch):
+    _wire_existing(retag_module, monkeypatch, {"__default__": Version("0.2.0")})
+    plan = retag_module._plan_retags(
+        "/usr/bin/docker", "v0.1.0", "ghcr.io/mlsys-io", force=True
+    )
+    assert len(plan) == 6
+
+
+def test_plan_retags_missing_label_aborts_without_force(
+    retag_module, monkeypatch, capsys
+):
+    _wire_existing(
+        retag_module,
+        monkeypatch,
+        {"__default__": retag_module.MissingVersionLabel("latest: no readable label")},
+    )
+    with pytest.raises(SystemExit) as exc:
+        retag_module._plan_retags(
+            "/usr/bin/docker", "v0.1.0", "ghcr.io/mlsys-io", force=False
+        )
+    assert exc.value.code == 1
+    assert "no readable label" in capsys.readouterr().err
+
+
+def test_plan_retags_missing_label_with_force_proceeds(retag_module, monkeypatch):
+    _wire_existing(
+        retag_module,
+        monkeypatch,
+        {"__default__": retag_module.MissingVersionLabel("latest: no readable label")},
+    )
+    plan = retag_module._plan_retags(
+        "/usr/bin/docker", "v0.1.0", "ghcr.io/mlsys-io", force=True
+    )
+    assert len(plan) == 6
+
+
+def test_plan_retags_transient_aborts_without_force(retag_module, monkeypatch, capsys):
+    _wire_existing(
+        retag_module,
+        monkeypatch,
+        {"__default__": retag_module.TransientInspectError("registry 503")},
+    )
+    with pytest.raises(SystemExit) as exc:
+        retag_module._plan_retags(
+            "/usr/bin/docker", "v0.1.0", "ghcr.io/mlsys-io", force=False
+        )
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert "registry 503" in err
+    assert "downgrade guard" in err
+
+
+def test_plan_retags_transient_with_force_warns_and_proceeds(
+    retag_module, monkeypatch, capsys
+):
+    _wire_existing(
+        retag_module,
+        monkeypatch,
+        {"__default__": retag_module.TransientInspectError("registry 503")},
+    )
+    plan = retag_module._plan_retags(
+        "/usr/bin/docker", "v0.1.0", "ghcr.io/mlsys-io", force=True
+    )
+    assert len(plan) == 6
+    err = capsys.readouterr().err
+    assert "guard is OFF" in err or "downgrade guard" in err
+    assert "silently move :latest backward" in err
