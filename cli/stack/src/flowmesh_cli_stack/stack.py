@@ -481,7 +481,12 @@ def down(
     logging.info("Draining workers...")
     _drain_workers(env_file)
     logging.info("Shutting down the FlowMesh stack...")
-    _compose(["down"], env_file=env_file, env=image_env_overrides(image_tag))
+    _compose(
+        ["down"],
+        env_file=env_file,
+        env=image_env_overrides(image_tag),
+        profile="root",
+    )
     logging.success("FlowMesh stack stopped.")
 
 
@@ -497,7 +502,12 @@ def restart(
     """Drain workers and restart the stack."""
     logging.info("Draining workers...")
     _drain_workers(env_file)
-    _compose(["down"], env_file=env_file, env=image_env_overrides(image_tag))
+    _compose(
+        ["down"],
+        env_file=env_file,
+        env=image_env_overrides(image_tag),
+        profile="root",
+    )
     profile = "root" if _node_role(env_file) == "root" else None
     _compose(
         ["up", "-d", "--wait"],
@@ -569,7 +579,12 @@ def clean(
     logging.info("Draining workers...")
     _drain_workers(env_file)
     logging.info("Removing stack containers and volumes...")
-    _compose(["down", "-v"], env_file=env_file, env=image_env_overrides(image_tag))
+    _compose(
+        ["down", "-v"],
+        env_file=env_file,
+        env=image_env_overrides(image_tag),
+        profile="root",
+    )
     logging.success("FlowMesh stack cleaned.")
 
 
