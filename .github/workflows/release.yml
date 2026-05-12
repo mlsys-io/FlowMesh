@@ -40,6 +40,15 @@ jobs:
         with:
           persist-credentials: false
           ref: ${{ env.RELEASE_TAG }}
+          fetch-depth: 0
+
+      - name: Verify tag is on main
+        run: |
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor HEAD origin/main; then
+            echo "::error::tag $RELEASE_TAG is not reachable from origin/main"
+            exit 1
+          fi
 
       - name: Set up uv
         uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78  # v7
