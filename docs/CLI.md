@@ -74,11 +74,18 @@ When multiple deployments share one host, give each stack its own
 The suffix isolates Docker object names (including containers, volumes, and networks); the ports isolate host bindings.
 
 ```bash
-flowmesh stack up                          # Server + Redis + Supervisor
+flowmesh stack up                          # Server + Redis + Supervisor (root)
 flowmesh stack worker up cpu 1             # 1 CPU worker
 flowmesh stack worker up gpu --targets 0   # 1 GPU worker pinned to GPU 0
 flowmesh stack down
 ```
+
+`flowmesh stack up` reads `NODE_ROLE` from the env file (default `root`). On a
+root node, both local Redis services are deployed alongside the server. On a
+worker node (`NODE_ROLE=worker`), Redis services are skipped — the worker
+server connects to the root node's Redis via `REDIS_CONTROL_URL` and
+`REDIS_TELEMETRY_URL`, which must be set in the worker's `.env` to reachable
+endpoints on the root node.
 
 After changing executor code, rebuild the affected image before bringing
 the stack back up — running containers don't pick up source changes:

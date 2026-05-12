@@ -1,6 +1,7 @@
 services:
   redis_control:
     image: redis:7-alpine
+    profiles: [root]
     container_name: ${FLOWMESH_STACK_SLUG:-flowmesh_node}_redis_control
     environment:
       REDIS_ACL_ENABLED: ${REDIS_ACL_ENABLED:-0}
@@ -68,6 +69,7 @@ services:
 
   redis_telemetry:
     image: redis:7-alpine
+    profiles: [root]
     container_name: ${FLOWMESH_STACK_SLUG:-flowmesh_node}_redis_telemetry
     environment:
       REDIS_ACL_ENABLED: ${REDIS_ACL_ENABLED:-0}
@@ -139,8 +141,10 @@ services:
     depends_on:
       redis_control:
         condition: service_healthy
+        required: false
       redis_telemetry:
         condition: service_healthy
+        required: false
     env_file:
       - ${STACK_ENV_FILE:-./.env}
     environment:
