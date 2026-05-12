@@ -25,11 +25,7 @@ def test_int_timeout_passes_through() -> None:
     assert _resolve_task_timeout({"timeout": 42}) == 42
 
 
-def test_float_timeout_truncates_to_int() -> None:
-    assert _resolve_task_timeout({"timeout": 12.9}) == 12
-
-
-@pytest.mark.parametrize("bad", [0, -1, "10", True, False, [600]])
+@pytest.mark.parametrize("bad", [0, -1, "10", True, False, [600], 12.9, 600.0])
 def test_invalid_timeout_raises(bad: object) -> None:
     with pytest.raises(ExecutionError):
         _resolve_task_timeout({"timeout": bad})

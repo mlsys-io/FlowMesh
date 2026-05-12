@@ -1076,6 +1076,9 @@ class PPOExecutor(TrainingMixin, Executor):
             training_config.get("num_train_epochs"), default=1.0, minimum=1.0
         )
         kl_coef = safe_float(training_config.get("kl_coef"), minimum=0)
+        # TODO: wire training.target_kl and training.early_stopping
+        # into a FlowMesh-owned early-stop hook. The templates still set these
+        # fields so the spec doesn't churn between PRs.
 
         max_seq_length = safe_int(
             training_config.get("max_seq_length"), default=64, minimum=1

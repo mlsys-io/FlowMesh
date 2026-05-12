@@ -46,11 +46,11 @@ def _resolve_task_timeout(agent: dict[str, Any] | None) -> int:
     raw = agent.get("timeout")
     if raw is None:
         return DEFAULT_AGENT_TASK_TIMEOUT_SEC
-    if not isinstance(raw, (int, float)) or isinstance(raw, bool) or raw <= 0:
+    if not isinstance(raw, int) or isinstance(raw, bool) or raw <= 0:
         raise ExecutionError(
-            f"spec.agent.timeout must be a positive number, got {raw!r}"
+            f"spec.agent.timeout must be a positive integer (seconds), got {raw!r}"
         )
-    return int(raw)
+    return raw
 
 
 logger = logging.getLogger("worker.agent")
