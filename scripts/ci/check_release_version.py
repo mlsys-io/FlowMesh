@@ -4,6 +4,9 @@ import argparse
 import re
 import tomllib
 from pathlib import Path
+from typing import Any
+
+from packaging.version import InvalidVersion, Version
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PACKAGE_PYPROJECTS: tuple[Path, ...] = (
@@ -23,27 +26,26 @@ FIRST_PARTY_DISTRIBUTIONS = {
     "flowmesh-sdk-stack",
 }
 
-_TAG_RE = re.compile(r"^v(?P<version>[0-9]+(?:\.[0-9]+){2}[A-Za-z0-9.!+_-]*)$")
 _EXACT_PIN_RE = re.compile(
     r"^(?P<name>[A-Za-z0-9_.-]+)(?:\[[^\]]+\])?==(?P<version>[^;,\s]+)"
 )
 
 
-def _load_pyproject(path: Path) -> dict:
+def _load_pyproject(path: Path) -> dict[str, Any]:
     with path.open("rb") as f:
         return tomllib.load(f)
 
 
-def _release_version(tag: str | None) -> str | None:
+def _release_version(tag: str | None) -> Version | None:
     if tag is None:
         return None
-    match = _TAG_RE.match(tag)
-    if match is None:
-        raise SystemExit(f"Release tag must look like vX.Y.Z, got {tag!r}.")
-    return match.group("version")
+    try:
+        return Version(tag.removeprefix("v"))
+    except InvalidVersion as exc:
+        raise SystemExit(f"Release tag is not PEP 440: {tag!r} ({exc}).")
 
 
-def _project_dependencies(data: dict) -> list[str]:
+def _project_dependencies(data: dict[str, Any]) -> list[str]:
     project = data.get("project", {})
     dependencies = list(project.get("dependencies", []))
     optional = project.get("optional-dependencies", {})
@@ -55,14 +57,23 @@ def _project_dependencies(data: dict) -> list[str]:
     return dependencies
 
 
-def _check_versions(expected: str | None) -> str:
-    versions: dict[str, str] = {}
+def _parse_pyproject_version(raw: str, rel: Path) -> Version:
+    try:
+        return Version(raw)
+    except InvalidVersion as exc:
+        raise SystemExit(
+            f"{rel} declares version {raw!r} which is not PEP 440 ({exc})."
+        )
+
+
+def _check_versions(expected: Version | None) -> Version:
+    versions: dict[str, Version] = {}
     for path in PACKAGE_PYPROJECTS:
         data = _load_pyproject(path)
         project = data["project"]
         name = project["name"]
-        version = project["version"]
         rel = path.relative_to(REPO_ROOT)
+        version = _parse_pyproject_version(project["version"], rel)
         versions[name] = version
         if expected is not None and version != expected:
             raise SystemExit(
@@ -75,10 +86,10 @@ def _check_versions(expected: str | None) -> str:
             f"{name}={version}" for name, version in sorted(versions.items())
         )
         raise SystemExit(f"Published package versions differ: {formatted}.")
-    return unique_versions.pop()
+    return next(iter(unique_versions))
 
 
-def _check_internal_pins(expected: str) -> None:
+def _check_internal_pins(expected: Version) -> None:
     failures: list[str] = []
     for path in PACKAGE_PYPROJECTS:
         data = _load_pyproject(path)
@@ -88,8 +99,15 @@ def _check_internal_pins(expected: str) -> None:
             if match is None:
                 continue
             name = match.group("name").lower().replace("_", "-")
-            version = match.group("version")
-            if name in FIRST_PARTY_DISTRIBUTIONS and version != expected:
+            if name not in FIRST_PARTY_DISTRIBUTIONS:
+                continue
+            raw_pin = match.group("version")
+            try:
+                pinned = Version(raw_pin)
+            except InvalidVersion:
+                failures.append(f"{rel}: {spec!r} pin is not PEP 440")
+                continue
+            if pinned != expected:
                 failures.append(f"{rel}: {spec!r} should pin =={expected}")
     if failures:
         raise SystemExit("Stale internal package pins:\n" + "\n".join(failures))

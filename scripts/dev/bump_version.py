@@ -4,6 +4,8 @@ import argparse
 import re
 from pathlib import Path
 
+from packaging.version import InvalidVersion, Version
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PACKAGE_PYPROJECTS: tuple[Path, ...] = (
     REPO_ROOT / "pyproject.toml",
@@ -28,13 +30,13 @@ _PIN_RE = re.compile(
     + "|".join(re.escape(name) for name in FIRST_PARTY_DISTRIBUTIONS)
     + r")\b)(?P<extras>\[[^\]]+\])?==(?P<version>[^\"'\s,\]]+)"
 )
-_VERSION_VALUE_RE = re.compile(r"^v?[0-9]+(?:\.[0-9]+){2}[A-Za-z0-9.!+_-]*$")
 
 
 def _normalize_version(raw: str) -> str:
-    if _VERSION_VALUE_RE.match(raw) is None:
-        raise SystemExit(f"Version must look like X.Y.Z or vX.Y.Z, got {raw!r}.")
-    return raw.removeprefix("v")
+    try:
+        return str(Version(raw.removeprefix("v")))
+    except InvalidVersion as exc:
+        raise SystemExit(f"Version is not PEP 440: {raw!r} ({exc}).")
 
 
 def _render(text: str, version: str, path: Path) -> str:
