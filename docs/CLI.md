@@ -101,6 +101,10 @@ GPU builder image when you only need the runtime images locally.
 `linux/arm64`) for the stack bake targets.
 Use `flowmesh stack push --no-builder` to skip publishing the standalone
 GPU builder image while still building GPU runtime images.
+Use `--image-tag <tag>` and `--build-ref <sha>` on either `build` or `push`
+to override `FLOWMESH_VERSION` / `FLOWMESH_BUILD_REF` per invocation
+without editing the env file; both values flow through to the
+`org.opencontainers.image.{version,revision}` labels on the built images.
 `flowmesh stack push` also refreshes per-target registry build caches so
 subsequent multi-platform pushes can reuse `arm64` and multi-stage layers.
 Set `FLOWMESH_CACHE_VERSION` only when you want to intentionally start a

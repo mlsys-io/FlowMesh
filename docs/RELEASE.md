@@ -109,16 +109,70 @@ python -m pip install --index-url https://test.pypi.org/simple/ --extra-index-ur
 flowmesh --help
 ```
 
+## Push container images
+
+After TestPyPI verification, push the FlowMesh container images from the build
+host. The Dockerfiles record the `org.opencontainers.image.{version,revision}`
+labels from `--image-tag` and `--build-ref`; `release-images.yml` later asserts
+these against the GitHub Release tag and the tagged commit's SHA, so set both
+flags explicitly.
+
+```bash
+git fetch origin tag v0.1.1
+git checkout v0.1.1
+flowmesh stack push --image-tag v0.1.1 --build-ref "$(git rev-parse HEAD)"
+```
+
+Six manifests are written under `ghcr.io/mlsys-io/`:
+
+- `flowmesh_server:v0.1.1`
+- `flowmesh_worker:v0.1.1-cpu`
+- `flowmesh_worker:v0.1.1-gpu`
+- `flowmesh_worker_builder:v0.1.1-gpu`
+- `flowmesh_ssh:v0.1.1-cpu`
+- `flowmesh_ssh:v0.1.1-gpu`
+
+Each manifest is a multi-arch OCI index covering `linux/amd64,linux/arm64`.
+Verify before continuing:
+
+```bash
+docker buildx imagetools inspect ghcr.io/mlsys-io/flowmesh_server:v0.1.1
+```
+
+### First-time GHCR setup
+
+The very first `flowmesh stack push` creates each of the six packages under
+`ghcr.io/mlsys-io/`. Before `release-images.yml` can verify or retag, two
+manual steps are needed per package (one-time):
+
+1. Set visibility to **Public** at
+   `github.com/orgs/mlsys-io/packages/container/<name>/settings`
+   (Danger Zone → Change visibility). Without this, the verify job's
+   anonymous reads fail.
+2. **Link to the FlowMesh repository** with role **Write** (same page →
+   Manage Actions access → Add repository). Without this, the retag-latest
+   job's `GITHUB_TOKEN` cannot write `:latest`.
+
+Also create a GitHub environment named **`ghcr`** at
+`github.com/mlsys-io/FlowMesh/settings/environments` with required
+reviewers configured — same approval pattern as the `pypi` environment.
+The retag-latest job runs only after a reviewer approves.
+
 ## Publish to PyPI
 
 Create a GitHub Release from the same `vX.Y.Z` tag. Publishing the release
-triggers `.github/workflows/release.yml`, which rebuilds from the tag,
-validates versions, smoke-tests the wheels, and publishes the exact uploaded
-artifact set to PyPI after the `pypi` environment approval.
+triggers both `.github/workflows/release.yml` and
+`.github/workflows/release-images.yml`. The first rebuilds from the tag,
+validates versions, smoke-tests the wheels, and publishes the artifact set to
+PyPI after the `pypi` environment approval. The second verifies that the
+images you pushed earlier match the tag and commit, then retags them as
+`:latest` after the `ghcr` environment approval. Pre-release tags
+(`vX.Y.Z-rc1`, `vX.Y.Z.dev1`, etc.) still verify but skip the `:latest`
+retag; post-releases (`vX.Y.Z.postN`) move `:latest` forward.
 
-Do not move or force-update release tags. The release workflow assumes the tag
-already passed PR or main-branch CI, and moving a tag can bypass that validation
-history.
+Do not move or force-update release tags. The release workflows assume the
+tag already passed PR or main-branch CI, and moving a tag can bypass that
+validation history.
 
 After the workflow finishes, verify PyPI installs in a fresh environment:
 
@@ -150,5 +204,10 @@ re-upload, or replace it. Recovery options:
 - **`.postN` re-release** of the same source release when the only change is
   packaging metadata (LICENSE, classifiers, README) and no Python code
   changed. Rare.
+- **Images failed but PyPI succeeded.** Push from the build host with the
+  correct `--image-tag` and `--build-ref`, then re-run `release-images.yml`
+  from the Actions UI with the same `tag`. PyPI is unaffected. The retag
+  step is idempotent — re-runs replace the digest block in the Release body
+  in place.
 
 Do not delete or reuse a published version number under any circumstance.
