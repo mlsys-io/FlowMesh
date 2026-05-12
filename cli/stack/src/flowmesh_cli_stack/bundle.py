@@ -208,6 +208,10 @@ fi
     script = f"""#!/usr/bin/env bash
 set -euo pipefail
 
+# Anchor all relative paths (./wheels, .venv, .env, secrets/, configs/) to
+# the bundle directory so the operator can run this from anywhere.
+cd "$(dirname "$0")"
+
 VENV_DIR="${{VENV_DIR:-.venv}}"
 UV_BIN="${{UV_BIN:-uv}}"
 PYTHON_REQ="${{FLOWMESH_PYTHON:-3.12}}"
@@ -358,11 +362,18 @@ def bundle_init(
     env_hint = env_file if not env_file.is_absolute() else resolved_env
     cd_hint = "" if dest == Path(".") else f"  cd {dest}\n"
     env_arg = "" if env_file == DEFAULT_ENV_FILE else f" --env-file {env_hint}"
-    tls_hint = (
-        f"  drop TLS certs into {_TLS_SERVER_SUBDIR}/ and {_TLS_REDIS_SUBDIR}/\n"
-        if not no_tls
-        else ""
-    )
+    if no_tls:
+        tls_hint = ""
+    elif node_role == NodeRole.WORKER:
+        # Worker nodes don't host Redis, so only the CA is needed there.
+        tls_hint = (
+            f"  drop server TLS certs into {_TLS_SERVER_SUBDIR}/ "
+            f"and the Redis CA into {_TLS_REDIS_SUBDIR}/redis-ca.pem\n"
+        )
+    else:
+        tls_hint = (
+            f"  drop TLS certs into {_TLS_SERVER_SUBDIR}/ and {_TLS_REDIS_SUBDIR}/\n"
+        )
     logging.success(f"Bundle layout ready at '{dest}'.")
     logging.log(
         f"Next steps:\n{cd_hint}"

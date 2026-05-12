@@ -246,6 +246,22 @@ def test_install_script_passes_role_and_deploy_to_stack_init(tmp_path: Path) -> 
     assert 'flowmesh stack init --env-file "$ENV_FILE" --role worker --deploy' in script
 
 
+def test_install_script_anchors_to_script_directory(tmp_path: Path) -> None:
+    from flowmesh_cli_stack.bundle import _write_install_script
+
+    _write_install_script(
+        tmp_path,
+        package_spec="flowmesh[cli]==0.1.0",
+        include_wheels=False,
+        role=NodeRole.ROOT,
+    )
+    script = (tmp_path / "install.sh").read_text()
+    # Without this anchor, running `./flowmesh_server_bundle/install.sh` from
+    # the parent dir would write .venv / .env into the parent and (with
+    # --include-wheels) fail to find ./wheels.
+    assert 'cd "$(dirname "$0")"' in script
+
+
 def test_install_script_omits_role_flag_for_root_but_keeps_deploy(
     tmp_path: Path,
 ) -> None:
