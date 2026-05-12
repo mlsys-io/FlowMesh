@@ -13,34 +13,46 @@ from flowmesh_cli.core import logging
 from flowmesh_cli.core.typer import get_typer
 from packaging.version import InvalidVersion, Version
 
+from . import stack as stack_module
+from .utils import DEFAULT_ENV_FILE
+
 app = get_typer(
     help="Package FlowMesh deployments into portable bundles for distribution."
 )
+
+_TLS_SERVER_SUBDIR = "secrets/tls/server"
+_TLS_REDIS_SUBDIR = "secrets/tls/redis"
+_WORKER_CONFIG_FILE = "configs/worker_config.yaml"
+
+_SERVER_TLS_SOURCES = (
+    Path(_TLS_SERVER_SUBDIR) / "server-ca.pem",
+    Path(_TLS_SERVER_SUBDIR) / "server.key",
+    Path(_TLS_SERVER_SUBDIR) / "server.pem",
+)
+_REDIS_TLS_CA_SOURCE = Path(_TLS_REDIS_SUBDIR) / "redis-ca.pem"
+_REDIS_TLS_CERT_SOURCES = (
+    Path(_TLS_REDIS_SUBDIR) / "redis-server.pem",
+    Path(_TLS_REDIS_SUBDIR) / "redis-server.key",
+)
+_WORKER_CONFIG_SOURCE = Path(_WORKER_CONFIG_FILE)
 
 
 def _copy_redis_tls_assets(dest: Path, include_tls: bool, *, ca_only: bool) -> None:
     if not include_tls:
         return
-    tls_dir = dest / "tls" / "redis"
-    ca_src = Path("secrets/tls/redis/redis-ca.pem")
-    cert_src = Path("secrets/tls/redis/redis-server.pem")
-    key_src = Path("secrets/tls/redis/redis-server.key")
+    tls_dir = dest / _TLS_REDIS_SUBDIR
+    sources: tuple[Path, ...] = (_REDIS_TLS_CA_SOURCE,)
+    if not ca_only:
+        sources = sources + _REDIS_TLS_CERT_SOURCES
     copied = False
     missing: list[str] = []
-    if ca_src.exists():
-        tls_dir.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(ca_src, tls_dir / ca_src.name)
-        copied = True
-    else:
-        missing.append(ca_src.name)
-    if not ca_only:
-        for src in (cert_src, key_src):
-            if src.exists():
-                tls_dir.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(src, tls_dir / src.name)
-                copied = True
-            else:
-                missing.append(src.name)
+    for src in sources:
+        if src.exists():
+            tls_dir.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, tls_dir / src.name)
+            copied = True
+        else:
+            missing.append(src.name)
     if not copied:
         logging.warning(
             "Warning: Redis TLS assets not found; bundle created without TLS."
@@ -52,13 +64,10 @@ def _copy_redis_tls_assets(dest: Path, include_tls: bool, *, ca_only: bool) -> N
 
 def _copy_server_assets(dest: Path, include_tls: bool) -> None:
     if include_tls:
-        tls_dir = dest / "tls" / "server"
-        ca_src = Path("secrets/tls/server/server-ca.pem")
-        key_src = Path("secrets/tls/server/server.key")
-        pem_src = Path("secrets/tls/server/server.pem")
+        tls_dir = dest / _TLS_SERVER_SUBDIR
         copied = False
         missing: list[str] = []
-        for src in (ca_src, key_src, pem_src):
+        for src in _SERVER_TLS_SOURCES:
             if src.exists():
                 tls_dir.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(src, tls_dir / src.name)
@@ -74,11 +83,32 @@ def _copy_server_assets(dest: Path, include_tls: bool) -> None:
             logging.warning(f"Warning: TLS assets missing: {missing_str}")
     _copy_redis_tls_assets(dest, include_tls, ca_only=True)
 
-    default_worker_config = Path("configs/worker_config.yaml")
-    if default_worker_config.exists():
-        shutil.copy2(default_worker_config, dest / "worker_config.yaml")
+    if _WORKER_CONFIG_SOURCE.exists():
+        worker_config_dest = dest / _WORKER_CONFIG_FILE
+        worker_config_dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(_WORKER_CONFIG_SOURCE, worker_config_dest)
     else:
-        logging.warning(f"Warning: worker config not found: {default_worker_config}")
+        logging.warning(f"Warning: worker config not found: {_WORKER_CONFIG_SOURCE}")
+
+
+def _scaffold_server_assets(dest: Path, include_tls: bool) -> None:
+    """Scaffold the bundle directory layout in-place at ``dest``."""
+    dest.mkdir(parents=True, exist_ok=True)
+
+    if include_tls:
+        for subdir in (_TLS_SERVER_SUBDIR, _TLS_REDIS_SUBDIR):
+            target = dest / subdir
+            existed = target.is_dir()
+            target.mkdir(parents=True, exist_ok=True)
+            logging.log(f"{'kept' if existed else 'created'} {subdir}/")
+
+    worker_config = dest / _WORKER_CONFIG_FILE
+    if worker_config.exists():
+        logging.log(f"kept {_WORKER_CONFIG_FILE}")
+    else:
+        worker_config.parent.mkdir(parents=True, exist_ok=True)
+        worker_config.touch()
+        logging.log(f"created {_WORKER_CONFIG_FILE}")
 
 
 def _build_cli_wheels(wheel_dir: Path) -> None:
@@ -263,3 +293,45 @@ def bundle_export(
         tar_path, include_tls=not no_tls, include_wheels=include_wheels
     )
     logging.success(f"Bundle created at {tar_path}")
+
+
+@app.command("init")
+def bundle_init(
+    dest: Path = typer.Option(
+        Path("."),
+        "--dest",
+        help="Directory to scaffold the bundle layout in (default: current dir).",
+    ),
+    no_tls: bool = typer.Option(
+        False, "--no-tls", help="Skip TLS placeholder directories."
+    ),
+    env_file: Path = typer.Option(
+        DEFAULT_ENV_FILE,
+        "--env-file",
+        help="Env file to write under --dest (or absolute path).",
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        "-f",
+        help="Overwrite an existing env file without prompting.",
+    ),
+) -> None:
+    """Scaffold an empty bundle layout in --dest."""
+    logging.info(f"Initializing server bundle layout in '{dest}'...")
+    _scaffold_server_assets(dest, include_tls=not no_tls)
+    resolved_env = env_file if env_file.is_absolute() else dest / env_file
+    resolved_env.parent.mkdir(parents=True, exist_ok=True)
+    stack_module.init(env_file=resolved_env, force=force)
+    # Paths in the next-steps block are intentionally relative to dest so
+    # they remain accurate after the user runs the cd line.
+    env_hint = env_file if not env_file.is_absolute() else resolved_env
+    cd_hint = "" if dest == Path(".") else f"  cd {dest}\n"
+    logging.success(f"Bundle layout ready at '{dest}'.")
+    logging.log(
+        f"Next steps:\n{cd_hint}"
+        f"  edit {env_hint} and {_WORKER_CONFIG_FILE}\n"
+        f"  drop TLS certs into {_TLS_SERVER_SUBDIR}/ and {_TLS_REDIS_SUBDIR}/\n"
+        f"  flowmesh stack pull\n"
+        f"  flowmesh stack up"
+    )

@@ -20,7 +20,7 @@ flowmesh result   {fetch, download}
 flowmesh trace    {fetch, analyze}
 flowmesh system   {metrics}
 flowmesh stack    {build, push, pull, pullall, up, down, restart, ps, logs}
-flowmesh stack bundle export
+flowmesh stack bundle {export, init}
 flowmesh stack worker {up, start, stop, down, list, pull}
 ```
 
@@ -130,6 +130,22 @@ flowmesh stack bundle export --include-wheels
 By default, the bundle's `install.sh` installs the published
 `flowmesh[cli]` package for the current release. Use `--include-wheels`
 when you need the archive to carry locally-built CLI/SDK wheels instead.
+
+Alternatively, use `stack bundle init` to prepare a directory for
+deployment. It creates empty `secrets/tls/{server,redis}/` and
+`configs/worker_config.yaml`, and writes `.env` from the shipped
+example. The normal flow is:
+
+```bash
+pip install flowmesh[cli]
+flowmesh stack bundle init
+# edit .env, configs/worker_config.yaml, drop TLS certs into secrets/tls/{server,redis}/
+flowmesh stack pull
+flowmesh stack up
+```
+
+Existing files are preserved. Use `--dest <path>` to scaffold elsewhere
+and `--force` to overwrite `.env` without prompting.
 
 ## SSH tasks
 
