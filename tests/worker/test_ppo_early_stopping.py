@@ -1,12 +1,18 @@
 """Unit tests for PPO KL-based early stopping."""
 
+from typing import Any
 from unittest.mock import patch
 
 import pytest
 
 pytest.importorskip("trl", reason="trl not installed (needs --extra training)")
 
-from worker.executors.ppo_executor import _EarlyStopPPOTrainer, _EarlyStopSignal
+from worker.executors.base_executor import ExecutionError
+from worker.executors.ppo_executor import (
+    PPOExecutor,
+    _EarlyStopPPOTrainer,
+    _EarlyStopSignal,
+)
 
 
 def _make_trainer(target_kl: float | None) -> _EarlyStopPPOTrainer:
@@ -50,3 +56,42 @@ def test_threshold_unset_is_no_op(_super_log) -> None:
     """When ``target_kl is None`` the override is a pure pass-through."""
     trainer = _make_trainer(target_kl=None)
     trainer.log({"objective/kl": 9.99})
+
+
+# ---------------------------------------------------------------------------
+# _install_kl_early_stopping activation rules
+# ---------------------------------------------------------------------------
+
+
+def _install(training_config: dict[str, Any]) -> _EarlyStopPPOTrainer:
+    """Run the installer against a bare trainer and return it."""
+    executor = PPOExecutor.__new__(PPOExecutor)
+    trainer = _make_trainer(target_kl=None)
+    executor._install_kl_early_stopping(trainer, training_config)
+    return trainer
+
+
+def test_install_no_op_when_flag_missing() -> None:
+    trainer = _install({"target_kl": 0.1})
+    assert trainer.target_kl is None
+
+
+@pytest.mark.parametrize("flag", [False, "false", "False", 0, "no", "off"])
+def test_install_no_op_when_flag_disabled(flag: Any) -> None:
+    trainer = _install({"early_stopping": flag, "target_kl": 0.1})
+    assert trainer.target_kl is None
+
+
+@pytest.mark.parametrize("flag", [True, "true", "True", 1, "yes", "on"])
+def test_install_arms_when_flag_enabled(flag: Any) -> None:
+    trainer = _install({"early_stopping": flag, "target_kl": 0.1})
+    assert trainer.target_kl == pytest.approx(0.1)
+
+
+@pytest.mark.parametrize("bad_target", [None, 0, -0.5])
+def test_install_rejects_enabled_without_positive_target(bad_target: Any) -> None:
+    cfg: dict[str, Any] = {"early_stopping": True}
+    if bad_target is not None:
+        cfg["target_kl"] = bad_target
+    with pytest.raises(ExecutionError):
+        _install(cfg)

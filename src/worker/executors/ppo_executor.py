@@ -35,7 +35,7 @@ from trl.trainer.ppo_trainer import PPOTrainer
 
 from shared.tasks.specs import PPOSpecStrict
 from shared.utils.manifest import scratch_dir
-from shared.utils.parsing import safe_float, safe_int
+from shared.utils.parsing import safe_float, safe_int, to_bool
 from worker.config import WorkerConfig
 from worker.lifecycle import Lifecycle
 
@@ -1420,7 +1420,7 @@ class PPOExecutor(TrainingMixin, Executor):
         ``target_kl``; if ``early_stopping`` is off, ``target_kl`` is ignored
         but logged so users notice the gap.
         """
-        enabled = bool(training_config.get("early_stopping", False))
+        enabled = to_bool(training_config.get("early_stopping"), default=False)
         target_kl = safe_float(training_config.get("target_kl"), minimum=0)
         if not enabled:
             if target_kl is not None and target_kl > 0:
