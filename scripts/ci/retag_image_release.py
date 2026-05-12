@@ -112,7 +112,11 @@ def _existing_latest_version(docker: str, latest_ref: str) -> Version | None:
 def _plan_retags(
     docker: str, tag: str, registry: str, force: bool
 ) -> list[tuple[str, str]]:
-    new_version = Version(tag.removeprefix("v"))
+    try:
+        new_version = Version(tag.removeprefix("v"))
+    except InvalidVersion as exc:
+        print(f"::error::tag {tag!r} is not PEP 440 ({exc})", file=sys.stderr)
+        sys.exit(1)
     plan: list[tuple[str, str]] = []
     for target in BUILD_TARGETS:
         source_ref = get_image_ref(registry, tag, target)
@@ -137,7 +141,9 @@ def _plan_retags(
                 )
                 sys.exit(1)
             print(
-                f"::warning::{exc}; --force set, skipping downgrade check",
+                f"::warning::{exc}; --force overrides the downgrade guard for this "
+                f"run. If {latest_ref} already points at a newer version, this "
+                f"retag will silently move :latest backward.",
                 file=sys.stderr,
             )
             existing = None
