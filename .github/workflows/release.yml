@@ -18,6 +18,11 @@ on:
         options:
           - testpypi
           - pypi
+      package_pattern:
+        description: Comma-separated globs of dist filenames to publish (default '*' = all six distributions). Used to stagger initial PyPI Trusted Publisher onboarding when the pending-publisher quota is below 6.
+        required: false
+        type: string
+        default: '*'
 
 permissions:
   contents: read
@@ -29,6 +34,7 @@ concurrency:
 env:
   RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
   PUBLISH_TARGET: ${{ github.event_name == 'release' && 'pypi' || inputs.publish_target }}
+  PACKAGE_PATTERN: ${{ github.event_name == 'release' && '*' || inputs.package_pattern }}
 
 jobs:
   build:
@@ -69,6 +75,34 @@ jobs:
 
       - name: Verify distributions
         run: uv run scripts/ci/check_package_build.py --dist dist
+
+      - name: Filter distributions
+        if: env.PACKAGE_PATTERN != '*'
+        env:
+          PATTERN: ${{ env.PACKAGE_PATTERN }}
+        run: |
+          cd dist
+          shopt -s nullglob
+          IFS=',' read -ra PATTERNS <<< "$PATTERN"
+          for f in *; do
+            keep=false
+            for p in "${PATTERNS[@]}"; do
+              case "$f" in
+                $p) keep=true; break ;;
+              esac
+            done
+            if ! $keep; then
+              echo "trim: $f"
+              rm -f "$f"
+            fi
+          done
+          remaining=$(ls -1 | wc -l)
+          if [ "$remaining" -eq 0 ]; then
+            echo "::error::PACKAGE_PATTERN '$PATTERN' matched no built distributions"
+            exit 1
+          fi
+          echo "kept $remaining distribution(s) after filter"
+          ls -la
 
       - name: Upload distributions
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
