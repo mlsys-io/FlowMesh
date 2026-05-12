@@ -623,3 +623,17 @@ STACK_ENV_SCHEMA = EnvSchema(
         ),
     ],
 )
+
+
+# Schema-default overrides applied when rendering a worker-role .env.
+# Unused vars are blanked out to avoid confusion and misconfiguration.
+WORKER_ROLE_OVERRIDES = {
+    "NODE_ROLE": NodeRole.WORKER.value,
+    "REDIS_TLS_CERT_FILE": "",
+    "REDIS_TLS_KEY_FILE": "",
+}
+
+
+def role_overrides(role: NodeRole) -> dict[str, str]:
+    """Return the schema-default overrides for a given role's rendered .env."""
+    return dict(WORKER_ROLE_OVERRIDES) if role == NodeRole.WORKER else {}

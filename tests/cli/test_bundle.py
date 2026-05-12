@@ -10,6 +10,8 @@ from flowmesh_cli_stack.bundle import (
     _scaffold_server_assets,
     bundle_init,
 )
+from flowmesh_cli_stack.env_schema import STACK_ENV_SCHEMA, role_overrides
+from flowmesh_stack.env_schema import render_env_example, validate_env_values
 
 
 def test_scaffold_creates_full_layout(tmp_path: Path) -> None:
@@ -51,6 +53,7 @@ def test_bundle_init_writes_env_via_stack_init(tmp_path: Path, monkeypatch) -> N
         no_tls=False,
         env_file=Path(".env"),
         force=False,
+        role=NodeRole.ROOT.value,
     )
     assert (tmp_path / _WORKER_CONFIG_FILE).is_file()
     assert (tmp_path / _TLS_SERVER_SUBDIR).is_dir()
@@ -69,6 +72,7 @@ def test_bundle_init_env_defaults_point_at_scaffolded_paths(
         no_tls=False,
         env_file=Path(".env"),
         force=False,
+        role=NodeRole.ROOT.value,
     )
     env_text = (tmp_path / ".env").read_text()
     assert f"SERVER_TLS_DIR=./{_TLS_SERVER_SUBDIR}" in env_text
@@ -85,6 +89,7 @@ def test_bundle_init_force_overwrites_env(tmp_path: Path, monkeypatch) -> None:
         no_tls=True,
         env_file=Path(".env"),
         force=True,
+        role=NodeRole.ROOT.value,
     )
     assert "stale=1" not in env.read_text()
 
@@ -96,6 +101,7 @@ def test_bundle_init_env_file_in_missing_parent(tmp_path: Path, monkeypatch) -> 
         no_tls=True,
         env_file=Path("config/.env"),
         force=False,
+        role=NodeRole.ROOT.value,
     )
     assert (tmp_path / "config" / ".env").is_file()
 
@@ -108,6 +114,7 @@ def test_bundle_init_dest_subdirectory(tmp_path: Path, monkeypatch) -> None:
         no_tls=False,
         env_file=Path(".env"),
         force=False,
+        role=NodeRole.ROOT.value,
     )
     assert (target / _WORKER_CONFIG_FILE).is_file()
     assert (target / ".env").is_file()
@@ -179,6 +186,7 @@ def test_bundle_init_next_steps_include_custom_env_file(
         no_tls=False,
         env_file=Path("config/.env"),
         force=False,
+        role=NodeRole.ROOT.value,
     )
     out = capsys.readouterr().out
     assert "flowmesh stack pull --env-file config/.env" in out
@@ -194,11 +202,57 @@ def test_bundle_init_next_steps_omit_env_flag_for_default(
         no_tls=False,
         env_file=Path(".env"),
         force=False,
+        role=NodeRole.ROOT.value,
     )
     out = capsys.readouterr().out
     assert "flowmesh stack pull\n" in out
     assert "flowmesh stack up" in out
     assert "--env-file" not in out
+
+
+def test_bundle_init_worker_role_writes_worker_env(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    bundle_init(
+        dest=Path("."),
+        no_tls=False,
+        env_file=Path(".env"),
+        force=False,
+        role=NodeRole.WORKER.value,
+    )
+    env_text = (tmp_path / ".env").read_text()
+    assert "NODE_ROLE=worker" in env_text
+    assert "NODE_ROLE=root" not in env_text
+    # Cert/key keys are blanked so the rendered file doesn't suggest
+    # config the worker operator would have to maintain.
+    for key in ("REDIS_TLS_CERT_FILE", "REDIS_TLS_KEY_FILE"):
+        assert f"{key}=\n" in env_text, f"expected {key}= (blank) in worker env"
+
+
+def test_install_script_passes_role_to_stack_init(tmp_path: Path) -> None:
+    from flowmesh_cli_stack.bundle import _write_install_script
+
+    _write_install_script(
+        tmp_path,
+        package_spec="flowmesh[cli]==0.1.0",
+        include_wheels=False,
+        role=NodeRole.WORKER,
+    )
+    script = (tmp_path / "install.sh").read_text()
+    assert 'flowmesh stack init --env-file "$ENV_FILE" --role worker' in script
+
+
+def test_install_script_omits_role_flag_for_root(tmp_path: Path) -> None:
+    from flowmesh_cli_stack.bundle import _write_install_script
+
+    _write_install_script(
+        tmp_path,
+        package_spec="flowmesh[cli]==0.1.0",
+        include_wheels=False,
+        role=NodeRole.ROOT,
+    )
+    script = (tmp_path / "install.sh").read_text()
+    assert "--role" not in script
+    assert 'flowmesh stack init --env-file "$ENV_FILE"' in script
 
 
 def test_bundle_init_no_tls_drops_cert_guidance(
@@ -210,9 +264,37 @@ def test_bundle_init_no_tls_drops_cert_guidance(
         no_tls=True,
         env_file=Path(".env"),
         force=False,
+        role=NodeRole.ROOT.value,
     )
     out = capsys.readouterr().out
     assert "drop TLS certs" not in out
+
+
+def _parse_env_body(body: str) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for line in body.splitlines():
+        if not line or line.startswith("#"):
+            continue
+        key, _, value = line.partition("=")
+        out[key.strip()] = value.strip()
+    return out
+
+
+def test_root_role_render_passes_schema_validation() -> None:
+    body = render_env_example(STACK_ENV_SCHEMA, overrides=role_overrides(NodeRole.ROOT))
+    errors, _ = validate_env_values(STACK_ENV_SCHEMA, _parse_env_body(body))
+    assert errors == []
+
+
+def test_worker_role_render_passes_schema_validation() -> None:
+    # Pin the contract that a scaffolded worker .env is considered valid
+    # by the schema's own validators — i.e. the blanked overrides don't
+    # trip required/min_value/conditional checks.
+    body = render_env_example(
+        STACK_ENV_SCHEMA, overrides=role_overrides(NodeRole.WORKER)
+    )
+    errors, _ = validate_env_values(STACK_ENV_SCHEMA, _parse_env_body(body))
+    assert errors == []
 
 
 def test_module_constants_match_env_defaults() -> None:

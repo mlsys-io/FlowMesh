@@ -131,22 +131,29 @@ flowmesh stack bundle export --include-wheels
 By default, the bundle's `install.sh` installs the published
 `flowmesh[cli]` package for the current release. Use `--include-wheels`
 when you need the archive to carry locally-built CLI/SDK wheels instead.
+The `role` positional (`root` | `worker`) feeds into the bundled
+`install.sh` so the chained `flowmesh stack init` writes a role-shaped
+`.env`. A worker bundle still requires the operator to repoint
+`REDIS_CONTROL_URL` / `REDIS_TELEMETRY_URL` at the root node before
+`stack up`.
 
 Alternatively, use `stack bundle init` to prepare a directory for
 deployment. It creates empty `secrets/tls/{server,redis}/` and
-`configs/worker_config.yaml`, and writes `.env` from the shipped
-example. The normal flow is:
+`configs/worker_config.yaml`, and writes `.env` from the schema. The
+normal flow is:
 
 ```bash
 pip install flowmesh[cli]
-flowmesh stack bundle init
+flowmesh stack bundle init                     # root node (default)
+flowmesh stack bundle init --role worker       # worker node
 # edit .env, configs/worker_config.yaml, drop TLS certs into secrets/tls/{server,redis}/
 flowmesh stack pull
 flowmesh stack up
 ```
 
 Existing files are preserved. Use `--dest <path>` to scaffold elsewhere
-and `--force` to overwrite `.env` without prompting.
+and `--force` to overwrite `.env` without prompting. `stack init`
+accepts the same `--role` flag for direct (non-bundle) bootstrap.
 
 ## SSH tasks
 

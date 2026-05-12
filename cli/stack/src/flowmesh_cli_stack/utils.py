@@ -3,7 +3,10 @@ import re
 from collections.abc import Mapping
 from pathlib import Path
 
+import typer
 from flowmesh import FlowMesh
+from flowmesh.models.nodes import NodeRole
+from flowmesh_cli.core import logging
 from flowmesh_cli.core.assets import asset_path
 from flowmesh_stack.env import load_env
 from flowmesh_stack.node_client import NodeClient
@@ -114,3 +117,12 @@ def ensure_deploy_paths(base_dir: Path) -> None:
             base_dir=base_dir,
         )
     )
+
+
+def parse_node_role(raw: str) -> NodeRole:
+    """Parse a CLI-supplied role string into a NodeRole, exiting on invalid input."""
+    try:
+        return NodeRole(raw.strip().lower())
+    except ValueError:
+        logging.error(f"Invalid role {raw!r}; expected one of {', '.join(NodeRole)}.")
+        raise typer.Exit(code=1) from None

@@ -15,7 +15,7 @@ from flowmesh_cli.core.typer import get_typer
 from packaging.version import InvalidVersion, Version
 
 from . import stack as stack_module
-from .utils import DEFAULT_ENV_FILE
+from .utils import DEFAULT_ENV_FILE, parse_node_role
 
 app = get_typer(
     help="Package FlowMesh deployments into portable bundles for distribution."
@@ -178,10 +178,15 @@ def _published_cli_spec() -> str:
 
 
 def _write_install_script(
-    dest: Path, *, package_spec: str | None = None, include_wheels: bool = False
+    dest: Path,
+    *,
+    package_spec: str | None = None,
+    include_wheels: bool = False,
+    role: NodeRole = NodeRole.ROOT,
 ) -> None:
     """Write an install.sh script to set up a venv and install FlowMesh CLI."""
     script_path = dest / "install.sh"
+    role_arg = "" if role == NodeRole.ROOT else f" --role {role.value}"
     if include_wheels:
         install_block = '"$UV_BIN" pip install ./wheels/*.whl'
     else:
@@ -232,7 +237,7 @@ source "$VENV_DIR/bin/activate"
 echo "Installed flowmesh CLI into $VENV_DIR."
 echo "Activate it with 'source $VENV_DIR/bin/activate'."
 if [ ! -f "$ENV_FILE" ]; then
-  flowmesh stack init --env-file "$ENV_FILE"
+  flowmesh stack init --env-file "$ENV_FILE"{role_arg}
 fi
 echo "Configure $ENV_FILE before executing FlowMesh."
 echo "Then run:"
@@ -262,12 +267,13 @@ def _create_bundle_tarball(
         if include_wheels:
             wheel_dir = staging_root / "wheels"
             _build_cli_wheels(wheel_dir)
-            _write_install_script(staging_root, include_wheels=True)
+            _write_install_script(staging_root, include_wheels=True, role=role)
         else:
             _write_install_script(
                 staging_root,
                 package_spec=_published_cli_spec(),
                 include_wheels=False,
+                role=role,
             )
         with tarfile.open(tar_path, mode="w:gz") as tf:
             # Ensure we archive the top-level prefix directory.
@@ -297,13 +303,8 @@ def bundle_export(
     ),
 ) -> None:
     """Create a deployment bundle for the server."""
-    normalized_role = role.strip().lower()
-    try:
-        node_role = NodeRole(normalized_role)
-    except ValueError:
-        logging.error(f"Invalid role {role!r}; expected one of {', '.join(NodeRole)}.")
-        raise typer.Exit(code=1)
-    logging.info(f"Creating server bundle for role={normalized_role}...")
+    node_role = parse_node_role(role)
+    logging.info(f"Creating server bundle for role={node_role.value}...")
     tar_path = output
     if tar_path is None:
         tar_path = Path("./dist/flowmesh_server_bundle.tar.gz")
@@ -338,13 +339,19 @@ def bundle_init(
         "-f",
         help="Overwrite an existing env file without prompting.",
     ),
+    role: str = typer.Option(
+        NodeRole.ROOT.value,
+        "--role",
+        help="Target NODE_ROLE for the scaffolded .env (root|worker).",
+    ),
 ) -> None:
     """Scaffold an empty bundle layout in --dest."""
+    node_role = parse_node_role(role)
     logging.info(f"Initializing server bundle layout in '{dest}'...")
     _scaffold_server_assets(dest, include_tls=not no_tls)
     resolved_env = env_file if env_file.is_absolute() else dest / env_file
     resolved_env.parent.mkdir(parents=True, exist_ok=True)
-    stack_module.init(env_file=resolved_env, force=force)
+    stack_module.init(env_file=resolved_env, force=force, role=node_role.value)
     # Paths in the next-steps block are intentionally relative to dest so
     # they remain accurate after the user runs the cd line.
     env_hint = env_file if not env_file.is_absolute() else resolved_env
