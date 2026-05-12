@@ -60,7 +60,7 @@ spec:
     target_kl: 0.1
     seed: 42
     padding_side: left
-    early_stopping: false
+    early_stopping: true
     save_strategy: steps
     save_model: true
     save_freq: 25               # Save checkpoint every 25 steps

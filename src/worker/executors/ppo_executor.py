@@ -324,6 +324,40 @@ class _RewardAdapter(torch.nn.Module):
             return getattr(self.__dict__.get("_lm", object()), name)
 
 
+class _EarlyStopSignal(Exception):
+    """Internal signal: KL exceeded ``target_kl``; unwind ``PPOTrainer.train``."""
+
+
+class _EarlyStopPPOTrainer(PPOTrainer):
+    """``PPOTrainer`` subclass that halts when ``objective/kl`` exceeds a threshold.
+
+    TRL's PPO loop calls ``self.log(metrics)`` once per update step but
+    never checks ``control.should_training_stop``, so a stock
+    ``TrainerCallback`` cannot end training. Overriding ``log`` and
+    raising ``_EarlyStopSignal`` instead lets the exception unwind the
+    loop cleanly; the executor catches it at the ``train()`` call site.
+
+    ``target_kl`` defaults to ``None`` so the subclass is a safe
+    drop-in when early stopping is disabled.
+    """
+
+    target_kl: float | None = None
+
+    def log(self, logs: dict[str, float], *args: Any, **kwargs: Any) -> None:
+        super().log(logs, *args, **kwargs)
+        if self.target_kl is None:
+            return
+        kl = logs.get("objective/kl")
+        if kl is None:
+            return
+        assert isinstance(kl, float), f"TRL logged non-float objective/kl: {kl!r}"
+        if kl > self.target_kl:
+            logger.info(
+                "PPO early stop: objective/kl=%.4f > target_kl=%.4f", kl, self.target_kl
+            )
+            raise _EarlyStopSignal()
+
+
 def _resolve_report_to(value: Any) -> str | list[str]:
     """Translate ``training.report_to`` into the value PPOConfig expects.
 
@@ -702,7 +736,7 @@ class PPOExecutor(TrainingMixin, Executor):
             # introspection to build arguments positionally/with kwargs to fit.
             import inspect
 
-            def build_trainer() -> PPOTrainer:
+            def build_trainer() -> _EarlyStopPPOTrainer:
                 sig = inspect.signature(PPOTrainer.__init__)
                 params = list(sig.parameters.values())[1:]  # drop self
 
@@ -772,7 +806,7 @@ class PPOExecutor(TrainingMixin, Executor):
                         if key in mapping:
                             legacy_seq.append(mapping[key])
                     try:
-                        return PPOTrainer(*legacy_seq, **kwargs)
+                        return _EarlyStopPPOTrainer(*legacy_seq, **kwargs)
                     except TypeError:
                         # Raise with details for debugging
                         raise TypeError(
@@ -780,7 +814,7 @@ class PPOExecutor(TrainingMixin, Executor):
                             f"{missing_required}"
                         )
 
-                return PPOTrainer(*positional, **kwargs)
+                return _EarlyStopPPOTrainer(*positional, **kwargs)
 
             ppo_trainer = build_trainer()
             self._ppo_trainer = ppo_trainer
@@ -813,9 +847,14 @@ class PPOExecutor(TrainingMixin, Executor):
             if reward_is_external:
                 logger.info("External reward model enabled for PPO training")
 
+            self._install_kl_early_stopping(ppo_trainer, training_config)
+
             logger.info("Starting PPO training...")
-            with reward_ctx:
-                ppo_trainer.train()
+            try:
+                with reward_ctx:
+                    ppo_trainer.train()
+            except _EarlyStopSignal:
+                logger.info("PPO training stopped early by KL threshold")
             logger.info("PPO training completed")
 
             training_successful = True
@@ -1079,9 +1118,6 @@ class PPOExecutor(TrainingMixin, Executor):
             training_config.get("num_train_epochs"), default=1.0, minimum=1.0
         )
         kl_coef = safe_float(training_config.get("kl_coef"), minimum=0)
-        # TODO: wire training.target_kl and training.early_stopping
-        # into a FlowMesh-owned early-stop hook. The templates still set these
-        # fields so the spec doesn't churn between PRs.
 
         max_seq_length = safe_int(
             training_config.get("max_seq_length"), default=64, minimum=1
@@ -1372,6 +1408,34 @@ class PPOExecutor(TrainingMixin, Executor):
                 return policy_model
 
         return model
+
+    def _install_kl_early_stopping(
+        self, ppo_trainer: _EarlyStopPPOTrainer, training_config: dict[str, Any]
+    ) -> None:
+        """Set ``target_kl`` on the trainer when ``training.early_stopping`` is on.
+
+        The trainer is already an ``_EarlyStopPPOTrainer`` from ``build_trainer``;
+        we just stamp the threshold so its ``log`` override starts watching KL.
+        Enforces that ``early_stopping=True`` is paired with a positive
+        ``target_kl``; if ``early_stopping`` is off, ``target_kl`` is ignored
+        but logged so users notice the gap.
+        """
+        enabled = bool(training_config.get("early_stopping", False))
+        target_kl = safe_float(training_config.get("target_kl"), minimum=0)
+        if not enabled:
+            if target_kl is not None and target_kl > 0:
+                logger.info(
+                    "PPO training.target_kl=%.4f set without early_stopping=true; "
+                    "no early-stop hook attached",
+                    target_kl,
+                )
+            return
+        if target_kl is None or target_kl <= 0:
+            raise ExecutionError(
+                "training.early_stopping requires a positive training.target_kl"
+            )
+        ppo_trainer.target_kl = target_kl
+        logger.info("PPO KL early-stop enabled at target_kl=%.4f", target_kl)
 
     def _install_trainer_save_overrides(self, ppo_trainer: PPOTrainer) -> None:
         """Patch PPO trainer saves to avoid TRL's DDP-unsafe checkpoint wrapper.
