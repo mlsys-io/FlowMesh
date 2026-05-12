@@ -48,3 +48,10 @@ COPY src/worker/requirements/requirements.gpu.txt /tmp/requirements.gpu.txt
 RUN uv pip install --python /opt/py312/bin/python --system --requirement /tmp/requirements.gpu.txt \
  && rm -f /tmp/requirements.gpu.txt \
  && rm -rf /root/.cache/uv /root/.cache/pip /root/.cache/ccache
+
+ARG BUILD_VERSION=dev
+ARG BUILD_REF=local
+ARG BUILD_CREATED=unknown
+LABEL org.opencontainers.image.version="${BUILD_VERSION}" \
+      org.opencontainers.image.created="${BUILD_CREATED}" \
+      org.opencontainers.image.revision="${BUILD_REF}"
