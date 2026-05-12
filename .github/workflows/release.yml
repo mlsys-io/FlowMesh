@@ -78,31 +78,10 @@ jobs:
 
       - name: Filter distributions
         if: env.PACKAGE_PATTERN != '*'
-        env:
-          PATTERN: ${{ env.PACKAGE_PATTERN }}
         run: |
-          cd dist
-          shopt -s nullglob
-          IFS=',' read -ra PATTERNS <<< "$PATTERN"
-          for f in *; do
-            keep=false
-            for p in "${PATTERNS[@]}"; do
-              case "$f" in
-                $p) keep=true; break ;;
-              esac
-            done
-            if ! $keep; then
-              echo "trim: $f"
-              rm -f "$f"
-            fi
-          done
-          remaining=$(ls -1 | wc -l)
-          if [ "$remaining" -eq 0 ]; then
-            echo "::error::PACKAGE_PATTERN '$PATTERN' matched no built distributions"
-            exit 1
-          fi
-          echo "kept $remaining distribution(s) after filter"
-          ls -la
+          uv run scripts/ci/filter_distributions.py \
+            --dist dist \
+            --pattern "$PACKAGE_PATTERN"
 
       - name: Upload distributions
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
