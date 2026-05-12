@@ -854,7 +854,7 @@ class PPOExecutor(TrainingMixin, Executor):
                 with reward_ctx:
                     ppo_trainer.train()
             except _EarlyStopSignal:
-                logger.info("PPO training stopped early by KL threshold")
+                pass
             logger.info("PPO training completed")
 
             training_successful = True
@@ -1421,7 +1421,7 @@ class PPOExecutor(TrainingMixin, Executor):
         but logged so users notice the gap.
         """
         enabled = to_bool(training_config.get("early_stopping"), default=False)
-        target_kl = safe_float(training_config.get("target_kl"), minimum=0)
+        target_kl = safe_float(training_config.get("target_kl"))
         if not enabled:
             if target_kl is not None and target_kl > 0:
                 logger.info(
