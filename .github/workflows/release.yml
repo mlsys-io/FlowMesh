@@ -19,7 +19,7 @@ on:
           - testpypi
           - pypi
       package_pattern:
-        description: Comma-separated globs of dist filenames to publish (default '*' = all six distributions). Used to stagger initial PyPI Trusted Publisher onboarding when the pending-publisher quota is below 6.
+        description: Comma-separated globs of dist filenames to publish (default '*' = all six distributions). Used to stagger initial PyPI Trusted Publisher onboarding when the pending-publisher quota is below 6. Patterns are split on commas, so individual patterns cannot contain a literal comma.
         required: false
         type: string
         default: '*'
