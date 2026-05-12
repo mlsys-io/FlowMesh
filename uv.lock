@@ -2022,8 +2022,8 @@ ci = [
     { name = "ipython", specifier = ">=9.5.0" },
     { name = "isort", specifier = ">=7.0.0" },
     { name = "jinja2", specifier = ">=3.1.6" },
-    { name = "lumid-data-sdk", git = "https://github.com/mlsys-io/lumid.data.git?subdirectory=sdk&rev=5e309c856486b5f5cc22073488fabcc76595e78c" },
-    { name = "lumid-hooks", git = "https://github.com/mlsys-io/lumid.hooks.git?rev=fdb9ddb9bf4203b18d073e5bab84f1173f32561a" },
+    { name = "lumid-data-sdk", specifier = ">=0.1.0" },
+    { name = "lumid-hooks", specifier = ">=0.1.0" },
     { name = "matplotlib", specifier = ">=3.10.6" },
     { name = "mcp", specifier = ">=1.23.0" },
     { name = "mypy", specifier = ">=1.19.1" },
@@ -2144,7 +2144,7 @@ runtime-agent = [
 ]
 runtime-analytics = [
     { name = "boto3", specifier = ">=1.41.5" },
-    { name = "lumid-data-sdk", git = "https://github.com/mlsys-io/lumid.data.git?subdirectory=sdk&rev=5e309c856486b5f5cc22073488fabcc76595e78c" },
+    { name = "lumid-data-sdk", specifier = ">=0.1.0" },
     { name = "pandas", specifier = ">=2.3.3" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2.12" },
     { name = "sqlalchemy", specifier = ">=2.0.44" },
@@ -2185,7 +2185,7 @@ runtime-server = [
     { name = "flowmesh-hook", editable = "hook" },
     { name = "grpcio", specifier = ">=1.76.0" },
     { name = "httpx", specifier = ">=0.28.1" },
-    { name = "lumid-hooks", git = "https://github.com/mlsys-io/lumid.hooks.git?rev=fdb9ddb9bf4203b18d073e5bab84f1173f32561a" },
+    { name = "lumid-hooks", specifier = ">=0.1.0" },
     { name = "protobuf", specifier = ">=5.29.6" },
     { name = "pydantic", specifier = ">=2.12.3" },
     { name = "python-multipart", specifier = ">=0.0.26" },
@@ -2237,7 +2237,7 @@ runtime-worker-cpu = [
     { name = "hydra-core", specifier = ">=1.3.2" },
     { name = "ipython", specifier = ">=9.5.0" },
     { name = "jinja2", specifier = ">=3.1.6" },
-    { name = "lumid-data-sdk", git = "https://github.com/mlsys-io/lumid.data.git?subdirectory=sdk&rev=5e309c856486b5f5cc22073488fabcc76595e78c" },
+    { name = "lumid-data-sdk", specifier = ">=0.1.0" },
     { name = "matplotlib", specifier = ">=3.10.6" },
     { name = "mcp", specifier = ">=1.23.0" },
     { name = "nvidia-ml-py", specifier = ">=13.580.82" },
@@ -2338,7 +2338,7 @@ dependencies = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "lumid-hooks", git = "https://github.com/mlsys-io/lumid.hooks.git?rev=fdb9ddb9bf4203b18d073e5bab84f1173f32561a" }]
+requires-dist = [{ name = "lumid-hooks", specifier = ">=0.1.0" }]
 
 [[package]]
 name = "flowmesh-sdk"
@@ -3554,19 +3554,27 @@ wheels = [
 [[package]]
 name = "lumid-data-sdk"
 version = "0.1.0"
-source = { git = "https://github.com/mlsys-io/lumid.data.git?subdirectory=sdk&rev=5e309c856486b5f5cc22073488fabcc76595e78c#5e309c856486b5f5cc22073488fabcc76595e78c" }
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "httpx" },
     { name = "httpx-sse" },
     { name = "pydantic" },
 ]
+sdist = { url = "https://files.pythonhosted.org/packages/44/f1/14ecb5d1a2f729c44d3aa405a8d6e673e4e6be3020b32366b9c3c93f9539/lumid_data_sdk-0.1.0.tar.gz", hash = "sha256:aded95d578055c7f116b8075b7dd5fb95c598c703fdec819c7e16783e33c821b", size = 11475, upload-time = "2026-05-12T09:09:33.9Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b9/26/6bb059c078fc5681b00dad6a03dbbf344d330c6191cb9c4e9d31ac8ac077/lumid_data_sdk-0.1.0-py3-none-any.whl", hash = "sha256:9218d00b94d407b1090e92dca38d8bb25fb5fbdf1c66d240116a18ee95c7da84", size = 11897, upload-time = "2026-05-12T09:09:32.629Z" },
+]
 
 [[package]]
 name = "lumid-hooks"
 version = "0.1.0"
-source = { git = "https://github.com/mlsys-io/lumid.hooks.git?rev=fdb9ddb9bf4203b18d073e5bab84f1173f32561a#fdb9ddb9bf4203b18d073e5bab84f1173f32561a" }
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pydantic" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/1f/b4/d660b386d13051669eae4c9056154c638302a1eea39fccb569075ed07243/lumid_hooks-0.1.0.tar.gz", hash = "sha256:0ae85cef586645391f21ea3d912de1bf2be77b6b6dd0690f3841bb238fa0315a", size = 11269, upload-time = "2026-05-12T09:07:16.782Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/85/70/84678eb357151f84fd78e6ce8270a42180a2605a3a3168492201feed76bf/lumid_hooks-0.1.0-py3-none-any.whl", hash = "sha256:8cfd8f3ed36001711b70290a5043a213322deaced1046d4583a4739f11cb00a6", size = 12796, upload-time = "2026-05-12T09:07:15.629Z" },
 ]
 
 [[package]]

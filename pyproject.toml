@@ -29,7 +29,7 @@ runtime-server = [
     "flowmesh-hook",
     "grpcio>=1.76.0",
     "httpx>=0.28.1",
-    "lumid-hooks @ git+https://github.com/mlsys-io/lumid.hooks.git@fdb9ddb9bf4203b18d073e5bab84f1173f32561a",
+    "lumid-hooks>=0.1.0",
     "protobuf>=5.29.6",
     "pydantic>=2.12.3",
     "python-multipart>=0.0.26",
@@ -119,7 +119,7 @@ runtime-analytics = [
     "pandas>=2.3.3",
     "psycopg[binary]>=3.2.12",
     "sqlalchemy>=2.0.44",
-    "lumid-data-sdk @ git+https://github.com/mlsys-io/lumid.data.git@5e309c856486b5f5cc22073488fabcc76595e78c#subdirectory=sdk",
+    "lumid-data-sdk>=0.1.0",
 ]
 runtime-worker-cpu = [
     { include-group = "runtime-worker-core" },

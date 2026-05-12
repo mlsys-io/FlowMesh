@@ -6,7 +6,7 @@ docker==7.1.0
 fastapi==0.120.3
 grpcio==1.76.0
 httpx==0.28.1
-lumid-hooks @ git+https://github.com/mlsys-io/lumid.hooks.git@fdb9ddb9bf4203b18d073e5bab84f1173f32561a
+lumid-hooks==0.1.0
 protobuf==5.29.6
 pydantic==2.12.3
 python-multipart==0.0.27
