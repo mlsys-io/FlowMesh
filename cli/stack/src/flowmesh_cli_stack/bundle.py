@@ -5,11 +5,13 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
 import typer
 from flowmesh_cli.core import logging
 from flowmesh_cli.core.typer import get_typer
+from packaging.version import InvalidVersion, Version
 
 app = get_typer(
     help="Package FlowMesh deployments into portable bundles for distribution."
@@ -111,22 +113,72 @@ def _build_cli_wheels(wheel_dir: Path) -> None:
             raise typer.Exit(code=result.returncode)
 
 
-def _write_install_script(dest: Path) -> None:
-    """Write an install.sh script to set up a venv and install bundled wheels."""
+def _published_cli_spec() -> str:
+    """Return the published FlowMesh CLI package spec for this release."""
+    try:
+        package_version = version("flowmesh-cli-stack")
+    except PackageNotFoundError:
+        logging.error("Unable to resolve installed flowmesh-cli-stack version.")
+        raise typer.Exit(code=1) from None
+    try:
+        parsed = Version(package_version)
+    except InvalidVersion:
+        logging.error(
+            f"Installed flowmesh-cli-stack version {package_version!r} is not a "
+            "valid PEP 440 version."
+        )
+        raise typer.Exit(code=1) from None
+    if parsed.is_prerelease or parsed.is_devrelease or parsed.local is not None:
+        logging.error(
+            f"Installed flowmesh-cli-stack version {package_version!r} is not a "
+            "published release; the bundle's install.sh would fail on PyPI. "
+            "Install a release of flowmesh-cli-stack first, or pass "
+            "--include-wheels to bundle local wheels instead."
+        )
+        raise typer.Exit(code=1)
+    # Workspace versions are kept in lock-step by scripts/dev/bump_version.py,
+    # so flowmesh-cli-stack's version is also the matching flowmesh-metapackage
+    # version on PyPI.
+    return f"flowmesh[cli]=={package_version}"
+
+
+def _write_install_script(
+    dest: Path, *, package_spec: str | None = None, include_wheels: bool = False
+) -> None:
+    """Write an install.sh script to set up a venv and install FlowMesh CLI."""
     script_path = dest / "install.sh"
-    script = """#!/usr/bin/env bash
+    if include_wheels:
+        install_block = '"$UV_BIN" pip install ./wheels/*.whl'
+    else:
+        assert package_spec is not None
+        install_block = f"""\
+FLOWMESH_PACKAGE_SPEC="${{FLOWMESH_PACKAGE_SPEC:-{package_spec}}}"
+FLOWMESH_INDEX_URL="${{FLOWMESH_INDEX_URL:-}}"
+FLOWMESH_EXTRA_INDEX_URL="${{FLOWMESH_EXTRA_INDEX_URL:-}}"
+
+INSTALL_ARGS=("$FLOWMESH_PACKAGE_SPEC")
+if [ -n "$FLOWMESH_INDEX_URL" ]; then
+  INSTALL_ARGS=(--index-url "$FLOWMESH_INDEX_URL" "${{INSTALL_ARGS[@]}}")
+fi
+if [ -n "$FLOWMESH_EXTRA_INDEX_URL" ]; then
+  INSTALL_ARGS=(--extra-index-url "$FLOWMESH_EXTRA_INDEX_URL" "${{INSTALL_ARGS[@]}}")
+fi
+"$UV_BIN" pip install "${{INSTALL_ARGS[@]}}"
+"""
+
+    script = f"""#!/usr/bin/env bash
 set -euo pipefail
 
-VENV_DIR="${VENV_DIR:-.venv}"
-UV_BIN="${UV_BIN:-uv}"
-PYTHON_REQ="${FLOWMESH_PYTHON:-3.12}"
+VENV_DIR="${{VENV_DIR:-.venv}}"
+UV_BIN="${{UV_BIN:-uv}}"
+PYTHON_REQ="${{FLOWMESH_PYTHON:-3.12}}"
 ENV_FILE=".env"
 
 if ! command -v "$UV_BIN" >/dev/null 2>&1; then
   echo "uv not found; installing..."
   curl -LsSf https://astral.sh/uv/install.sh | sh
   export PATH="$HOME/.local/bin:$PATH"
-  UV_BIN="${UV_BIN:-uv}"
+  UV_BIN="${{UV_BIN:-uv}}"
 fi
 if ! command -v "$UV_BIN" >/dev/null 2>&1; then
   echo "uv install failed or not found in PATH." >&2
@@ -141,7 +193,7 @@ fi
 
 source "$VENV_DIR/bin/activate"
 "$UV_BIN" pip install --upgrade pip
-"$UV_BIN" pip install ./wheels/*.whl
+{install_block}
 echo "Installed flowmesh CLI into $VENV_DIR."
 echo "Activate it with 'source $VENV_DIR/bin/activate'."
 if [ ! -f "$ENV_FILE" ]; then
@@ -158,7 +210,9 @@ echo "  flowmesh stack down"
     script_path.chmod(script_path.stat().st_mode | 0o111)
 
 
-def _create_bundle_tarball(tar_path: Path, include_tls: bool) -> None:
+def _create_bundle_tarball(
+    tar_path: Path, include_tls: bool, *, include_wheels: bool
+) -> None:
     """Create a deployable bundle as a tar.gz with a top-level prefix."""
     tar_path.parent.mkdir(parents=True, exist_ok=True)
     prefix = "flowmesh_server_bundle"
@@ -166,9 +220,16 @@ def _create_bundle_tarball(tar_path: Path, include_tls: bool) -> None:
         staging_root = Path(tmp) / prefix
         staging_root.mkdir(parents=True, exist_ok=True)
         _copy_server_assets(staging_root, include_tls=include_tls)
-        wheel_dir = staging_root / "wheels"
-        _build_cli_wheels(wheel_dir)
-        _write_install_script(staging_root)
+        if include_wheels:
+            wheel_dir = staging_root / "wheels"
+            _build_cli_wheels(wheel_dir)
+            _write_install_script(staging_root, include_wheels=True)
+        else:
+            _write_install_script(
+                staging_root,
+                package_spec=_published_cli_spec(),
+                include_wheels=False,
+            )
         with tarfile.open(tar_path, mode="w:gz") as tf:
             # Ensure we archive the top-level prefix directory.
             tf.add(staging_root, arcname=prefix)
@@ -183,12 +244,22 @@ def bundle_export(
         help="Output tar.gz path (default: ./dist/flowmesh_server_bundle.tar.gz)",
     ),
     no_tls: bool = typer.Option(False, "--no-tls", help="Exclude TLS assets"),
+    include_wheels: bool = typer.Option(
+        False,
+        "--include-wheels",
+        help=(
+            "Bundle local CLI/SDK wheels instead of installing "
+            "published flowmesh[cli]."
+        ),
+    ),
 ) -> None:
-    """Create a self-contained deployment bundle for the server."""
+    """Create a deployment bundle for the server."""
     logging.info("Creating server bundle...")
     tar_path = output
     if tar_path is None:
         tar_path = Path("./dist/flowmesh_server_bundle.tar.gz")
         tar_path.parent.mkdir(parents=True, exist_ok=True)
-    _create_bundle_tarball(tar_path, include_tls=not no_tls)
+    _create_bundle_tarball(
+        tar_path, include_tls=not no_tls, include_wheels=include_wheels
+    )
     logging.success(f"Bundle created at {tar_path}")

@@ -20,6 +20,7 @@ flowmesh result   {fetch, download}
 flowmesh trace    {fetch, analyze}
 flowmesh system   {metrics}
 flowmesh stack    {build, push, pull, pullall, up, down, restart, ps, logs}
+flowmesh stack bundle export
 flowmesh stack worker {up, start, stop, down, list, pull}
 ```
 
@@ -104,6 +105,17 @@ can build multi-platform images and share the registry cache across
 machines. Pass `--builder <name>` to either command to use a builder
 other than the default, and `-f`/`--force` to skip the confirmation
 prompt when the active `buildx` builder needs to switch.
+
+To hand off a deployment bundle with bootstrap/config assets:
+
+```bash
+flowmesh stack bundle export
+flowmesh stack bundle export --include-wheels
+```
+
+By default, the bundle's `install.sh` installs the published
+`flowmesh[cli]` package for the current release. Use `--include-wheels`
+when you need the archive to carry locally-built CLI/SDK wheels instead.
 
 ## SSH tasks
 

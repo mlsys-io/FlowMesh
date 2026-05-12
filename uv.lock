@@ -2316,6 +2316,7 @@ dependencies = [
     { name = "docker" },
     { name = "flowmesh-cli" },
     { name = "flowmesh-sdk-stack" },
+    { name = "packaging" },
     { name = "pyyaml" },
 ]
 
@@ -2324,6 +2325,7 @@ requires-dist = [
     { name = "docker", specifier = ">=7.1.0" },
     { name = "flowmesh-cli", specifier = "==0.1.0" },
     { name = "flowmesh-sdk-stack", specifier = "==0.1.0" },
+    { name = "packaging", specifier = ">=24" },
     { name = "pyyaml", specifier = ">=6.0.2" },
 ]
 
