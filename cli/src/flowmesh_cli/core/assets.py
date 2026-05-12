@@ -18,9 +18,6 @@ def asset_path(package: str, *parts: str) -> Path:
     resource = resources.files(package)
     for part in parts:
         resource /= part
-    if not resources.is_resource(package, Path(*parts).as_posix()):
-        # is_resource only checks files, so we allow directories to pass through.
-        pass
     try:
         with resources.as_file(resource) as path:
             return Path(path)
