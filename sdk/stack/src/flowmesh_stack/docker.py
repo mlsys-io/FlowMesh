@@ -50,9 +50,13 @@ def compose_logs(
     env: Mapping[str, str] | None = None,
     service: str | None = None,
     capture_output: bool = False,
+    profile: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """Stream compose logs, optionally for a specific service."""
-    args = ["logs", "-f"]
+    args: list[str] = []
+    if profile:
+        args += ["--profile", profile]
+    args += ["logs", "-f"]
     if service:
         args.append(service)
     return compose(
@@ -225,7 +229,12 @@ class DockerComposeStack:
             env=compose_env,
         )
 
-    def stream_logs(self, env_file: Path, service: str | None = None) -> int:
+    def stream_logs(
+        self,
+        env_file: Path,
+        service: str | None = None,
+        profile: str | None = None,
+    ) -> int:
         """Stream stack logs and fall back to container logs when needed."""
         self.load_env(env_file)
         compose_env = {self.env_file_var: str(env_file.resolve())}
@@ -236,6 +245,7 @@ class DockerComposeStack:
                 env=compose_env,
                 service=service,
                 capture_output=False,
+                profile=profile,
             )
             if result.returncode == 0:
                 return 0
@@ -247,5 +257,6 @@ class DockerComposeStack:
             env_file=env_file,
             env=compose_env,
             capture_output=False,
+            profile=profile,
         )
         return result.returncode

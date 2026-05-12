@@ -527,7 +527,7 @@ def logs(
     ),
 ) -> None:
     """Stream logs from stack services or a specific service container."""
-    code = _stack().stream_logs(env_file=env_file, service=service)
+    code = _stack().stream_logs(env_file=env_file, service=service, profile="root")
     if code != 0:
         raise typer.Exit(code=code)
 
@@ -539,7 +539,7 @@ def ps(
     ),
 ) -> None:
     """Display running status of stack containers and worker containers."""
-    _compose(["ps"], env_file=env_file, env=None)
+    _compose(["ps"], env_file=env_file, env=None, profile="root")
     logging.log("\nWorkers:")
     docker_bin = _require_bin("docker")
     subprocess.run(
