@@ -697,14 +697,17 @@ def init(
             return
     deploy_version: str | None = None
     if deploy:
-        deploy_version = resolve_package_version()
-        if deploy_version is None:
+        package_version = resolve_package_version()
+        if package_version is None:
             logging.warning(
                 "Unable to resolve flowmesh-cli-stack version; "
                 "falling back to FLOWMESH_VERSION=latest. "
                 "Edit .env if you need a specific version."
             )
             deploy_version = "latest"
+        else:
+            # GHCR images for releases are pushed at v<version>.
+            deploy_version = f"v{package_version}"
     overrides = {
         **role_overrides(node_role),
         **deploy_overrides(deploy, deploy_version),

@@ -230,7 +230,7 @@ def test_bundle_init_worker_role_writes_worker_env(tmp_path: Path, monkeypatch) 
     # bundle_init implies --deploy: the version pin should match the
     # installed flowmesh-cli-stack release so compose pulls images at
     # the same tag the bundle bootstrap picked.
-    assert f"FLOWMESH_VERSION={version('flowmesh-cli-stack')}" in env_text
+    assert f"FLOWMESH_VERSION=v{version('flowmesh-cli-stack')}" in env_text
 
 
 def test_install_script_passes_role_and_deploy_to_stack_init(tmp_path: Path) -> None:
@@ -316,7 +316,7 @@ def test_stack_init_deploy_writes_resolved_version(tmp_path: Path, monkeypatch) 
         deploy=True,
     )
     env_text = env_path.read_text()
-    assert f"FLOWMESH_VERSION={version('flowmesh-cli-stack')}" in env_text
+    assert f"FLOWMESH_VERSION=v{version('flowmesh-cli-stack')}" in env_text
     assert "FLOWMESH_VERSION=dev" not in env_text
 
 
