@@ -21,6 +21,7 @@ from flowmesh.models import (
     NetworkInfo,
     Node,
     NodeRegisterResponse,
+    NodeRole,
     NodeWorkerInfo,
     OkResponse,
     ResultEnvelope,
@@ -42,6 +43,7 @@ from flowmesh.models import (
 )
 
 # Server-side imports (stubs installed by conftest.py)
+from server.config import NodeRole as SrvNodeRole
 from server.registries.node import Node as SrvNode
 from server.registries.worker import Worker as SrvWorker
 from server.registries.worker import WorkerInfo as SrvWorkerInfo
@@ -150,6 +152,7 @@ ENUM_PAIRS = [
     (SrvTaskType, TaskType),
     (SrvLogLevel, LogLevel),
     (SrvLogStream, LogStream),
+    (SrvNodeRole, NodeRole),
 ]
 
 

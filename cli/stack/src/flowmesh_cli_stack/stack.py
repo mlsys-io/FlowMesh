@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import typer
+from flowmesh.models.nodes import NodeRole
 from flowmesh_cli.core import logging
 from flowmesh_cli.core.assets import AssetNotFoundError, asset_path
 from flowmesh_cli.core.typer import get_typer
@@ -78,18 +79,16 @@ def _compose(
         raise typer.Exit(code=result.returncode)
 
 
-def _node_role(env_file: Path) -> str:
+def _node_role(env_file: Path) -> NodeRole:
     """Return the configured NODE_ROLE (root | worker), defaulting to root if unset."""
     raw = parse_env_file(env_file).get("NODE_ROLE", "").strip()
-    if not raw:
-        return "root"
-    role = raw.lower()
-    if role not in ("root", "worker"):
+    try:
+        return NodeRole(raw.lower()) if raw else NodeRole.ROOT
+    except ValueError:
         logging.error(
             f"NODE_ROLE={raw!r} is not a recognized role; expected 'root' or 'worker'."
         )
         raise typer.Exit(code=1)
-    return role
 
 
 def _resolve_build_targets(batch_targets: list[str]) -> list[str]:
@@ -449,7 +448,7 @@ def pull(
 ) -> None:
     """Pull Docker images for stack services from the registry."""
     args = ["pull"] + (services or [])
-    profile = "root" if _node_role(env_file) == "root" else None
+    profile = "root" if _node_role(env_file) == NodeRole.ROOT else None
     _compose(
         args, env_file=env_file, env=image_env_overrides(image_tag), profile=profile
     )
@@ -486,7 +485,7 @@ def up(
     services are skipped — the worker is expected to connect to the root
     node's Redis via REDIS_CONTROL_URL / REDIS_TELEMETRY_URL.
     """
-    profile = "root" if _node_role(env_file) == "root" else None
+    profile = "root" if _node_role(env_file) == NodeRole.ROOT else None
     _compose(
         ["up", "-d", "--wait"],
         env_file=env_file,
@@ -546,7 +545,7 @@ def restart(
         env=image_env_overrides(image_tag),
         profile="root",
     )
-    profile = "root" if _node_role(env_file) == "root" else None
+    profile = "root" if _node_role(env_file) == NodeRole.ROOT else None
     _compose(
         ["up", "-d", "--wait"],
         env_file=env_file,

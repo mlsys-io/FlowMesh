@@ -123,7 +123,8 @@ prompt when the active `buildx` builder needs to switch.
 To hand off a deployment bundle with bootstrap/config assets:
 
 ```bash
-flowmesh stack bundle export
+flowmesh stack bundle export             # root node (default)
+flowmesh stack bundle export worker      # worker node
 flowmesh stack bundle export --include-wheels
 ```
 

@@ -1,5 +1,6 @@
 """Stack env schema."""
 
+from flowmesh.models.nodes import NodeRole
 from flowmesh_stack.env_schema import (
     EnvSchema,
     EnvSection,
@@ -46,9 +47,9 @@ STACK_ENV_SCHEMA = EnvSchema(
                 ),
                 EnvVar(
                     "NODE_ROLE",
-                    "root",
+                    NodeRole.ROOT.value,
                     var_type=EnvVarType.ENUM,
-                    choices={"root", "worker"},
+                    choices=NodeRole,
                 ),
                 EnvVar("NODE_NAMESPACE", "flowmesh"),
                 EnvVar("NODE_CLUSTER", "dev"),

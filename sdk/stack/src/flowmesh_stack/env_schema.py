@@ -1,7 +1,7 @@
 """Environment schema definitions and pure validation helpers."""
 
 import enum
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from logging import _nameToLevel as LOG_LEVELS
 from pathlib import Path
@@ -32,7 +32,7 @@ class EnvVar:
     var_type: EnvVarType = EnvVarType.STRING
     required: bool = False
     use_default: bool = False
-    choices: set[str] | None = None
+    choices: Iterable[str] | None = None
     min_value: float | None = None
     max_value: float | None = None
     min_length: int | None = None

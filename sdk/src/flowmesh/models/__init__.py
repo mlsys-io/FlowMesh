@@ -15,6 +15,7 @@ from .common import (
 from .nodes import (
     Node,
     NodeRegisterResponse,
+    NodeRole,
     NodeWorkerInfo,
     WorkerRegisterResponse,
 )
@@ -73,6 +74,7 @@ __all__ = [
     "PathResponse",
     "Node",
     "NodeRegisterResponse",
+    "NodeRole",
     "NodeWorkerInfo",
     "ProfileSummary",
     "ResultEnvelope",

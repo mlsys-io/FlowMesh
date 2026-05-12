@@ -1,10 +1,16 @@
 """Node-related models."""
 
+from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 
 from .workers import WorkerHardware
+
+
+class NodeRole(StrEnum):
+    ROOT = "root"
+    WORKER = "worker"
 
 
 class Node(BaseModel):

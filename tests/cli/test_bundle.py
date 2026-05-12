@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from flowmesh.models.nodes import NodeRole
 from flowmesh_cli_stack import bundle as bundle_module
 from flowmesh_cli_stack.bundle import (
     _TLS_REDIS_SUBDIR,
@@ -129,6 +130,89 @@ def test_copy_server_assets_stages_worker_config_under_configs(
     staged = staging / _WORKER_CONFIG_FILE
     assert staged.is_file()
     assert staged.read_text() == "scheduler: round_robin\n"
+
+
+def _seed_redis_tls_sources(repo: Path) -> None:
+    tls = repo / _TLS_REDIS_SUBDIR
+    tls.mkdir(parents=True)
+    (tls / "redis-ca.pem").write_text("CA")
+    (tls / "redis-server.pem").write_text("CERT")
+    (tls / "redis-server.key").write_text("KEY")
+
+
+def test_copy_server_assets_root_stages_redis_cert_and_key(
+    tmp_path: Path, monkeypatch
+) -> None:
+    repo = tmp_path / "repo"
+    _seed_redis_tls_sources(repo)
+    monkeypatch.chdir(repo)
+    staging = tmp_path / "stage"
+    staging.mkdir()
+    _copy_server_assets(staging, include_tls=True, role=NodeRole.ROOT)
+    redis_dir = staging / _TLS_REDIS_SUBDIR
+    assert (redis_dir / "redis-ca.pem").read_text() == "CA"
+    assert (redis_dir / "redis-server.pem").read_text() == "CERT"
+    assert (redis_dir / "redis-server.key").read_text() == "KEY"
+
+
+def test_copy_server_assets_worker_skips_redis_cert_and_key(
+    tmp_path: Path, monkeypatch
+) -> None:
+    repo = tmp_path / "repo"
+    _seed_redis_tls_sources(repo)
+    monkeypatch.chdir(repo)
+    staging = tmp_path / "stage"
+    staging.mkdir()
+    _copy_server_assets(staging, include_tls=True, role=NodeRole.WORKER)
+    redis_dir = staging / _TLS_REDIS_SUBDIR
+    assert (redis_dir / "redis-ca.pem").read_text() == "CA"
+    assert not (redis_dir / "redis-server.pem").exists()
+    assert not (redis_dir / "redis-server.key").exists()
+
+
+def test_bundle_init_next_steps_include_custom_env_file(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    bundle_init(
+        dest=Path("."),
+        no_tls=False,
+        env_file=Path("config/.env"),
+        force=False,
+    )
+    out = capsys.readouterr().out
+    assert "flowmesh stack pull --env-file config/.env" in out
+    assert "flowmesh stack up --env-file config/.env" in out
+
+
+def test_bundle_init_next_steps_omit_env_flag_for_default(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    bundle_init(
+        dest=Path("."),
+        no_tls=False,
+        env_file=Path(".env"),
+        force=False,
+    )
+    out = capsys.readouterr().out
+    assert "flowmesh stack pull\n" in out
+    assert "flowmesh stack up" in out
+    assert "--env-file" not in out
+
+
+def test_bundle_init_no_tls_drops_cert_guidance(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    bundle_init(
+        dest=Path("."),
+        no_tls=True,
+        env_file=Path(".env"),
+        force=False,
+    )
+    out = capsys.readouterr().out
+    assert "drop TLS certs" not in out
 
 
 def test_module_constants_match_env_defaults() -> None:

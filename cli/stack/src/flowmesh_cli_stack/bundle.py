@@ -9,6 +9,7 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
 import typer
+from flowmesh.models.nodes import NodeRole
 from flowmesh_cli.core import logging
 from flowmesh_cli.core.typer import get_typer
 from packaging.version import InvalidVersion, Version
@@ -62,7 +63,9 @@ def _copy_redis_tls_assets(dest: Path, include_tls: bool, *, ca_only: bool) -> N
         logging.warning(f"Warning: Redis TLS assets missing: {missing_str}")
 
 
-def _copy_server_assets(dest: Path, include_tls: bool) -> None:
+def _copy_server_assets(
+    dest: Path, include_tls: bool, role: NodeRole = NodeRole.ROOT
+) -> None:
     if include_tls:
         tls_dir = dest / _TLS_SERVER_SUBDIR
         copied = False
@@ -81,7 +84,9 @@ def _copy_server_assets(dest: Path, include_tls: bool) -> None:
         elif missing:
             missing_str = ", ".join(missing)
             logging.warning(f"Warning: TLS assets missing: {missing_str}")
-    _copy_redis_tls_assets(dest, include_tls, ca_only=True)
+    # Worker nodes don't host Redis (compose root profile gates it), so they
+    # only need the CA to verify the root's TLS.
+    _copy_redis_tls_assets(dest, include_tls, ca_only=role == NodeRole.WORKER)
 
     if _WORKER_CONFIG_SOURCE.exists():
         worker_config_dest = dest / _WORKER_CONFIG_FILE
@@ -241,7 +246,11 @@ echo "  flowmesh stack down"
 
 
 def _create_bundle_tarball(
-    tar_path: Path, include_tls: bool, *, include_wheels: bool
+    tar_path: Path,
+    include_tls: bool,
+    *,
+    include_wheels: bool,
+    role: NodeRole = NodeRole.ROOT,
 ) -> None:
     """Create a deployable bundle as a tar.gz with a top-level prefix."""
     tar_path.parent.mkdir(parents=True, exist_ok=True)
@@ -249,7 +258,7 @@ def _create_bundle_tarball(
     with tempfile.TemporaryDirectory(prefix="flowmesh-bundle-") as tmp:
         staging_root = Path(tmp) / prefix
         staging_root.mkdir(parents=True, exist_ok=True)
-        _copy_server_assets(staging_root, include_tls=include_tls)
+        _copy_server_assets(staging_root, include_tls=include_tls, role=role)
         if include_wheels:
             wheel_dir = staging_root / "wheels"
             _build_cli_wheels(wheel_dir)
@@ -267,6 +276,10 @@ def _create_bundle_tarball(
 
 @app.command("export")
 def bundle_export(
+    role: str = typer.Argument(
+        NodeRole.ROOT.value,
+        help="Target NODE_ROLE for the bundle (root|worker).",
+    ),
     output: Path = typer.Option(
         None,
         "--output",
@@ -284,13 +297,22 @@ def bundle_export(
     ),
 ) -> None:
     """Create a deployment bundle for the server."""
-    logging.info("Creating server bundle...")
+    normalized_role = role.strip().lower()
+    try:
+        node_role = NodeRole(normalized_role)
+    except ValueError:
+        logging.error(f"Invalid role {role!r}; expected one of {', '.join(NodeRole)}.")
+        raise typer.Exit(code=1)
+    logging.info(f"Creating server bundle for role={normalized_role}...")
     tar_path = output
     if tar_path is None:
         tar_path = Path("./dist/flowmesh_server_bundle.tar.gz")
         tar_path.parent.mkdir(parents=True, exist_ok=True)
     _create_bundle_tarball(
-        tar_path, include_tls=not no_tls, include_wheels=include_wheels
+        tar_path,
+        include_tls=not no_tls,
+        include_wheels=include_wheels,
+        role=node_role,
     )
     logging.success(f"Bundle created at {tar_path}")
 
@@ -327,11 +349,17 @@ def bundle_init(
     # they remain accurate after the user runs the cd line.
     env_hint = env_file if not env_file.is_absolute() else resolved_env
     cd_hint = "" if dest == Path(".") else f"  cd {dest}\n"
+    env_arg = "" if env_file == DEFAULT_ENV_FILE else f" --env-file {env_hint}"
+    tls_hint = (
+        f"  drop TLS certs into {_TLS_SERVER_SUBDIR}/ and {_TLS_REDIS_SUBDIR}/\n"
+        if not no_tls
+        else ""
+    )
     logging.success(f"Bundle layout ready at '{dest}'.")
     logging.log(
         f"Next steps:\n{cd_hint}"
         f"  edit {env_hint} and {_WORKER_CONFIG_FILE}\n"
-        f"  drop TLS certs into {_TLS_SERVER_SUBDIR}/ and {_TLS_REDIS_SUBDIR}/\n"
-        f"  flowmesh stack pull\n"
-        f"  flowmesh stack up"
+        f"{tls_hint}"
+        f"  flowmesh stack pull{env_arg}\n"
+        f"  flowmesh stack up{env_arg}"
     )
