@@ -31,13 +31,14 @@ from flowmesh_stack.images import (
     get_push_platforms,
 )
 
-from .env_schema import STACK_ENV_SCHEMA, role_overrides
+from .env_schema import STACK_ENV_SCHEMA, deploy_overrides, role_overrides
 from .utils import (
     DEFAULT_ENV_FILE,
     STACK_PATH_KEYS,
     apply_stack_resource_env,
     ensure_deploy_paths,
     parse_node_role,
+    resolve_package_version,
     stack_bake_file,
     stack_compose_file,
     stack_env_example,
@@ -679,6 +680,14 @@ def init(
         "--role",
         help="Target NODE_ROLE for the generated env file (root|worker).",
     ),
+    deploy: bool = typer.Option(
+        False,
+        "--deploy",
+        help=(
+            "Pin FLOWMESH_VERSION to the installed flowmesh-cli-stack package version"
+            "(falls back to 'latest' if package metadata is missing)."
+        ),
+    ),
 ) -> None:
     """Create or overwrite the stack env file rendered from the schema."""
     node_role = parse_node_role(role)
@@ -686,7 +695,20 @@ def init(
         if not typer.confirm(f"{env_file} exists. Overwrite?", default=False):
             logging.info("Keeping existing env file.")
             return
-    overrides = role_overrides(node_role)
+    deploy_version: str | None = None
+    if deploy:
+        deploy_version = resolve_package_version()
+        if deploy_version is None:
+            logging.warning(
+                "Unable to resolve flowmesh-cli-stack version; "
+                "falling back to FLOWMESH_VERSION=latest. "
+                "Edit .env if you need a specific version."
+            )
+            deploy_version = "latest"
+    overrides = {
+        **role_overrides(node_role),
+        **deploy_overrides(deploy, deploy_version),
+    }
     env_file.write_text(render_env_example(STACK_ENV_SCHEMA, overrides=overrides))
     logging.success(f"Wrote {env_file} (NODE_ROLE={node_role.value}).")
 

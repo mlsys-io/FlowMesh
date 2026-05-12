@@ -153,7 +153,10 @@ flowmesh stack up
 
 Existing files are preserved. Use `--dest <path>` to scaffold elsewhere
 and `--force` to overwrite `.env` without prompting. `stack init`
-accepts the same `--role` flag for direct (non-bundle) bootstrap.
+accepts the same `--role` flag for direct (non-bundle) bootstrap, plus
+`--deploy` to pin `FLOWMESH_VERSION` to the installed
+`flowmesh-cli-stack` package version. Falls back to
+`FLOWMESH_VERSION=latest` if the package metadata can't be read.
 
 ## SSH tasks
 

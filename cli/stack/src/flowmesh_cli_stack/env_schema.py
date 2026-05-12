@@ -636,4 +636,11 @@ WORKER_ROLE_OVERRIDES = {
 
 def role_overrides(role: NodeRole) -> dict[str, str]:
     """Return the schema-default overrides for a given role's rendered .env."""
-    return dict(WORKER_ROLE_OVERRIDES) if role == NodeRole.WORKER else {}
+    return WORKER_ROLE_OVERRIDES.copy() if role == NodeRole.WORKER else {}
+
+
+def deploy_overrides(deploy: bool, version: str | None = None) -> dict[str, str]:
+    """Return the schema-default overrides for a deploy-shaped rendered .env."""
+    if not (deploy and version):
+        return {}
+    return {"FLOWMESH_VERSION": version}

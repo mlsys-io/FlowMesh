@@ -1,6 +1,7 @@
 import os
 import re
 from collections.abc import Mapping
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
 import typer
@@ -126,3 +127,11 @@ def parse_node_role(raw: str) -> NodeRole:
     except ValueError:
         logging.error(f"Invalid role {raw!r}; expected one of {', '.join(NodeRole)}.")
         raise typer.Exit(code=1) from None
+
+
+def resolve_package_version(name: str = "flowmesh-cli-stack") -> str | None:
+    """Return the installed flowmesh-cli-stack version, or None if it can't be read."""
+    try:
+        return version(name)
+    except PackageNotFoundError:
+        return None

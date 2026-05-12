@@ -5,7 +5,6 @@ import subprocess
 import sys
 import tarfile
 import tempfile
-from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
 import typer
@@ -15,7 +14,7 @@ from flowmesh_cli.core.typer import get_typer
 from packaging.version import InvalidVersion, Version
 
 from . import stack as stack_module
-from .utils import DEFAULT_ENV_FILE, parse_node_role
+from .utils import DEFAULT_ENV_FILE, parse_node_role, resolve_package_version
 
 app = get_typer(
     help="Package FlowMesh deployments into portable bundles for distribution."
@@ -150,9 +149,8 @@ def _build_cli_wheels(wheel_dir: Path) -> None:
 
 def _published_cli_spec() -> str:
     """Return the published FlowMesh CLI package spec for this release."""
-    try:
-        package_version = version("flowmesh-cli-stack")
-    except PackageNotFoundError:
+    package_version = resolve_package_version()
+    if package_version is None:
         logging.error("Unable to resolve installed flowmesh-cli-stack version.")
         raise typer.Exit(code=1) from None
     try:
@@ -187,6 +185,7 @@ def _write_install_script(
     """Write an install.sh script to set up a venv and install FlowMesh CLI."""
     script_path = dest / "install.sh"
     role_arg = "" if role == NodeRole.ROOT else f" --role {role.value}"
+    deploy_arg = " --deploy"
     if include_wheels:
         install_block = '"$UV_BIN" pip install ./wheels/*.whl'
     else:
@@ -237,7 +236,7 @@ source "$VENV_DIR/bin/activate"
 echo "Installed flowmesh CLI into $VENV_DIR."
 echo "Activate it with 'source $VENV_DIR/bin/activate'."
 if [ ! -f "$ENV_FILE" ]; then
-  flowmesh stack init --env-file "$ENV_FILE"{role_arg}
+  flowmesh stack init --env-file "$ENV_FILE"{role_arg}{deploy_arg}
 fi
 echo "Configure $ENV_FILE before executing FlowMesh."
 echo "Then run:"
@@ -351,7 +350,9 @@ def bundle_init(
     _scaffold_server_assets(dest, include_tls=not no_tls)
     resolved_env = env_file if env_file.is_absolute() else dest / env_file
     resolved_env.parent.mkdir(parents=True, exist_ok=True)
-    stack_module.init(env_file=resolved_env, force=force, role=node_role.value)
+    stack_module.init(
+        env_file=resolved_env, force=force, role=node_role.value, deploy=True
+    )
     # Paths in the next-steps block are intentionally relative to dest so
     # they remain accurate after the user runs the cd line.
     env_hint = env_file if not env_file.is_absolute() else resolved_env

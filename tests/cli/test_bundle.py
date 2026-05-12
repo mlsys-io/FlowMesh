@@ -1,3 +1,4 @@
+from importlib.metadata import version
 from pathlib import Path
 
 from flowmesh.models.nodes import NodeRole
@@ -226,9 +227,13 @@ def test_bundle_init_worker_role_writes_worker_env(tmp_path: Path, monkeypatch) 
     # config the worker operator would have to maintain.
     for key in ("REDIS_TLS_CERT_FILE", "REDIS_TLS_KEY_FILE"):
         assert f"{key}=\n" in env_text, f"expected {key}= (blank) in worker env"
+    # bundle_init implies --deploy: the version pin should match the
+    # installed flowmesh-cli-stack release so compose pulls images at
+    # the same tag the bundle bootstrap picked.
+    assert f"FLOWMESH_VERSION={version('flowmesh-cli-stack')}" in env_text
 
 
-def test_install_script_passes_role_to_stack_init(tmp_path: Path) -> None:
+def test_install_script_passes_role_and_deploy_to_stack_init(tmp_path: Path) -> None:
     from flowmesh_cli_stack.bundle import _write_install_script
 
     _write_install_script(
@@ -238,10 +243,12 @@ def test_install_script_passes_role_to_stack_init(tmp_path: Path) -> None:
         role=NodeRole.WORKER,
     )
     script = (tmp_path / "install.sh").read_text()
-    assert 'flowmesh stack init --env-file "$ENV_FILE" --role worker' in script
+    assert 'flowmesh stack init --env-file "$ENV_FILE" --role worker --deploy' in script
 
 
-def test_install_script_omits_role_flag_for_root(tmp_path: Path) -> None:
+def test_install_script_omits_role_flag_for_root_but_keeps_deploy(
+    tmp_path: Path,
+) -> None:
     from flowmesh_cli_stack.bundle import _write_install_script
 
     _write_install_script(
@@ -252,7 +259,7 @@ def test_install_script_omits_role_flag_for_root(tmp_path: Path) -> None:
     )
     script = (tmp_path / "install.sh").read_text()
     assert "--role" not in script
-    assert 'flowmesh stack init --env-file "$ENV_FILE"' in script
+    assert 'flowmesh stack init --env-file "$ENV_FILE" --deploy' in script
 
 
 def test_bundle_init_no_tls_drops_cert_guidance(
@@ -295,6 +302,69 @@ def test_worker_role_render_passes_schema_validation() -> None:
     )
     errors, _ = validate_env_values(STACK_ENV_SCHEMA, _parse_env_body(body))
     assert errors == []
+
+
+def test_stack_init_deploy_writes_resolved_version(tmp_path: Path, monkeypatch) -> None:
+    from flowmesh_cli_stack import stack as stack_module
+
+    monkeypatch.chdir(tmp_path)
+    env_path = tmp_path / ".env"
+    stack_module.init(
+        env_file=env_path,
+        force=False,
+        role=NodeRole.ROOT.value,
+        deploy=True,
+    )
+    env_text = env_path.read_text()
+    assert f"FLOWMESH_VERSION={version('flowmesh-cli-stack')}" in env_text
+    assert "FLOWMESH_VERSION=dev" not in env_text
+
+
+def test_stack_init_without_deploy_keeps_dev_version(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from flowmesh_cli_stack import stack as stack_module
+
+    monkeypatch.chdir(tmp_path)
+    env_path = tmp_path / ".env"
+    stack_module.init(
+        env_file=env_path,
+        force=False,
+        role=NodeRole.ROOT.value,
+        deploy=False,
+    )
+    env_text = env_path.read_text()
+    # The dev placeholder is intentional for local iteration; --deploy
+    # is opt-in for deploy-shaped scaffolds.
+    assert "FLOWMESH_VERSION=dev" in env_text
+
+
+def test_stack_init_deploy_falls_back_to_latest_on_missing_metadata(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    from importlib.metadata import PackageNotFoundError
+
+    from flowmesh_cli_stack import stack as stack_module
+    from flowmesh_cli_stack import utils as utils_module
+
+    monkeypatch.chdir(tmp_path)
+
+    def _missing(name: str) -> str:
+        raise PackageNotFoundError(name)
+
+    monkeypatch.setattr(utils_module, "version", _missing)
+    env_path = tmp_path / ".env"
+    stack_module.init(
+        env_file=env_path,
+        force=False,
+        role=NodeRole.ROOT.value,
+        deploy=True,
+    )
+    env_text = env_path.read_text()
+    assert "FLOWMESH_VERSION=latest" in env_text
+    # The fallback should surface to the operator so they can pin a
+    # specific tag if needed.
+    assert "falling back to FLOWMESH_VERSION=latest" in capsys.readouterr().out
 
 
 def test_module_constants_match_env_defaults() -> None:
