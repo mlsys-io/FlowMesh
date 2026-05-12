@@ -79,9 +79,17 @@ def _compose(
 
 
 def _node_role(env_file: Path) -> str:
-    """Return the configured NODE_ROLE (root | worker), defaulting to root."""
-    role = parse_env_file(env_file).get("NODE_ROLE", "root").strip().lower()
-    return role if role in ("root", "worker") else "root"
+    """Return the configured NODE_ROLE (root | worker), defaulting to root if unset."""
+    raw = parse_env_file(env_file).get("NODE_ROLE", "").strip()
+    if not raw:
+        return "root"
+    role = raw.lower()
+    if role not in ("root", "worker"):
+        logging.error(
+            f"NODE_ROLE={raw!r} is not a recognized role; expected 'root' or 'worker'."
+        )
+        raise typer.Exit(code=1)
+    return role
 
 
 def _resolve_build_targets(batch_targets: list[str]) -> list[str]:
