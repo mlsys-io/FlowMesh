@@ -228,6 +228,8 @@ def _run_bake(
     builder: str,
     force: bool,
     no_builder: bool = False,
+    image_tag: str | None = None,
+    build_ref: str | None = None,
 ) -> None:
     ensure_env_file(env_file, stack_env_example())
     load_env(env_file, base_dir=Path.cwd(), path_keys=STACK_PATH_KEYS)
@@ -275,12 +277,14 @@ def _run_bake(
 
     build_created = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     registry = os.getenv("FLOWMESH_REGISTRY", "ghcr.io/mlsys-io")
-    version = os.getenv("FLOWMESH_VERSION", "dev")
+    version = image_tag if image_tag else os.getenv("FLOWMESH_VERSION", "dev")
     cache_version = os.getenv("FLOWMESH_CACHE_VERSION", "").strip() or "cache"
-    env = {
+    env: dict[str, str] = {
         "REGISTRY": registry,
         "VERSION": version,
-        "BUILD_REF": os.getenv("FLOWMESH_BUILD_REF", "local"),
+        "BUILD_REF": (
+            build_ref if build_ref else os.getenv("FLOWMESH_BUILD_REF", "local")
+        ),
         "BUILD_CREATED": build_created,
     }
 
@@ -357,10 +361,23 @@ def build(
         "--force",
         help="Skip the confirmation prompt when switching the active buildx builder.",
     ),
+    image_tag: str | None = typer.Option(
+        None, "--image-tag", help="Override FLOWMESH_VERSION"
+    ),
+    build_ref: str | None = typer.Option(
+        None, "--build-ref", help="Override FLOWMESH_BUILD_REF"
+    ),
 ) -> None:
     """Build FlowMesh Docker images locally using buildx."""
     _run_bake(
-        "load", targets, env_file, builder=builder, force=force, no_builder=no_builder
+        "load",
+        targets,
+        env_file,
+        builder=builder,
+        force=force,
+        no_builder=no_builder,
+        image_tag=image_tag,
+        build_ref=build_ref,
     )
     logging.success("Images built locally.")
 
@@ -389,10 +406,23 @@ def push(
         "--force",
         help="Skip the confirmation prompt when switching the active buildx builder.",
     ),
+    image_tag: str | None = typer.Option(
+        None, "--image-tag", help="Override FLOWMESH_VERSION"
+    ),
+    build_ref: str | None = typer.Option(
+        None, "--build-ref", help="Override FLOWMESH_BUILD_REF"
+    ),
 ) -> None:
     """Build FlowMesh Docker images and push them to the container registry."""
     _run_bake(
-        "push", targets, env_file, builder=builder, force=force, no_builder=no_builder
+        "push",
+        targets,
+        env_file,
+        builder=builder,
+        force=force,
+        no_builder=no_builder,
+        image_tag=image_tag,
+        build_ref=build_ref,
     )
     logging.success("Images pushed.")
 
