@@ -12,6 +12,7 @@ spec:
     source:
       type: huggingface
       identifier: Qwen/Qwen3-8B-AWQ    # quantized + Qwen3 chat template (enable_thinking)
+      revision: main                # model revision/branch
     vllm:
       # Engine configuration
       quantization: awq             # awq, gptq, fp8, bitsandbytes
@@ -23,8 +24,7 @@ spec:
       max_num_batched_tokens: 2048    # chunked prefill budget
       gpu_memory_utilization: 0.9     # fraction of GPU memory for KV cache
       dtype: auto                   # model precision (auto, float16, bfloat16)
-      revision: main               # model revision/branch
-      tokenizer_revision: main     # tokenizer revision/branch
+      tokenizer_revision: main     # tokenizer revision (override if differs from model)
       rope_scaling:                   # RoPE scaling config (via hf_overrides)
         type: dynamic
         factor: 1.0
