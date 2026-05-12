@@ -64,6 +64,9 @@ jobs:
       - name: Build distributions
         run: uv build --all-packages --out-dir dist
 
+      - name: Check distribution metadata
+        run: uvx twine==6.2.0 check dist/*
+
       - name: Verify distributions
         run: uv run scripts/ci/check_package_build.py --dist dist
 
