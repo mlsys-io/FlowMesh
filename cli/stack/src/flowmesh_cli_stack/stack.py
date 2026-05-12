@@ -114,45 +114,109 @@ def _require_bin(name: str) -> str:
     return path
 
 
-def _parse_buildx_driver(output: str) -> str | None:
+def _parse_buildx_field(output: str, field: str) -> str | None:
+    needle = f"{field}:"
     for line in output.splitlines():
         line = line.strip()
-        if line.startswith("Driver:"):
+        if line.startswith(needle):
             return line.split(":", 1)[1].strip() or None
     return None
 
 
-def _ensure_multiplatform_builder_support(docker_bin: str) -> None:
-    inspect = subprocess.run(
-        [
-            docker_bin,
-            "buildx",
-            "inspect",
-        ],  # nosec B603: argv list, absolute binary path.
+def _inspect_buildx_builder(
+    docker_bin: str, name: str | None
+) -> subprocess.CompletedProcess[str]:
+    args = [docker_bin, "buildx", "inspect"]
+    if name is not None:
+        args.append(name)
+    return subprocess.run(  # nosec B603: argv list, absolute binary path.
+        args, capture_output=True, text=True, check=False
+    )
+
+
+def _get_active_buildx_builder(docker_bin: str) -> str | None:
+    result = _inspect_buildx_builder(docker_bin, None)
+    if result.returncode != 0:
+        return None
+    return _parse_buildx_field(result.stdout, "Name")
+
+
+def _ensure_buildx_builder_ready(
+    docker_bin: str,
+    builder: str,
+    expected_driver: str,
+    missing_hint: str | None = None,
+) -> None:
+    """Verify ``builder`` exists and uses ``expected_driver`` before bake runs."""
+    result = _inspect_buildx_builder(docker_bin, builder)
+    if result.returncode != 0:
+        logging.error(f"Buildx builder '{builder}' is not available.")
+        if result.stderr:
+            logging.log(result.stderr.strip(), err=True)
+        if missing_hint:
+            logging.log(missing_hint)
+        raise typer.Exit(code=1)
+    driver = _parse_buildx_field(result.stdout, "Driver")
+    if driver != expected_driver:
+        logging.error(
+            f"Buildx builder '{builder}' uses driver '{driver or 'unknown'}'; "
+            f"'{expected_driver}' is required."
+        )
+        raise typer.Exit(code=1)
+
+
+def _switch_active_buildx_builder(docker_bin: str, target: str, force: bool) -> None:
+    """If the active buildx builder differs from ``target``, switch to it.
+
+    Prompts for confirmation unless ``force`` is true; aborts the command on
+    decline so the user never silently builds against an unintended builder.
+    """
+    active = _get_active_buildx_builder(docker_bin)
+    if active == target:
+        return
+    if not force:
+        prompt = (
+            f"Active buildx builder is '{active or 'unknown'}'; "
+            f"switch to '{target}'?"
+        )
+        if not typer.confirm(prompt, default=False):
+            logging.error(f"Aborted; '{target}' is not the active buildx builder.")
+            raise typer.Exit(code=1)
+    result = subprocess.run(  # nosec B603: argv list, absolute binary path.
+        [docker_bin, "buildx", "use", target],
         capture_output=True,
         text=True,
         check=False,
     )
-    if inspect.returncode != 0:
-        return
-    driver = _parse_buildx_driver(inspect.stdout)
-    if driver != "docker":
-        return
-    logging.error("The active buildx builder uses the 'docker' driver.")
-    logging.error(
-        "Multi-platform push requires either the containerd image store or a "
-        "buildx builder that uses the 'docker-container' driver."
-    )
-    logging.log(
-        "Create and select a compatible builder, then retry:\n"
-        "docker buildx create --name flowmesh-multiarch "
-        "--driver docker-container --bootstrap --use"
-    )
-    raise typer.Exit(code=1)
+    if result.returncode != 0:
+        if result.stdout:
+            logging.log(result.stdout)
+        if result.stderr:
+            logging.log(result.stderr, err=True)
+        logging.error(f"Failed to switch active buildx builder to '{target}'.")
+        raise typer.Exit(code=result.returncode)
+    logging.info(f"Switched active buildx builder to '{target}'.")
+
+
+# Driver split: load uses the native docker driver (local cache, image goes
+# straight into the daemon's image store); push uses docker-container (registry
+# cache in/out, multi-platform).
+_BUILD_DEFAULT_BUILDER = "default"
+_PUSH_DEFAULT_BUILDER = "flowmesh-multiarch"
+_PUSH_BUILDER_MISSING_HINT = (
+    "Create the builder, then retry:\n"
+    f"docker buildx create --name {_PUSH_DEFAULT_BUILDER} "
+    "--driver docker-container --bootstrap"
+)
 
 
 def _run_bake(
-    mode: str, targets: list[str] | None, env_file: Path, no_builder: bool = False
+    mode: str,
+    targets: list[str] | None,
+    env_file: Path,
+    builder: str,
+    force: bool,
+    no_builder: bool = False,
 ) -> None:
     ensure_env_file(env_file, stack_env_example())
     load_env(env_file, base_dir=Path.cwd(), path_keys=STACK_PATH_KEYS)
@@ -186,8 +250,17 @@ def _run_bake(
     if not bake_file.exists():
         logging.error(f"Bake file not found: {bake_file}")
         raise typer.Exit(code=1)
+
     if mode == "push":
-        _ensure_multiplatform_builder_support(docker_bin)
+        _ensure_buildx_builder_ready(
+            docker_bin,
+            builder,
+            "docker-container",
+            missing_hint=_PUSH_BUILDER_MISSING_HINT,
+        )
+    else:
+        _ensure_buildx_builder_ready(docker_bin, builder, "docker")
+    _switch_active_buildx_builder(docker_bin, builder, force)
 
     build_created = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     registry = os.getenv("FLOWMESH_REGISTRY", "ghcr.io/mlsys-io")
@@ -201,7 +274,15 @@ def _run_bake(
     }
 
     for batch_targets in _resolve_bake_batches(targets, no_builder=no_builder):
-        args = [docker_bin, "buildx", "bake", "-f", str(bake_file)]
+        args = [
+            docker_bin,
+            "buildx",
+            "bake",
+            "-f",
+            str(bake_file),
+            "--builder",
+            builder,
+        ]
         if mode == "push":
             args.append("--push")
         else:
@@ -209,11 +290,12 @@ def _run_bake(
         args.extend(batch_targets)
 
         selected_targets = _resolve_build_targets(batch_targets)
-        for target in selected_targets:
-            cache_ref = get_cache_ref(registry, cache_version, target)
-            args += ["--set", f"{target}.cache-from=type=registry,ref={cache_ref}"]
-            if mode == "push":
+        if mode == "push":
+            for target in selected_targets:
+                cache_ref = get_cache_ref(registry, cache_version, target)
                 args += [
+                    "--set",
+                    f"{target}.cache-from=type=registry,ref={cache_ref}",
                     "--set",
                     f"{target}.cache-to=type=registry,ref={cache_ref},mode=max",
                 ]
@@ -253,9 +335,22 @@ def build(
         "--no-builder",
         help="Skip exporting the standalone GPU builder image.",
     ),
+    builder: str = typer.Option(
+        _BUILD_DEFAULT_BUILDER,
+        "--builder",
+        help="Buildx builder to use; must use the native 'docker' driver.",
+    ),
+    force: bool = typer.Option(
+        False,
+        "-f",
+        "--force",
+        help="Skip the confirmation prompt when switching the active buildx builder.",
+    ),
 ) -> None:
     """Build FlowMesh Docker images locally using buildx."""
-    _run_bake("load", targets, env_file, no_builder=no_builder)
+    _run_bake(
+        "load", targets, env_file, builder=builder, force=force, no_builder=no_builder
+    )
     logging.success("Images built locally.")
 
 
@@ -272,9 +367,22 @@ def push(
         "--no-builder",
         help="Skip publishing the standalone GPU builder image.",
     ),
+    builder: str = typer.Option(
+        _PUSH_DEFAULT_BUILDER,
+        "--builder",
+        help="Buildx builder to use; must use the 'docker-container' driver.",
+    ),
+    force: bool = typer.Option(
+        False,
+        "-f",
+        "--force",
+        help="Skip the confirmation prompt when switching the active buildx builder.",
+    ),
 ) -> None:
     """Build FlowMesh Docker images and push them to the container registry."""
-    _run_bake("push", targets, env_file, no_builder=no_builder)
+    _run_bake(
+        "push", targets, env_file, builder=builder, force=force, no_builder=no_builder
+    )
     logging.success("Images pushed.")
 
 
