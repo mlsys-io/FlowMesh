@@ -59,13 +59,6 @@ logger = get_logger(
     level=config.logging.level,
 )
 
-logger.info(
-    "FlowMesh server booting: role=%s control_url=%s telemetry_url=%s",
-    NODE_ROLE.value,
-    config.redis.control_url,
-    config.redis.telemetry_url,
-)
-
 # Result & metrics directories
 RESULTS_DIR = config.results_dir
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
