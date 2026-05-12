@@ -97,9 +97,13 @@ GPU builder image while still building GPU runtime images.
 subsequent multi-platform pushes can reuse `arm64` and multi-stage layers.
 Set `FLOWMESH_CACHE_VERSION` only when you want to intentionally start a
 new remote cache lineage.
-When pushing multi-platform images from Docker Engine, use either the
-containerd image store or a `buildx` builder with the `docker-container`
-driver.
+`flowmesh stack build` runs on the native `docker` driver and reuses
+the local layer cache for fast iteration. `flowmesh stack push`
+requires a `buildx` builder with the `docker-container` driver so it
+can build multi-platform images and share the registry cache across
+machines. Pass `--builder <name>` to either command to use a builder
+other than the default, and `-f`/`--force` to skip the confirmation
+prompt when the active `buildx` builder needs to switch.
 
 ## SSH tasks
 
