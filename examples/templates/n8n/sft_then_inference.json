@@ -36,7 +36,7 @@
     {
       "parameters": {
         "mode": "raw",
-        "jsonOutput": "{\n  \\"hardware\": {\n    \"cpu\": \"8\",\n    \"memory\": \"10Gi\",\n    \"gpu\": {\n      \"type\": \"any\",\n      \"count\": 1\n    }\n  }\n}",
+        "jsonOutput": "{\n  \"hardware\": {\n    \"cpu\": \"8\",\n    \"memory\": \"10Gi\",\n    \"gpu\": {\n      \"type\": \"any\",\n      \"count\": 1\n    }\n  }\n}",
         "options": {}
       },
       "type": "n8n-nodes-base.set",
@@ -174,7 +174,7 @@
     {
       "parameters": {
         "mode": "raw",
-        "jsonOutput": "{\n  \\"hardware\": {\n    \"cpu\": \"8\",\n    \"memory\": \"10Gi\",\n    \"gpu\": {\n      \"type\": \"any\",\n      \"count\": 1\n    }\n  }\n}",
+        "jsonOutput": "{\n  \"hardware\": {\n    \"cpu\": \"8\",\n    \"memory\": \"10Gi\",\n    \"gpu\": {\n      \"type\": \"any\",\n      \"count\": 1\n    }\n  }\n}",
         "options": {}
       },
       "type": "n8n-nodes-base.set",

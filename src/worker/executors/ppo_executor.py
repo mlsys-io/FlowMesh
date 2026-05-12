@@ -14,7 +14,10 @@ import time
 from contextlib import contextmanager, nullcontext
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
+
+if TYPE_CHECKING:
+    from deepspeed.runtime.engine import DeepSpeedEngine
 
 import torch
 from datasets import Dataset
@@ -1383,6 +1386,7 @@ class PPOExecutor(TrainingMixin, Executor):
             output_dir: str | None = None, _internal_call: bool = False
         ) -> None:
             backup_model = ppo_trainer.model
+            backup_deepspeed: DeepSpeedEngine | None = None
             ppo_trainer.model = self._resolve_model_for_save(backup_model)
             if ppo_trainer.is_deepspeed_enabled:
                 backup_deepspeed = ppo_trainer.deepspeed
@@ -1392,7 +1396,7 @@ class PPOExecutor(TrainingMixin, Executor):
             finally:
                 ppo_trainer.model = backup_model
                 if ppo_trainer.is_deepspeed_enabled:
-                    ppo_trainer.deepspeed = backup_deepspeed
+                    ppo_trainer.deepspeed = backup_deepspeed  # type: ignore[assignment]
 
         def _wrapped_save_checkpoint(model: Any, trial: Any) -> None:
             Trainer._save_checkpoint(ppo_trainer, model, trial)
