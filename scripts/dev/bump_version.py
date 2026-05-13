@@ -15,6 +15,7 @@ PACKAGE_PYPROJECTS: tuple[Path, ...] = (
     REPO_ROOT / "sdk" / "pyproject.toml",
     REPO_ROOT / "sdk" / "stack" / "pyproject.toml",
 )
+SDK_INIT = REPO_ROOT / "sdk" / "src" / "flowmesh" / "__init__.py"
 FIRST_PARTY_DISTRIBUTIONS: tuple[str, ...] = (
     "flowmesh-cli-stack",
     "flowmesh-sdk-stack",
@@ -25,6 +26,7 @@ FIRST_PARTY_DISTRIBUTIONS: tuple[str, ...] = (
 )
 
 _VERSION_RE = re.compile(r'(?m)^version = "[^"]+"$')
+_SDK_INIT_VERSION_RE = re.compile(r'(?m)^__version__ = "[^"]+"$')
 _PIN_RE = re.compile(
     r"(?P<name>\b(?:"
     + "|".join(re.escape(name) for name in FIRST_PARTY_DISTRIBUTIONS)
@@ -50,6 +52,16 @@ def _render(text: str, version: str, path: Path) -> str:
     )
 
 
+def _render_sdk_init(text: str, version: str) -> str:
+    rendered, count = _SDK_INIT_VERSION_RE.subn(
+        f'__version__ = "{version}"', text, count=1
+    )
+    if count != 1:
+        rel = SDK_INIT.relative_to(REPO_ROOT)
+        raise SystemExit(f"Expected one __version__ line in {rel}.")
+    return rendered
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("version", help="Synchronized release version, e.g. 0.1.1.")
@@ -65,6 +77,10 @@ def main() -> int:
     for path in PACKAGE_PYPROJECTS:
         current = path.read_text()
         rendered.append((path, current, _render(current, version, path)))
+    sdk_init_current = SDK_INIT.read_text()
+    rendered.append(
+        (SDK_INIT, sdk_init_current, _render_sdk_init(sdk_init_current, version))
+    )
 
     changed = [path for path, current, updated in rendered if current != updated]
     if args.check:
