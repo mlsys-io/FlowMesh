@@ -41,7 +41,7 @@ the production publish job.
 ## Prepare a release
 
 1. Pick the next synchronized package version, for example `0.1.1`.
-2. Update package versions and first-party pins:
+2. Update package versions, first-party pins, and runtime version files:
 
    ```bash
    uv run scripts/dev/bump_version.py 0.1.1

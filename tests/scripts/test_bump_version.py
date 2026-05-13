@@ -50,3 +50,20 @@ def test_render_sdk_version_module_requires_single_version_line(
 ):
     with pytest.raises(SystemExit, match=match):
         bump_module._render_sdk_version_module(source, "0.1.1")
+
+
+@pytest.mark.parametrize(
+    ("source", "match"),
+    [
+        ("VERSION = '0.1.0'\n", "Expected one FLOWMESH_RELEASE_VERSION line"),
+        (
+            'FLOWMESH_RELEASE_VERSION = "0.1.0"\nFLOWMESH_RELEASE_VERSION = "0.1.0"\n',
+            "Expected one FLOWMESH_RELEASE_VERSION line",
+        ),
+    ],
+)
+def test_render_shared_version_module_requires_single_version_line(
+    bump_module, source, match
+):
+    with pytest.raises(SystemExit, match=match):
+        bump_module._render_shared_version_module(source, "0.1.1")
