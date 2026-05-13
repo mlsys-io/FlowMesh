@@ -39,7 +39,7 @@ env:
 jobs:
   build:
     name: Build and verify distributions
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
@@ -92,7 +92,7 @@ jobs:
   publish:
     name: Publish distributions
     needs: build
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     environment: ${{ github.event_name == 'release' && 'pypi' || inputs.publish_target }}
     permissions:
       contents: read  # Required to download release metadata and workflow artifacts.
