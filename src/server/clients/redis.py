@@ -110,16 +110,23 @@ SSH_CONNECTION_IDS_KEY = "ssh:connections:active"
 
 
 def iter_pubsub_messages(pubsub: PubSub) -> Iterable[Any]:
-    """Iterate over messages from a Redis PubSub instance."""
-    for msg in pubsub.listen():
-        if msg.get("type") != "message":
-            continue
-        raw = msg.get("data")
-        if raw is None:
-            continue
-        if isinstance(raw, bytes):
-            raw = raw.decode("utf-8", errors="ignore")
-        yield json.loads(raw)
+    """Iterate over messages from a Redis PubSub instance.
+
+    Stops cleanly on `ConnectionError`, `ValueError`, or `OSError` so callers
+    don't have to wrap every loop in their own try/except.
+    """
+    try:
+        for msg in pubsub.listen():
+            if msg.get("type") != "message":
+                continue
+            raw = msg.get("data")
+            if raw is None:
+                continue
+            if isinstance(raw, bytes):
+                raw = raw.decode("utf-8", errors="ignore")
+            yield json.loads(raw)
+    except (ConnectionError, ValueError, OSError):
+        return
 
 
 def _sync[T](value: Awaitable[T] | T) -> T:

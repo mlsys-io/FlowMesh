@@ -1,14 +1,10 @@
 import asyncio
-import json
 import logging
 import queue
 import threading
-from collections.abc import Iterable
 from logging.handlers import RotatingFileHandler
-from typing import Any
 
 import docker
-from redis.client import PubSub
 
 _logger: logging.Logger | None = None
 _docker_client: docker.DockerClient | None = None
@@ -94,19 +90,3 @@ class ResourcePool[T]:
     def release(self, item: T) -> None:
         with self._lock:
             self._reserved.discard(item)
-
-
-def iter_pubsub_messages(pubsub: PubSub) -> Iterable[Any]:
-    """Iterate over messages from a Redis PubSub instance."""
-    try:
-        for msg in pubsub.listen():
-            if msg.get("type") != "message":
-                continue
-            raw = msg.get("data")
-            if raw is None:
-                continue
-            if isinstance(raw, bytes):
-                raw = raw.decode("utf-8", errors="ignore")
-            yield json.loads(raw)
-    except (ConnectionError, ValueError, OSError):
-        return

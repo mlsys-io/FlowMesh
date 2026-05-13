@@ -11,8 +11,12 @@ from shared.schemas.command import (
     TaskMessage,
 )
 
-from ...clients.redis import SyncRedisClient, node_dispatch_channel
-from ...utils.helpers import TSQueue, iter_pubsub_messages
+from ...clients.redis import (
+    SyncRedisClient,
+    iter_pubsub_messages,
+    node_dispatch_channel,
+)
+from ...utils.helpers import TSQueue
 
 
 class TaskListener:

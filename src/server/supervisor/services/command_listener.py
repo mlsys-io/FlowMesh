@@ -19,10 +19,10 @@ from shared.schemas.command import (
 from ...clients.redis import (
     NODE_RESPONSE_CHANNEL,
     SyncRedisClient,
+    iter_pubsub_messages,
     node_cmd_channel,
 )
 from ...utils.concurrent import Sentinel, TaskReceiver
-from ...utils.helpers import iter_pubsub_messages
 from ..adapters.docker import DockerWorkerConfig
 from ..manager import WorkerInitConfig, WorkerManager
 from .ssh_relay import SshRelayService
