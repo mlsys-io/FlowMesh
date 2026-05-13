@@ -8,6 +8,7 @@ from lumid_hooks import PrincipalContext
 
 from shared.schemas.event import NodeEvent, serialize_event
 from shared.schemas.node import NodeInfo
+from shared.utils.http import auth_headers
 from shared.utils.time import now_iso
 
 from ...clients.redis import NODE_EVENT_CHANNEL, SyncRedisClient
@@ -79,7 +80,7 @@ class Lifecycle:
             "Registering node %s with root at %s", self._node_info.alias, url
         )
         payload = self._node_info.model_dump()
-        resp = httpx.post(url, json=payload, timeout=10.0)
+        resp = httpx.post(url, json=payload, headers=auth_headers(), timeout=10.0)
         resp.raise_for_status()
         data = resp.json()
         node_id = data.get("node_id")
