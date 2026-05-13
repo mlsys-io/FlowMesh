@@ -36,9 +36,9 @@ from shared.tasks.specs.ssh import (
     SSHSpecStrict,
 )
 from shared.utils import new_ssh_session_id, parse_float_env
+from shared.utils.http import auth_headers
 from shared.utils.manifest import ARTIFACTS_DIR, prepare_output_dir
 from worker.config import WorkerConfig
-from worker.executors.utils.artifacts import auth_headers
 from worker.executors.utils.checkpoints import maybe_upload_artifacts
 from worker.lifecycle import Lifecycle
 

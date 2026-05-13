@@ -13,10 +13,10 @@ import requests
 
 from shared.schemas.result import write_result_in_envelope
 from shared.tasks.specs import TaskSpecStrictBase
+from shared.utils.http import add_auth_headers
 from shared.utils.parsing import parse_bool_env
 
 from ..base_executor import ExecutionError, TaskReference
-from .artifacts import add_auth_headers
 
 
 @dataclass(slots=True)

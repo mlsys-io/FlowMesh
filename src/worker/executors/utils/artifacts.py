@@ -6,19 +6,9 @@ from urllib.parse import urlparse
 
 import requests
 
+from shared.utils.http import auth_headers
+
 from ..base_executor import ExecutionError
-
-
-def auth_headers() -> dict[str, str]:
-    """Return auth headers if `FLOWMESH_API_KEY` is set, otherwise an empty dict."""
-    token = os.getenv("FLOWMESH_API_KEY", "").strip()
-    return {"Authorization": f"Bearer {token}"} if token else {}
-
-
-def add_auth_headers(headers: dict[str, str]) -> None:
-    """Add auth headers to the given dict if not already present."""
-    if not any(k.lower() == "authorization" for k in headers):
-        headers.update(auth_headers())
 
 
 def artifact_to_source(

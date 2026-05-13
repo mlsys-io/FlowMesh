@@ -8,8 +8,9 @@ from urllib.parse import urlparse
 
 import requests
 
+from shared.utils.http import add_auth_headers
+
 from ..base_executor import ExecutionError
-from .artifacts import add_auth_headers
 
 
 def resolve_jsonl_path(
