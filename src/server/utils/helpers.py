@@ -4,14 +4,11 @@ import logging
 import queue
 import threading
 import uuid
-from collections.abc import AsyncGenerator, Iterable
-from contextlib import asynccontextmanager
+from collections.abc import Iterable
 from logging.handlers import RotatingFileHandler
 from typing import Any
 
-import aiohttp
 import docker
-import requests
 from redis.client import PubSub
 
 _logger: logging.Logger | None = None
@@ -68,109 +65,6 @@ def get_docker_client() -> docker.DockerClient:
 
     _docker_client = docker.from_env()
     return _docker_client
-
-
-class HttpSession:
-    def __init__(
-        self, base_url: str, token: str, version_prefix: str = "/api/v1"
-    ) -> None:
-        self.base_url = base_url
-        self._version_prefix = version_prefix
-        self._auth_headers = {"Authorization": f"Bearer {token}"}
-        self._session = requests.Session()
-        if token:
-            self._session.headers.update(self._auth_headers)
-
-    def _make_url(self, path: str, version_prefix: bool) -> str:
-        url = self.base_url.rstrip("/")
-        if version_prefix:
-            url += self._version_prefix
-        url += "/" + path.lstrip("/")
-        return url
-
-    def _add_auth_headers(self, kwargs: dict[str, Any]) -> dict[str, Any]:
-        kwargs["headers"] = self._auth_headers | kwargs.get("headers", {})
-        return kwargs
-
-    def request(
-        self, method: str, path: str, version_prefix: bool = False, **kwargs: Any
-    ) -> requests.Response:
-        url = self._make_url(path, version_prefix)
-        return self._session.request(method, url, **kwargs)
-
-    @asynccontextmanager
-    async def arequest(
-        self, method: str, path: str, version_prefix: bool = False, **kwargs: Any
-    ) -> AsyncGenerator[aiohttp.ClientResponse, None]:
-        url = self._make_url(path, version_prefix)
-        kwargs = self._add_auth_headers(kwargs)
-        async with aiohttp.ClientSession() as session:
-            async with session.request(method, url, **kwargs) as response:
-                yield response
-
-    def get(
-        self, path: str, version_prefix: bool = False, **kwargs: Any
-    ) -> requests.Response:
-        url = self._make_url(path, version_prefix)
-        return self._session.get(url, **kwargs)
-
-    @asynccontextmanager
-    async def aget(
-        self, path: str, version_prefix: bool = False, **kwargs: Any
-    ) -> AsyncGenerator[aiohttp.ClientResponse, None]:
-        url = self._make_url(path, version_prefix)
-        kwargs = self._add_auth_headers(kwargs)
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, **kwargs) as response:
-                yield response
-
-    def post(
-        self, path: str, version_prefix: bool = False, **kwargs: Any
-    ) -> requests.Response:
-        url = self._make_url(path, version_prefix)
-        return self._session.post(url, **kwargs)
-
-    @asynccontextmanager
-    async def apost(
-        self, path: str, version_prefix: bool = False, **kwargs: Any
-    ) -> AsyncGenerator[aiohttp.ClientResponse, None]:
-        url = self._make_url(path, version_prefix)
-        kwargs = self._add_auth_headers(kwargs)
-        async with aiohttp.ClientSession() as session:
-            async with session.post(url, **kwargs) as response:
-                yield response
-
-    def put(
-        self, path: str, version_prefix: bool = False, **kwargs: Any
-    ) -> requests.Response:
-        url = self._make_url(path, version_prefix)
-        return self._session.put(url, **kwargs)
-
-    @asynccontextmanager
-    async def aput(
-        self, path: str, version_prefix: bool = False, **kwargs: Any
-    ) -> AsyncGenerator[aiohttp.ClientResponse, None]:
-        url = self._make_url(path, version_prefix)
-        kwargs = self._add_auth_headers(kwargs)
-        async with aiohttp.ClientSession() as session:
-            async with session.put(url, **kwargs) as response:
-                yield response
-
-    def delete(
-        self, path: str, version_prefix: bool = False, **kwargs: Any
-    ) -> requests.Response:
-        url = self._make_url(path, version_prefix)
-        return self._session.delete(url, **kwargs)
-
-    @asynccontextmanager
-    async def adelete(
-        self, path: str, version_prefix: bool = False, **kwargs: Any
-    ) -> AsyncGenerator[aiohttp.ClientResponse, None]:
-        url = self._make_url(path, version_prefix)
-        kwargs = self._add_auth_headers(kwargs)
-        async with aiohttp.ClientSession() as session:
-            async with session.delete(url, **kwargs) as response:
-                yield response
 
 
 class TSQueue[T]:
