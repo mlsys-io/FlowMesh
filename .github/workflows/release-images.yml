@@ -44,7 +44,6 @@ jobs:
 
       - name: Verify tag is on main
         run: |
-          git fetch --no-tags origin main
           if ! git merge-base --is-ancestor HEAD origin/main; then
             echo "::error::tag $RELEASE_TAG is not reachable from origin/main"
             exit 1
