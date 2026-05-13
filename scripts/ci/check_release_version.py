@@ -33,7 +33,7 @@ _EXACT_PIN_RE = re.compile(
 )
 _SDK_STATIC_VERSION_RE = re.compile(r'(?m)^_STATIC_VERSION = "(?P<version>[^"]+)"$')
 _SHARED_RUNTIME_VERSION_RE = re.compile(
-    r'(?m)^FLOWMESH_VERSION = "(?P<version>[^"]+)"$'
+    r'(?m)^FLOWMESH_RELEASE_VERSION = "(?P<version>[^"]+)"$'
 )
 
 
@@ -154,7 +154,7 @@ def _check_runtime_versions(expected: Version) -> None:
     _read_literal_version(
         SHARED_VERSION_MODULE,
         _SHARED_RUNTIME_VERSION_RE,
-        "FLOWMESH_VERSION",
+        "FLOWMESH_RELEASE_VERSION",
         expected,
     )
 

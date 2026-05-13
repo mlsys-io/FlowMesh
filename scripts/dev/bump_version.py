@@ -28,7 +28,7 @@ FIRST_PARTY_DISTRIBUTIONS: tuple[str, ...] = (
 
 _VERSION_RE = re.compile(r'(?m)^version = "[^"]+"$')
 _SDK_STATIC_VERSION_RE = re.compile(r'(?m)^_STATIC_VERSION = "[^"]+"$')
-_SHARED_RUNTIME_VERSION_RE = re.compile(r'(?m)^FLOWMESH_VERSION = "[^"]+"$')
+_SHARED_RUNTIME_VERSION_RE = re.compile(r'(?m)^FLOWMESH_RELEASE_VERSION = "[^"]+"$')
 _PIN_RE = re.compile(
     r"(?P<name>\b(?:"
     + "|".join(re.escape(name) for name in FIRST_PARTY_DISTRIBUTIONS)
@@ -84,7 +84,7 @@ def _render_shared_version_module(text: str, version: str) -> str:
         version,
         SHARED_VERSION_MODULE,
         _SHARED_RUNTIME_VERSION_RE,
-        "FLOWMESH_VERSION",
+        "FLOWMESH_RELEASE_VERSION",
     )
 
 

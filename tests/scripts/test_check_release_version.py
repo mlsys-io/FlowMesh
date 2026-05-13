@@ -26,7 +26,7 @@ def test_check_runtime_versions_accepts_matching_literals(
     sdk_version = tmp_path / "sdk_version.py"
     sdk_version.write_text('_STATIC_VERSION = "0.1.1"\n')
     shared_version = tmp_path / "shared_version.py"
-    shared_version.write_text('FLOWMESH_VERSION = "0.1.1"\n')
+    shared_version.write_text('FLOWMESH_RELEASE_VERSION = "0.1.1"\n')
 
     monkeypatch.setattr(release_module, "SDK_VERSION_MODULE", sdk_version)
     monkeypatch.setattr(release_module, "SHARED_VERSION_MODULE", shared_version)
@@ -40,7 +40,7 @@ def test_check_runtime_versions_rejects_mismatched_literal(
     sdk_version = tmp_path / "sdk_version.py"
     sdk_version.write_text('_STATIC_VERSION = "0.1.0"\n')
     shared_version = tmp_path / "shared_version.py"
-    shared_version.write_text('FLOWMESH_VERSION = "0.1.1"\n')
+    shared_version.write_text('FLOWMESH_RELEASE_VERSION = "0.1.1"\n')
 
     monkeypatch.setattr(release_module, "SDK_VERSION_MODULE", sdk_version)
     monkeypatch.setattr(release_module, "SHARED_VERSION_MODULE", shared_version)

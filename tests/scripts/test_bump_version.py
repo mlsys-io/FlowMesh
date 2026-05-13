@@ -28,10 +28,10 @@ def test_render_sdk_version_module_updates_static_version(bump_module):
 
 
 def test_render_shared_version_module_updates_runtime_version(bump_module):
-    source = 'FLOWMESH_VERSION = "0.1.0"\n'
+    source = 'FLOWMESH_RELEASE_VERSION = "0.1.0"\n'
     assert (
         bump_module._render_shared_version_module(source, "0.1.1")
-        == 'FLOWMESH_VERSION = "0.1.1"\n'
+        == 'FLOWMESH_RELEASE_VERSION = "0.1.1"\n'
     )
 
 

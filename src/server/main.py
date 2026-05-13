@@ -17,7 +17,7 @@ if __name__ == "__main__" and __package__ is None:
     __package__ = "server"
     sys.modules.setdefault("server.main", sys.modules[__name__])
 
-from shared._version import FLOWMESH_VERSION
+from shared._version import FLOWMESH_RELEASE_VERSION
 
 from .auth import resolve_system_principal
 from .clients import RedisClient
@@ -271,7 +271,7 @@ openapi_tags = [
 
 app = FastAPI(
     title="FlowMesh Server",
-    version=FLOWMESH_VERSION,
+    version=FLOWMESH_RELEASE_VERSION,
     openapi_tags=openapi_tags,
     docs_url=None,
     redoc_url=None,
