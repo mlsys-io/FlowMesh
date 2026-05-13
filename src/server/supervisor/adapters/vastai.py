@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import threading
 from collections import Counter
 from typing import Any
@@ -8,7 +9,7 @@ from vastai import VastAI  # type: ignore
 
 from ... import env
 from ...hooks import PrincipalContext
-from ...utils.helpers import ResourcePool, get_logger
+from ...utils.helpers import ResourcePool
 from ..resource_manager import GpuArch
 from ..schemas import WorkerHardware, WorkerInfo, WorkerStatus
 from .base import (
@@ -22,7 +23,7 @@ from .utils import env_to_secret_str, get_worker_image_name, to_env_str
 
 _PROVIDER_NAME = "vastai"
 
-logger = get_logger()
+logger = logging.getLogger("supervisor")
 
 
 class VastAIWorkerConfig(WorkerConfig):

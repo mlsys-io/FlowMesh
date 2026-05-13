@@ -1,56 +1,10 @@
 import asyncio
-import logging
 import queue
 import threading
-from logging.handlers import RotatingFileHandler
 
 import docker
 
-_logger: logging.Logger | None = None
 _docker_client: docker.DockerClient | None = None
-
-
-def get_logger(
-    name: str = "server",
-    log_file: str = "server.log",
-    max_bytes: int = 0,
-    backup_count: int = 0,
-    level: str = "INFO",
-) -> logging.Logger:
-    global _logger
-    if _logger is not None:
-        return _logger
-
-    logger = logging.getLogger(name)
-    if logger.handlers:
-        for handler in list(logger.handlers):
-            logger.removeHandler(handler)
-            try:
-                handler.close()
-            except Exception:
-                pass
-
-    logger.setLevel(getattr(logging, level.upper(), logging.INFO))
-    logger.propagate = False
-
-    fh = RotatingFileHandler(
-        log_file,
-        mode="w",
-        maxBytes=max_bytes,
-        backupCount=backup_count,
-        encoding="utf-8",
-    )
-    fmt = logging.Formatter("%(asctime)s | %(levelname)s | %(message)s")
-    fh.setFormatter(fmt)
-    logger.addHandler(fh)
-
-    ch = logging.StreamHandler()
-    ch.setFormatter(fmt)
-    ch.setLevel(getattr(logging, level.upper(), logging.INFO))
-    logger.addHandler(ch)
-
-    _logger = logger
-    return logger
 
 
 def get_docker_client() -> docker.DockerClient:

@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 import os
 import re
 import threading
@@ -17,7 +18,7 @@ from shared.utils.docker import sanitize_container_name
 
 from ... import env
 from ...hooks import PrincipalContext
-from ...utils.helpers import get_docker_client, get_logger
+from ...utils.helpers import get_docker_client
 from ..resource_manager import GpuArch, ResourceManager
 from ..schemas import WorkerHardware, WorkerInfo, WorkerStatus
 from .base import (
@@ -36,7 +37,7 @@ _SSH_MANAGED_LABEL = "flowmesh.ssh.managed"
 _ssh_network_suffix = sanitize_container_name(env.NODE_ALIAS, maxlen=32)
 _SSH_NETWORK_NAME = f"flowmesh_ssh_{_ssh_network_suffix or 'default'}"
 
-logger = get_logger()
+logger = logging.getLogger("supervisor")
 
 
 class _VolumeInitializer:
