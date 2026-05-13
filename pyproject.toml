@@ -1,6 +1,6 @@
 [project]
 name = "flowmesh"
-version = "0.1.0"
+version = "0.1.1"
 description = "FlowMesh: A Multi-tenant Service Fabric for LLM Agentic Workflows"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -10,13 +10,13 @@ dependencies = []
 
 [project.optional-dependencies]
 # Public PyPI install surface.
-sdk = ["flowmesh-sdk==0.1.0"]
-cli = ["flowmesh-cli[stack]==0.1.0"]
-hook = ["flowmesh-hook==0.1.0"]
+sdk = ["flowmesh-sdk==0.1.1"]
+cli = ["flowmesh-cli[stack]==0.1.1"]
+hook = ["flowmesh-hook==0.1.1"]
 all = [
-    "flowmesh-cli[stack]==0.1.0",
-    "flowmesh-hook==0.1.0",
-    "flowmesh-sdk==0.1.0",
+    "flowmesh-cli[stack]==0.1.1",
+    "flowmesh-hook==0.1.1",
+    "flowmesh-sdk==0.1.1",
 ]
 
 [dependency-groups]
