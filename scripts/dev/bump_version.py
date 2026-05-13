@@ -15,7 +15,8 @@ PACKAGE_PYPROJECTS: tuple[Path, ...] = (
     REPO_ROOT / "sdk" / "pyproject.toml",
     REPO_ROOT / "sdk" / "stack" / "pyproject.toml",
 )
-SDK_INIT = REPO_ROOT / "sdk" / "src" / "flowmesh" / "__init__.py"
+SDK_VERSION_MODULE = REPO_ROOT / "sdk" / "src" / "flowmesh" / "_version.py"
+SHARED_VERSION_MODULE = REPO_ROOT / "src" / "shared" / "_version.py"
 FIRST_PARTY_DISTRIBUTIONS: tuple[str, ...] = (
     "flowmesh-cli-stack",
     "flowmesh-sdk-stack",
@@ -26,7 +27,8 @@ FIRST_PARTY_DISTRIBUTIONS: tuple[str, ...] = (
 )
 
 _VERSION_RE = re.compile(r'(?m)^version = "[^"]+"$')
-_SDK_INIT_VERSION_RE = re.compile(r'(?m)^__version__ = "[^"]+"$')
+_SDK_STATIC_VERSION_RE = re.compile(r'(?m)^_STATIC_VERSION = "[^"]+"$')
+_SHARED_RUNTIME_VERSION_RE = re.compile(r'(?m)^FLOWMESH_VERSION = "[^"]+"$')
 _PIN_RE = re.compile(
     r"(?P<name>\b(?:"
     + "|".join(re.escape(name) for name in FIRST_PARTY_DISTRIBUTIONS)
@@ -52,14 +54,38 @@ def _render(text: str, version: str, path: Path) -> str:
     )
 
 
-def _render_sdk_init(text: str, version: str) -> str:
-    rendered, count = _SDK_INIT_VERSION_RE.subn(
-        f'__version__ = "{version}"', text, count=1
-    )
-    if count != 1:
-        rel = SDK_INIT.relative_to(REPO_ROOT)
-        raise SystemExit(f"Expected one __version__ line in {rel}.")
+def _render_literal_assignment(
+    text: str,
+    version: str,
+    path: Path,
+    pattern: re.Pattern[str],
+    name: str,
+) -> str:
+    if len(pattern.findall(text)) != 1:
+        rel = path.relative_to(REPO_ROOT)
+        raise SystemExit(f"Expected one {name} line in {rel}.")
+    rendered = pattern.sub(f'{name} = "{version}"', text, count=1)
     return rendered
+
+
+def _render_sdk_version_module(text: str, version: str) -> str:
+    return _render_literal_assignment(
+        text,
+        version,
+        SDK_VERSION_MODULE,
+        _SDK_STATIC_VERSION_RE,
+        "_STATIC_VERSION",
+    )
+
+
+def _render_shared_version_module(text: str, version: str) -> str:
+    return _render_literal_assignment(
+        text,
+        version,
+        SHARED_VERSION_MODULE,
+        _SHARED_RUNTIME_VERSION_RE,
+        "FLOWMESH_VERSION",
+    )
 
 
 def main() -> int:
@@ -77,9 +103,21 @@ def main() -> int:
     for path in PACKAGE_PYPROJECTS:
         current = path.read_text()
         rendered.append((path, current, _render(current, version, path)))
-    sdk_init_current = SDK_INIT.read_text()
+    sdk_version_current = SDK_VERSION_MODULE.read_text()
     rendered.append(
-        (SDK_INIT, sdk_init_current, _render_sdk_init(sdk_init_current, version))
+        (
+            SDK_VERSION_MODULE,
+            sdk_version_current,
+            _render_sdk_version_module(sdk_version_current, version),
+        )
+    )
+    shared_version_current = SHARED_VERSION_MODULE.read_text()
+    rendered.append(
+        (
+            SHARED_VERSION_MODULE,
+            shared_version_current,
+            _render_shared_version_module(shared_version_current, version),
+        )
     )
 
     changed = [path for path, current, updated in rendered if current != updated]

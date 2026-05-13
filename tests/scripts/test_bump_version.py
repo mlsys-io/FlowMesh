@@ -19,11 +19,34 @@ def bump_module() -> ModuleType:
     return module
 
 
-def test_render_sdk_init_updates_version_constant(bump_module):
-    source = '__version__ = "0.1.0"\n'
-    assert bump_module._render_sdk_init(source, "0.1.1") == '__version__ = "0.1.1"\n'
+def test_render_sdk_version_module_updates_static_version(bump_module):
+    source = '_STATIC_VERSION = "0.1.0"\n'
+    assert (
+        bump_module._render_sdk_version_module(source, "0.1.1")
+        == '_STATIC_VERSION = "0.1.1"\n'
+    )
 
 
-def test_render_sdk_init_requires_single_version_line(bump_module):
-    with pytest.raises(SystemExit, match="Expected one __version__ line"):
-        bump_module._render_sdk_init("VERSION = '0.1.0'\n", "0.1.1")
+def test_render_shared_version_module_updates_runtime_version(bump_module):
+    source = 'FLOWMESH_VERSION = "0.1.0"\n'
+    assert (
+        bump_module._render_shared_version_module(source, "0.1.1")
+        == 'FLOWMESH_VERSION = "0.1.1"\n'
+    )
+
+
+@pytest.mark.parametrize(
+    ("source", "match"),
+    [
+        ("VERSION = '0.1.0'\n", "Expected one _STATIC_VERSION line"),
+        (
+            '_STATIC_VERSION = "0.1.0"\n_STATIC_VERSION = "0.1.0"\n',
+            "Expected one _STATIC_VERSION line",
+        ),
+    ],
+)
+def test_render_sdk_version_module_requires_single_version_line(
+    bump_module, source, match
+):
+    with pytest.raises(SystemExit, match=match):
+        bump_module._render_sdk_version_module(source, "0.1.1")

@@ -24,6 +24,7 @@ Async usage::
         workflows = await client.workflows.list()
 """
 
+from ._version import __version__
 from .async_client import AsyncFlowMesh
 from .client import FlowMesh
 from .config import FlowMeshConfig
@@ -50,6 +51,5 @@ __all__ = [
     "FlowMeshConnectionError",
     "ConfigNotFoundError",
     "ConfigInvalidError",
+    "__version__",
 ]
-
-__version__ = "0.1.1"

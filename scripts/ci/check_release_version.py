@@ -17,6 +17,8 @@ PACKAGE_PYPROJECTS: tuple[Path, ...] = (
     REPO_ROOT / "sdk" / "pyproject.toml",
     REPO_ROOT / "sdk" / "stack" / "pyproject.toml",
 )
+SDK_VERSION_MODULE = REPO_ROOT / "sdk" / "src" / "flowmesh" / "_version.py"
+SHARED_VERSION_MODULE = REPO_ROOT / "src" / "shared" / "_version.py"
 FIRST_PARTY_DISTRIBUTIONS = {
     "flowmesh",
     "flowmesh-cli",
@@ -28,6 +30,10 @@ FIRST_PARTY_DISTRIBUTIONS = {
 
 _EXACT_PIN_RE = re.compile(
     r"^(?P<name>[A-Za-z0-9_.-]+)(?:\[[^\]]+\])?==(?P<version>[^;,\s]+)"
+)
+_SDK_STATIC_VERSION_RE = re.compile(r'(?m)^_STATIC_VERSION = "(?P<version>[^"]+)"$')
+_SHARED_RUNTIME_VERSION_RE = re.compile(
+    r'(?m)^FLOWMESH_VERSION = "(?P<version>[^"]+)"$'
 )
 
 
@@ -63,6 +69,31 @@ def _parse_pyproject_version(raw: str, rel: Path) -> Version:
     except InvalidVersion as exc:
         raise SystemExit(
             f"{rel} declares version {raw!r} which is not PEP 440 ({exc})."
+        )
+
+
+def _display_path(path: Path) -> Path:
+    try:
+        return path.relative_to(REPO_ROOT)
+    except ValueError:
+        return path
+
+
+def _read_literal_version(
+    path: Path, pattern: re.Pattern[str], name: str, expected: Version
+) -> None:
+    matches = list(pattern.finditer(path.read_text()))
+    rel = _display_path(path)
+    if len(matches) != 1:
+        raise SystemExit(f"Expected one {name} line in {rel}.")
+    raw = matches[0].group("version")
+    try:
+        version = Version(raw)
+    except InvalidVersion as exc:
+        raise SystemExit(f"{rel} declares {name} {raw!r} which is not PEP 440 ({exc}).")
+    if version != expected:
+        raise SystemExit(
+            f"{rel} declares {name} {version}, expected release {expected}."
         )
 
 
@@ -113,6 +144,21 @@ def _check_internal_pins(expected: Version) -> None:
         raise SystemExit("Stale internal package pins:\n" + "\n".join(failures))
 
 
+def _check_runtime_versions(expected: Version) -> None:
+    _read_literal_version(
+        SDK_VERSION_MODULE,
+        _SDK_STATIC_VERSION_RE,
+        "_STATIC_VERSION",
+        expected,
+    )
+    _read_literal_version(
+        SHARED_VERSION_MODULE,
+        _SHARED_RUNTIME_VERSION_RE,
+        "FLOWMESH_VERSION",
+        expected,
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -124,6 +170,7 @@ def main() -> int:
     expected = _release_version(args.tag)
     version = _check_versions(expected)
     _check_internal_pins(version)
+    _check_runtime_versions(version)
     print(f"Release package versions are synchronized at {version}.")
     return 0
 
