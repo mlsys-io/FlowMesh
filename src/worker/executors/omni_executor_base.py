@@ -23,6 +23,7 @@ from shared.utils.parsing import to_bool, to_int
 from ..config import WorkerConfig
 from ..lifecycle import Lifecycle
 from .base_executor import ExecutionError, Executor
+from .mixins.inference import InferenceMixin
 
 try:
     import numpy as np
@@ -38,7 +39,7 @@ except Exception:
 logger = logging.getLogger(__name__)
 
 
-class OmniExecutorBase(Executor):
+class OmniExecutorBase(InferenceMixin, Executor):
     """Shared base for Omni-family executors.
 
     Manages the ``_omni`` model handle and provides config / audio helpers.

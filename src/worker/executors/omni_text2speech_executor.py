@@ -16,6 +16,7 @@ except Exception:
         Omni = None
     _HAS_OMNI = False
 
+from shared.schemas.governance import SpanType
 from shared.tasks.specs.omni import OmniText2SpeechSpecStrict
 from shared.utils.parsing import as_list, to_int
 
@@ -47,55 +48,79 @@ class OmniText2SpeechExecutor(OmniExecutorBase):
         spec_dict = spec.model_dump(by_alias=True)
         out_dir = Path(out_dir).resolve()
 
-        texts = self.collect_text_inputs(spec_dict)
-        if not texts:
-            raise ExecutionError(
-                "omni_text2speech requires text input "
-                "in spec.data.text or spec.data.items."
-            )
+        with self._task_span(
+            task.task_id, task.workflow_id, out_dir, owner_id=task.owner_id
+        ):
+            texts = self.collect_text_inputs(spec_dict)
+            if not texts:
+                raise ExecutionError(
+                    "omni_text2speech requires text input "
+                    "in spec.data.text or spec.data.items."
+                )
 
-        self._ensure_omni(spec_dict)
-        cfg = self.omni_cfg(spec_dict, "omni:tts", "omni_text2speech")
-        output_format = str(cfg.get("output_format") or "wav").strip().lower() or "wav"
-        sample_rate = to_int(cfg.get("sample_rate"), default=24000)
-
-        audio_objects = [self._generate_single(t, spec_dict=spec_dict) for t in texts]
-        artifacts_dir = out_dir / "artifacts"
-        items: list[dict[str, Any]] = []
-        for idx, (text, audio_obj) in enumerate(zip(texts, audio_objects)):
-            save_path = self.resolve_save_path(
-                cfg,
-                out_dir,
-                index=idx,
-                ext=output_format,
-                multi=len(texts) > 1,
-                default_prefix="generated_tts",
+            with self._span(
+                "model load",
+                span_type=SpanType.COMPUTE,
+                attributes={"task_id": task.task_id, "prompt_count": len(texts)},
+            ):
+                self._ensure_omni(spec_dict)
+            cfg = self.omni_cfg(spec_dict, "omni:tts", "omni_text2speech")
+            output_format = (
+                str(cfg.get("output_format") or "wav").strip().lower() or "wav"
             )
-            save_path.parent.mkdir(parents=True, exist_ok=True)
-            save_audio(audio_obj, save_path, sample_rate=sample_rate)
-            items.append(
-                {
-                    "index": idx,
-                    "text": text,
-                    "audio": artifact_ref(self.relative_to(save_path, artifacts_dir)),
-                }
-            )
+            sample_rate = to_int(cfg.get("sample_rate"), default=24000)
 
-        first = items[0]["audio"] if items else {}
-        result: dict[str, Any] = {
-            "ok": True,
-            "executor": self.name,
-            "mode": "tts",
-            "model": self._model_name,
-            "audio": first,
-            "items": items,
-            "sample_rate": sample_rate,
-        }
-        storyboard = spec_dict.get("storyboard")
-        if isinstance(storyboard, dict):
-            result["storyboard"] = dict(storyboard)
-        maybe_upload_artifacts(task, out_dir, logger=logger)
-        return result
+            with self._span(
+                "generation",
+                span_type=SpanType.COMPUTE,
+                attributes={"task_id": task.task_id, "prompt_count": len(texts)},
+            ):
+                audio_objects = [
+                    self._generate_single(t, spec_dict=spec_dict) for t in texts
+                ]
+            artifacts_dir = out_dir / "artifacts"
+            items: list[dict[str, Any]] = []
+            with self._span(
+                "output postprocessing",
+                span_type=SpanType.COMPUTE,
+                attributes={"task_id": task.task_id, "item_count": len(texts)},
+            ):
+                for idx, (text, audio_obj) in enumerate(zip(texts, audio_objects)):
+                    save_path = self.resolve_save_path(
+                        cfg,
+                        out_dir,
+                        index=idx,
+                        ext=output_format,
+                        multi=len(texts) > 1,
+                        default_prefix="generated_tts",
+                    )
+                    save_path.parent.mkdir(parents=True, exist_ok=True)
+                    save_audio(audio_obj, save_path, sample_rate=sample_rate)
+                    items.append(
+                        {
+                            "index": idx,
+                            "text": text,
+                            "audio": artifact_ref(
+                                self.relative_to(save_path, artifacts_dir)
+                            ),
+                        }
+                    )
+
+            first = items[0]["audio"] if items else {}
+            result: dict[str, Any] = {
+                "ok": True,
+                "executor": self.name,
+                "mode": "tts",
+                "model": self._model_name,
+                "audio": first,
+                "items": items,
+                "sample_rate": sample_rate,
+            }
+            storyboard = spec_dict.get("storyboard")
+            if isinstance(storyboard, dict):
+                result["storyboard"] = dict(storyboard)
+            maybe_upload_artifacts(task, out_dir, logger=logger)
+            return result
 
     # ── model ────────────────────────────────────────────────────────────
 

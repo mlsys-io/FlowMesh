@@ -15,6 +15,7 @@ except Exception:
         Omni = None
     _HAS_OMNI = False
 
+from shared.schemas.governance import SpanType
 from shared.tasks.specs.omni import OmniText2ImageSpecStrict
 from shared.utils.parsing import as_list
 
@@ -41,50 +42,70 @@ class OmniText2ImageExecutor(OmniExecutorBase):
         spec_dict = spec.model_dump(by_alias=True)
         out_dir = Path(out_dir).resolve()
 
-        prompts = self.collect_text_inputs(spec_dict)
-        if not prompts:
-            raise ExecutionError(
-                "omni_text2image requires prompts "
-                "in spec.data.prompt or spec.data.items."
-            )
+        with self._task_span(
+            task.task_id, task.workflow_id, out_dir, owner_id=task.owner_id
+        ):
+            prompts = self.collect_text_inputs(spec_dict)
+            if not prompts:
+                raise ExecutionError(
+                    "omni_text2image requires prompts "
+                    "in spec.data.prompt or spec.data.items."
+                )
 
-        self._ensure_omni(spec_dict)
-        cfg = self.omni_cfg(spec_dict, "omni:image generation", "omni_text2image")
-        fmt = str(cfg.get("output_format") or "png").strip().lower() or "png"
+            with self._span(
+                "model load",
+                span_type=SpanType.COMPUTE,
+                attributes={"task_id": task.task_id, "prompt_count": len(prompts)},
+            ):
+                self._ensure_omni(spec_dict)
+            cfg = self.omni_cfg(spec_dict, "omni:image generation", "omni_text2image")
+            fmt = str(cfg.get("output_format") or "png").strip().lower() or "png"
 
-        artifacts_dir = out_dir / "artifacts"
-        items: list[dict[str, Any]] = []
-        images = self._generate_images(prompts)
-        for idx, (prompt, image) in enumerate(zip(prompts, images)):
-            save_path = self.resolve_save_path(
-                cfg,
-                out_dir,
-                index=idx,
-                ext=fmt,
-                multi=len(prompts) > 1,
-                default_prefix="generated_image",
-            )
-            save_path.parent.mkdir(parents=True, exist_ok=True)
-            _save_image(image, save_path)
-            items.append(
-                {
-                    "index": idx,
-                    "prompt": prompt,
-                    "image": artifact_ref(self.relative_to(save_path, artifacts_dir)),
-                }
-            )
+            artifacts_dir = out_dir / "artifacts"
+            items: list[dict[str, Any]] = []
+            with self._span(
+                "generation",
+                span_type=SpanType.COMPUTE,
+                attributes={"task_id": task.task_id, "prompt_count": len(prompts)},
+            ):
+                images = self._generate_images(prompts)
+            with self._span(
+                "output postprocessing",
+                span_type=SpanType.COMPUTE,
+                attributes={"task_id": task.task_id, "item_count": len(prompts)},
+            ):
+                for idx, (prompt, image) in enumerate(zip(prompts, images)):
+                    save_path = self.resolve_save_path(
+                        cfg,
+                        out_dir,
+                        index=idx,
+                        ext=fmt,
+                        multi=len(prompts) > 1,
+                        default_prefix="generated_image",
+                    )
+                    save_path.parent.mkdir(parents=True, exist_ok=True)
+                    _save_image(image, save_path)
+                    items.append(
+                        {
+                            "index": idx,
+                            "prompt": prompt,
+                            "image": artifact_ref(
+                                self.relative_to(save_path, artifacts_dir)
+                            ),
+                        }
+                    )
 
-        first = items[0]["image"] if items else {}
-        result: dict[str, Any] = {
-            "ok": True,
-            "executor": self.name,
-            "mode": "image",
-            "model": self._model_name,
-            "image": first,
-            "items": items,
-        }
-        maybe_upload_artifacts(task, out_dir, logger=logger)
-        return result
+            first = items[0]["image"] if items else {}
+            result: dict[str, Any] = {
+                "ok": True,
+                "executor": self.name,
+                "mode": "image",
+                "model": self._model_name,
+                "image": first,
+                "items": items,
+            }
+            maybe_upload_artifacts(task, out_dir, logger=logger)
+            return result
 
     # ── model ────────────────────────────────────────────────────────────
 
