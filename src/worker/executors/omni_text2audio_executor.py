@@ -107,7 +107,7 @@ class OmniText2AudioExecutor(OmniExecutorBase):
             )
 
         cfg = _bgm_cfg(spec_dict)
-        output_format = str(cfg.get("output_format", "wav")).strip().lower()
+        output_format = str(cfg.get("output_format") or "").strip().lower() or "wav"
         if output_format != "wav":
             raise ExecutionError(
                 "omni_text2audio currently supports output_format='wav' only."

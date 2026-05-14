@@ -90,7 +90,7 @@ class OmniText2GeneralExecutor(OmniExecutorBase):
             )
 
         cfg = _narration_cfg(spec_dict)
-        output_format = str(cfg.get("output_format", "wav")).strip().lower()
+        output_format = str(cfg.get("output_format") or "").strip().lower() or "wav"
         if output_format != "wav":
             raise ExecutionError(
                 "omni_text2general currently supports output_format='wav' only."

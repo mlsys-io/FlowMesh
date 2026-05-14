@@ -80,7 +80,7 @@ class OmniText2SpeechExecutor(OmniExecutorBase):
         ):
             self._ensure_omni(spec_dict)
         cfg = self.omni_cfg(spec_dict, "omni:tts", "omni_text2speech")
-        output_format = str(cfg.get("output_format", "wav")).strip().lower()
+        output_format = str(cfg.get("output_format") or "").strip().lower() or "wav"
         sample_rate = to_int(cfg.get("sample_rate"), default=24000)
 
         with self._span(

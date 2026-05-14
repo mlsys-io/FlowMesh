@@ -75,7 +75,7 @@ class OmniText2ImageExecutor(OmniExecutorBase):
         ):
             self._ensure_omni(spec_dict)
         cfg = self.omni_cfg(spec_dict, "omni:image generation", "omni_text2image")
-        fmt = str(cfg.get("output_format", "png")).strip().lower()
+        fmt = str(cfg.get("output_format") or "").strip().lower() or "png"
 
         artifacts_dir = out_dir / "artifacts"
         items: list[dict[str, Any]] = []
