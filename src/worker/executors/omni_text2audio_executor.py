@@ -56,7 +56,7 @@ from shared.utils.parsing import to_float, to_int
 
 from .base_executor import ExecutionError, ExecutorTask
 from .omni_executor_base import OmniExecutorBase, extract_multimodal_output
-from .utils.checkpoints import artifact_ref, maybe_upload_artifacts
+from .utils.checkpoints import artifact_ref, maybe_upload_artifacts, maybe_upload_traces
 
 logger = logging.getLogger(__name__)
 
@@ -84,7 +84,10 @@ class OmniText2AudioExecutor(OmniExecutorBase):
         with self._task_span(
             task.task_id, task.workflow_id, out_dir, owner_id=task.owner_id
         ):
-            return self._run_inner(task, spec, spec_dict, out_dir)
+            result = self._run_inner(task, spec, spec_dict, out_dir)
+        maybe_upload_artifacts(task, out_dir, logger=logger)
+        maybe_upload_traces(task, out_dir, logger=logger)
+        return result
 
     def _run_inner(
         self,
@@ -104,7 +107,7 @@ class OmniText2AudioExecutor(OmniExecutorBase):
             )
 
         cfg = _bgm_cfg(spec_dict)
-        output_format = str(cfg.get("output_format") or "wav").strip().lower() or "wav"
+        output_format = str(cfg.get("output_format", "wav")).strip().lower()
         if output_format != "wav":
             raise ExecutionError(
                 "omni_text2audio currently supports output_format='wav' only."
@@ -232,7 +235,6 @@ class OmniText2AudioExecutor(OmniExecutorBase):
         storyboard = spec_dict.get("storyboard")
         if isinstance(storyboard, dict):
             result["storyboard"] = dict(storyboard)
-        maybe_upload_artifacts(task, out_dir, logger=logger)
         return result
 
     # ── model ────────────────────────────────────────────────────────────
