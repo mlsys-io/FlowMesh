@@ -18,7 +18,9 @@ spec:
       identifier: Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice
 
   data:
-    text: "Hello, welcome to FlowMesh. This is a text-to-speech demo."
+    type: list
+    items:
+      - "Hello, welcome to FlowMesh. This is a text-to-speech demo."
 
   omni:
     output_format: wav

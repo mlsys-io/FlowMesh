@@ -45,7 +45,11 @@ class OmniText2ImageExecutor(OmniExecutorBase):
         with self._task_span(
             task.task_id, task.workflow_id, out_dir, owner_id=task.owner_id
         ):
-            prompts = self.collect_text_inputs(spec_dict)
+            prompts: list[str] = []
+            for p in self._collect_prompts_for_spec(spec, task.task_id).prompts:
+                if not isinstance(p, str):
+                    raise ExecutionError("omni_text2image prompts must be strings.")
+                prompts.append(p)
             if not prompts:
                 raise ExecutionError(
                     "omni_text2image requires prompts "

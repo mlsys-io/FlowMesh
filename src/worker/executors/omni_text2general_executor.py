@@ -67,16 +67,23 @@ class OmniText2GeneralExecutor(OmniExecutorBase):
         with self._task_span(
             task.task_id, task.workflow_id, out_dir, owner_id=task.owner_id
         ):
-            return self._run_inner(task, spec_dict, out_dir)
+            return self._run_inner(task, spec, spec_dict, out_dir)
 
     def _run_inner(
-        self, task: ExecutorTask, spec_dict: dict[str, Any], out_dir: Path
+        self,
+        task: ExecutorTask,
+        spec: OmniText2GeneralSpecStrict,
+        spec_dict: dict[str, Any],
+        out_dir: Path,
     ) -> dict[str, Any]:
-        texts = self.collect_text_inputs(spec_dict)
+        texts: list[str] = []
+        for p in self._collect_prompts_for_spec(spec, task.task_id).prompts:
+            if not isinstance(p, str):
+                raise ExecutionError("omni_text2general prompts must be strings.")
+            texts.append(p)
         if not texts:
             raise ExecutionError(
-                "omni_text2general requires text input "
-                "in spec.data.text or spec.data.items."
+                "omni_text2general requires text input in spec.data.items."
             )
 
         cfg = _narration_cfg(spec_dict)

@@ -51,11 +51,14 @@ class OmniText2SpeechExecutor(OmniExecutorBase):
         with self._task_span(
             task.task_id, task.workflow_id, out_dir, owner_id=task.owner_id
         ):
-            texts = self.collect_text_inputs(spec_dict)
+            texts: list[str] = []
+            for p in self._collect_prompts_for_spec(spec, task.task_id).prompts:
+                if not isinstance(p, str):
+                    raise ExecutionError("omni_text2speech prompts must be strings.")
+                texts.append(p)
             if not texts:
                 raise ExecutionError(
-                    "omni_text2speech requires text input "
-                    "in spec.data.text or spec.data.items."
+                    "omni_text2speech requires text input in spec.data.items."
                 )
 
             with self._span(

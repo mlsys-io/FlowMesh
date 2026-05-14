@@ -18,7 +18,9 @@ spec:
       identifier: stabilityai/stable-audio-open-1.0
 
   data:
-    text: Upbeat electronic music with synth pads and a driving beat
+    type: list
+    items:
+      - Upbeat electronic music with synth pads and a driving beat
 
   omni:
     output_format: wav

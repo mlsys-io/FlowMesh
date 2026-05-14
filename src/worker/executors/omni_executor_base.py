@@ -162,22 +162,6 @@ class OmniExecutorBase(InferenceMixin, Executor):
         return str(value).strip()
 
     @staticmethod
-    def collect_text_inputs(spec_dict: dict[str, Any]) -> list[str]:
-        data = spec_dict.get("data") or {}
-        if not isinstance(data, dict):
-            data = {}
-        dtype = str(data.get("type") or "").strip().lower()
-        if dtype == "list":
-            items = data.get("items") or []
-            if not isinstance(items, list):
-                return []
-            return [str(item).strip() for item in items if str(item).strip()]
-        text_val = data.get("text") or data.get("prompt") or spec_dict.get("task")
-        if not isinstance(text_val, str) or not text_val.strip():
-            return []
-        return [text_val.strip()]
-
-    @staticmethod
     def resolve_save_path(
         cfg: dict[str, Any],
         out_dir: Path,

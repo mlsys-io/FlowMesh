@@ -18,7 +18,9 @@ spec:
       identifier: Qwen/Qwen3-Omni-30B-A3B-Instruct
 
   data:
-    text: "Please read the following passage in a calm, professional tone: FlowMesh is a distributed GPU workflow engine."
+    type: list
+    items:
+      - "Please read the following passage in a calm, professional tone: FlowMesh is a distributed GPU workflow engine."
 
   omni:
     output_format: wav
