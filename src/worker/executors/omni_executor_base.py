@@ -15,7 +15,7 @@ import tempfile
 import wave
 from abc import abstractmethod
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 import yaml
 
@@ -191,6 +191,14 @@ class OmniExecutorBase(InferenceMixin, Executor):
         if value in (None, ""):
             value = default
         return str(value).strip()
+
+    def _collect_text_inputs(self, spec: TaskSpecStrictBase, task_id: str) -> list[str]:
+        prompts = self._collect_prompts_for_spec(spec, task_id).prompts
+        if not prompts:
+            raise ExecutionError(f"{self.name} requires text input in spec.data.items.")
+        if not all(isinstance(p, str) for p in prompts):
+            raise ExecutionError(f"{self.name} prompts must be strings.")
+        return cast(list[str], prompts)
 
     @staticmethod
     def resolve_save_path(

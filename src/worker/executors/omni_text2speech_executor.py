@@ -3,7 +3,7 @@
 import logging
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 try:
     from vllm_omni.entrypoints.omni import Omni
@@ -53,14 +53,7 @@ class OmniText2SpeechExecutor(OmniExecutorBase):
         out_dir: Path,
     ) -> dict[str, Any]:
         assert isinstance(spec, OmniText2SpeechSpecStrict)
-        raw_prompts = self._collect_prompts_for_spec(spec, task.task_id).prompts
-        if not all(isinstance(t, str) for t in raw_prompts):
-            raise ExecutionError("omni_text2speech prompts must be strings.")
-        texts = cast(list[str], raw_prompts)
-        if not texts:
-            raise ExecutionError(
-                "omni_text2speech requires text input in spec.data.items."
-            )
+        texts = self._collect_text_inputs(spec, task.task_id)
 
         with self._span(
             "model load",

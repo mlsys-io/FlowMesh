@@ -2,7 +2,7 @@
 
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 try:
     from vllm import SamplingParams
@@ -69,14 +69,7 @@ class OmniText2GeneralExecutor(OmniExecutorBase):
         out_dir: Path,
     ) -> dict[str, Any]:
         assert isinstance(spec, OmniText2GeneralSpecStrict)
-        raw_prompts = self._collect_prompts_for_spec(spec, task.task_id).prompts
-        if not all(isinstance(t, str) for t in raw_prompts):
-            raise ExecutionError("omni_text2general prompts must be strings.")
-        texts = cast(list[str], raw_prompts)
-        if not texts:
-            raise ExecutionError(
-                "omni_text2general requires text input in spec.data.items."
-            )
+        texts = self._collect_text_inputs(spec, task.task_id)
 
         cfg = _narration_cfg(spec_dict)
         output_format = str(cfg.get("output_format") or "").strip().lower() or "wav"

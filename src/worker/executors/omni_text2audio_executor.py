@@ -3,7 +3,7 @@
 import logging
 import wave
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 try:
     import numpy as np
@@ -86,14 +86,7 @@ class OmniText2AudioExecutor(OmniExecutorBase):
         out_dir: Path,
     ) -> dict[str, Any]:
         assert isinstance(spec, OmniText2AudioSpecStrict)
-        raw_prompts = self._collect_prompts_for_spec(spec, task.task_id).prompts
-        if not all(isinstance(p, str) for p in raw_prompts):
-            raise ExecutionError("omni_text2audio prompts must be strings.")
-        prompts = cast(list[str], raw_prompts)
-        if not prompts:
-            raise ExecutionError(
-                "omni_text2audio requires prompt text in spec.data.items."
-            )
+        prompts = self._collect_text_inputs(spec, task.task_id)
 
         cfg = _bgm_cfg(spec_dict)
         output_format = str(cfg.get("output_format") or "").strip().lower() or "wav"
