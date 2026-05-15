@@ -3,7 +3,7 @@
 import logging
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 try:
     from vllm_omni.entrypoints.omni import Omni
@@ -17,6 +17,7 @@ except Exception:
     _HAS_OMNI = False
 
 from shared.schemas.governance import SpanType
+from shared.tasks.specs import TaskSpecStrictBase
 from shared.tasks.specs.omni import OmniText2SpeechSpecStrict
 from shared.utils.parsing import as_list, to_int
 
@@ -27,7 +28,7 @@ from .omni_executor_base import (
     extract_multimodal_output,
     save_audio,
 )
-from .utils.checkpoints import artifact_ref, maybe_upload_artifacts, maybe_upload_traces
+from .utils.checkpoints import artifact_ref
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +37,7 @@ class OmniText2SpeechExecutor(OmniExecutorBase):
     """Generate speech audio using vllm_omni.Omni."""
 
     name = "omni_text2speech"
+    _TASK_SPEC_TYPE = OmniText2SpeechSpecStrict
 
     def prepare(self) -> None:
         if not _HAS_OMNI:
@@ -43,31 +45,18 @@ class OmniText2SpeechExecutor(OmniExecutorBase):
                 "vllm_omni is not installed; cannot use omni_text2speech executor."
             )
 
-    def run(self, task: ExecutorTask, out_dir: Path) -> dict[str, Any]:
-        spec = self.require_spec(task, OmniText2SpeechSpecStrict)
-        spec_dict = spec.model_dump(by_alias=True)
-        out_dir = Path(out_dir).resolve()
-
-        with self._task_span(
-            task.task_id, task.workflow_id, out_dir, owner_id=task.owner_id
-        ):
-            result = self._run_inner(task, spec, spec_dict, out_dir)
-        maybe_upload_artifacts(task, out_dir, logger=logger)
-        maybe_upload_traces(task, out_dir, logger=logger)
-        return result
-
     def _run_inner(
         self,
         task: ExecutorTask,
-        spec: OmniText2SpeechSpecStrict,
+        spec: TaskSpecStrictBase,
         spec_dict: dict[str, Any],
         out_dir: Path,
     ) -> dict[str, Any]:
-        texts: list[str] = []
-        for p in self._collect_prompts_for_spec(spec, task.task_id).prompts:
-            if not isinstance(p, str):
-                raise ExecutionError("omni_text2speech prompts must be strings.")
-            texts.append(p)
+        assert isinstance(spec, OmniText2SpeechSpecStrict)
+        raw_prompts = self._collect_prompts_for_spec(spec, task.task_id).prompts
+        if not all(isinstance(t, str) for t in raw_prompts):
+            raise ExecutionError("omni_text2speech prompts must be strings.")
+        texts = cast(list[str], raw_prompts)
         if not texts:
             raise ExecutionError(
                 "omni_text2speech requires text input in spec.data.items."

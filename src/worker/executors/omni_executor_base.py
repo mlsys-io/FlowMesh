@@ -13,17 +13,20 @@ import os
 import struct
 import tempfile
 import wave
+from abc import abstractmethod
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 import yaml
 
+from shared.tasks.specs import TaskSpecStrictBase
 from shared.utils.parsing import to_bool, to_int
 
 from ..config import WorkerConfig
 from ..lifecycle import Lifecycle
-from .base_executor import ExecutionError, Executor
+from .base_executor import ExecutionError, Executor, ExecutorTask
 from .mixins.inference import InferenceMixin
+from .utils.checkpoints import maybe_upload_artifacts, maybe_upload_traces
 
 try:
     import numpy as np
@@ -42,9 +45,13 @@ logger = logging.getLogger(__name__)
 class OmniExecutorBase(InferenceMixin, Executor):
     """Shared base for Omni-family executors.
 
-    Manages the ``_omni`` model handle and provides config / audio helpers.
-    Concrete subclasses implement ``prepare()`` and ``run()`` as usual.
+    Manages the ``_omni`` model handle, runs the generic ``run()`` shape
+    (task span + artifact / trace upload), and delegates the task body to
+    each subclass's ``_run_inner``. Subclasses set ``_TASK_SPEC_TYPE`` so
+    the base can call ``require_spec`` without knowing the concrete type.
     """
+
+    _TASK_SPEC_TYPE: ClassVar[type[TaskSpecStrictBase]]
 
     def __init__(
         self, config: WorkerConfig, lifecycle: Lifecycle | None = None
@@ -54,6 +61,30 @@ class OmniExecutorBase(InferenceMixin, Executor):
         self._model_name: str | None = None
         self._omni_spec: tuple[Any, ...] | None = None
         self._stage_configs_tmp: Path | None = None
+
+    def run(self, task: ExecutorTask, out_dir: Path) -> dict[str, Any]:
+        spec = self.require_spec(task, self._TASK_SPEC_TYPE)
+        spec_dict = spec.model_dump(by_alias=True)
+        out_dir = Path(out_dir).resolve()
+        with self._task_span(
+            task.task_id, task.workflow_id, out_dir, owner_id=task.owner_id
+        ):
+            result = self._run_inner(task, spec, spec_dict, out_dir)
+        maybe_upload_artifacts(task, out_dir, logger=logger)
+        maybe_upload_traces(task, out_dir, logger=logger)
+        return result
+
+    @abstractmethod
+    def _run_inner(
+        self,
+        task: ExecutorTask,
+        spec: TaskSpecStrictBase,
+        spec_dict: dict[str, Any],
+        out_dir: Path,
+    ) -> dict[str, Any]:
+        """Run the executor-specific body. ``spec`` is the concrete strict
+        spec; subclasses ``assert isinstance(spec, ...)`` to narrow."""
+        raise NotImplementedError
 
     # ── model lifecycle ──────────────────────────────────────────────────
 
