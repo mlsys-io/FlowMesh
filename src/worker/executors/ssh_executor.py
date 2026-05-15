@@ -40,7 +40,6 @@ from shared.utils.http import auth_headers
 from shared.utils.manifest import ARTIFACTS_DIR, prepare_output_dir
 from worker.config import WorkerConfig
 from worker.executors.utils.checkpoints import maybe_upload_artifacts
-from worker.lifecycle import Lifecycle
 
 from .base_executor import (
     ExecutionError,
@@ -270,10 +269,10 @@ class SSHExecutor(Executor):
 
     name = "ssh"
 
-    def __init__(
-        self, config: WorkerConfig, lifecycle: Lifecycle | None = None
-    ) -> None:
-        super().__init__(config, lifecycle)
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        config = self._config
+        lifecycle = self._lifecycle
         self._worker_name = (
             config.container_name
             or config.alias

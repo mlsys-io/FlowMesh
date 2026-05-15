@@ -22,8 +22,6 @@ except Exception:  # pragma: no cover - optional dependency at import time
 from shared.tasks.components import AdapterConfig
 from shared.tasks.components.model import AdapterApplyMode
 from shared.tasks.specs import InferenceSpecStrict
-from worker.config import WorkerConfig
-from worker.lifecycle import Lifecycle
 
 from .base_executor import ExecutionError
 from .utils.checkpoints import (
@@ -53,10 +51,8 @@ class VLLMLoRAExecutor(VLLMExecutor):
 
     name = "vllm_lora"
 
-    def __init__(
-        self, config: WorkerConfig, lifecycle: Lifecycle | None = None
-    ) -> None:
-        super().__init__(config, lifecycle)
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
         self._adapter_specs: list[LoRAAdapterSpec] = []
         self._runtime_specs: list[LoRAAdapterSpec] = []
 

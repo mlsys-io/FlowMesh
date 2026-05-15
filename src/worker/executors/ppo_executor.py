@@ -36,8 +36,6 @@ from trl.trainer.ppo_trainer import PPOTrainer
 from shared.tasks.specs import PPOSpecStrict
 from shared.utils.manifest import scratch_dir
 from shared.utils.parsing import safe_float, safe_int, to_bool
-from worker.config import WorkerConfig
-from worker.lifecycle import Lifecycle
 
 from ..utils.logging import configure_hf_library_logging
 from .base_executor import ExecutionError, Executor, ExecutorTask
@@ -384,10 +382,8 @@ class PPOExecutor(TrainingMixin, Executor):
 
     name = "ppo_executor"
 
-    def __init__(
-        self, config: WorkerConfig, lifecycle: Lifecycle | None = None
-    ) -> None:
-        super().__init__(config, lifecycle)
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
         self._model_name: str | None = None
         self._policy_model: PreTrainedModel | None = None
         self._ref_model: PreTrainedModel | None = None

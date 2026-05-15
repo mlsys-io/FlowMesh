@@ -29,7 +29,7 @@ from typing import Any, TypeVar
 
 from shared.tasks import MergedChildTaskStrict
 from shared.tasks.specs import TaskSpecStrictBase
-from shared.tasks.worker_message import WorkerTaskMessage
+from shared.tasks.worker_message import WorkerHardware, WorkerTaskMessage
 from worker.config import WorkerConfig
 from worker.lifecycle import Lifecycle
 
@@ -57,10 +57,14 @@ class Executor(ABC):
     name: str = "executor"
 
     def __init__(
-        self, config: WorkerConfig, lifecycle: Lifecycle | None = None
+        self,
+        config: WorkerConfig,
+        hardware: WorkerHardware | None = None,
+        lifecycle: Lifecycle | None = None,
     ) -> None:
         super().__init__()
         self._config = config
+        self._hardware = hardware
         self._lifecycle = lifecycle
 
     def emit_update(self, task_id: str, payload: dict[str, Any]) -> None:

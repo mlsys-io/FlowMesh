@@ -61,8 +61,6 @@ from shared.tasks.specs import (
     EmbeddingSpecStrict,
     InferenceSpecStrict,
 )
-from worker.config import WorkerConfig
-from worker.lifecycle import Lifecycle
 
 from ..utils.logging import configure_hf_library_logging
 from .base_executor import ExecutionError, Executor, ExecutorTask
@@ -122,10 +120,8 @@ class HFTransformersExecutor(InferenceMixin, Executor):
 
     name = "transformers"
 
-    def __init__(
-        self, config: WorkerConfig, lifecycle: Lifecycle | None = None
-    ) -> None:
-        super().__init__(config, lifecycle)
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
         self._tok: PreTrainedTokenizerBase | None = None
         self._image_processor: Any | None = None
         self._model: PreTrainedModel | None = None

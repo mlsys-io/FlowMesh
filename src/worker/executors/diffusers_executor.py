@@ -15,8 +15,6 @@ from typing import TYPE_CHECKING, Any
 from PIL import Image
 
 from shared.tasks.specs import DiffusionSpecStrict
-from worker.config import WorkerConfig
-from worker.lifecycle import Lifecycle
 
 from ..utils.logging import configure_hf_library_logging
 from .base_executor import ExecutionError, Executor, ExecutorTask
@@ -52,10 +50,8 @@ class DiffusersExecutor(DataMixin, Executor):
 
     name = "diffusers"
 
-    def __init__(
-        self, config: WorkerConfig, lifecycle: Lifecycle | None = None
-    ) -> None:
-        super().__init__(config, lifecycle)
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
         self._pipe: Any | None = None
         self._device: str | None = None
         self._model_name: str | None = None

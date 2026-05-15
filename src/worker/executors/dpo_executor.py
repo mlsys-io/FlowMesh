@@ -27,8 +27,6 @@ from trl.trainer.dpo_trainer import DPOTrainer
 
 from shared.tasks.specs import DPOSpecStrict
 from shared.utils.manifest import scratch_dir
-from worker.config import WorkerConfig
-from worker.lifecycle import Lifecycle
 
 from ..utils.logging import configure_hf_library_logging
 from .base_executor import ExecutionError, Executor, ExecutorTask
@@ -52,10 +50,8 @@ class DPOExecutor(TrainingMixin, Executor):
 
     name = "dpo_executor"
 
-    def __init__(
-        self, config: WorkerConfig, lifecycle: Lifecycle | None = None
-    ) -> None:
-        super().__init__(config, lifecycle)
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
         self._model_name: str | None = None
         self._current_model: PreTrainedModel | None = None
         self._current_ref_model: PreTrainedModel | None = None

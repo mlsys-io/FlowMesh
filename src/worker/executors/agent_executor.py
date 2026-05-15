@@ -17,8 +17,6 @@ from typing import Any
 from datasets import load_dataset
 
 from shared.tasks.specs import AgentSpecStrict
-from worker.config import WorkerConfig
-from worker.lifecycle import Lifecycle
 
 from .base_executor import ExecutionError, Executor, ExecutorTask
 from .utils.checkpoints import (
@@ -61,10 +59,8 @@ class AgentExecutor(Executor):
 
     name = "agent"
 
-    def __init__(
-        self, config: WorkerConfig, lifecycle: Lifecycle | None = None
-    ) -> None:
-        super().__init__(config, lifecycle)
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
         self._initialized = False
         self._tasks: list[str] = []
 

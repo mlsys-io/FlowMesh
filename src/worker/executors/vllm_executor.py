@@ -68,8 +68,6 @@ except Exception:
 
 from shared.schemas.governance import SpanType
 from shared.tasks.specs import InferenceSpecStrict
-from worker.config import WorkerConfig
-from worker.lifecycle import Lifecycle
 
 from .base_executor import ExecutionError, Executor, ExecutorTask
 from .mixins.data import InferenceEntry
@@ -122,10 +120,8 @@ Document:
 
 Summary:"""
 
-    def __init__(
-        self, config: WorkerConfig, lifecycle: Lifecycle | None = None
-    ) -> None:
-        super().__init__(config, lifecycle)
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
         self._llm: LLM | None = None
         self._model_name: str | None = None
         self._batched_inputs: list[str | TextPrompt] = []

@@ -22,8 +22,6 @@ import yaml
 from shared.tasks.specs import TaskSpecStrictBase
 from shared.utils.parsing import to_bool, to_int
 
-from ..config import WorkerConfig
-from ..lifecycle import Lifecycle
 from .base_executor import ExecutionError, Executor, ExecutorTask
 from .mixins.inference import InferenceMixin
 from .utils.checkpoints import maybe_upload_artifacts, maybe_upload_traces
@@ -53,10 +51,8 @@ class OmniExecutorBase(InferenceMixin, Executor):
 
     _TASK_SPEC_TYPE: ClassVar[type[TaskSpecStrictBase]]
 
-    def __init__(
-        self, config: WorkerConfig, lifecycle: Lifecycle | None = None
-    ) -> None:
-        super().__init__(config, lifecycle)
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
         self._omni: Any | None = None
         self._model_name: str | None = None
         self._omni_spec: tuple[Any, ...] | None = None
