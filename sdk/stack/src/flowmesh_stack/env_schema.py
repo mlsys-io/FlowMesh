@@ -1,6 +1,7 @@
 """Environment schema definitions and pure validation helpers."""
 
 import enum
+import operator
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from logging import _nameToLevel as LOG_LEVELS
@@ -34,7 +35,9 @@ class EnvVar:
     use_default: bool = False
     choices: Iterable[str] | None = None
     min_value: float | None = None
+    min_inclusive: bool = True
     max_value: float | None = None
+    max_inclusive: bool = True
     min_length: int | None = None
     ensure_path: Literal["error", "warn", "create"] | None = None
     url_schemes: set[str] | None = None
@@ -133,19 +136,13 @@ def validate_env_values(
                     if int_value is None:
                         errors.append(f"{var.key} must be an integer")
                         continue
-                    if var.min_value is not None and int_value < var.min_value:
-                        errors.append(f"{var.key} must be >= {int(var.min_value)}")
-                    if var.max_value is not None and int_value > var.max_value:
-                        errors.append(f"{var.key} must be <= {int(var.max_value)}")
+                    _check_value_range(var, int_value, errors)
                 case EnvVarType.FLOAT:
                     float_value = parse_float(raw)
                     if float_value is None:
                         errors.append(f"{var.key} must be a number")
                         continue
-                    if var.min_value is not None and float_value < var.min_value:
-                        errors.append(f"{var.key} must be >= {var.min_value}")
-                    if var.max_value is not None and float_value > var.max_value:
-                        errors.append(f"{var.key} must be <= {var.max_value}")
+                    _check_value_range(var, float_value, errors)
                 case EnvVarType.BOOL:
                     if parse_bool(raw) is None:
                         errors.append(
@@ -211,6 +208,36 @@ def require_all_or_none(
     values = [env.get(key, "").strip() for key in keys]
     if any(values) and not all(values):
         errors.append(f"Either all or none of {', '.join(keys)} must be set")
+
+
+_COMPARE_OPS = {
+    "<": operator.lt,
+    "<=": operator.le,
+    ">": operator.gt,
+    ">=": operator.ge,
+}
+
+
+def _check_value_range(var: EnvVar, value: float, errors: list[str]) -> None:
+    comp: Literal["<", "<=", ">", ">="]
+    if var.min_value is not None:
+        comp = ">=" if var.min_inclusive else ">"
+        _check_bound(var, value, var.min_value, comp, errors)
+    if var.max_value is not None:
+        comp = "<=" if var.max_inclusive else "<"
+        _check_bound(var, value, var.max_value, comp, errors)
+
+
+def _check_bound(
+    var: EnvVar,
+    value: float,
+    bound: float,
+    comparison: Literal["<", "<=", ">", ">="],
+    errors: list[str],
+) -> None:
+    op = _COMPARE_OPS[comparison]
+    if not op(value, bound):
+        errors.append(f"{var.key} must be {comparison} {bound}")
 
 
 def _ensure_path(raw: str, var: EnvVar, errors: list[str], warnings: list[str]) -> None:
