@@ -301,6 +301,9 @@ STACK_ENV_SCHEMA = EnvSchema(
                 EnvVar("SSH_MAX_TTL_SEC", var_type=EnvVarType.FLOAT, min_value=0),
                 EnvVar("SSH_POLL_INTERVAL_SEC", var_type=EnvVarType.FLOAT, min_value=0),
                 EnvVar("SSH_STOP_TIMEOUT_SEC", var_type=EnvVarType.FLOAT, min_value=0),
+                EnvVar("SSH_MAX_CPU", var_type=EnvVarType.FLOAT, min_value=0),
+                EnvVar("SSH_MAX_MEMORY"),
+                EnvVar("SSH_MAX_PIDS", var_type=EnvVarType.INT, min_value=1),
             ],
         ),
         EnvSection(

@@ -35,7 +35,7 @@ from shared.tasks.specs.ssh import (
     SSHOutputSpec,
     SSHSpecStrict,
 )
-from shared.utils import new_ssh_session_id, parse_float_env
+from shared.utils import new_ssh_session_id, parse_float_env, parse_mem_to_bytes
 from shared.utils.http import auth_headers
 from shared.utils.manifest import ARTIFACTS_DIR, prepare_output_dir
 from worker.config import WorkerConfig
@@ -155,9 +155,12 @@ class SSHConfig:
     mounts: list[SSHMountSpec]
     poll_interval_sec: float
     stop_timeout_sec: float
+    cpu_limit: float | None
+    memory_limit_bytes: int | None
+    pids_limit: int | None
 
     @classmethod
-    def from_spec(cls, spec: SSHSpecStrict) -> "SSHConfig":
+    def from_spec(cls, spec: SSHSpecStrict, worker_cfg: WorkerConfig) -> "SSHConfig":
         """Build a resolved config from a task spec, env vars, and defaults."""
         has_gpu = bool(os.getenv("WORKER_HOST_GPU_ID", "").strip())
         fallback_image = _DEFAULT_IMAGE_GPU if has_gpu else _DEFAULT_IMAGE_CPU
@@ -172,6 +175,9 @@ class SSHConfig:
             SSHOutputConfig.from_spec(ssh_output)
             if (ssh_output := spec.sshOutput)
             else None
+        )
+        cpu_limit, memory_limit_bytes, pids_limit = _resolve_resource_limits(
+            spec, worker_cfg
         )
         return cls(
             image=spec.image or default_image,
@@ -189,7 +195,74 @@ class SSHConfig:
             mounts=list(spec.mounts or []),
             poll_interval_sec=poll_interval_sec,
             stop_timeout_sec=stop_timeout_sec,
+            cpu_limit=cpu_limit,
+            memory_limit_bytes=memory_limit_bytes,
+            pids_limit=pids_limit,
         )
+
+
+def _resolve_resource_limits(
+    spec: SSHSpecStrict, worker_cfg: WorkerConfig
+) -> tuple[float | None, int | None, int | None]:
+    """Resolve effective CPU/memory limits as min(task spec, worker cap).
+
+    Returns ``(cpu_limit, memory_limit_bytes, pids_limit)``. Each of them may be
+    ``None`` to mean unbounded — that is, neither the spec nor the cap constrains it.
+    """
+    spec_cpu: float | None = None
+    spec_mem_bytes: int | None = None
+    if (res := spec.resources) and (hw := res.hardware):
+        if hw.cpu is not None:
+            spec_cpu = float(hw.cpu)
+        if hw.memory is not None:
+            if isinstance(hw.memory, str):
+                spec_mem_bytes = parse_mem_to_bytes(hw.memory)
+                if spec_mem_bytes is None:
+                    raise ExecutionError(
+                        f"resources.hardware.memory value {hw.memory!r} is not "
+                        "a valid memory string (e.g. '8Gi', '512Mi')"
+                    )
+            else:
+                spec_mem_bytes = int(hw.memory)
+
+    ssh_limits = worker_cfg.ssh_limits
+    if ssh_limits is None:
+        return spec_cpu, spec_mem_bytes, None
+
+    cpu_limit = _min_or_none(spec_cpu, ssh_limits.max_cpu_cores)
+    if (
+        spec_cpu is not None
+        and ssh_limits.max_cpu_cores is not None
+        and spec_cpu > ssh_limits.max_cpu_cores
+    ):
+        logger.warning(
+            "SSH task requested cpu=%s but worker cap is %s; clamping to cap",
+            spec_cpu,
+            ssh_limits.max_cpu_cores,
+        )
+
+    memory_limit_bytes = _min_or_none(spec_mem_bytes, ssh_limits.max_memory_bytes)
+    if (
+        spec_mem_bytes is not None
+        and ssh_limits.max_memory_bytes is not None
+        and spec_mem_bytes > ssh_limits.max_memory_bytes
+    ):
+        logger.warning(
+            "SSH task requested memory=%d bytes but worker cap is %d; "
+            "clamping to cap",
+            spec_mem_bytes,
+            ssh_limits.max_memory_bytes,
+        )
+
+    return cpu_limit, memory_limit_bytes, ssh_limits.max_pids
+
+
+def _min_or_none[T: (int, float)](a: T | None, b: T | None) -> T | None:
+    if a is None:
+        return b
+    if b is None:
+        return a
+    return min(a, b)
 
 
 class SSHExecutor(Executor):
@@ -250,7 +323,7 @@ class SSHExecutor(Executor):
 
     def run(self, task: ExecutorTask, out_dir: Path) -> dict[str, Any]:
         spec = self.require_spec(task, SSHSpecStrict)
-        cfg = SSHConfig.from_spec(spec)
+        cfg = SSHConfig.from_spec(spec, self._config)
         access_mode = cfg.access_mode
         interactive = cfg.interactive
 
@@ -293,7 +366,7 @@ class SSHExecutor(Executor):
             interactive,
         )
         kwargs = self._build_run_kwargs(
-            cfg.image,
+            cfg,
             container_name,
             environment,
             labels,
@@ -501,7 +574,7 @@ class SSHExecutor(Executor):
 
     def _build_run_kwargs(
         self,
-        image: str,
+        cfg: SSHConfig,
         container_name: str,
         environment: dict[str, str],
         labels: dict[str, str],
@@ -511,7 +584,7 @@ class SSHExecutor(Executor):
         interactive: bool,
     ) -> dict[str, Any]:
         kwargs: dict[str, Any] = {
-            "image": image,
+            "image": cfg.image,
             "name": container_name,
             "environment": environment,
             "labels": labels,
@@ -525,6 +598,12 @@ class SSHExecutor(Executor):
             kwargs["entrypoint"] = [_SSH_RUN_ENTRYPOINT_PATH]
             if command:
                 kwargs["command"] = command
+        if cfg.cpu_limit is not None:
+            kwargs["nano_cpus"] = int(cfg.cpu_limit * 1_000_000_000)
+        if cfg.memory_limit_bytes is not None:
+            kwargs["mem_limit"] = cfg.memory_limit_bytes
+        if cfg.pids_limit is not None:
+            kwargs["pids_limit"] = cfg.pids_limit
         # WORKER_HOST_GPU_ID holds the real host device IDs assigned by the
         # server (e.g. "2,3").
         host_gpu_ids = os.getenv("WORKER_HOST_GPU_ID", "").strip()

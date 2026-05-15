@@ -190,7 +190,15 @@ def main() -> None:
     )
     hardware = collect_hw(bandwidth_bytes_per_sec=cfg.network_bandwidth_bytes_per_sec)
     logger.info("Collected hardware info: %s", hardware)
-    lifecycle.start(env={}, hardware=hardware, tags=cfg.tags)
+    ssh_limits = cfg.ssh_limits
+    if ssh_limits is None:
+        logger.warning(
+            "SSH resource cap not configured; SSH sessions will be able to access "
+            "full host resources of this worker."
+        )
+    else:
+        logger.info("SSH resource cap: %s", ssh_limits.model_dump())
+    lifecycle.start(env={}, hardware=hardware, ssh_limits=ssh_limits, tags=cfg.tags)
 
     executors, default_executor = initialize_executors(
         cfg,

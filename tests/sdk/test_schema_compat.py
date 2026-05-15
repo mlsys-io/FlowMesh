@@ -25,6 +25,7 @@ from flowmesh.models import (
     NodeWorkerInfo,
     OkResponse,
     ResultEnvelope,
+    SSHLimits,
     StorageInfo,
     TaskInfo,
     TaskType,
@@ -79,6 +80,7 @@ from server.schemas.workflow import (
 from server.task.models import TaskInfo as SrvTaskInfo
 from server.task.models import TaskUsage as SrvTaskUsage
 from shared.schemas.result import ResultEnvelope as SrvResultEnvelope
+from shared.schemas.worker import SSHLimits as SrvSSHLimits
 from shared.tasks.task_type import TaskType as SrvTaskType
 
 from .helpers import assert_enum_members_match, assert_fields_match
@@ -113,6 +115,7 @@ MODEL_PAIRS = [
     (SrvStorageInfo, StorageInfo),
     (SrvHostInfo, HostInfo),
     (SrvWorkerHardware, WorkerHardware),
+    (SrvSSHLimits, SSHLimits),
     # Logs
     (SrvLogEvent, LogEvent),
     (SrvLogEntry, LogEntry),

@@ -12,7 +12,7 @@ import pytest
 import worker.executors.ssh_executor as ssh_executor_module
 from shared.tasks.specs import SSHSpecStrict
 from shared.tasks.worker_message import WorkerTaskMessage
-from tests.worker.factories import make_live_worker_config
+from tests.worker.factories import DEFAULT_WORKER_CONFIG, make_live_worker_config
 from worker.executors.base_executor import ExecutionError
 from worker.executors.ssh_executor import (
     _SSH_RUN_ENTRYPOINT_PATH,
@@ -52,7 +52,7 @@ def _task_message(**spec_updates: object) -> WorkerTaskMessage:
 class TestSSHConfigFromSpec:
     def test_noninteractive_config(self) -> None:
         task = _task_message()
-        cfg = SSHConfig.from_spec(cast(SSHSpecStrict, task.spec))
+        cfg = SSHConfig.from_spec(cast(SSHSpecStrict, task.spec), DEFAULT_WORKER_CONFIG)
         assert cfg.interactive is False
         assert cfg.command == ["python", "-c", "print(1)"]
         assert cfg.image == "python:3.12-slim"
@@ -61,7 +61,7 @@ class TestSSHConfigFromSpec:
         spec = SSHSpecStrict.model_validate(
             {"taskType": "ssh", "authorizedKeys": ["ssh-rsa AAAA..."]}
         )
-        cfg = SSHConfig.from_spec(spec)
+        cfg = SSHConfig.from_spec(spec, DEFAULT_WORKER_CONFIG)
         assert cfg.interactive is True
         assert cfg.command is None
         assert cfg.entrypoint is None
@@ -75,7 +75,7 @@ class TestSSHConfigFromSpec:
                 "entrypoint": ["/run.sh"],
             }
         )
-        cfg = SSHConfig.from_spec(spec)
+        cfg = SSHConfig.from_spec(spec, DEFAULT_WORKER_CONFIG)
         assert cfg.interactive is False
         assert cfg.entrypoint == ["/run.sh"]
         assert cfg.command is None
@@ -89,7 +89,7 @@ class TestSSHConfigFromSpec:
                 "command": ["echo hello"],
             }
         )
-        cfg = SSHConfig.from_spec(spec)
+        cfg = SSHConfig.from_spec(spec, DEFAULT_WORKER_CONFIG)
         assert cfg.interactive is False
         assert cfg.entrypoint == ["/bin/bash", "-c"]
         assert cfg.command == ["echo hello"]
@@ -114,7 +114,8 @@ class TestResolveNoninteractiveCommand:
                     "image": "python:3.12",
                     "command": ["python", "train.py"],
                 }
-            )
+            ),
+            DEFAULT_WORKER_CONFIG,
         )
         client = MagicMock()
         result = executor._resolve_noninteractive_command(client, cfg)
@@ -129,7 +130,8 @@ class TestResolveNoninteractiveCommand:
                     "image": "myimg",
                     "entrypoint": ["/run.sh"],
                 }
-            )
+            ),
+            DEFAULT_WORKER_CONFIG,
         )
         client = MagicMock()
         result = executor._resolve_noninteractive_command(client, cfg)
@@ -145,7 +147,8 @@ class TestResolveNoninteractiveCommand:
                     "entrypoint": ["/bin/bash", "-c"],
                     "command": ["echo hello"],
                 }
-            )
+            ),
+            DEFAULT_WORKER_CONFIG,
         )
         client = MagicMock()
         result = executor._resolve_noninteractive_command(client, cfg)
@@ -160,7 +163,8 @@ class TestResolveNoninteractiveCommand:
                     "interactive": False,
                     "image": "myimg:latest",
                 }
-            )
+            ),
+            DEFAULT_WORKER_CONFIG,
         )
         mock_image = MagicMock()
         mock_image.attrs = {
@@ -184,7 +188,8 @@ class TestResolveNoninteractiveCommand:
                     "interactive": False,
                     "image": "emptyimg",
                 }
-            )
+            ),
+            DEFAULT_WORKER_CONFIG,
         )
         mock_image = MagicMock()
         mock_image.attrs = {"Config": {"Entrypoint": None, "Cmd": None}}
@@ -240,6 +245,36 @@ class TestBuildEnvironment:
 # ------------------------------------------------------------------ #
 
 
+def _build_ssh_config(
+    image: str = "myimg:latest",
+    *,
+    cpu_limit: float | None = None,
+    memory_limit_bytes: int | None = None,
+    pids_limit: int | None = None,
+) -> SSHConfig:
+    """Construct a minimal SSHConfig for _build_run_kwargs tests."""
+    return SSHConfig(
+        image=image,
+        interactive=False,
+        user="flowmesh",
+        authorized_keys=[],
+        command=None,
+        entrypoint=None,
+        ttl_sec=60.0,
+        idle_sec=30.0,
+        access_mode="direct",
+        extra_env={},
+        inputs=[],
+        output=None,
+        mounts=[],
+        poll_interval_sec=1.0,
+        stop_timeout_sec=5.0,
+        cpu_limit=cpu_limit,
+        memory_limit_bytes=memory_limit_bytes,
+        pids_limit=pids_limit,
+    )
+
+
 class TestBuildRunKwargs:
     def _make_executor(
         self, tmp_path: Path, docker_gpu_runtime: str | None = None
@@ -252,7 +287,7 @@ class TestBuildRunKwargs:
     ) -> None:
         executor = self._make_executor(tmp_path)
         kwargs = executor._build_run_kwargs(
-            image="myimg:latest",
+            _build_ssh_config(),
             container_name="worker-1_ssh-task-1234",
             environment={},
             labels={},
@@ -269,7 +304,7 @@ class TestBuildRunKwargs:
     ) -> None:
         executor = self._make_executor(tmp_path)
         kwargs = executor._build_run_kwargs(
-            image="myimg:latest",
+            _build_ssh_config(),
             container_name="worker-1_ssh-task-1234",
             environment={},
             labels={},
@@ -294,7 +329,7 @@ class TestBuildRunKwargs:
         )
 
         kwargs = executor._build_run_kwargs(
-            image="myimg:latest",
+            _build_ssh_config(),
             container_name="worker-1_ssh-task-1234",
             environment={},
             labels={},
@@ -320,7 +355,7 @@ class TestBuildRunKwargs:
         )
 
         kwargs = executor._build_run_kwargs(
-            image="myimg:latest",
+            _build_ssh_config(),
             container_name="worker-1_ssh-task-1234",
             environment={},
             labels={},
@@ -332,6 +367,42 @@ class TestBuildRunKwargs:
 
         assert kwargs["device_requests"] == [fake_device_request]
         assert kwargs["runtime"] == "nvidia"
+
+    def test_resource_limits_absent_when_unset(self, tmp_path: Path) -> None:
+        executor = self._make_executor(tmp_path)
+        kwargs = executor._build_run_kwargs(
+            _build_ssh_config(),
+            container_name="worker-1_ssh-task-1234",
+            environment={},
+            labels={},
+            ports={},
+            volumes=[],
+            command=None,
+            interactive=False,
+        )
+        assert "nano_cpus" not in kwargs
+        assert "mem_limit" not in kwargs
+        assert "pids_limit" not in kwargs
+
+    def test_resource_limits_applied(self, tmp_path: Path) -> None:
+        executor = self._make_executor(tmp_path)
+        kwargs = executor._build_run_kwargs(
+            _build_ssh_config(
+                cpu_limit=2.5,
+                memory_limit_bytes=8 * 1024**3,
+                pids_limit=256,
+            ),
+            container_name="worker-1_ssh-task-1234",
+            environment={},
+            labels={},
+            ports={},
+            volumes=[],
+            command=None,
+            interactive=False,
+        )
+        assert kwargs["nano_cpus"] == int(2.5 * 1_000_000_000)
+        assert kwargs["mem_limit"] == 8 * 1024**3
+        assert kwargs["pids_limit"] == 256
 
 
 class TestNoninteractiveContainerStartup:

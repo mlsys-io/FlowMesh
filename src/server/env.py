@@ -75,6 +75,9 @@ SSH_DEFAULT_IDLE_SEC: float | None = parse_float_env("SSH_DEFAULT_IDLE_SEC")
 SSH_MAX_TTL_SEC: float | None = parse_float_env("SSH_MAX_TTL_SEC")
 SSH_POLL_INTERVAL_SEC: float | None = parse_float_env("SSH_POLL_INTERVAL_SEC")
 SSH_STOP_TIMEOUT_SEC: float | None = parse_float_env("SSH_STOP_TIMEOUT_SEC")
+SSH_MAX_CPU: float | None = parse_float_env("SSH_MAX_CPU")
+SSH_MAX_MEMORY: str | None = os.getenv("SSH_MAX_MEMORY", "").strip() or None
+SSH_MAX_PIDS: int | None = parse_int_env("SSH_MAX_PIDS")
 
 LOG_FILE: str = os.getenv("LOG_FILE", "server.log")
 LOG_MAX_BYTES: int = int(os.getenv("LOG_MAX_BYTES", 5_242_880))

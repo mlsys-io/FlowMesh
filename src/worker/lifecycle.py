@@ -11,6 +11,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from shared.schemas.worker import SSHLimits
 from shared.tasks.worker_message import WorkerHardware, WorkerStatus
 from shared.utils.time import now_iso
 
@@ -70,7 +71,13 @@ class Lifecycle:
                 metrics["estimated_energy_kwh"] = energy_total
         return metrics
 
-    def start(self, env: dict[str, Any], hardware: WorkerHardware, tags: list[str]):
+    def start(
+        self,
+        env: dict[str, Any],
+        hardware: WorkerHardware,
+        ssh_limits: SSHLimits | None,
+        tags: list[str],
+    ):
         self._started_ts = time.time()
         try:
             initial_power = self.power_monitor.sample()
@@ -82,6 +89,7 @@ class Lifecycle:
             pid=os.getpid(),
             env=env,
             hardware=hardware,
+            ssh_limits=ssh_limits,
             tags=tags,
             cost_per_hour=self.cost_per_hour,
             power_metrics=initial_power,

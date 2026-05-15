@@ -9,7 +9,7 @@ import pytest
 
 from shared.tasks.specs import SSHSpecStrict
 from shared.tasks.worker_message import WorkerTaskMessage
-from tests.worker.factories import make_live_worker_config
+from tests.worker.factories import DEFAULT_WORKER_CONFIG, make_live_worker_config
 from worker.config import WorkerConfig
 from worker.executors.ssh_executor import ResolvedSSHInput, SSHConfig, SSHExecutor
 
@@ -59,7 +59,7 @@ def test_build_mount_plan_uses_worker_volume_view_in_container(
 
     monkeypatch.setenv("RESULTS_DIR", str(results_dir))
     task = _task_message()
-    cfg = SSHConfig.from_spec(cast(SSHSpecStrict, task.spec))
+    cfg = SSHConfig.from_spec(cast(SSHSpecStrict, task.spec), DEFAULT_WORKER_CONFIG)
     executor = SSHExecutor(
         _worker_config(tmp_path, network_mode="container:flowmesh-worker-1")
     )
@@ -101,7 +101,7 @@ def test_build_mount_plan_uses_direct_binds_outside_container(
 
     monkeypatch.setenv("RESULTS_DIR", str(results_dir))
     task = _task_message()
-    cfg = SSHConfig.from_spec(cast(SSHSpecStrict, task.spec))
+    cfg = SSHConfig.from_spec(cast(SSHSpecStrict, task.spec), DEFAULT_WORKER_CONFIG)
     executor = SSHExecutor(_worker_config(tmp_path, results_mount_source=None))
     staged_inputs_dir = tmp_path / "staged-inputs"
     (staged_inputs_dir / "task-pre").mkdir(parents=True)
@@ -140,7 +140,7 @@ def test_resolve_inputs_rejects_unsafe_mount_path(
 
     monkeypatch.setenv("RESULTS_DIR", str(results_dir))
     task = _task_message(inputs=[{"stage": "preprocess", "mountPath": "/tmp/unsafe"}])
-    cfg = SSHConfig.from_spec(cast(SSHSpecStrict, task.spec))
+    cfg = SSHConfig.from_spec(cast(SSHSpecStrict, task.spec), DEFAULT_WORKER_CONFIG)
     executor = SSHExecutor(
         _worker_config(tmp_path, network_mode="container:flowmesh-worker-1")
     )
@@ -153,7 +153,7 @@ def test_stage_inputs_locally_downloads_missing_upstream_results(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     task = _task_message()
-    cfg = SSHConfig.from_spec(cast(SSHSpecStrict, task.spec))
+    cfg = SSHConfig.from_spec(cast(SSHSpecStrict, task.spec), DEFAULT_WORKER_CONFIG)
     executor = SSHExecutor(_worker_config(tmp_path, results_mount_source=None))
 
     monkeypatch.setenv("RESULTS_DIR", str(tmp_path / "results"))

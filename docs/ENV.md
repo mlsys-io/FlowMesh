@@ -79,3 +79,21 @@ Spark), set `DOCKER_GPU_RUNTIME=` in the stack env.
 | `SUPERVISOR_GRPC_KEEPALIVE_PERMIT_WITHOUT_CALLS` | `true` | gRPC keepalive |
 | `SUPERVISOR_GRPC_EXTERNAL_PORT` | – | External port (when port-forwarded) |
 | `SERVER_GRPC_TLS_*` | – | TLS certificate files |
+
+## SSH session resource caps
+
+When `enable_ssh` is true on a Docker worker, these configured
+ceilings bound every SSH session container spawned by that worker.
+Unset values mean unbounded (host-wide access).
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SSH_MAX_CPU` | – | Max CPU cores per SSH container (float, e.g. `4` or `2.5`). Sets Docker `nano_cpus`. |
+| `SSH_MAX_MEMORY` | – | Max memory per SSH container (e.g. `8Gi`, `512Mi`, or a byte count). Sets Docker `mem_limit`. |
+| `SSH_MAX_PIDS` | – | Max PIDs per SSH container. Sets Docker `pids_limit`. Admin-only — not user-overridable. |
+
+The effective CPU/memory limit is `min(spec.resources.hardware, worker
+cap)`. A task that requests more than the worker cap is dispatched to
+another worker if one has a larger cap; otherwise the dispatcher
+follows its standard requeue/retry behavior. The worker logs a startup
+warning if SSH is enabled with no cap configured.

@@ -10,8 +10,10 @@ from shared.schemas.command import (
     StopMessage,
     TaskMessage,
 )
+from shared.schemas.worker import SSHLimits
 from shared.tasks import TaskEnvelope
 from shared.tasks.components.resources import GPURequirements
+from shared.tasks.specs import SSHSpecStrict, SSHSpecTemplate
 from shared.tasks.worker_message import (
     WorkerHardware,
     WorkerStatus,
@@ -47,6 +49,9 @@ class Worker(BaseModel):
     env: dict[str, Any] = Field(default_factory=dict, description="Runtime metadata.")
     hardware: WorkerHardware | None = Field(
         default=None, description="Hardware metadata."
+    )
+    ssh_limits: SSHLimits | None = Field(
+        default=None, description="Configured ceiling on SSH session resources."
     )
     tags: list[str] = Field(default_factory=list, description="Worker tags.")
     last_seen: str | None = Field(default=None, description="Last heartbeat timestamp.")
@@ -484,14 +489,34 @@ def hw_satisfies(worker: Worker, task: TaskEnvelope) -> bool:
     mem_needed = requirements.memory
     gpu_req = requirements.gpu
 
+    # Consider SSH hardware limits for SSH tasks.
+    ssh_caps = (
+        worker.ssh_limits
+        if isinstance(task.spec, (SSHSpecStrict, SSHSpecTemplate))
+        and worker.ssh_limits is not None
+        else None
+    )
+
     if cpu_needed is not None:
-        cpu_cores = None if hw is None else hw.cpu.logical_cores
+        cpu_cores: float | None = None if hw is None else hw.cpu.logical_cores
+        if (
+            ssh_caps is not None
+            and ssh_caps.max_cpu_cores is not None
+            and cpu_cores is not None
+        ):
+            cpu_cores = min(cpu_cores, ssh_caps.max_cpu_cores)
         if cpu_cores is None or cpu_cores < cpu_needed:
             return False
 
     if mem_needed:
         required_bytes = parse_mem_to_bytes(str(mem_needed)) or 0
         available = 0 if hw is None else (hw.memory.total_bytes or 0)
+        if (
+            ssh_caps is not None
+            and ssh_caps.max_memory_bytes is not None
+            and available > 0
+        ):
+            available = min(available, ssh_caps.max_memory_bytes)
         if available < required_bytes:
             return False
 
@@ -621,6 +646,12 @@ def _parse_worker_from_redis(
         if hardware_json is None
         else WorkerHardware.model_validate_json(hardware_json)
     )
+    ssh_limits_json = value.get("ssh_limits_json")
+    ssh_limits = (
+        None
+        if ssh_limits_json is None
+        else SSHLimits.model_validate_json(ssh_limits_json)
+    )
     tags = _loads(value.get("tags_json"), [])
     cached_models = _ensure_str_list(_loads(value.get("cache_models_json"), []))
     cached_datasets = _ensure_str_list(_loads(value.get("cache_datasets_json"), []))
@@ -650,6 +681,7 @@ def _parse_worker_from_redis(
         pid=pid,
         env=env,
         hardware=hardware,
+        ssh_limits=ssh_limits,
         tags=tags,
         last_seen=value.get("last_seen"),
         cached_models=cached_models,

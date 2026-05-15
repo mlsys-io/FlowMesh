@@ -3,6 +3,8 @@ from typing import Annotated
 
 from pydantic import BaseModel, Field
 
+from shared.schemas.worker import SSHLimits
+
 from .. import env
 from ..schemas.node import WorkerHardware
 
@@ -25,6 +27,13 @@ class WorkerInfo(BaseModel):
     hardware: Annotated[
         WorkerHardware | None, Field(default=None, description="Hardware metadata")
     ]
+    ssh_limits: Annotated[
+        SSHLimits | None,
+        Field(
+            default=None,
+            description="Configured ceiling on SSH session resources.",
+        ),
+    ] = None
 
 
 __all__ = ["WorkerHardware", "WorkerInfo", "WorkerStatus"]

@@ -73,6 +73,12 @@ class WorkerHardware(BaseModel):
     extra: dict[str, Any] | None = None
 
 
+class SSHLimits(BaseModel):
+    max_cpu_cores: float | None = None
+    max_memory_bytes: int | None = None
+    max_pids: int | None = None
+
+
 class Worker(BaseModel):
     id: str
     alias: str | None = None
@@ -85,6 +91,7 @@ class Worker(BaseModel):
     pid: int | None = None
     env: dict[str, Any] = Field(default_factory=dict)
     hardware: WorkerHardware | None = None
+    ssh_limits: SSHLimits | None = None
     tags: list[str] = Field(default_factory=list)
     last_seen: str | None = None
     cached_models: list[str] = Field(default_factory=list)

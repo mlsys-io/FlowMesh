@@ -14,6 +14,8 @@ from docker.models.containers import Container
 from docker.types import DeviceRequest
 from pydantic import BaseModel, Field
 
+from shared.schemas.worker import SSHLimits
+from shared.utils import parse_mem_to_bytes
 from shared.utils.docker import sanitize_container_name
 
 from ... import env
@@ -113,6 +115,12 @@ class SSHConfig(BaseModel):
     """Container status poll interval in seconds"""
     stop_timeout_sec: float | None = env.SSH_STOP_TIMEOUT_SEC
     """Seconds to wait when stopping a session container"""
+    max_cpu: float | None = env.SSH_MAX_CPU
+    """Maximum CPU cores accessible to an SSH session container"""
+    max_memory: str | None = env.SSH_MAX_MEMORY
+    """Maximum memory accessible to an SSH session container (e.g. "8Gi")"""
+    max_pids: int | None = env.SSH_MAX_PIDS
+    """Maximum number of PIDs inside an SSH session container"""
 
     def to_env(self) -> dict[str, str]:
         """Return env vars to inject into the worker container."""
@@ -124,8 +132,29 @@ class SSHConfig(BaseModel):
             "SSH_MAX_TTL_SEC": self.max_ttl_sec,
             "SSH_POLL_INTERVAL_SEC": self.poll_interval_sec,
             "SSH_STOP_TIMEOUT_SEC": self.stop_timeout_sec,
+            "SSH_MAX_CPU": self.max_cpu,
+            "SSH_MAX_MEMORY": self.max_memory,
+            "SSH_MAX_PIDS": self.max_pids,
         }
         return {k: str(v) for k, v in mapping.items() if v is not None}
+
+    def to_limits(self) -> SSHLimits | None:
+        """Project the admin cap into a wire-ready ``SSHLimits``."""
+        memory_bytes: int | None = None
+        if self.max_memory is not None:
+            memory_bytes = parse_mem_to_bytes(self.max_memory)
+            if memory_bytes is None:
+                raise ValueError(
+                    f"SSH_MAX_MEMORY value {self.max_memory!r} is not a valid "
+                    "memory string (e.g. '8Gi', '512Mi', or a byte count)"
+                )
+        if self.max_cpu is None and memory_bytes is None and self.max_pids is None:
+            return None
+        return SSHLimits(
+            max_cpu_cores=self.max_cpu,
+            max_memory_bytes=memory_bytes,
+            max_pids=self.max_pids,
+        )
 
 
 class DockerWorkerConfig(WorkerConfig):
@@ -210,6 +239,7 @@ class DockerWorkerAdapter(WorkerAdapter):
             provider=_PROVIDER_NAME,
             status=self.status,
             hardware=hardware,
+            ssh_limits=self.config.ssh.to_limits() if self.config.enable_ssh else None,
         )
 
     async def start(self) -> bool:
@@ -488,7 +518,8 @@ class DockerWorkerAdapter(WorkerAdapter):
         environment["WORKER_NETWORK_MODE"] = f"container:{self.container_name}"
         environment["WORKER_CONTAINER_NAME"] = self.container_name
         environment["SSH_NETWORK_NAME"] = _SSH_NETWORK_NAME
-        environment.update(self.config.ssh.to_env())
+        if self.config.enable_ssh:
+            environment.update(self.config.ssh.to_env())
         return environment
 
     def _apply_worker_type_settings(

@@ -1,7 +1,7 @@
 """Tests for worker hardware satisfaction and sorting."""
 
 from server.registries.worker import Worker, hw_satisfies
-from shared.schemas.worker import WorkerStatus
+from shared.schemas.worker import SSHLimits, WorkerStatus
 from shared.tasks import TaskEnvelopeStrict
 from shared.tasks.components.resources import (
     GPURequirements,
@@ -27,6 +27,7 @@ def _worker(
     cpu_cores: int = 4,
     gpu_memory_is_unified: bool = False,
     gpu_shared_memory_total_bytes: int | None = None,
+    ssh_limits: SSHLimits | None = None,
 ) -> Worker:
     devices = [
         GpuInfo(index=i, name=gpu_name, uuid=f"GPU-{i}", memory_total_bytes=gpu_mem)
@@ -52,6 +53,7 @@ def _worker(
         node_alias="g",
         status=WorkerStatus.IDLE,
         hardware=hw,
+        ssh_limits=ssh_limits,
     )
 
 
@@ -161,3 +163,67 @@ class TestHwSatisfies:
         w = _worker(cpu_cores=2)
         t = _task(cpu=8)
         assert hw_satisfies(w, t) is False
+
+
+def _ssh_task(cpu: int | None = None, memory: str | None = None) -> TaskEnvelopeStrict:
+    hw_req = None
+    if cpu is not None or memory is not None:
+        hw_req = HardwareRequirements(cpu=cpu, memory=memory)
+    resources = ResourcesSpec(hardware=hw_req) if hw_req else None
+    return TaskEnvelopeStrict.model_validate(
+        {
+            "apiVersion": "flowmesh/v1",
+            "kind": "Task",
+            "spec": {
+                "taskType": "ssh",
+                "interactive": False,
+                "image": "x",
+                "command": ["true"],
+                "resources": resources.model_dump() if resources else None,
+            },
+        }
+    )
+
+
+class TestHwSatisfiesSSHLimits:
+    def test_ssh_cap_below_request_filters_worker(self) -> None:
+        w = _worker(
+            cpu_cores=32,
+            sys_mem=64 * 1024**3,
+            ssh_limits=SSHLimits(max_cpu_cores=2.0),
+        )
+        t = _ssh_task(cpu=8)
+        assert hw_satisfies(w, t) is False
+
+    def test_ssh_cap_above_request_passes(self) -> None:
+        w = _worker(
+            cpu_cores=32,
+            sys_mem=64 * 1024**3,
+            ssh_limits=SSHLimits(max_cpu_cores=16.0),
+        )
+        t = _ssh_task(cpu=8)
+        assert hw_satisfies(w, t) is True
+
+    def test_ssh_memory_cap_filters(self) -> None:
+        w = _worker(
+            cpu_cores=32,
+            sys_mem=64 * 1024**3,
+            ssh_limits=SSHLimits(max_memory_bytes=2 * 1024**3),
+        )
+        t = _ssh_task(memory="4Gi")
+        assert hw_satisfies(w, t) is False
+
+    def test_ssh_cap_ignored_for_non_ssh_tasks(self) -> None:
+        # Even if ssh_limits would filter out the worker for SSH, non-SSH
+        # tasks should see the full physical hardware.
+        w = _worker(
+            cpu_cores=32,
+            ssh_limits=SSHLimits(max_cpu_cores=2.0),
+        )
+        t = _task(cpu=8)
+        assert hw_satisfies(w, t) is True
+
+    def test_no_ssh_cap_behaves_as_before(self) -> None:
+        w = _worker(cpu_cores=32, sys_mem=64 * 1024**3)
+        t = _ssh_task(cpu=8, memory="4Gi")
+        assert hw_satisfies(w, t) is True
