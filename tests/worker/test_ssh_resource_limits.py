@@ -137,7 +137,9 @@ class TestSSHConfigResolveGpuDevices:
             ]
         )
         cfg = SSHConfig.from_spec(
-            _spec({"hardware": {"gpu": {"count": 1, "type": "A100", "memory": "40Gi"}}}),
+            _spec(
+                {"hardware": {"gpu": {"count": 1, "type": "A100", "memory": "40Gi"}}}
+            ),
             make_worker_config(),
             hardware=hardware,
         )
