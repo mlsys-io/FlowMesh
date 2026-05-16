@@ -152,6 +152,23 @@ class TestSSHConfigResolveGpuDevices:
         cfg = SSHConfig.from_spec(_spec(), make_worker_config())
         assert cfg.gpu_device_ids == []
 
+    def test_enabled_flag_raises_when_spec_requests_gpus_but_host_has_none(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("WORKER_HOST_GPU_ID", raising=False)
+        with pytest.raises(Exception, match="this worker has none"):
+            SSHConfig.from_spec(
+                _spec({"hardware": {"gpu": {"count": 1}}}),
+                _worker_config_gpu_limit(),
+            )
+
+    def test_enabled_flag_yields_empty_when_spec_trivial_and_host_empty(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("WORKER_HOST_GPU_ID", raising=False)
+        cfg = SSHConfig.from_spec(_spec(), _worker_config_gpu_limit())
+        assert cfg.gpu_device_ids == []
+
     def test_no_gpu_spec_passes_all_worker_gpus(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

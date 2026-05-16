@@ -296,8 +296,6 @@ def _resolve_gpu_devices(
     ]
     if not config.enable_ssh_gpu_limit:
         return host_gpu_ids
-    if not host_gpu_ids:
-        return []
 
     gpu_req: GPURequirements | None = None
     if (res := spec.resources) and (hw := res.hardware):
@@ -310,6 +308,11 @@ def _resolve_gpu_devices(
     requested = gpu_req.count if gpu_req.count is not None else 1
     if requested <= 0:
         return []
+
+    if not host_gpu_ids:
+        raise ExecutionError(
+            f"SSH task requested {requested} GPU(s) but this worker has none"
+        )
 
     # The supervisor passes WORKER_HOST_GPU_ID in the same order as
     # worker.hardware.gpu.devices, so positions line up 1:1. When metadata is
