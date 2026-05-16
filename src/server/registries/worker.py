@@ -1,5 +1,4 @@
 import json
-import re
 from collections.abc import Iterable, Sequence
 from typing import Any
 
@@ -20,6 +19,12 @@ from shared.tasks.worker_message import (
     WorkerTaskMessage,
 )
 from shared.utils import new_worker_id, now_iso, parse_mem_to_bytes
+from shared.utils.hardware import (
+    normalize_gpu_type,
+    parse_gpu_memory_bytes,
+    select_matching_gpu_indices,
+    unified_gpu_memory_satisfies,
+)
 
 from ..clients.redis import (
     WORKER_EVENT_CHANNEL,
@@ -536,34 +541,27 @@ def _gpu_meets_requirements(hw: WorkerHardware, gpu_req: GPURequirements) -> boo
             required_count = int(required_count)
         except Exception:
             required_count = None
-    required_type = str(gpu_req.type or "").strip().lower()
-    if required_type in {"", "any", "auto", "*"}:
-        required_type = ""
-    required_memory = gpu_req.memory
-    required_memory_bytes = (
-        parse_mem_to_bytes(str(required_memory)) if required_memory else None
-    )
+    required_type = normalize_gpu_type(gpu_req.type)
+    required_memory_bytes = parse_gpu_memory_bytes(gpu_req.memory)
+    needed = required_count or 1
 
     entries = hw.gpu.devices
     if entries:
         if required_count is not None and len(entries) < required_count:
             return False
-        if required_type:
-            pattern = re.compile(re.escape(required_type), re.IGNORECASE)
-            if not any(pattern.search(entry.name) for entry in entries):
-                return False
-        if required_memory_bytes:
-            needed = required_count or 1
-            eligible = sum(
-                1
-                for entry in entries
-                if (entry.memory_total_bytes or 0) >= required_memory_bytes
-            )
-            if eligible < needed and not _unified_gpu_memory_satisfies(
-                hw, required_memory_bytes, needed
-            ):
-                return False
-        return True
+        if len(select_matching_gpu_indices(entries, gpu_req)) >= needed:
+            return True
+        # Unified-memory fallback: when memory is the binding constraint and
+        # the worker exposes a unified GPU/system pool large enough to cover
+        # the request, still admit it.
+        if required_memory_bytes is None:
+            return False
+        type_only_req = GPURequirements(
+            count=gpu_req.count, type=gpu_req.type, memory=None
+        )
+        if len(select_matching_gpu_indices(entries, type_only_req)) < needed:
+            return False
+        return unified_gpu_memory_satisfies(hw, required_memory_bytes, needed)
 
     # Fallback when workers report aggregate GPU data instead of per-device entries.
     count = 0 if hw is None else len(hw.gpu.devices)
@@ -579,13 +577,12 @@ def _gpu_meets_requirements(hw: WorkerHardware, gpu_req: GPURequirements) -> boo
 
     if required_memory_bytes:
         total_mem = 0 if first_gpu is None else (first_gpu.memory_total_bytes or 0)
-        if total_mem <= 0 and _unified_gpu_memory_satisfies(
-            hw, required_memory_bytes, required_count or 1
+        if total_mem <= 0 and unified_gpu_memory_satisfies(
+            hw, required_memory_bytes, needed
         ):
             return True
         if total_mem <= 0:
             return False
-        needed = required_count or 1
         per_gpu = total_mem / max(needed, 1)
         if per_gpu < required_memory_bytes:
             return False
@@ -600,18 +597,6 @@ def dedicated_gpu_memory_total_bytes(hw: WorkerHardware | None) -> int:
     for entry in hw.gpu.devices:
         total += entry.memory_total_bytes or 0
     return total
-
-
-def _unified_gpu_memory_satisfies(
-    hw: WorkerHardware, required_memory_bytes: int, required_count: int
-) -> bool:
-    if not hw.gpu.memory_is_unified:
-        return False
-    shared_total = hw.gpu.shared_memory_total_bytes or 0
-    if shared_total <= 0:
-        return False
-    per_gpu_share = shared_total / max(required_count, 1)
-    return per_gpu_share >= required_memory_bytes
 
 
 def _parse_worker_from_redis(
