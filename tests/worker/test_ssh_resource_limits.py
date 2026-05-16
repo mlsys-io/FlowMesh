@@ -1,7 +1,7 @@
 """Tests for SSH container resource-limit resolution and propagation."""
 
 import logging
-from typing import cast
+from typing import Any, cast
 
 import pytest
 
@@ -16,6 +16,7 @@ from shared.tasks.worker_message import (
     WorkerHardware,
 )
 from tests.worker.factories import make_worker_config, make_worker_hardware
+from worker.config import WorkerConfig
 from worker.executors.ssh_executor import SSHConfig
 
 
@@ -100,6 +101,10 @@ class TestSSHConfigResolveLimits:
             )
 
 
+def _worker_config_gpu_limit(**overrides: Any) -> WorkerConfig:
+    return make_worker_config(enable_ssh_gpu_limit=True, **overrides)
+
+
 class TestSSHConfigResolveGpuDevices:
     def test_no_host_gpus_yields_empty_slice(
         self, monkeypatch: pytest.MonkeyPatch
@@ -111,18 +116,52 @@ class TestSSHConfigResolveGpuDevices:
         )
         assert cfg.gpu_device_ids == []
 
+    def test_disabled_flag_passes_all_host_gpus_despite_spec(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("WORKER_HOST_GPU_ID", "2,3,4,5")
+        hardware = make_worker_hardware(
+            [
+                GpuInfo(
+                    index=0, name="T4", uuid="t4-0", memory_total_bytes=16 * 1024**3
+                ),
+                GpuInfo(
+                    index=1, name="A100", uuid="a100-0", memory_total_bytes=80 * 1024**3
+                ),
+                GpuInfo(
+                    index=2, name="A100", uuid="a100-1", memory_total_bytes=80 * 1024**3
+                ),
+                GpuInfo(
+                    index=3, name="A100", uuid="a100-2", memory_total_bytes=80 * 1024**3
+                ),
+            ]
+        )
+        cfg = SSHConfig.from_spec(
+            _spec({"hardware": {"gpu": {"count": 1, "type": "A100", "memory": "40Gi"}}}),
+            make_worker_config(),
+            hardware=hardware,
+        )
+        assert cfg.gpu_device_ids == ["2", "3", "4", "5"]
+
+    def test_disabled_flag_yields_empty_when_no_host_gpus(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("WORKER_HOST_GPU_ID", raising=False)
+        cfg = SSHConfig.from_spec(_spec(), make_worker_config())
+        assert cfg.gpu_device_ids == []
+
     def test_no_gpu_spec_passes_all_worker_gpus(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv("WORKER_HOST_GPU_ID", "2,3")
-        cfg = SSHConfig.from_spec(_spec(), make_worker_config())
+        cfg = SSHConfig.from_spec(_spec(), _worker_config_gpu_limit())
         assert cfg.gpu_device_ids == ["2", "3"]
 
     def test_count_only_slices_first_n(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("WORKER_HOST_GPU_ID", "2,3,4,5")
         cfg = SSHConfig.from_spec(
             _spec({"hardware": {"gpu": {"count": 2}}}),
-            make_worker_config(),
+            _worker_config_gpu_limit(),
         )
         assert cfg.gpu_device_ids == ["2", "3"]
 
@@ -154,7 +193,7 @@ class TestSSHConfigResolveGpuDevices:
         )
         cfg = SSHConfig.from_spec(
             _spec({"hardware": {"gpu": {"count": 2, "type": "A100"}}}),
-            make_worker_config(),
+            _worker_config_gpu_limit(),
             hardware=hardware,
         )
         assert cfg.gpu_device_ids == ["1", "2"]
@@ -175,7 +214,7 @@ class TestSSHConfigResolveGpuDevices:
         )
         cfg = SSHConfig.from_spec(
             _spec({"hardware": {"gpu": {"count": 1, "memory": "40Gi"}}}),
-            make_worker_config(),
+            _worker_config_gpu_limit(),
             hardware=hardware,
         )
         assert cfg.gpu_device_ids == ["1"]
@@ -197,7 +236,7 @@ class TestSSHConfigResolveGpuDevices:
         with pytest.raises(Exception, match="GPU"):
             SSHConfig.from_spec(
                 _spec({"hardware": {"gpu": {"count": 1, "type": "A100"}}}),
-                make_worker_config(),
+                _worker_config_gpu_limit(),
                 hardware=hardware,
             )
 
@@ -205,7 +244,7 @@ class TestSSHConfigResolveGpuDevices:
         monkeypatch.setenv("WORKER_HOST_GPU_ID", "2,3")
         cfg = SSHConfig.from_spec(
             _spec({"hardware": {"gpu": {"count": 0}}}),
-            make_worker_config(),
+            _worker_config_gpu_limit(),
         )
         assert cfg.gpu_device_ids == []
 
@@ -217,7 +256,7 @@ class TestSSHConfigResolveGpuDevices:
         monkeypatch.setenv("WORKER_HOST_GPU_ID", "2,3,4")
         cfg = SSHConfig.from_spec(
             _spec({"hardware": {"gpu": {"count": 2}}}),
-            make_worker_config(),
+            _worker_config_gpu_limit(),
         )
         assert cfg.gpu_device_ids == ["2", "3"]
 
@@ -249,7 +288,7 @@ class TestSSHConfigResolveGpuDevices:
         )
         cfg = SSHConfig.from_spec(
             _spec({"hardware": {"gpu": {"count": 1, "memory": "40Gi"}}}),
-            make_worker_config(),
+            _worker_config_gpu_limit(),
             hardware=hardware,
         )
         assert cfg.gpu_device_ids == ["0"]
@@ -279,7 +318,7 @@ class TestSSHConfigResolveGpuDevices:
         )
         cfg = SSHConfig.from_spec(
             _spec({"hardware": {"gpu": {"type": "A100"}}}),
-            make_worker_config(),
+            _worker_config_gpu_limit(),
             hardware=hardware,
         )
         assert cfg.gpu_device_ids == ["1"]
@@ -300,7 +339,7 @@ class TestSSHConfigResolveGpuDevices:
         )
         cfg = SSHConfig.from_spec(
             _spec({"hardware": {"gpu": {"memory": "40Gi"}}}),
-            make_worker_config(),
+            _worker_config_gpu_limit(),
             hardware=hardware,
         )
         assert cfg.gpu_device_ids == ["1"]
@@ -331,6 +370,6 @@ class TestSSHConfigResolveGpuDevices:
         with pytest.raises(Exception, match="GPU"):
             SSHConfig.from_spec(
                 _spec({"hardware": {"gpu": {"count": 1, "memory": "40Gi"}}}),
-                make_worker_config(),
+                _worker_config_gpu_limit(),
                 hardware=hardware,
             )

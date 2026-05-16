@@ -191,7 +191,7 @@ class SSHConfig:
         cpu_limit, memory_limit_bytes, pids_limit = _resolve_resource_limits(
             spec, worker_cfg
         )
-        gpu_device_ids = _resolve_gpu_devices(spec, hardware)
+        gpu_device_ids = _resolve_gpu_devices(spec, worker_cfg, hardware)
         return cls(
             image=spec.image or default_image,
             interactive=bool(spec.interactive),
@@ -280,7 +280,7 @@ def _min_or_none[T: (int, float)](a: T | None, b: T | None) -> T | None:
 
 
 def _resolve_gpu_devices(
-    spec: SSHSpecStrict, hardware: WorkerHardware | None
+    spec: SSHSpecStrict, config: WorkerConfig, hardware: WorkerHardware | None
 ) -> list[str]:
     """Pick the smallest subset of the worker's GPUs that satisfies the spec.
 
@@ -294,6 +294,8 @@ def _resolve_gpu_devices(
         for d in os.getenv("WORKER_HOST_GPU_ID", "").split(",")
         if (d_stripped := d.strip())
     ]
+    if not config.enable_ssh_gpu_limit:
+        return host_gpu_ids
     if not host_gpu_ids:
         return []
 

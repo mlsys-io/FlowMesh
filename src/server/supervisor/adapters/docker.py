@@ -30,7 +30,7 @@ from .base import (
     WorkerFactory,
     WorkerTokenType,
 )
-from .utils import get_worker_image_name
+from .utils import get_worker_image_name, to_env_str
 
 _STOP_TIMEOUT = 30  # seconds
 _PROVIDER_NAME = "docker"
@@ -121,6 +121,11 @@ class SSHConfig(BaseModel):
     """Maximum memory accessible to an SSH session container (e.g. "8Gi")"""
     max_pids: int | None = env.SSH_MAX_PIDS
     """Maximum number of PIDs inside an SSH session container"""
+    enable_gpu_limit: bool = env.ENABLE_SSH_GPU_LIMIT
+    """Whether to apply requested GPU limits to SSH session containers.
+
+    If false, SSH session containers are allocated all available GPUs regardless of
+    their resource requests."""
 
     def to_env(self) -> dict[str, str]:
         """Return env vars to inject into the worker container."""
@@ -135,8 +140,9 @@ class SSHConfig(BaseModel):
             "SSH_MAX_CPU": self.max_cpu,
             "SSH_MAX_MEMORY": self.max_memory,
             "SSH_MAX_PIDS": self.max_pids,
+            "ENABLE_SSH_GPU_LIMIT": self.enable_gpu_limit,
         }
-        return {k: str(v) for k, v in mapping.items() if v is not None}
+        return {k: to_env_str(v) for k, v in mapping.items() if v is not None}
 
     def to_limits(self) -> SSHLimits | None:
         """Project the admin cap into a wire-ready ``SSHLimits``."""

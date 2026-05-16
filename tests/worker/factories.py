@@ -46,6 +46,7 @@ DEFAULT_WORKER_CONFIG: Final[WorkerConfig] = WorkerConfig(
     enable_mp_executors=False,
     docker_gpu_runtime=None,
     ssh_limits=None,
+    enable_ssh_gpu_limit=False,
 )
 
 

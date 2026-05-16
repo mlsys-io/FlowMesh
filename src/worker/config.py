@@ -44,6 +44,7 @@ class WorkerConfig:
     enable_mp_executors: bool
     docker_gpu_runtime: str | None
     ssh_limits: SSHLimits | None
+    enable_ssh_gpu_limit: bool
     grpc_keepalive_time_ms: int | None = None
     grpc_keepalive_timeout_ms: int | None = None
     network_mode: str | None = None
@@ -145,6 +146,7 @@ class WorkerConfig:
                 max_pids=ssh_max_pids,
             )
         )
+        enable_ssh_gpu_limit = parse_bool_env("ENABLE_SSH_GPU_LIMIT", False)
 
         return WorkerConfig(
             worker_token=worker_token,
@@ -167,6 +169,7 @@ class WorkerConfig:
             enable_mp_executors=enable_mp_executors,
             docker_gpu_runtime=docker_gpu_runtime,
             ssh_limits=ssh_limits,
+            enable_ssh_gpu_limit=enable_ssh_gpu_limit,
             grpc_keepalive_time_ms=grpc_keepalive_time_ms,
             grpc_keepalive_timeout_ms=grpc_keepalive_timeout_ms,
             network_mode=network_mode,
