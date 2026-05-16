@@ -2,7 +2,10 @@
 
 import json
 from pathlib import Path
-from typing import Any
+from types import SimpleNamespace
+from typing import Any, cast
+
+from PIL import Image
 
 from worker.executors.mixins.data import DataMixin
 
@@ -128,3 +131,42 @@ def test_dump_to_governance_with_merged_children(tmp_path: Path) -> None:
         ("tsk-c1", "tsk-up-b"),
         ("tsk-c2", "tsk-up-c"),
     }
+
+
+def test_collect_prompts_resolves_grouped_image_artifact_refs_after_flatten(
+    tmp_path: Path,
+) -> None:
+    mixin = _Mixin()
+    upstream_dir = tmp_path / "upstream-task"
+    artifacts_dir = upstream_dir / "artifacts" / "images"
+    artifacts_dir.mkdir(parents=True)
+    for name, color in (("a.png", "red"), ("b.png", "green"), ("c.png", "blue")):
+        Image.new("RGB", (2, 2), color=color).save(artifacts_dir / name)
+
+    spec = cast(
+        Any,
+        SimpleNamespace(
+            data={"type": "list", "expr": "vision.images"},
+            inference={},
+            upstreamResults={
+                "vision": {
+                    "images": [
+                        [{"path": "images/a.png"}, {"path": "images/b.png"}],
+                        [{"path": "images/c.png"}],
+                    ],
+                    "_artifacts": {"base_dir": upstream_dir.as_posix()},
+                }
+            },
+        ),
+    )
+
+    entry = mixin._collect_prompts_for_spec(spec, "tsk-vision", fetch_images=True)
+
+    assert entry.image_group_sizes == [2, 1]
+    assert len(entry.images) == 3
+    assert all(image is not None for image in entry.images)
+    assert [image.size for image in entry.images if image is not None] == [
+        (2, 2),
+        (2, 2),
+        (2, 2),
+    ]
