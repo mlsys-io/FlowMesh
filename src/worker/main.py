@@ -96,7 +96,7 @@ def initialize_executors(
 
         try:
             if key in configured_wrapped:
-                return MPExecutor(cls, config=config)
+                return MPExecutor(cls, config, hardware)
             return cls(config, hardware, lifecycle)
         except Exception as exc:
             logger.warning("Failed to initialize executor %s: %s", key, exc)

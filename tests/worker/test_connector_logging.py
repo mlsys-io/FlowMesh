@@ -6,7 +6,7 @@ import uuid
 from pathlib import Path
 
 from shared.tasks.worker_message import WorkerTaskMessage
-from tests.worker.factories import make_live_worker_config
+from tests.worker.factories import make_live_worker_config, make_worker_hardware
 from worker.executors.base_executor import Executor
 from worker.executors.mp_executor import MPExecutor
 
@@ -60,7 +60,11 @@ def test_connector_logs_printed_to_stderr(tmp_path: Path) -> None:
     by checking container logs or log files in production.
     """
     # Create MP executor with test executor
-    mp = MPExecutor(ConnectorLoggingExecutor, config=make_live_worker_config(tmp_path))
+    mp = MPExecutor(
+        ConnectorLoggingExecutor,
+        config=make_live_worker_config(tmp_path),
+        hardware=make_worker_hardware(),
+    )
 
     task_payload = WorkerTaskMessage.model_validate(
         {

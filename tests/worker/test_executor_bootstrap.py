@@ -10,14 +10,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from shared.tasks.worker_message import (
-    CPUInfo,
-    GpuPlatformInfo,
-    MemoryInfo,
-    NetworkInfo,
-    WorkerHardware,
-)
-from tests.worker.factories import make_live_worker_config
+from tests.worker.factories import make_live_worker_config, make_worker_hardware
 from worker.executors.base_executor import Executor, ExecutorTask
 from worker.main import initialize_executors
 
@@ -34,23 +27,10 @@ class _PassthroughExecutor(Executor):
         return {"ok": True}
 
 
-def _hardware() -> WorkerHardware:
-    return WorkerHardware(
-        cpu=CPUInfo(logical_cores=2, model="x"),
-        memory=MemoryInfo(total_bytes=1024**3),
-        gpu=GpuPlatformInfo(
-            driver_version=None,
-            cuda_version=None,
-            devices=[],
-        ),
-        network=NetworkInfo(ip=None, bandwidth_bytes_per_sec=None),
-    )
-
-
 class TestInitializeExecutorsHardware:
     def test_executor_receives_hardware_via_passthrough(self, tmp_path: Path) -> None:
         cfg = make_live_worker_config(tmp_path)
-        hw = _hardware()
+        hw = make_worker_hardware()
         executors, default = initialize_executors(
             config=cfg,
             hardware=hw,

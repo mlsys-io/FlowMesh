@@ -7,7 +7,16 @@ from typing import Any, Final
 from lumid_hooks import PrincipalContext
 
 from shared.tasks import TaskType
-from shared.tasks.worker_message import TaskEnvelopeStrict, WorkerTaskMessage
+from shared.tasks.worker_message import (
+    CPUInfo,
+    GpuInfo,
+    GpuPlatformInfo,
+    MemoryInfo,
+    NetworkInfo,
+    TaskEnvelopeStrict,
+    WorkerHardware,
+    WorkerTaskMessage,
+)
 from worker.config import WorkerConfig
 
 DEFAULT_WORKER_CONFIG: Final[WorkerConfig] = WorkerConfig(
@@ -91,4 +100,18 @@ def make_worker_task_message(
         task_type=task_type,
         task=TaskEnvelopeStrict(apiVersion=api_version, kind=kind, spec=spec),
         **overrides,
+    )
+
+
+def make_worker_hardware(devices: list[GpuInfo] | None = None) -> WorkerHardware:
+    """Build a WorkerHardware with sensible test defaults."""
+    return WorkerHardware(
+        cpu=CPUInfo(logical_cores=2, model="x"),
+        memory=MemoryInfo(total_bytes=1024**3),
+        gpu=GpuPlatformInfo(
+            driver_version=None,
+            cuda_version=None,
+            devices=devices or [],
+        ),
+        network=NetworkInfo(ip=None, bandwidth_bytes_per_sec=None),
     )

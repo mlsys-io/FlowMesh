@@ -7,7 +7,11 @@ from pathlib import Path
 from shared.tasks import TaskType
 from shared.tasks.specs import EchoSpecStrict
 from shared.tasks.worker_message import WorkerTaskMessage
-from tests.worker.factories import make_live_worker_config, make_worker_task_message
+from tests.worker.factories import (
+    make_live_worker_config,
+    make_worker_hardware,
+    make_worker_task_message,
+)
 from worker.executors.base_executor import Executor
 from worker.executors.mp_executor import MPExecutor
 
@@ -36,7 +40,11 @@ def _simple_task_message() -> WorkerTaskMessage:
 
 
 def test_mp_executor_does_not_start_subprocess_until_first_run(tmp_path: Path) -> None:
-    mp = MPExecutor(_SimpleMPExecutor, config=make_live_worker_config(tmp_path))
+    mp = MPExecutor(
+        _SimpleMPExecutor,
+        config=make_live_worker_config(tmp_path),
+        hardware=make_worker_hardware(),
+    )
 
     assert mp._shutdown is True
     assert mp._proc is None
@@ -58,7 +66,11 @@ def test_mp_executor_does_not_start_subprocess_until_first_run(tmp_path: Path) -
 
 
 def test_mp_executor_cleanup_before_run_is_noop(tmp_path: Path) -> None:
-    mp = MPExecutor(_SimpleMPExecutor, config=make_live_worker_config(tmp_path))
+    mp = MPExecutor(
+        _SimpleMPExecutor,
+        config=make_live_worker_config(tmp_path),
+        hardware=make_worker_hardware(),
+    )
 
     mp.cleanup_after_run()
 

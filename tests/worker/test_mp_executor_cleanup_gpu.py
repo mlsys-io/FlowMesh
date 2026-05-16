@@ -9,7 +9,7 @@ import pynvml  # type: ignore
 import pytest
 
 from shared.tasks.worker_message import WorkerTaskMessage
-from tests.worker.factories import make_live_worker_config
+from tests.worker.factories import make_live_worker_config, make_worker_hardware
 from worker.executors.mp_executor import MPExecutor
 from worker.executors.vllm_executor import VLLMExecutor
 
@@ -47,7 +47,11 @@ def test_mp_executor_cleans_up_vllm(caplog, tmp_path: Path) -> None:
 
     gpu_before = total_gpu_used()
 
-    mp = MPExecutor(VLLMExecutor, config=make_live_worker_config(tmp_path))
+    mp = MPExecutor(
+        VLLMExecutor,
+        config=make_live_worker_config(tmp_path),
+        hardware=make_worker_hardware(),
+    )
 
     # Create task payload matching parse_task_yaml output format
     task_payload = WorkerTaskMessage.model_validate(

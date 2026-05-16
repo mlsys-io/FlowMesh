@@ -21,6 +21,7 @@ from typing import Any
 
 import psutil
 
+from shared.tasks.worker_message import WorkerHardware
 from worker.config import WorkerConfig
 
 from .base_executor import ExecutionError, Executor, ExecutorTask
@@ -232,6 +233,7 @@ def _configure_worker_logging(log_queue: Queue | None) -> None:
 def _executor_worker(
     executor_cls: type[Executor],
     config: WorkerConfig,
+    hardware: WorkerHardware | None,
     cmd_queue: mp.Queue,
     result_queue: mp.Queue,
     log_queue: Queue | None,
@@ -256,7 +258,7 @@ def _executor_worker(
     with MPLogHandler(enabled=log_queue is not None):
         executor: Executor | None = None
         try:
-            executor = executor_cls(config)
+            executor = executor_cls(config, hardware)
         except Exception:
             logger.warning(
                 "Failed to initialize executor in worker process", exc_info=True
@@ -362,10 +364,10 @@ class MPExecutor(Executor):
         self,
         executor_cls: type[Executor],
         config: WorkerConfig,
-        *,
+        hardware: WorkerHardware | None = None,
         start_method: str = "spawn",
     ) -> None:
-        super().__init__(config)
+        super().__init__(config, hardware)
         self._executor_cls = executor_cls
         self._ctx = mp.get_context(start_method)
         inner_name = getattr(executor_cls, "name", executor_cls.__name__)
@@ -398,6 +400,7 @@ class MPExecutor(Executor):
             args=(
                 self._executor_cls,
                 self._config,
+                self._hardware,
                 self._cmd_q,
                 self._res_q,
                 self._log_q,
