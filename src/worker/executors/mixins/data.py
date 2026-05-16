@@ -403,6 +403,8 @@ class DataMixin(GovernanceMixin):
                 metadata_raw.append(entry_meta)
         elif dtype == "list":
             items = data.get("items")
+            context: dict[str, Any] | None = None
+            root_node: str | None = None
             if items is None:
                 expr = data.get("expr")
                 if not expr:
@@ -427,6 +429,10 @@ class DataMixin(GovernanceMixin):
                 )
             if fetch_images:
                 items, image_group_sizes = self._flatten_grouped_image_items(items)
+                items = [
+                    maybe_resolve_artifact_ref(item, context, root_node)
+                    for item in items
+                ]
 
                 s3_entries: list[tuple[int, str]] = []
 
