@@ -417,11 +417,6 @@ class DataMixin(GovernanceMixin):
                     resolved_expr = expr.strip()
                     items = _evaluate_expr(resolved_expr, context)
                     root_node = resolved_expr.split(".", 1)[0] or None
-                    if isinstance(items, list):
-                        items = [
-                            maybe_resolve_artifact_ref(item, context, root_node)
-                            for item in items
-                        ]
             if not isinstance(items, list):
                 raise ExecutionError(
                     "spec.data.items must be a list or resolve to a list "
