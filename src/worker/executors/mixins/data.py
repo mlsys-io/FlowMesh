@@ -504,6 +504,10 @@ class DataMixin(GovernanceMixin):
                     raise ExecutionError("Missing image data for one or more items.")
                 prompts = [x if isinstance(x, str) else "" for x in items]
             else:
+                items = [
+                    maybe_resolve_artifact_ref(item, context, root_node)
+                    for item in items
+                ]
                 prompts, apply_chat_template, found_system_prompt = (
                     normalize_prompt_payload(items)
                 )
