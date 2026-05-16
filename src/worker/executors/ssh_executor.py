@@ -29,13 +29,20 @@ from typing import TYPE_CHECKING, Any, cast
 
 import requests
 
+from shared.tasks.components.resources import GPURequirements
 from shared.tasks.specs.ssh import (
     SSHInputSpec,
     SSHMountSpec,
     SSHOutputSpec,
     SSHSpecStrict,
 )
+from shared.tasks.worker_message import WorkerHardware
 from shared.utils import new_ssh_session_id, parse_float_env, parse_mem_to_bytes
+from shared.utils.hardware import (
+    parse_gpu_memory_bytes,
+    select_matching_gpu_indices,
+    unified_gpu_memory_satisfies,
+)
 from shared.utils.http import auth_headers
 from shared.utils.manifest import ARTIFACTS_DIR, prepare_output_dir
 from worker.config import WorkerConfig
@@ -157,9 +164,15 @@ class SSHConfig:
     cpu_limit: float | None
     memory_limit_bytes: int | None
     pids_limit: int | None
+    gpu_device_ids: list[str]
 
     @classmethod
-    def from_spec(cls, spec: SSHSpecStrict, worker_cfg: WorkerConfig) -> "SSHConfig":
+    def from_spec(
+        cls,
+        spec: SSHSpecStrict,
+        worker_cfg: WorkerConfig,
+        hardware: WorkerHardware | None = None,
+    ) -> "SSHConfig":
         """Build a resolved config from a task spec, env vars, and defaults."""
         has_gpu = bool(os.getenv("WORKER_HOST_GPU_ID", "").strip())
         fallback_image = _DEFAULT_IMAGE_GPU if has_gpu else _DEFAULT_IMAGE_CPU
@@ -178,6 +191,7 @@ class SSHConfig:
         cpu_limit, memory_limit_bytes, pids_limit = _resolve_resource_limits(
             spec, worker_cfg
         )
+        gpu_device_ids = _resolve_gpu_devices(spec, hardware)
         return cls(
             image=spec.image or default_image,
             interactive=bool(spec.interactive),
@@ -197,6 +211,7 @@ class SSHConfig:
             cpu_limit=cpu_limit,
             memory_limit_bytes=memory_limit_bytes,
             pids_limit=pids_limit,
+            gpu_device_ids=gpu_device_ids,
         )
 
 
@@ -264,6 +279,91 @@ def _min_or_none[T: (int, float)](a: T | None, b: T | None) -> T | None:
     return min(a, b)
 
 
+def _resolve_gpu_devices(
+    spec: SSHSpecStrict, hardware: WorkerHardware | None
+) -> list[str]:
+    """Pick the smallest subset of the worker's GPUs that satisfies the spec.
+
+    Returns the *host* device IDs to expose to the SSH container. When the spec
+    sets no GPU constraints at all, returns the worker's full host GPU set;
+    when only ``type`` or ``memory`` is set without ``count``, defaults to
+    slicing a single matching device.
+    """
+    host_gpu_ids = [
+        d_stripped
+        for d in os.getenv("WORKER_HOST_GPU_ID", "").split(",")
+        if (d_stripped := d.strip())
+    ]
+    if not host_gpu_ids:
+        return []
+
+    gpu_req: GPURequirements | None = None
+    if (res := spec.resources) and (hw := res.hardware):
+        gpu_req = hw.gpu
+    if gpu_req is None or (
+        gpu_req.count is None and not gpu_req.type and not gpu_req.memory
+    ):
+        return host_gpu_ids
+
+    requested = gpu_req.count if gpu_req.count is not None else 1
+    if requested <= 0:
+        return []
+
+    # The supervisor passes WORKER_HOST_GPU_ID in the same order as
+    # worker.hardware.gpu.devices, so positions line up 1:1. When metadata is
+    # missing or misaligned, fall back to count-only slicing.
+    devices = hardware.gpu.devices if hardware is not None else []
+    if devices and len(devices) != len(host_gpu_ids):
+        logger.warning(
+            "WORKER_HOST_GPU_ID (%d) and worker hardware.gpu.devices (%d) "
+            "disagree; falling back to count-only slicing",
+            len(host_gpu_ids),
+            len(devices),
+        )
+        devices = []
+
+    required_mem_bytes: int | None = None
+    if gpu_req.memory:
+        required_mem_bytes = parse_gpu_memory_bytes(gpu_req.memory)
+        if required_mem_bytes is None:
+            raise ExecutionError(
+                f"resources.hardware.gpu.memory value {gpu_req.memory!r} is "
+                "not a valid memory string (e.g. '40Gi', '80GB')"
+            )
+
+    if not devices:
+        # No per-device metadata to filter by — fall back to first-N host IDs.
+        if len(host_gpu_ids) < requested:
+            raise ExecutionError(
+                f"SSH task requested {requested} GPU(s) but only "
+                f"{len(host_gpu_ids)} are available on this worker"
+            )
+        return host_gpu_ids[:requested]
+
+    matching_indices = select_matching_gpu_indices(devices, gpu_req, limit=requested)
+    if len(matching_indices) >= requested:
+        return [host_gpu_ids[idx] for idx in matching_indices]
+
+    # Unified memory fallback
+    if required_mem_bytes is not None and hardware is not None:
+        type_only_req = GPURequirements(
+            count=gpu_req.count, type=gpu_req.type, memory=None
+        )
+        type_matching = select_matching_gpu_indices(
+            devices, type_only_req, limit=requested
+        )
+        if len(type_matching) >= requested and unified_gpu_memory_satisfies(
+            hardware, required_mem_bytes, requested
+        ):
+            return [host_gpu_ids[idx] for idx in type_matching]
+
+    raise ExecutionError(
+        f"SSH task requested {requested} GPU(s) matching the spec but "
+        f"only {len(matching_indices)} satisfying device(s) are available "
+        "on this worker"
+    )
+
+
 class SSHExecutor(Executor):
     """Executor for SSH tasks (interactive sessions and non-interactive jobs)."""
 
@@ -322,7 +422,7 @@ class SSHExecutor(Executor):
 
     def run(self, task: ExecutorTask, out_dir: Path) -> dict[str, Any]:
         spec = self.require_spec(task, SSHSpecStrict)
-        cfg = SSHConfig.from_spec(spec, self._config)
+        cfg = SSHConfig.from_spec(spec, self._config, self._hardware)
         access_mode = cfg.access_mode
         interactive = cfg.interactive
 
@@ -363,6 +463,7 @@ class SSHExecutor(Executor):
             mount_plan.staged_input_specs,
             mount_plan.create_dirs,
             interactive,
+            cfg.gpu_device_ids,
         )
         kwargs = self._build_run_kwargs(
             cfg,
@@ -548,6 +649,7 @@ class SSHExecutor(Executor):
         staged_input_specs: list[tuple[str, str]],
         create_dirs: list[str],
         interactive: bool,
+        gpu_device_ids: list[str] | None = None,
     ) -> dict[str, str]:
         env: dict[str, str] = {}
         if interactive:
@@ -556,9 +658,12 @@ class SSHExecutor(Executor):
                 env["AUTHORIZED_KEYS"] = "\n".join(authorized_keys)
             env["SSH_UID"] = str(os.getuid())
             env["SSH_GID"] = str(os.getgid())
-        cuda = os.getenv("CUDA_VISIBLE_DEVICES")
-        if cuda is not None:
-            env["CUDA_VISIBLE_DEVICES"] = cuda
+        if gpu_device_ids:
+            # Docker exposes only the sliced devices, which appear as 0..N-1
+            # inside the container regardless of their host IDs.
+            env["CUDA_VISIBLE_DEVICES"] = ",".join(
+                str(i) for i in range(len(gpu_device_ids))
+            )
         if staged_input_specs:
             env["FLOWMESH_STAGED_INPUT_SPECS"] = "\n".join(
                 f"{mount_path}\t{target_path}"
@@ -603,16 +708,12 @@ class SSHExecutor(Executor):
             kwargs["mem_limit"] = cfg.memory_limit_bytes
         if cfg.pids_limit is not None:
             kwargs["pids_limit"] = cfg.pids_limit
-        # WORKER_HOST_GPU_ID holds the real host device IDs assigned by the
-        # server (e.g. "2,3").
-        host_gpu_ids = os.getenv("WORKER_HOST_GPU_ID", "").strip()
-        if host_gpu_ids:
-            device_ids = [
-                d_stripped for d in host_gpu_ids.split(",") if (d_stripped := d.strip())
-            ]
+        if cfg.gpu_device_ids:
             try:
                 kwargs["device_requests"] = [
-                    DeviceRequest(device_ids=device_ids, capabilities=[["gpu"]])
+                    DeviceRequest(
+                        device_ids=list(cfg.gpu_device_ids), capabilities=[["gpu"]]
+                    )
                 ]
                 if runtime := self._docker_gpu_runtime:
                     kwargs["runtime"] = runtime

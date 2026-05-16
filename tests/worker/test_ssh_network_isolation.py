@@ -34,6 +34,7 @@ def _ssh_config(image: str = "myimg:latest") -> SSHConfig:
         cpu_limit=None,
         memory_limit_bytes=None,
         pids_limit=None,
+        gpu_device_ids=[],
     )
 
 

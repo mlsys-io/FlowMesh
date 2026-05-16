@@ -7,7 +7,15 @@ import pytest
 
 from shared.schemas.worker import SSHLimits
 from shared.tasks.specs import SSHSpecStrict
-from tests.worker.factories import make_worker_config
+from shared.tasks.worker_message import (
+    CPUInfo,
+    GpuInfo,
+    GpuPlatformInfo,
+    MemoryInfo,
+    NetworkInfo,
+    WorkerHardware,
+)
+from tests.worker.factories import make_worker_config, make_worker_hardware
 from worker.executors.ssh_executor import SSHConfig
 
 
@@ -89,4 +97,240 @@ class TestSSHConfigResolveLimits:
             SSHConfig.from_spec(
                 _spec({"hardware": {"memory": "lots"}}),
                 make_worker_config(),
+            )
+
+
+class TestSSHConfigResolveGpuDevices:
+    def test_no_host_gpus_yields_empty_slice(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("WORKER_HOST_GPU_ID", raising=False)
+        cfg = SSHConfig.from_spec(
+            _spec({"hardware": {"gpu": {"count": 1}}}),
+            make_worker_config(),
+        )
+        assert cfg.gpu_device_ids == []
+
+    def test_no_gpu_spec_passes_all_worker_gpus(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("WORKER_HOST_GPU_ID", "2,3")
+        cfg = SSHConfig.from_spec(_spec(), make_worker_config())
+        assert cfg.gpu_device_ids == ["2", "3"]
+
+    def test_count_only_slices_first_n(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("WORKER_HOST_GPU_ID", "2,3,4,5")
+        cfg = SSHConfig.from_spec(
+            _spec({"hardware": {"gpu": {"count": 2}}}),
+            make_worker_config(),
+        )
+        assert cfg.gpu_device_ids == ["2", "3"]
+
+    def test_type_filter_skips_non_matching_devices(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("WORKER_HOST_GPU_ID", "0,1,2")
+        hardware = make_worker_hardware(
+            [
+                GpuInfo(
+                    index=0,
+                    name="NVIDIA T4",
+                    uuid="t4-0",
+                    memory_total_bytes=16 * 1024**3,
+                ),
+                GpuInfo(
+                    index=1,
+                    name="NVIDIA A100-SXM4-80GB",
+                    uuid="a100-0",
+                    memory_total_bytes=80 * 1024**3,
+                ),
+                GpuInfo(
+                    index=2,
+                    name="NVIDIA A100-SXM4-80GB",
+                    uuid="a100-1",
+                    memory_total_bytes=80 * 1024**3,
+                ),
+            ]
+        )
+        cfg = SSHConfig.from_spec(
+            _spec({"hardware": {"gpu": {"count": 2, "type": "A100"}}}),
+            make_worker_config(),
+            hardware=hardware,
+        )
+        assert cfg.gpu_device_ids == ["1", "2"]
+
+    def test_memory_filter_skips_small_devices(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("WORKER_HOST_GPU_ID", "0,1")
+        hardware = make_worker_hardware(
+            [
+                GpuInfo(
+                    index=0, name="T4", uuid="t4-0", memory_total_bytes=16 * 1024**3
+                ),
+                GpuInfo(
+                    index=1, name="A100", uuid="a100-0", memory_total_bytes=80 * 1024**3
+                ),
+            ]
+        )
+        cfg = SSHConfig.from_spec(
+            _spec({"hardware": {"gpu": {"count": 1, "memory": "40Gi"}}}),
+            make_worker_config(),
+            hardware=hardware,
+        )
+        assert cfg.gpu_device_ids == ["1"]
+
+    def test_insufficient_matching_devices_raises(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("WORKER_HOST_GPU_ID", "0,1")
+        hardware = make_worker_hardware(
+            [
+                GpuInfo(
+                    index=0, name="T4", uuid="t4-0", memory_total_bytes=16 * 1024**3
+                ),
+                GpuInfo(
+                    index=1, name="T4", uuid="t4-1", memory_total_bytes=16 * 1024**3
+                ),
+            ]
+        )
+        with pytest.raises(Exception, match="GPU"):
+            SSHConfig.from_spec(
+                _spec({"hardware": {"gpu": {"count": 1, "type": "A100"}}}),
+                make_worker_config(),
+                hardware=hardware,
+            )
+
+    def test_count_zero_yields_empty(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("WORKER_HOST_GPU_ID", "2,3")
+        cfg = SSHConfig.from_spec(
+            _spec({"hardware": {"gpu": {"count": 0}}}),
+            make_worker_config(),
+        )
+        assert cfg.gpu_device_ids == []
+
+    def test_no_hardware_metadata_still_count_slices(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Without WorkerHardware, type / memory filters can't be evaluated;
+        # count-only slicing still works as a graceful fallback.
+        monkeypatch.setenv("WORKER_HOST_GPU_ID", "2,3,4")
+        cfg = SSHConfig.from_spec(
+            _spec({"hardware": {"gpu": {"count": 2}}}),
+            make_worker_config(),
+        )
+        assert cfg.gpu_device_ids == ["2", "3"]
+
+    def test_unified_memory_satisfies_floor(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # GB10 / GH200-style unified-memory worker: per-device memory is
+        # unreported, but the shared pool covers the requested floor. The slice
+        # should still go through.
+        monkeypatch.setenv("WORKER_HOST_GPU_ID", "0")
+        hardware = WorkerHardware(
+            cpu=CPUInfo(logical_cores=8, model="x"),
+            memory=MemoryInfo(total_bytes=128 * 1024**3),
+            gpu=GpuPlatformInfo(
+                driver_version=None,
+                cuda_version=None,
+                devices=[
+                    GpuInfo(
+                        index=0,
+                        name="NVIDIA GB10",
+                        uuid="gb10",
+                        memory_total_bytes=None,
+                    )
+                ],
+                memory_is_unified=True,
+                shared_memory_total_bytes=128 * 1024**3,
+            ),
+            network=NetworkInfo(ip=None, bandwidth_bytes_per_sec=None),
+        )
+        cfg = SSHConfig.from_spec(
+            _spec({"hardware": {"gpu": {"count": 1, "memory": "40Gi"}}}),
+            make_worker_config(),
+            hardware=hardware,
+        )
+        assert cfg.gpu_device_ids == ["0"]
+
+    def test_type_filter_applies_when_count_omitted(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # `count` omitted but `type` set: the dispatcher admits the worker on
+        # one matching device; the slicer must restrict to that single device,
+        # not pass through all worker GPUs.
+        monkeypatch.setenv("WORKER_HOST_GPU_ID", "0,1")
+        hardware = make_worker_hardware(
+            [
+                GpuInfo(
+                    index=0,
+                    name="NVIDIA T4",
+                    uuid="t4-0",
+                    memory_total_bytes=16 * 1024**3,
+                ),
+                GpuInfo(
+                    index=1,
+                    name="NVIDIA A100-SXM4-80GB",
+                    uuid="a100-0",
+                    memory_total_bytes=80 * 1024**3,
+                ),
+            ]
+        )
+        cfg = SSHConfig.from_spec(
+            _spec({"hardware": {"gpu": {"type": "A100"}}}),
+            make_worker_config(),
+            hardware=hardware,
+        )
+        assert cfg.gpu_device_ids == ["1"]
+
+    def test_memory_filter_applies_when_count_omitted(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("WORKER_HOST_GPU_ID", "0,1")
+        hardware = make_worker_hardware(
+            [
+                GpuInfo(
+                    index=0, name="T4", uuid="t4-0", memory_total_bytes=16 * 1024**3
+                ),
+                GpuInfo(
+                    index=1, name="A100", uuid="a100-0", memory_total_bytes=80 * 1024**3
+                ),
+            ]
+        )
+        cfg = SSHConfig.from_spec(
+            _spec({"hardware": {"gpu": {"memory": "40Gi"}}}),
+            make_worker_config(),
+            hardware=hardware,
+        )
+        assert cfg.gpu_device_ids == ["1"]
+
+    def test_unified_memory_pool_too_small_raises(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("WORKER_HOST_GPU_ID", "0")
+        hardware = WorkerHardware(
+            cpu=CPUInfo(logical_cores=8, model="x"),
+            memory=MemoryInfo(total_bytes=16 * 1024**3),
+            gpu=GpuPlatformInfo(
+                driver_version=None,
+                cuda_version=None,
+                devices=[
+                    GpuInfo(
+                        index=0,
+                        name="NVIDIA GB10",
+                        uuid="gb10",
+                        memory_total_bytes=None,
+                    )
+                ],
+                memory_is_unified=True,
+                shared_memory_total_bytes=16 * 1024**3,
+            ),
+            network=NetworkInfo(ip=None, bandwidth_bytes_per_sec=None),
+        )
+        with pytest.raises(Exception, match="GPU"):
+            SSHConfig.from_spec(
+                _spec({"hardware": {"gpu": {"count": 1, "memory": "40Gi"}}}),
+                make_worker_config(),
+                hardware=hardware,
             )
