@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 import yaml
 
+from shared.schemas.executor_result import BaseExecutorResult
 from shared.tasks.specs import TaskSpecStrictBase
 from shared.utils.parsing import to_bool, to_int
 
@@ -40,6 +41,11 @@ except Exception:
 logger = logging.getLogger(__name__)
 
 
+class OmniResult(BaseExecutorResult):
+    ok: bool = True
+    model: str | None = None
+
+
 class OmniExecutorBase(InferenceMixin, Executor):
     """Shared base for Omni-family executors.
 
@@ -58,7 +64,7 @@ class OmniExecutorBase(InferenceMixin, Executor):
         self._omni_spec: tuple[Any, ...] | None = None
         self._stage_configs_tmp: Path | None = None
 
-    def run(self, task: ExecutorTask, out_dir: Path) -> dict[str, Any]:
+    def run(self, task: ExecutorTask, out_dir: Path) -> OmniResult:
         spec = self.require_spec(task, self._TASK_SPEC_TYPE)
         spec_dict = spec.model_dump(by_alias=True)
         out_dir = Path(out_dir).resolve()
@@ -68,7 +74,7 @@ class OmniExecutorBase(InferenceMixin, Executor):
             result = self._run_inner(task, spec, spec_dict, out_dir)
         maybe_upload_artifacts(task, out_dir, logger=logger)
         maybe_upload_traces(task, out_dir, logger=logger)
-        return result
+        return OmniResult.model_validate(result)
 
     @abstractmethod
     def _run_inner(

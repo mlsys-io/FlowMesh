@@ -56,6 +56,8 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from shared.schemas.artifact import ArtifactRef
+from shared.schemas.executor_result import BaseExecutorResult
 from shared.schemas.governance import SpanType
 from shared.tasks.specs import (
     EmbeddingSpecStrict,
@@ -113,6 +115,16 @@ except Exception:
     _HAS_TRANSFORMERS = False
 
 logger = logging.getLogger(__name__)
+
+
+class TransformersResult(BaseExecutorResult):
+    ok: bool = True
+    model: str | None = None
+    items: list[dict[str, Any]] = []
+    usage: dict[str, Any] | None = None
+    count: int | None = None
+    embedding_file: ArtifactRef | None = None
+    image_group_sizes: list[int] | None = None
 
 
 class HFTransformersExecutor(InferenceMixin, Executor):
@@ -384,7 +396,7 @@ class HFTransformersExecutor(InferenceMixin, Executor):
             return "length"
         return None
 
-    def run(self, task: ExecutorTask, out_dir: Path) -> dict[str, Any]:  # type: ignore[override]
+    def run(self, task: ExecutorTask, out_dir: Path) -> TransformersResult:
         configure_hf_library_logging()
         spec = task.spec
         if not isinstance(spec, (InferenceSpecStrict, EmbeddingSpecStrict)):
@@ -399,7 +411,7 @@ class HFTransformersExecutor(InferenceMixin, Executor):
             result = self._run_inner(spec, task_id, out_dir)
         maybe_upload_artifacts(task, out_dir, logger=logger)
         maybe_upload_traces(task, out_dir, logger=logger)
-        return result
+        return TransformersResult.model_validate(result)
 
     def _run_inner(
         self,

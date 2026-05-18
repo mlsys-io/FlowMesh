@@ -14,6 +14,8 @@ from typing import TYPE_CHECKING, Any
 
 from PIL import Image
 
+from shared.schemas.artifact import ArtifactRef
+from shared.schemas.executor_result import BaseExecutorResult
 from shared.tasks.specs import DiffusionSpecStrict
 
 from ..utils.logging import configure_hf_library_logging
@@ -43,6 +45,12 @@ except Exception:
         _HAS_DIFFUSERS = False
 
 logger = logging.getLogger(__name__)
+
+
+class DiffusersResult(BaseExecutorResult):
+    ok: bool = True
+    model: str | None = None
+    images: list[ArtifactRef] = []
 
 
 class DiffusersExecutor(DataMixin, Executor):
@@ -240,7 +248,7 @@ class DiffusersExecutor(DataMixin, Executor):
 
         return combined_pos, combined_neg, user_pos_pooled, user_neg_pooled
 
-    def run(self, task: ExecutorTask, out_dir: Path) -> dict[str, Any]:
+    def run(self, task: ExecutorTask, out_dir: Path) -> DiffusersResult:
         configure_hf_library_logging()
         spec = self.require_spec(task, DiffusionSpecStrict)
         task_id = task.task_id.strip()
@@ -250,7 +258,7 @@ class DiffusersExecutor(DataMixin, Executor):
             response = self._run_inner(spec, task_id, out_dir)
         maybe_upload_artifacts(task, out_dir, logger=logger)
         maybe_upload_traces(task, out_dir, logger=logger)
-        return response
+        return DiffusersResult.model_validate(response)
 
     def _run_inner(
         self,

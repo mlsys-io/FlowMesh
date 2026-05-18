@@ -67,6 +67,7 @@ except Exception:
         StructuredOutputsParams = None  # type: ignore
 
 from shared.schemas.governance import SpanType
+from shared.schemas.executor_result import BaseExecutorResult
 from shared.tasks.specs import InferenceSpecStrict
 
 from .base_executor import ExecutionError, Executor, ExecutorTask
@@ -79,6 +80,13 @@ from .utils.checkpoints import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class VLLMResult(BaseExecutorResult):
+    ok: bool = True
+    model: str | None = None
+    items: list[dict[str, Any]] = []
+    usage: dict[str, Any] | None = None
 
 
 class _RawJsonSchema:
@@ -849,7 +857,7 @@ Summary:"""
     # --------------------------------------------------------------------- #
     # Execution
     # --------------------------------------------------------------------- #
-    def run(self, task: ExecutorTask, out_dir: Path) -> dict[str, Any]:  # type: ignore[override]
+    def run(self, task: ExecutorTask, out_dir: Path) -> VLLMResult:
         spec = self.require_spec(task, InferenceSpecStrict)
         task_id = task.task_id.strip()
         if not task_id:
@@ -868,7 +876,7 @@ Summary:"""
         task: ExecutorTask,
         spec: InferenceSpecStrict,
         out_dir: Path,
-    ) -> dict[str, Any]:
+    ) -> VLLMResult:
         task_id = task.task_id.strip()
         merge_children = task.merged_children or []
         entries: list[PreparedInferenceEntry] = []
@@ -1196,7 +1204,7 @@ Summary:"""
             dependencies_by_task=dependencies_by_task,
         )
 
-        return result
+        return VLLMResult.model_validate(result)
 
     def cleanup_after_run(self) -> None:
         if self._llm:

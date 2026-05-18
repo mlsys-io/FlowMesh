@@ -16,6 +16,8 @@ from typing import Any
 
 from datasets import load_dataset
 
+from shared.schemas.artifact import ArtifactRef
+from shared.schemas.executor_result import BaseExecutorResult
 from shared.tasks.specs import AgentSpecStrict
 
 from .base_executor import ExecutionError, Executor, ExecutorTask
@@ -52,6 +54,16 @@ def _resolve_task_timeout(agent: dict[str, Any] | None) -> int:
 
 
 logger = logging.getLogger("worker.agent")
+
+
+class AgentResult(BaseExecutorResult):
+    ok: bool
+    model: str
+    items: list[dict[str, Any]] = []
+    usage: dict[str, Any] | None = None
+    metadata: dict[str, Any] | None = None
+    agent_output: ArtifactRef | None = None
+    batch_summary_file: ArtifactRef | None = None
 
 
 class AgentExecutor(Executor):
@@ -223,7 +235,7 @@ class AgentExecutor(Executor):
         else:
             raise ExecutionError(f"Unsupported spec.data.type: {dtype!r}")
 
-    def run(self, task: ExecutorTask, out_dir: Path) -> dict[str, Any]:
+    def run(self, task: ExecutorTask, out_dir: Path) -> AgentResult:
         """Execute agent tasks using youtu-agent (utu) framework"""
         self.ensure_dir(out_dir)
 
@@ -321,7 +333,7 @@ class AgentExecutor(Executor):
             maybe_upload_artifacts(task, out_dir, logger=logger)
 
             logger.info(f"Agent execution completed: {len(self._tasks)} task(s)")
-            return output
+            return AgentResult.model_validate(output)
 
         except ExecutionError:
             raise

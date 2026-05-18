@@ -116,17 +116,18 @@ def test_transformers_executor_supports_chat_prompts_and_jsonl_export(
         result = executor.run(task, tmp_path)
     mock_ensure_model.assert_called_once_with(spec)
 
-    assert [item["output"] for item in result["items"]] == [
+    assert [item["output"] for item in result.items] == [
         "first answer",
         "second answer",
     ]
-    assert [item["prompt"] for item in result["items"]] == [
+    assert [item["prompt"] for item in result.items] == [
         "<chat>hello</chat>",
         "<chat>world</chat>",
     ]
-    assert [item["metadata"]["row_id"] for item in result["items"]] == ["a", "b"]
-    assert result["usage"]["num_requests"] == 2
-    assert "latency_sec" in result["usage"]
+    assert [item["metadata"]["row_id"] for item in result.items] == ["a", "b"]
+    assert result.usage is not None
+    assert result.usage["num_requests"] == 2
+    assert "latency_sec" in result.usage
 
     exported = (tmp_path / "artifacts" / "rows.jsonl").read_text(encoding="utf-8")
     assert '"row_id": "a"' in exported
