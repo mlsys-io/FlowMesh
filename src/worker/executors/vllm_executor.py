@@ -66,8 +66,8 @@ except Exception:
         _HAS_VLLM = False
         StructuredOutputsParams = None  # type: ignore
 
-from shared.schemas.governance import SpanType
 from shared.schemas.executor_result import BaseExecutorResult
+from shared.schemas.governance import SpanType
 from shared.tasks.specs import InferenceSpecStrict
 
 from .base_executor import ExecutionError, Executor, ExecutorTask

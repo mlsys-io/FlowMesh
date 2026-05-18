@@ -344,7 +344,7 @@ class DiffusersExecutor(DataMixin, Executor):
         image_dir = out_dir / "artifacts" / "images"
         image_dir.mkdir(parents=True, exist_ok=True)
 
-        generated_images: list[dict[str, str]] = []
+        generated_images: list[ArtifactRef] = []
         for idx, img in enumerate(images):
             img.save(image_dir / f"image_{idx}.png", format="PNG")
             generated_images.append(artifact_ref(f"images/image_{idx}.png"))

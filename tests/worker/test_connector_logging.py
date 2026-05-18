@@ -90,6 +90,7 @@ def test_connector_logs_printed_to_stderr(tmp_path: Path) -> None:
     mp.cleanup_after_run()
 
     # Verify the executor ran successfully
+    assert isinstance(result, dict)
     assert result["ok"], f"Executor failed: {result}"
     assert (
         result.get("result", {}).get("status") == "completed"

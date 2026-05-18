@@ -54,6 +54,7 @@ def test_mp_executor_does_not_start_subprocess_until_first_run(tmp_path: Path) -
     with tempfile.TemporaryDirectory() as out_dir:
         result = mp.run(_simple_task_message(), Path(out_dir))
 
+    assert isinstance(result, dict)
     assert result["ok"] is True
     assert mp._shutdown is False
     assert mp._proc is not None

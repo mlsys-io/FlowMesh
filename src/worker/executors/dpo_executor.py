@@ -100,9 +100,9 @@ class DPOExecutor(TrainingMixin, Executor):
                     training_successful=True,
                     spawned_torchrun=True,
                     model_name=(
-                        spec.model
-                        and spec.model.source
-                        and spec.model.source.identifier
+                        spec.model.source.identifier
+                        if spec.model and spec.model.source
+                        else None
                     ),
                     output_dir=out_dir.as_posix(),
                 )

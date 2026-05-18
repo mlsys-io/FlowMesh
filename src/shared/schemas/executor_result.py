@@ -1,4 +1,4 @@
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 from .artifact import ArtifactContext
 
@@ -22,7 +22,8 @@ class BaseExecutorResult(BaseModel):
     )
     artifacts: ArtifactContext | None = Field(
         default=None,
-        alias="_artifacts",
+        validation_alias=AliasChoices("artifacts", "_artifacts"),
+        serialization_alias="_artifacts",
         description="Resolution context for relative artifact refs.",
     )
 

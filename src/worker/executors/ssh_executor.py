@@ -60,8 +60,9 @@ from .base_executor import (
 class SSHResult(BaseExecutorResult):
     session_id: str
     exit_code: int
-    command: str | None = None
-    entrypoint: str | None = None
+    command: list[str] | None = None
+    entrypoint: list[str] | None = None
+
 
 try:
     import docker

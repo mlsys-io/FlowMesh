@@ -47,10 +47,10 @@ def write_result_in_envelope(
 ) -> None:
     """Wrap ``result`` in a ``ResultEnvelope`` and persist it at ``path``."""
     path.parent.mkdir(parents=True, exist_ok=True)
+    if isinstance(result, dict):
+        result = BaseExecutorResult.model_validate(result)
     envelope = ResultEnvelope(task_id=task_id, result=result)
-    atomic_write_text(
-        path, envelope.model_dump_json(indent=2, serialize_as_any=True)
-    )
+    atomic_write_text(path, envelope.model_dump_json(indent=2, serialize_as_any=True))
 
 
 def read_result(base_dir: Path, task_id: str) -> str:

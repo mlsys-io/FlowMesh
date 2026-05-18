@@ -9,6 +9,7 @@ from typing import Any
 from pydantic import BaseModel, ValidationError
 
 from shared.schemas.event import TaskEvent
+from shared.schemas.executor_result import BaseExecutorResult
 from shared.schemas.result import ResultEnvelope, result_file_path, write_result
 from shared.tasks import (
     MergedChildTaskStrict,
@@ -994,7 +995,7 @@ class Dispatcher:
             )
             skip_envelope = ResultEnvelope(
                 task_id=task_id,
-                result={},
+                result=BaseExecutorResult(),
                 metadata={
                     "skipped": True,
                     "reason": "condition_not_met",

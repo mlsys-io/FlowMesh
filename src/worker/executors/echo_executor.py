@@ -88,9 +88,7 @@ class EchoExecutor(DataMixin, Executor):
                 resolved = self._resolve_item(item, context)
                 self._append_outputs(merged_items, resolved)
 
-            result = EchoResult(
-                ok=True, items=merged_items, count=len(merged_items)
-            )
+            result = EchoResult(ok=True, items=merged_items, count=len(merged_items))
             deps = self._extract_source_data_ids(spec)
             dependencies_by_task = {task_id: deps}
 

@@ -39,7 +39,9 @@ def test_artifacts_alias_round_trips_both_directions() -> None:
     from_alias = BaseExecutorResult.model_validate({"_artifacts": {"base_dir": "/a"}})
     from_field = BaseExecutorResult.model_validate({"artifacts": {"base_dir": "/a"}})
 
-    assert from_alias.artifacts == from_field.artifacts == ArtifactContext(base_dir="/a")
+    assert (
+        from_alias.artifacts == from_field.artifacts == ArtifactContext(base_dir="/a")
+    )
 
     dumped = from_alias.model_dump()
     assert "_artifacts" in dumped
