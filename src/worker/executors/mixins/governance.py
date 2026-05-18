@@ -13,6 +13,7 @@ from typing import Any
 
 from opentelemetry.trace import Span as OTelSpan
 
+from shared.schemas.executor_result import BaseExecutorResult
 from shared.schemas.governance import (
     READY_SPAN_NAME,
     TASK_SPAN_NAME,
@@ -236,17 +237,20 @@ class GovernanceMixin:
     def _dump_to_governance(
         self,
         task_id: str,
-        result: dict[str, Any],
+        result: BaseExecutorResult | dict[str, Any],
         dependencies_by_task: dict[str, list[str]],
     ) -> None:
         """Write parent + merged-child results and emit asset/lineage rows."""
         parent_deps = dependencies_by_task.get(task_id, [])
-        children_payload = result.get("children", {})
+        payload = (
+            result.model_dump() if isinstance(result, BaseExecutorResult) else result
+        )
+        children_payload = payload.get("children", {}) or {}
 
         collection_jobs: list[dict[str, Any]] = [
             {
                 "task_id": task_id,
-                "result": result,
+                "result": payload,
                 "deps": parent_deps,
                 "is_parent": True,
             }

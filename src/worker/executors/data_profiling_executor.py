@@ -8,6 +8,7 @@ import random
 from pathlib import Path
 from typing import Any
 
+from shared.schemas.executor_result import BaseExecutorResult
 from shared.tasks.specs import DataProfilingSpecStrict
 from shared.utils.json import to_json_serializable, validate_keys
 
@@ -19,19 +20,25 @@ from .utils.graph_templates import _render_template, _resolve_columns
 logger = logging.getLogger(__name__)
 
 
+class DataProfilingResult(BaseExecutorResult):
+    ok: bool = True
+    type: str = "sql"
+    template: str | None = None
+    cost_estimates: dict[str, Any] | None = None
+
+
 class DataProfilingExecutor(DataMixin, Executor):
     """Executor that estimates SQL query costs by sampling SQL template params."""
 
     name = "data_profiling"
 
-    def run(self, task: ExecutorTask, out_dir: Path) -> dict[str, Any]:
+    def run(self, task: ExecutorTask, out_dir: Path) -> DataProfilingResult:
         spec = self.require_spec(task, DataProfilingSpecStrict)
         task_id = task.task_id
         merge_children = task.merged_children or []
 
         result = self._run_single_profile(spec, task_id)
 
-        child_results: dict[str, dict[str, Any]] = {}
         for child in merge_children:
             child_id = child.task_id
             child_spec = child.spec
@@ -39,16 +46,13 @@ class DataProfilingExecutor(DataMixin, Executor):
                 raise ExecutionError(
                     "Merged child spec must be data_profiling for merged profiling"
                 )
-            child_results[child_id] = self._run_single_profile(child_spec, child_id)
-
-        if child_results:
-            result["children"] = child_results
+            result.children[child_id] = self._run_single_profile(child_spec, child_id)
 
         return result
 
     def _run_single_profile(
         self, spec: DataProfilingSpecStrict, task_id: str
-    ) -> dict[str, Any]:
+    ) -> DataProfilingResult:
         data_cfg = spec.data
         if not isinstance(data_cfg, dict):
             raise ExecutionError(
@@ -100,14 +104,12 @@ class DataProfilingExecutor(DataMixin, Executor):
             connection_string, queries, params_rows
         )
 
-        result: dict[str, Any] = {
-            "ok": True,
-            "type": "sql",
-            "template": template_str,
-            "cost_estimates": cost_estimates,
-        }
-
-        return result
+        return DataProfilingResult(
+            ok=True,
+            type="sql",
+            template=template_str,
+            cost_estimates=cost_estimates,
+        )
 
     def _sample_template_queries(
         self,

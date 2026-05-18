@@ -29,6 +29,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import requests
 
+from shared.schemas.executor_result import BaseExecutorResult
 from shared.tasks.components.resources import GPURequirements
 from shared.tasks.specs.ssh import (
     SSHInputSpec,
@@ -54,6 +55,13 @@ from .base_executor import (
     ExecutorTask,
     TaskCancelledError,
 )
+
+
+class SSHResult(BaseExecutorResult):
+    session_id: str
+    exit_code: int
+    command: str | None = None
+    entrypoint: str | None = None
 
 try:
     import docker
@@ -425,7 +433,7 @@ class SSHExecutor(Executor):
     # Main execution
     # ------------------------------------------------------------------ #
 
-    def run(self, task: ExecutorTask, out_dir: Path) -> dict[str, Any]:
+    def run(self, task: ExecutorTask, out_dir: Path) -> SSHResult:
         spec = self.require_spec(task, SSHSpecStrict)
         cfg = SSHConfig.from_spec(spec, self._config, self._hardware)
         access_mode = cfg.access_mode
@@ -539,16 +547,17 @@ class SSHExecutor(Executor):
                 cfg.output,
                 mount_plan,
             )
-            result: dict[str, Any] = {"session_id": session_id, "exit_code": exit_code}
+            result = SSHResult(session_id=session_id, exit_code=exit_code)
             if interactive:
-                result.update(session_info)
+                for key, value in session_info.items():
+                    setattr(result, key, value)
             else:
                 # Keep as fallback — captures any output the streaming thread missed.
                 self._save_container_logs(container, out_dir)
                 if cfg.command is not None:
-                    result["command"] = cfg.command
+                    result.command = cfg.command
                 if cfg.entrypoint is not None:
-                    result["entrypoint"] = cfg.entrypoint
+                    result.entrypoint = cfg.entrypoint
             if mount_plan.copy_output_path:
                 self._copy_output_directory(
                     container,

@@ -5,7 +5,9 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 import httpx
+from pydantic import Field
 
+from shared.schemas.executor_result import BaseExecutorResult
 from shared.tasks.specs import ApiSpecStrict
 
 from .base_executor import ExecutionError, Executor, ExecutorTask
@@ -14,6 +16,19 @@ logger = logging.getLogger(__name__)
 
 # Cache key: (base_url, timeout_seconds, verify_tls, follow_redirects)
 _ClientKey = tuple[str, float, bool, bool]
+
+
+class APIResult(BaseExecutorResult):
+    ok: bool
+    executor: str
+    method: str
+    url: str
+    status_code: int
+    truncated: bool = False
+    headers: dict[str, str] | None = None
+    response_json: Any = Field(default=None, alias="json")
+    usage: dict[str, Any] | None = None
+    text: str | None = None
 
 
 class APIExecutor(Executor):
@@ -89,7 +104,7 @@ class APIExecutor(Executor):
         """Close the connection pool when the runner deactivates this executor."""
         self.close_all_clients()
 
-    def run(self, task: ExecutorTask, out_dir: Path) -> dict[str, Any]:
+    def run(self, task: ExecutorTask, out_dir: Path) -> APIResult:
         spec = self.require_spec(task, ApiSpecStrict)
         api_cfg = spec.api or {}
         if not isinstance(api_cfg, dict):
@@ -173,17 +188,17 @@ class APIExecutor(Executor):
             body_bytes = body_bytes[:max_body_bytes]
             truncated = True
 
-        result: dict[str, Any] = {
-            "ok": resp.is_success,
-            "executor": self.name,
-            "method": method,
-            "url": str(resp.url),
-            "status_code": resp.status_code,
-            "truncated": truncated,
-        }
+        result = APIResult(
+            ok=resp.is_success,
+            executor=self.name,
+            method=method,
+            url=str(resp.url),
+            status_code=resp.status_code,
+            truncated=truncated,
+        )
 
         if include_headers:
-            result["headers"] = dict(resp.headers)
+            result.headers = dict(resp.headers)
 
         body_text: str | None = None
         if return_body:
@@ -191,26 +206,25 @@ class APIExecutor(Executor):
             body_text = body_bytes.decode(encoding, errors="replace")
 
         if parse_json:
-            result["json"] = resp.json()
-            if not isinstance(result["json"], dict):
+            result.response_json = resp.json()
+            if not isinstance(result.response_json, dict):
                 raise ExecutionError("Response is not a valid JSON mapping")
-            if isinstance(result["json"], dict):
-                usage = result["json"].get("usage")
-                if not isinstance(usage, dict):
-                    raise ExecutionError(
-                        "spec.api.response.parse_json is true but response JSON "
-                        f"does not contain usage info: {result['json']}"
-                    )
-                result["usage"] = usage
+            usage = result.response_json.get("usage")
+            if not isinstance(usage, dict):
+                raise ExecutionError(
+                    "spec.api.response.parse_json is true but response JSON "
+                    f"does not contain usage info: {result.response_json}"
+                )
+            result.usage = usage
             try:
-                result["text"] = result["json"]["choices"][0]["message"]["content"]
+                result.text = result.response_json["choices"][0]["message"]["content"]
             except Exception as exc:
                 raise ExecutionError(
                     "spec.api.response.parse_json is true but response JSON "
-                    f"does not contain message.content: {result['json']}"
+                    f"does not contain message.content: {result.response_json}"
                 ) from exc
         elif return_body:
-            result["text"] = body_text
+            result.text = body_text
 
         if raise_for_status and resp.is_error:
             if body_text:

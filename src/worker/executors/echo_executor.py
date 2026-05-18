@@ -2,6 +2,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from shared.schemas.executor_result import BaseExecutorResult
 from shared.tasks.specs import EchoSpecStrict
 
 from .base_executor import ExecutionError, Executor, ExecutorTask
@@ -12,6 +13,12 @@ from .utils.graph_templates import _evaluate_expr
 logger = logging.getLogger(__name__)
 
 type EchoItem = str | dict[str, str]
+
+
+class EchoResult(BaseExecutorResult):
+    ok: bool = True
+    items: list[dict[str, Any]] = []
+    count: int = 0
 
 
 class EchoExecutor(DataMixin, Executor):
@@ -55,7 +62,7 @@ class EchoExecutor(DataMixin, Executor):
                 "a string literal or a mapping"
             )
 
-    def run(self, task: ExecutorTask, out_dir: Path) -> dict[str, Any]:
+    def run(self, task: ExecutorTask, out_dir: Path) -> EchoResult:
         spec = self.require_spec(task, EchoSpecStrict)
         task_id = task.task_id.strip()
         with self._task_span(
@@ -81,18 +88,16 @@ class EchoExecutor(DataMixin, Executor):
                 resolved = self._resolve_item(item, context)
                 self._append_outputs(merged_items, resolved)
 
-            payload: dict[str, Any] = {
-                "ok": True,
-                "items": merged_items,
-                "count": len(merged_items),
-            }
+            result = EchoResult(
+                ok=True, items=merged_items, count=len(merged_items)
+            )
             deps = self._extract_source_data_ids(spec)
             dependencies_by_task = {task_id: deps}
 
             self._dump_to_governance(
                 task_id=task_id,
-                result=payload,
+                result=result,
                 dependencies_by_task=dependencies_by_task,
             )
         maybe_upload_traces(task, out_dir, logger=logger)
-        return payload
+        return result

@@ -182,9 +182,9 @@ class TestDataRetrievalExecutorAgentBranch:
             )
             result = executor._run_agent(data_cfg, context, out_dir)
 
-        assert result["ok"] is True
-        assert result["count"] == 1
-        item = result["items"][0]
+        assert result.ok is True
+        assert result.count == 1
+        item = result.items[0]
         assert "fetch NVDA quotes for 2024-01-01" in item["description"]
         assert item["rows"] == 1
         assert item["run_id"] == "run-fake"

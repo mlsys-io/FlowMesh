@@ -10,6 +10,7 @@ from typing import Any, cast
 import pandas as pd
 from PIL import Image
 
+from shared.schemas.executor_result import BaseExecutorResult
 from shared.tasks.specs import DataRetrievalSpecStrict
 from shared.utils.json import validate_keys
 
@@ -27,10 +28,18 @@ from .utils.graph_templates import _render_template, _resolve_columns
 logger = logging.getLogger(__name__)
 
 
+class DataRetrievalResult(BaseExecutorResult):
+    ok: bool = True
+    type: str | None = None
+    items: list[dict[str, Any]] = []
+    count: int | None = None
+    metadata: dict[str, Any] | None = None
+
+
 class DataRetrievalExecutor(DataMixin, Executor):
     name = "data_retrieval"
 
-    def run(self, task: ExecutorTask, out_dir: Path) -> dict[str, Any]:
+    def run(self, task: ExecutorTask, out_dir: Path) -> DataRetrievalResult:
         spec = self.require_spec(task, DataRetrievalSpecStrict)
         task_id = task.task_id
         with self._task_span(
@@ -72,7 +81,7 @@ class DataRetrievalExecutor(DataMixin, Executor):
 
     def _run_sql(
         self, data_cfg: dict[str, Any], context: dict[str, Any]
-    ) -> dict[str, Any]:
+    ) -> DataRetrievalResult:
         """
         Execute SQL queries based on the provided data configuration and context.
 
@@ -144,18 +153,18 @@ class DataRetrievalExecutor(DataMixin, Executor):
                     }
                 )
 
-        return {
-            "ok": True,
-            "items": items,
-            "count": len(items),
-        }
+        return DataRetrievalResult(
+            ok=True,
+            items=items,
+            count=len(items),
+        )
 
     def _run_s3(
         self,
         data_cfg: dict[str, Any],
         context: dict[str, Any],
         out_dir: Path,
-    ) -> dict[str, Any]:
+    ) -> DataRetrievalResult:
         validate_keys(
             data_cfg,
             "DataRetrievalExecutor.spec.data",
@@ -207,20 +216,19 @@ class DataRetrievalExecutor(DataMixin, Executor):
                     item["params"] = params_rows
                 items.append(item)
 
-        result = {
-            "ok": True,
-            "type": "s3",
-            "items": items,
-            "metadata": s3_result["metadata"],  # type: ignore
-        }
-        return result
+        return DataRetrievalResult(
+            ok=True,
+            type="s3",
+            items=items,
+            metadata=s3_result["metadata"],  # type: ignore
+        )
 
     def _run_agent(
         self,
         data_cfg: dict[str, Any],
         context: dict[str, Any],
         out_dir: Path,
-    ) -> dict[str, Any]:
+    ) -> DataRetrievalResult:
         """Drive lumid.data's data agent for NL-driven retrieval."""
         validate_keys(
             data_cfg,
@@ -314,12 +322,12 @@ class DataRetrievalExecutor(DataMixin, Executor):
                     }
                 )
 
-        return {
-            "ok": True,
-            "type": "agent",
-            "items": items,
-            "count": len(items),
-        }
+        return DataRetrievalResult(
+            ok=True,
+            type="agent",
+            items=items,
+            count=len(items),
+        )
 
     def _load_table(self, path: Path, output_format: str) -> pd.DataFrame:
         """Load the materialized retrieval file into a DataFrame."""
