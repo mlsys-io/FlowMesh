@@ -243,7 +243,9 @@ class GovernanceMixin:
         """Write parent + merged-child results and emit asset/lineage rows."""
         parent_deps = dependencies_by_task.get(task_id, [])
         payload = (
-            result.model_dump() if isinstance(result, BaseExecutorResult) else result
+            result.model_dump(serialize_as_any=True)
+            if isinstance(result, BaseExecutorResult)
+            else result
         )
         children_payload = payload.get("children", {}) or {}
 

@@ -194,7 +194,9 @@ class Runner:
         url = destination.url
         ignore_error = destination.ignore_error
         result_dict = (
-            result.model_dump() if isinstance(result, BaseExecutorResult) else result
+            result.model_dump(serialize_as_any=True)
+            if isinstance(result, BaseExecutorResult)
+            else result
         )
         payload = {
             "task_id": task_id,

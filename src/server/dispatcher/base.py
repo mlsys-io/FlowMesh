@@ -922,7 +922,9 @@ class Dispatcher:
                 f"Result for task {stage_task_id} not found at {path}"
             )
         content = json.loads(path.read_text(encoding="utf-8"))
-        return ResultEnvelope.model_validate(content).result.model_dump()
+        return ResultEnvelope.model_validate(content).result.model_dump(
+            serialize_as_any=True
+        )
 
     def _dig_path(self, data: Any, parts: list[str]) -> Any:
         current = data
