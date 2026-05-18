@@ -109,9 +109,10 @@ scripts/dev/            compile_protos, sync_requirements, check_env_examples
 - **Task merging.** Compatible adjacent tasks in a DAG (same `taskType`,
   model, hardware shape, and merge key) coalesce into a single dispatch.
   Merged children ride on `WorkerTaskMessage.merged_children`; the worker
-  writes per-child results into `result.children`; the dispatcher fans
-  out synthetic `TASK_SUCCEEDED` / `TASK_FAILED` events. Disable with
-  `ENABLE_TASK_MERGE=false`.
+  writes per-child results into `result.children` on the typed
+  `BaseExecutorResult` (`src/shared/schemas/executor_result.py`); the
+  dispatcher fans out synthetic `TASK_SUCCEEDED` / `TASK_FAILED` events.
+  Disable with `ENABLE_TASK_MERGE=false`.
 - **Stage stickiness** (`ENABLE_STAGE_WEIGHT_STICKINESS=true`) — the
   dispatcher pins stages that reference an upstream stage's checkpoint
   to the worker that produced it, falling back to normal selection when
