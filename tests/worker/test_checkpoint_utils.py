@@ -6,6 +6,7 @@ from typing import cast
 
 import pytest
 
+from shared.schemas.artifact import ArtifactContext, ArtifactRef
 from worker.executors.base_executor import TaskReference
 from worker.executors.utils import checkpoints
 
@@ -31,7 +32,9 @@ def _task(
 
 class TestArtifactRef:
     def test_returns_path_only(self) -> None:
-        assert checkpoints.artifact_ref("images/foo.png") == {"path": "images/foo.png"}
+        assert checkpoints.artifact_ref("images/foo.png") == ArtifactRef(
+            path="images/foo.png"
+        )
 
 
 class TestBuildArtifactContext:
@@ -39,15 +42,17 @@ class TestBuildArtifactContext:
         out_dir = tmp_path / "task-1"
         out_dir.mkdir()
         ctx = checkpoints.build_artifact_context(_task().spec, out_dir)
-        assert ctx["base_dir"] == out_dir.resolve().as_posix()
-        assert ctx["base_url"] == "http://host:8010"
+        assert ctx == ArtifactContext(
+            base_dir=out_dir.resolve().as_posix(), base_url="http://host:8010"
+        )
 
     def test_local_destination_leaves_base_url_none(self, tmp_path: Path) -> None:
         out_dir = tmp_path / "task-1"
         out_dir.mkdir()
         ctx = checkpoints.build_artifact_context(_task("local").spec, out_dir)
-        assert ctx["base_dir"] == out_dir.resolve().as_posix()
-        assert ctx["base_url"] is None
+        assert ctx == ArtifactContext(
+            base_dir=out_dir.resolve().as_posix(), base_url=None
+        )
 
 
 class TestMaybeUploadArtifacts:

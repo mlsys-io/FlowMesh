@@ -11,6 +11,8 @@ from urllib.parse import urlparse
 
 import requests
 
+from shared.schemas.artifact import ArtifactContext, ArtifactRef
+from shared.schemas.executor_result import BaseExecutorResult
 from shared.schemas.result import write_result_in_envelope
 from shared.tasks.specs import TaskSpecStrictBase
 from shared.utils.http import add_auth_headers
@@ -394,15 +396,15 @@ def is_cleanup_enabled() -> bool:
     return normalized not in {"0", "false", "no", "off"}
 
 
-def artifact_ref(rel_path: str) -> dict[str, str]:
-    """Build an artifact reference dict. `rel_path` is the path relative to
-    `out_dir/artifacts/`"""
-    return {"path": rel_path}
+def artifact_ref(rel_path: str) -> ArtifactRef:
+    """Build an artifact reference. ``rel_path`` is relative to
+    ``out_dir/artifacts/``."""
+    return ArtifactRef(path=rel_path)
 
 
-def build_artifact_context(spec: TaskSpecStrictBase, out_dir: Path) -> dict[str, Any]:
-    """Top-level `_artifacts` context: {base_dir, base_url}. base_url is the
-    destination origin (scheme://host[:port]) for HTTP, else None."""
+def build_artifact_context(spec: TaskSpecStrictBase, out_dir: Path) -> ArtifactContext:
+    """Top-level ``_artifacts`` context. ``base_url`` is the destination
+    origin (scheme://host[:port]) for HTTP, else ``None``."""
     base_dir = Path(out_dir).resolve().as_posix()
     base_url: str | None = None
     destination = get_http_destination(spec)
@@ -410,17 +412,19 @@ def build_artifact_context(spec: TaskSpecStrictBase, out_dir: Path) -> dict[str,
         parsed = urlparse(destination.url)
         if parsed.scheme and parsed.netloc:
             base_url = f"{parsed.scheme}://{parsed.netloc}"
-    return {"base_dir": base_dir, "base_url": base_url}
+    return ArtifactContext(base_dir=base_dir, base_url=base_url)
 
 
 def write_executor_result(
     path: Path,
     task_id: str,
     spec: TaskSpecStrictBase,
-    result: dict[str, Any],
+    result: BaseExecutorResult | dict[str, Any],
 ) -> None:
     """Stamp ``_artifacts`` onto ``result`` and persist the envelope."""
-    result["_artifacts"] = build_artifact_context(spec, path.parent)
+    if isinstance(result, dict):
+        result = BaseExecutorResult.model_validate(result)
+    result.artifacts = build_artifact_context(spec, path.parent)
     write_result_in_envelope(path, task_id, result)
 
 

@@ -9,10 +9,12 @@ from shared.utils.atomic import atomic_write_text
 from shared.utils.manifest import prepare_output_dir
 from shared.utils.time import now_iso
 
+from .executor_result import BaseExecutorResult
+
 
 class ResultEnvelope(BaseModel):
     task_id: str = Field(description="Task identifier.")
-    result: dict[str, Any] = Field(description="Result payload data.")
+    result: BaseExecutorResult = Field(description="Result payload data.")
     worker_id: str | None = Field(
         default=None, description="Worker identifier submitting the result."
     )
@@ -40,7 +42,9 @@ def write_result(base_dir: Path, envelope: ResultEnvelope) -> Path:
     return path
 
 
-def write_result_in_envelope(path: Path, task_id: str, result: dict[str, Any]) -> None:
+def write_result_in_envelope(
+    path: Path, task_id: str, result: BaseExecutorResult | dict[str, Any]
+) -> None:
     """Wrap ``result`` in a ``ResultEnvelope`` and persist it at ``path``."""
     path.parent.mkdir(parents=True, exist_ok=True)
     envelope = ResultEnvelope(task_id=task_id, result=result)
