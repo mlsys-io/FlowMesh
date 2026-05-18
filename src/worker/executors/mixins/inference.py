@@ -15,7 +15,6 @@ from shared.tasks.specs import InferenceSpecStrict
 from shared.utils.json import to_json_serializable
 
 from ..base_executor import ExecutionError
-from ..utils.checkpoints import artifact_ref
 from .data import DataMixin, InferenceEntry, PromptInput
 
 logger = logging.getLogger(__name__)
@@ -292,11 +291,6 @@ class InferenceMixin(DataMixin):
                 fh.write("\n")
 
         rel_path = target_path.relative_to(artifacts_dir).as_posix()
-        result["jsonl_export"] = {
-            **artifact_ref(rel_path),
-            "record_count": len(records),
-            "fields": list(fields_cfg.keys()),
-        }
         logger.info(
             "Task %s exported %d records to artifacts/%s",
             task_id,

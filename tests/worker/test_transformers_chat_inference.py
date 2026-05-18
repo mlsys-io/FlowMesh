@@ -127,7 +127,6 @@ def test_transformers_executor_supports_chat_prompts_and_jsonl_export(
     assert [item["metadata"]["row_id"] for item in result["items"]] == ["a", "b"]
     assert result["usage"]["num_requests"] == 2
     assert "latency_sec" in result["usage"]
-    assert result["jsonl_export"]["record_count"] == 2
 
     exported = (tmp_path / "artifacts" / "rows.jsonl").read_text(encoding="utf-8")
     assert '"row_id": "a"' in exported

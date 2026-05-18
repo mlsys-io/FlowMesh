@@ -25,7 +25,6 @@ from shared.schemas.result import (
     result_file_path,
     write_result,
 )
-from shared.utils.atomic import atomic_write_text
 from shared.utils.manifest import ARTIFACTS_DIR, LOGS_DIR, RESULTS_NAME, sync_manifest
 
 from ...app_state import (
@@ -186,8 +185,6 @@ async def upload_result_file(
             detail=f"Failed to store artifact: {exc}",
         ) from exc
 
-    _rewrite_jsonl_export_paths(task_id, base_dir, target_path)
-
     record = runtime.get_record(task_id)
     expected_artifacts: list[str] = []
     if record:
@@ -331,55 +328,6 @@ async def download_task_logs(
             status_code=status.HTTP_404_NOT_FOUND, detail="logs not found"
         )
     return FileResponse(target_path)
-
-
-def _rewrite_jsonl_export_paths(
-    task_id: str, base_dir: Path, artifact_path: Path
-) -> None:
-    results_path = base_dir / RESULTS_NAME
-    if not results_path.exists():
-        return
-    try:
-        payload = json.loads(results_path.read_text(encoding="utf-8"))
-    except Exception:
-        return
-
-    filename = artifact_path.name
-    new_abs = str(artifact_path)
-    new_relative = f"{ARTIFACTS_DIR}/{filename}"
-    updated = False
-
-    def _update(entry: dict[str, Any]) -> None:
-        nonlocal updated
-        if not isinstance(entry, dict):
-            return
-        block = entry.get("jsonl_export")
-        if isinstance(block, dict):
-            path_value = str(block.get("path") or "")
-            if path_value and Path(path_value).name == filename:
-                if "worker_path" not in block and path_value != new_abs:
-                    block["worker_path"] = path_value
-                block["path"] = new_abs
-                block["relative_path"] = new_relative
-                block.setdefault("url", f"/api/v1/results/{task_id}/files/{filename}")
-                updated = True
-        children = entry.get("children")
-        if isinstance(children, dict):
-            for child_entry in children.values():
-                if isinstance(child_entry, dict):
-                    _update(child_entry)
-
-    result_entry = payload.get("result") if isinstance(payload, dict) else None
-    if isinstance(result_entry, dict):
-        _update(result_entry)
-
-    if updated:
-        try:
-            atomic_write_text(
-                results_path, json.dumps(payload, ensure_ascii=False, indent=2)
-            )
-        except Exception:
-            pass
 
 
 def _resolve_bundle_sections(include: list[str]) -> tuple[str, ...]:
