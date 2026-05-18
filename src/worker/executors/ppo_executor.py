@@ -33,6 +33,8 @@ from trl.models.modeling_value_head import AutoModelForCausalLMWithValueHead
 from trl.trainer.ppo_config import PPOConfig
 from trl.trainer.ppo_trainer import PPOTrainer
 
+from shared.schemas.artifact import ArtifactRef
+from shared.schemas.executor_result import BaseExecutorResult
 from shared.tasks.specs import PPOSpecStrict
 from shared.utils.manifest import scratch_dir
 from shared.utils.parsing import safe_float, safe_int, to_bool
@@ -52,6 +54,19 @@ from .utils.distributed import run_torchrun
 from .utils.huggingface import build_hf_load_kwargs, pick_torch_dtype
 
 logger = logging.getLogger("worker.ppo")
+
+
+class PPOResult(BaseExecutorResult):
+    training_successful: bool = True
+    training_time_seconds: float | None = None
+    error_message: str | None = None
+    model_name: str | None = None
+    dataset_size: int = 0
+    output_dir: str | None = None
+    checkpoints_dir: ArtifactRef | None = None
+    final_model: ArtifactRef | None = None
+    final_model_archive: ArtifactRef | None = None
+    spawned_torchrun: bool = False
 
 
 class _ExternalRewardModel(torch.nn.Module):
@@ -392,7 +407,7 @@ class PPOExecutor(TrainingMixin, Executor):
         self._reward_module: _ExternalRewardModel | _RewardAdapter | None = None
         self._task_out_dir: Path | None = None
 
-    def run(self, task: ExecutorTask, out_dir: Path) -> dict[str, Any]:
+    def run(self, task: ExecutorTask, out_dir: Path) -> PPOResult:
         configure_hf_library_logging()
         logger.info("Starting PPO training task")
         spec = self.require_spec(task, PPOSpecStrict)
@@ -420,14 +435,14 @@ class PPOExecutor(TrainingMixin, Executor):
             if ipc_path.exists():
                 result = self.load_json(ipc_path)
                 self._task_out_dir = None
-                return result
+                return PPOResult.model_validate(result)
             self._task_out_dir = None
-            return {
-                "training_successful": True,
-                "spawned_torchrun": True,
-                "model_name": spec.model_name,
-                "output_dir": out_dir.as_posix(),
-            }
+            return PPOResult(
+                training_successful=True,
+                spawned_torchrun=True,
+                model_name=spec.model_name,
+                output_dir=out_dir.as_posix(),
+            )
 
         start_time = time.time()
 
@@ -931,7 +946,7 @@ class PPOExecutor(TrainingMixin, Executor):
 
         logger.info("PPO training task completed in %.2f seconds", training_time)
         self._task_out_dir = None
-        return results
+        return PPOResult.model_validate(results)
 
     def _ensure_jsonl_local(self, jsonl_cfg: dict[str, Any]) -> Path:
         headers_cfg = (

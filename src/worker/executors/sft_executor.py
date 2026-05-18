@@ -22,6 +22,8 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 from trl.trainer.sft_config import SFTConfig
 from trl.trainer.sft_trainer import SFTTrainer
 
+from shared.schemas.artifact import ArtifactRef
+from shared.schemas.executor_result import BaseExecutorResult
 from shared.tasks.specs import SFTSpecStrict, TaskSpecStrictBase
 from shared.utils.manifest import scratch_dir
 
@@ -43,6 +45,21 @@ from .utils.huggingface import build_hf_load_kwargs, pick_torch_dtype
 logger = logging.getLogger("worker.sft")
 
 
+class SFTResult(BaseExecutorResult):
+    task_id: str | None = None
+    training_successful: bool = True
+    training_time_seconds: float | None = None
+    error_message: str | None = None
+    model_name: str | None = None
+    dataset_size: int = 0
+    output_dir: str | None = None
+    checkpoints_dir: ArtifactRef | None = None
+    resume_from_path: str | None = None
+    final_model: ArtifactRef | None = None
+    final_model_archive: ArtifactRef | None = None
+    spawned_torchrun: bool = False
+
+
 class SFTExecutor(TrainingMixin, Executor):
     name = "sft_executor"
 
@@ -55,7 +72,7 @@ class SFTExecutor(TrainingMixin, Executor):
         self._final_model_dir: Path | None = None
         self._task_out_dir: Path | None = None
 
-    def run(self, task: ExecutorTask, out_dir: Path) -> dict[str, Any]:
+    def run(self, task: ExecutorTask, out_dir: Path) -> SFTResult:
         configure_hf_library_logging()
         spec = self.require_spec(task, SFTSpecStrict)
         requested_gpu_count = self._requested_gpu_count(spec)
@@ -191,14 +208,14 @@ class SFTExecutor(TrainingMixin, Executor):
                 if ipc_path.exists():
                     distributed_result = self.load_json(ipc_path)
                     self._task_out_dir = None
-                    return distributed_result
+                    return SFTResult.model_validate(distributed_result)
                 self._task_out_dir = None
-                return {
-                    "training_successful": True,
-                    "spawned_torchrun": True,
-                    "model_name": spec.model_name,
-                    "output_dir": out_dir.as_posix(),
-                }
+                return SFTResult(
+                    training_successful=True,
+                    spawned_torchrun=True,
+                    model_name=spec.model_name,
+                    output_dir=out_dir.as_posix(),
+                )
         except Exception as spawn_exc:
             logger.exception("Failed to launch distributed SFT: %s", spawn_exc)
             raise ExecutionError(
@@ -467,7 +484,7 @@ class SFTExecutor(TrainingMixin, Executor):
             self._final_model_dir = None
 
             self._task_out_dir = None
-            return result_payload
+            return SFTResult.model_validate(result_payload)
 
         except Exception as exc:
             error_msg = str(exc)

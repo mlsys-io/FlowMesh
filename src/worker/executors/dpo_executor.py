@@ -25,6 +25,8 @@ from transformers import (
 from trl.trainer.dpo_config import DPOConfig
 from trl.trainer.dpo_trainer import DPOTrainer
 
+from shared.schemas.artifact import ArtifactRef
+from shared.schemas.executor_result import BaseExecutorResult
 from shared.tasks.specs import DPOSpecStrict
 from shared.utils.manifest import scratch_dir
 
@@ -45,6 +47,19 @@ from .utils.huggingface import build_hf_load_kwargs, pick_torch_dtype
 logger = logging.getLogger("worker.dpo")
 
 
+class DPOResult(BaseExecutorResult):
+    training_successful: bool = True
+    training_time_seconds: float | None = None
+    error_message: str | None = None
+    model_name: str | None = None
+    dataset_size: int = 0
+    output_dir: str | None = None
+    checkpoints_dir: ArtifactRef | None = None
+    final_model: ArtifactRef | None = None
+    final_model_archive: ArtifactRef | None = None
+    spawned_torchrun: bool = False
+
+
 class DPOExecutor(TrainingMixin, Executor):
     """DPO training executor using TRL library."""
 
@@ -59,7 +74,7 @@ class DPOExecutor(TrainingMixin, Executor):
         self._current_trainer: DPOTrainer | None = None
         self._task_out_dir: Path | None = None
 
-    def run(self, task: ExecutorTask, out_dir: Path) -> dict[str, Any]:
+    def run(self, task: ExecutorTask, out_dir: Path) -> DPOResult:
         configure_hf_library_logging()
         logger.info("Starting DPO training task")
         spec = self.require_spec(task, DPOSpecStrict)
@@ -80,24 +95,24 @@ class DPOExecutor(TrainingMixin, Executor):
                 )
                 ipc_path = scratch_dir(out_dir) / "distributed_result.json"
                 if ipc_path.exists():
-                    return self.load_json(ipc_path)
-                return {
-                    "training_successful": True,
-                    "spawned_torchrun": True,
-                    "model_name": (
+                    return DPOResult.model_validate(self.load_json(ipc_path))
+                return DPOResult(
+                    training_successful=True,
+                    spawned_torchrun=True,
+                    model_name=(
                         spec.model
                         and spec.model.source
                         and spec.model.source.identifier
                     ),
-                    "output_dir": out_dir.as_posix(),
-                }
+                    output_dir=out_dir.as_posix(),
+                )
 
             result = self._execute_training(task, out_dir)
             logger.info(
                 "DPO training task completed in %.2f seconds",
                 result.get("training_time_seconds", 0.0),
             )
-            return result
+            return DPOResult.model_validate(result)
         finally:
             self._task_out_dir = None
 

@@ -18,6 +18,8 @@ from transformers import (
 from trl.trainer.sft_config import SFTConfig
 from trl.trainer.sft_trainer import SFTTrainer
 
+from shared.schemas.artifact import ArtifactRef
+from shared.schemas.executor_result import BaseExecutorResult
 from shared.tasks.specs import LoRASFTSpecStrict
 
 from ..utils.logging import configure_hf_library_logging
@@ -48,6 +50,20 @@ except ImportError:
 logger = logging.getLogger("worker.sft.lora")
 
 
+class LoRAResult(BaseExecutorResult):
+    task_id: str
+    training_successful: bool
+    training_time_seconds: float
+    error_message: str | None = None
+    model_name: str | None = None
+    dataset_size: int = 0
+    output_dir: str
+    checkpoints_dir: ArtifactRef
+    resume_from_path: str | None = None
+    final_lora: ArtifactRef | None = None
+    final_lora_archive: ArtifactRef | None = None
+
+
 class LoRASFTExecutor(TrainingMixin, Executor):
     """Execute LoRA-based supervised fine-tuning using TRL's SFTTrainer."""
 
@@ -59,7 +75,7 @@ class LoRASFTExecutor(TrainingMixin, Executor):
         self._current_model: Any | None = None
         self._current_trainer: Any | None = None
 
-    def run(self, task: ExecutorTask, out_dir: Path) -> dict[str, Any]:
+    def run(self, task: ExecutorTask, out_dir: Path) -> LoRAResult:
         configure_hf_library_logging()
         spec = self.require_spec(task, LoRASFTSpecStrict)
         start_time = time.time()
@@ -321,7 +337,7 @@ class LoRASFTExecutor(TrainingMixin, Executor):
                 final_adapter_path,
                 archive_path,
             )
-            return result_payload
+            return LoRAResult.model_validate(result_payload)
 
         except Exception as exc:  # pylint: disable=broad-except
             error_msg = str(exc)
@@ -345,7 +361,7 @@ class LoRASFTExecutor(TrainingMixin, Executor):
         }
 
         if training_successful:
-            return result
+            return LoRAResult.model_validate(result)
 
         write_executor_result(out_dir / "results.json", task.task_id, task.spec, result)
         message = error_msg or "LoRA SFT training failed"
