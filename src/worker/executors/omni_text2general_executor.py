@@ -53,7 +53,7 @@ _DEFAULT_SYSTEM_PROMPT = (
 class OmniText2GeneralResult(OmniResult):
     executor: str = EXECUTOR_NAME
     mode: str = "narration"
-    audio: dict[str, Any]
+    audio: ArtifactRef | None
     sample_rate: int
     storyboard: dict[str, Any] | None = None
 
@@ -196,7 +196,7 @@ class OmniText2GeneralExecutor(OmniExecutorBase):
         return OmniText2GeneralResult(
             model=self._model_name,
             items=items,
-            audio=items[0]["audio"] if items else {},
+            audio=items[0]["audio"] if items else None,
             sample_rate=sample_rate,
             storyboard=spec_dict.get("storyboard"),
         )

@@ -31,7 +31,7 @@ EXECUTOR_NAME = "omni_text2image"
 class OmniText2ImageResult(OmniResult):
     executor: str = EXECUTOR_NAME
     mode: str = "image"
-    image: dict[str, Any]
+    image: ArtifactRef | None
 
 
 class OmniText2ImageExecutor(OmniExecutorBase):
@@ -101,7 +101,7 @@ class OmniText2ImageExecutor(OmniExecutorBase):
 
         return OmniText2ImageResult(
             model=self._model_name,
-            image=items[0]["image"] if items else {},
+            image=items[0]["image"] if items else None,
             items=items,
         )
 

@@ -66,7 +66,7 @@ EXECUTOR_NAME = "omni_text2audio"
 class OmniText2AudioResult(OmniResult):
     executor: str = EXECUTOR_NAME
     mode: str = "bgm"
-    audio: dict[str, Any]
+    audio: ArtifactRef | None
     sample_rate: int
     num_waveforms: int
     audio_length: float
@@ -215,7 +215,7 @@ class OmniText2AudioExecutor(OmniExecutorBase):
 
         return OmniText2AudioResult(
             model=self._model_name,
-            audio=items[0]["audio"] if items else {},
+            audio=items[0]["audio"] if items else None,
             items=items,
             sample_rate=sample_rate,
             num_waveforms=len(items),
