@@ -50,14 +50,13 @@ logger = logging.getLogger("worker.sft.lora")
 
 
 class LoRAResult(BaseExecutorResult):
-    task_id: str
-    training_successful: bool
-    training_time_seconds: float
+    training_successful: bool = True
+    training_time_seconds: float | None = None
     error_message: str | None = None
     model_name: str | None = None
     dataset_size: int = 0
-    output_dir: str
-    checkpoints_dir: ArtifactRef
+    output_dir: str | None = None
+    checkpoints_dir: ArtifactRef | None = None
     resume_from_path: str | None = None
     final_lora: ArtifactRef | None = None
     final_lora_archive: ArtifactRef | None = None
@@ -317,7 +316,6 @@ class LoRASFTExecutor(TrainingMixin, Executor):
                 )
                 logger.info("Prepared LoRA archive at %s", archive_path)
             result = LoRAResult(
-                task_id=task.task_id,
                 training_successful=training_successful,
                 training_time_seconds=training_time,
                 error_message=error_msg,
@@ -348,7 +346,6 @@ class LoRASFTExecutor(TrainingMixin, Executor):
         training_time = time.time() - start_time
 
         result = LoRAResult(
-            task_id=task.task_id,
             training_successful=training_successful,
             training_time_seconds=training_time,
             error_message=error_msg,

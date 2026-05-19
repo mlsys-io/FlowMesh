@@ -45,7 +45,6 @@ logger = logging.getLogger("worker.sft")
 
 
 class SFTResult(BaseExecutorResult):
-    task_id: str | None = None
     training_successful: bool = True
     training_time_seconds: float | None = None
     error_message: str | None = None
@@ -457,7 +456,6 @@ class SFTExecutor(TrainingMixin, Executor):
                     else None
                 )
             result = SFTResult(
-                task_id=task.task_id,
                 training_successful=training_successful,
                 training_time_seconds=training_time,
                 error_message=error_msg,
@@ -508,7 +506,6 @@ class SFTExecutor(TrainingMixin, Executor):
 
         training_time = time.time() - start_time
         result = SFTResult(
-            task_id=task.task_id,
             training_successful=training_successful,
             training_time_seconds=training_time,
             error_message=error_msg,
