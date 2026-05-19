@@ -32,7 +32,6 @@ from .base_executor import ExecutionError, Executor, ExecutorTask
 from .mixins.training import TrainingMixin
 from .utils.checkpoints import (
     archive_model_dir,
-    artifact_ref,
     determine_resume_path,
     get_http_destination,
     maybe_upload_artifacts,
@@ -448,7 +447,7 @@ class SFTExecutor(TrainingMixin, Executor):
                 model_name=self._model_name,
                 dataset_size=len(train_dataset),
                 output_dir=out_dir.as_posix(),
-                checkpoints_dir=artifact_ref("checkpoints"),
+                checkpoints_dir=ArtifactRef(path="checkpoints"),
                 resume_from_path=resume_str,
             )
 
@@ -457,12 +456,12 @@ class SFTExecutor(TrainingMixin, Executor):
                 self._final_model_dir = (
                     resolved_model_path if resolved_model_path.exists() else None
                 )
-                result.final_model = artifact_ref(
-                    final_model_path.relative_to(artifacts_dir).as_posix()
+                result.final_model = ArtifactRef(
+                    path=final_model_path.relative_to(artifacts_dir).as_posix()
                 )
                 if final_archive_path is not None:
-                    result.final_model_archive = artifact_ref(
-                        final_archive_path.relative_to(artifacts_dir).as_posix()
+                    result.final_model_archive = ArtifactRef(
+                        path=final_archive_path.relative_to(artifacts_dir).as_posix()
                     )
 
             maybe_upload_artifacts(task, out_dir, logger=logger)
@@ -514,7 +513,7 @@ class SFTExecutor(TrainingMixin, Executor):
                 else 0
             ),
             output_dir=out_dir.as_posix(),
-            checkpoints_dir=artifact_ref("checkpoints"),
+            checkpoints_dir=ArtifactRef(path="checkpoints"),
             resume_from_path=resume_path.as_posix() if resume_path else None,
         )
         write_executor_result(out_dir / "results.json", task.task_id, task.spec, result)

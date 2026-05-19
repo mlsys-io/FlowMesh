@@ -21,11 +21,7 @@ from shared.tasks.specs import DiffusionSpecStrict
 from ..utils.logging import configure_hf_library_logging
 from .base_executor import ExecutionError, Executor, ExecutorTask
 from .mixins.data import DataMixin
-from .utils.checkpoints import (
-    artifact_ref,
-    maybe_upload_artifacts,
-    maybe_upload_traces,
-)
+from .utils.checkpoints import maybe_upload_artifacts, maybe_upload_traces
 
 try:
     import torch
@@ -347,7 +343,7 @@ class DiffusersExecutor(DataMixin, Executor):
         generated_images: list[ArtifactRef] = []
         for idx, img in enumerate(images):
             img.save(image_dir / f"image_{idx}.png", format="PNG")
-            generated_images.append(artifact_ref(f"images/image_{idx}.png"))
+            generated_images.append(ArtifactRef(path=f"images/image_{idx}.png"))
 
         result = DiffusersResult(model=self._model_name, images=generated_images)
         self._dump_to_governance(

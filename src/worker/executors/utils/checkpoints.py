@@ -11,7 +11,7 @@ from urllib.parse import urlparse
 
 import requests
 
-from shared.schemas.artifact import ArtifactContext, ArtifactRef
+from shared.schemas.artifact import ArtifactContext
 from shared.schemas.result import BaseExecutorResult, ResultEnvelope
 from shared.tasks.specs import TaskSpecStrictBase
 from shared.utils.atomic import atomic_write_text
@@ -394,12 +394,6 @@ def is_cleanup_enabled() -> bool:
         return False
     normalized = setting.strip().lower()
     return normalized not in {"0", "false", "no", "off"}
-
-
-def artifact_ref(rel_path: str) -> ArtifactRef:
-    """Build an artifact reference. ``rel_path`` is relative to
-    ``out_dir/artifacts/``."""
-    return ArtifactRef(path=rel_path)
 
 
 def build_artifact_context(spec: TaskSpecStrictBase, out_dir: Path) -> ArtifactContext:

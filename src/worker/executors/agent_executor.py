@@ -21,11 +21,7 @@ from shared.schemas.result import BaseExecutorResult
 from shared.tasks.specs import AgentSpecStrict
 
 from .base_executor import ExecutionError, Executor, ExecutorTask
-from .utils.checkpoints import (
-    artifact_ref,
-    maybe_upload_artifacts,
-    write_executor_result,
-)
+from .utils.checkpoints import maybe_upload_artifacts, write_executor_result
 from .utils.graph_templates import build_prompts_from_graph_template
 
 # Add agent directory to sys.path for utu imports
@@ -283,7 +279,7 @@ class AgentExecutor(Executor):
                         "execution_log": result.get("log", []),
                     },
                     agent_output=(
-                        artifact_ref(agent_output_ref)
+                        ArtifactRef(path=agent_output_ref)
                         if isinstance(agent_output_ref, str)
                         else None
                     ),
@@ -328,7 +324,7 @@ class AgentExecutor(Executor):
                         "batch_summary": results.get("batch_summary", {}),
                     },
                     batch_summary_file=(
-                        artifact_ref(batch_summary_ref)
+                        ArtifactRef(path=batch_summary_ref)
                         if isinstance(batch_summary_ref, str)
                         else None
                     ),

@@ -15,6 +15,7 @@ except Exception:
         Omni = None
     _HAS_OMNI = False
 
+from shared.schemas.artifact import ArtifactRef
 from shared.schemas.governance import SpanType
 from shared.tasks.specs import TaskSpecStrictBase
 from shared.tasks.specs.omni import OmniText2ImageSpecStrict
@@ -22,7 +23,6 @@ from shared.utils.parsing import as_list
 
 from .base_executor import ExecutionError, ExecutorTask
 from .omni_executor_base import OmniExecutorBase, OmniResult
-from .utils.checkpoints import artifact_ref
 
 logger = logging.getLogger(__name__)
 EXECUTOR_NAME = "omni_text2image"
@@ -93,8 +93,8 @@ class OmniText2ImageExecutor(OmniExecutorBase):
                     {
                         "index": idx,
                         "prompt": prompt,
-                        "image": artifact_ref(
-                            self.relative_to(save_path, artifacts_dir)
+                        "image": ArtifactRef(
+                            path=self.relative_to(save_path, artifacts_dir)
                         ),
                     }
                 )

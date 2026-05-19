@@ -6,7 +6,7 @@ from typing import cast
 
 import pytest
 
-from shared.schemas.artifact import ArtifactContext, ArtifactRef
+from shared.schemas.artifact import ArtifactContext
 from worker.executors.base_executor import TaskReference
 from worker.executors.utils import checkpoints
 
@@ -28,13 +28,6 @@ def _task(
         destination = None
     spec = SimpleNamespace(output=SimpleNamespace(destination=destination))
     return cast(TaskReference, SimpleNamespace(task_id="task-1", spec=spec))
-
-
-class TestArtifactRef:
-    def test_returns_path_only(self) -> None:
-        assert checkpoints.artifact_ref("images/foo.png") == ArtifactRef(
-            path="images/foo.png"
-        )
 
 
 class TestBuildArtifactContext:

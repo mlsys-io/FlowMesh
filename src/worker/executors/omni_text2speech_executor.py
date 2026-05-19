@@ -16,6 +16,7 @@ except Exception:
         Omni = None
     _HAS_OMNI = False
 
+from shared.schemas.artifact import ArtifactRef
 from shared.schemas.governance import SpanType
 from shared.tasks.specs import TaskSpecStrictBase
 from shared.tasks.specs.omni import OmniText2SpeechSpecStrict
@@ -29,7 +30,6 @@ from .omni_executor_base import (
     extract_multimodal_output,
     save_audio,
 )
-from .utils.checkpoints import artifact_ref
 
 logger = logging.getLogger(__name__)
 EXECUTOR_NAME = "omni_text2speech"
@@ -105,8 +105,8 @@ class OmniText2SpeechExecutor(OmniExecutorBase):
                     {
                         "index": idx,
                         "text": text,
-                        "audio": artifact_ref(
-                            self.relative_to(save_path, artifacts_dir)
+                        "audio": ArtifactRef(
+                            path=self.relative_to(save_path, artifacts_dir)
                         ),
                     }
                 )

@@ -10,6 +10,7 @@ from typing import Any, cast
 import pandas as pd
 from PIL import Image
 
+from shared.schemas.artifact import ArtifactRef
 from shared.schemas.result import BaseExecutorResult
 from shared.tasks.specs import DataRetrievalSpecStrict
 from shared.utils.json import validate_keys
@@ -18,11 +19,7 @@ from ..connectors import AgentConnector, PostgreSQLConnector, S3Connector
 from ..utils.serialization import serialize_dataframe
 from .base_executor import ExecutionError, Executor, ExecutorTask
 from .mixins.data import DataMixin
-from .utils.checkpoints import (
-    artifact_ref,
-    maybe_upload_artifacts,
-    maybe_upload_traces,
-)
+from .utils.checkpoints import maybe_upload_artifacts, maybe_upload_traces
 from .utils.graph_templates import _render_template, _resolve_columns
 
 logger = logging.getLogger(__name__)
@@ -346,5 +343,5 @@ class DataRetrievalExecutor(DataMixin, Executor):
             filename = f"{uuid.uuid4().hex}.png"
             file_path = images_dir / filename
             content.save(file_path, format="PNG")
-            return artifact_ref(f"s3_images/{filename}")
+            return ArtifactRef(path=f"s3_images/{filename}")
         return content

@@ -68,11 +68,7 @@ from ..utils.logging import configure_hf_library_logging
 from .base_executor import ExecutionError, Executor, ExecutorTask
 from .mixins.data import InferenceEntry
 from .mixins.inference import InferenceMixin
-from .utils.checkpoints import (
-    artifact_ref,
-    maybe_upload_artifacts,
-    maybe_upload_traces,
-)
+from .utils.checkpoints import maybe_upload_artifacts, maybe_upload_traces
 
 try:
     import torch
@@ -493,7 +489,7 @@ class HFTransformersExecutor(InferenceMixin, Executor):
                 model=self._model_name,
                 items=[],
                 count=len(grouped_visual_embeddings),
-                embedding_file=artifact_ref("visual_embeddings.pt"),
+                embedding_file=ArtifactRef(path="visual_embeddings.pt"),
                 image_group_sizes=image_group_sizes,
             )
 

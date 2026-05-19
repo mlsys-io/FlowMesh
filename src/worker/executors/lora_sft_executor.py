@@ -28,7 +28,6 @@ from .mixins.training import TrainingMixin
 from .sft_executor import SFTExecutor
 from .utils.checkpoints import (
     archive_model_dir,
-    artifact_ref,
     determine_resume_path,
     maybe_upload_artifacts,
     write_executor_result,
@@ -314,16 +313,16 @@ class LoRASFTExecutor(TrainingMixin, Executor):
                 model_name=self._model_name,
                 dataset_size=len(train_dataset) if train_dataset is not None else 0,
                 output_dir=out_dir.as_posix(),
-                checkpoints_dir=artifact_ref("checkpoints"),
+                checkpoints_dir=ArtifactRef(path="checkpoints"),
                 resume_from_path=resume_str,
             )
             if final_adapter_path is not None:
-                result.final_lora = artifact_ref(
-                    final_adapter_path.relative_to(artifacts_dir).as_posix()
+                result.final_lora = ArtifactRef(
+                    path=final_adapter_path.relative_to(artifacts_dir).as_posix()
                 )
                 archive_path = archive_model_dir(final_adapter_path)
-                result.final_lora_archive = artifact_ref(
-                    archive_path.relative_to(artifacts_dir).as_posix()
+                result.final_lora_archive = ArtifactRef(
+                    path=archive_path.relative_to(artifacts_dir).as_posix()
                 )
                 logger.info("Prepared LoRA archive at %s", archive_path)
 
@@ -352,7 +351,7 @@ class LoRASFTExecutor(TrainingMixin, Executor):
             model_name=self._model_name,
             dataset_size=len(train_dataset) if train_dataset is not None else 0,
             output_dir=out_dir.as_posix(),
-            checkpoints_dir=artifact_ref("checkpoints"),
+            checkpoints_dir=ArtifactRef(path="checkpoints"),
             resume_from_path=resume_path.as_posix() if resume_path else None,
         )
 

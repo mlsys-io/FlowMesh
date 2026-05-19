@@ -35,7 +35,6 @@ from .base_executor import ExecutionError, Executor, ExecutorTask
 from .mixins.training import TrainingMixin
 from .utils.checkpoints import (
     archive_model_dir,
-    artifact_ref,
     get_http_destination,
     maybe_upload_artifacts,
     write_executor_result,
@@ -484,15 +483,15 @@ class DPOExecutor(TrainingMixin, Executor):
                 model_name=self._model_name,
                 dataset_size=len(dataset) if dataset is not None else 0,
                 output_dir=out_dir.as_posix(),
-                checkpoints_dir=artifact_ref("checkpoints"),
+                checkpoints_dir=ArtifactRef(path="checkpoints"),
             )
             if final_model_path is not None:
-                result.final_model = artifact_ref(
-                    final_model_path.relative_to(artifacts_dir).as_posix()
+                result.final_model = ArtifactRef(
+                    path=final_model_path.relative_to(artifacts_dir).as_posix()
                 )
             if final_archive_path is not None:
-                result.final_model_archive = artifact_ref(
-                    final_archive_path.relative_to(artifacts_dir).as_posix()
+                result.final_model_archive = ArtifactRef(
+                    path=final_archive_path.relative_to(artifacts_dir).as_posix()
                 )
 
             maybe_upload_artifacts(task, out_dir, logger=logger)

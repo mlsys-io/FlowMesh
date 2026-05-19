@@ -26,6 +26,7 @@ except Exception:
         Omni = None
     _HAS_OMNI = False
 
+from shared.schemas.artifact import ArtifactRef
 from shared.schemas.governance import SpanType
 from shared.tasks.specs import TaskSpecStrictBase
 from shared.tasks.specs.omni import OmniText2GeneralSpecStrict
@@ -38,7 +39,6 @@ from .omni_executor_base import (
     extract_audio_from_mm,
     save_audio,
 )
-from .utils.checkpoints import artifact_ref
 
 logger = logging.getLogger(__name__)
 EXECUTOR_NAME = "omni_text2general"
@@ -184,7 +184,9 @@ class OmniText2GeneralExecutor(OmniExecutorBase):
                     "index": idx,
                     "request_id": rid,
                     "prompt": texts[idx] if idx < len(texts) else None,
-                    "audio": artifact_ref(self.relative_to(save_path, artifacts_dir)),
+                    "audio": ArtifactRef(
+                        path=self.relative_to(save_path, artifacts_dir)
+                    ),
                 }
                 text_out = text_results.get(rid)
                 if text_out:
