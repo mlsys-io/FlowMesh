@@ -4,7 +4,6 @@ import logging
 import tarfile
 import tempfile
 from pathlib import Path
-from typing import Any
 
 from fastapi import (
     APIRouter,
@@ -20,6 +19,7 @@ from fastapi.responses import FileResponse
 from pydantic import ValidationError
 
 from shared.schemas.result import (
+    BaseExecutorResult,
     ResultEnvelope,
     read_result,
     result_file_path,
@@ -115,7 +115,7 @@ async def get_result(
     principal: PrincipalContext = Depends(authenticate_connection),
     results_dir: Path = Depends(get_results_dir),
     logger: logging.Logger = Depends(get_logger),
-) -> dict[str, Any]:
+) -> BaseExecutorResult:
     task_id = (task_id or "").strip()
     if not task_id:
         raise HTTPException(
@@ -143,7 +143,7 @@ async def get_result(
             detail=f"Result file is not valid JSON: {exc}",
         ) from exc
     try:
-        return ResultEnvelope.model_validate(content).result.model_dump()
+        return ResultEnvelope.model_validate(content).result
     except ValidationError as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
