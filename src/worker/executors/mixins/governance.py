@@ -210,7 +210,9 @@ class GovernanceMixin:
         )
 
     @staticmethod
-    def _spec_upstream_results(spec: TaskSpecStrictBase) -> dict[str, Any]:
+    def _spec_upstream_results(
+        spec: TaskSpecStrictBase,
+    ) -> dict[str, BaseExecutorResult]:
         """Validated ``spec._upstreamResults`` (server-injected stage context)."""
         context = spec.upstreamResults or {}
         if not isinstance(context, dict):

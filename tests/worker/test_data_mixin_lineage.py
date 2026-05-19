@@ -146,20 +146,21 @@ def test_collect_prompts_resolves_grouped_image_artifact_refs_after_flatten(
     for name, color in (("a.png", "red"), ("b.png", "green"), ("c.png", "blue")):
         Image.new("RGB", (2, 2), color=color).save(artifacts_dir / name)
 
+    result = BaseExecutorResult.model_validate(
+        {
+            "images": [
+                [{"path": "images/a.png"}, {"path": "images/b.png"}],
+                [{"path": "images/c.png"}],
+            ],
+            "_artifacts": {"base_dir": upstream_dir.as_posix()},
+        }
+    )
     spec = cast(
         Any,
         SimpleNamespace(
             data={"type": "list", "expr": "vision.images"},
             inference={},
-            upstreamResults={
-                "vision": {
-                    "images": [
-                        [{"path": "images/a.png"}, {"path": "images/b.png"}],
-                        [{"path": "images/c.png"}],
-                    ],
-                    "_artifacts": {"base_dir": upstream_dir.as_posix()},
-                }
-            },
+            upstreamResults={"vision": result},
         ),
     )
 

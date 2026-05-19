@@ -15,6 +15,7 @@ import requests
 from datasets import Dataset, load_dataset
 from PIL import Image
 
+from shared.schemas.result import BaseExecutorResult
 from shared.tasks.specs import TaskSpecStrictBase
 from shared.utils.json import safe_get
 
@@ -403,7 +404,7 @@ class DataMixin(GovernanceMixin):
                 metadata_raw.append(entry_meta)
         elif dtype == "list":
             items = data.get("items")
-            context: dict[str, Any] | None = None
+            context: dict[str, BaseExecutorResult] | None = None
             root_node: str | None = None
             if items is None:
                 expr = data.get("expr")

@@ -6,48 +6,39 @@ from urllib.parse import urlparse
 
 import requests
 
+from shared.schemas.result import BaseExecutorResult
 from shared.utils.http import auth_headers
 
 from ..base_executor import ExecutionError
 
 
 def artifact_to_source(
-    ref: dict[str, Any], context: dict[str, Any] | None, node: str | None
+    ref: dict[str, Any], context: dict[str, BaseExecutorResult] | None, node: str | None
 ) -> str:
     """Translate a `{path: ...}` artifact ref into a URL or local path."""
     rel_path = ref.get("path")
     if not isinstance(rel_path, str) or not rel_path:
         raise ExecutionError("Artifact ref must include a non-empty 'path' field")
 
-    ctx: dict[str, Any] = {}
-    if context and isinstance(node, str) and node:
-        node_payload = context.get(node)
-        if isinstance(node_payload, dict):
-            raw_ctx = node_payload.get("_artifacts")
-            if isinstance(raw_ctx, dict):
-                ctx = raw_ctx
-            if not ctx:
-                # Some executors stuff their result under a "result" key.
-                result = node_payload.get("result")
-                if isinstance(result, dict):
-                    inner = result.get("_artifacts")
-                    if isinstance(inner, dict):
-                        ctx = inner
-
-    if ctx:
-        base_url = ctx.get("base_url")
-        base_dir = ctx.get("base_dir")
+    if (
+        context
+        and node
+        and (node_result := context.get(node))
+        and (ctx := node_result.artifacts)
+    ):
+        base_url = ctx.base_url
+        base_dir = ctx.base_dir
     else:
         base_url = base_dir = None
 
     # Check local filesystem first
-    base_dir_path = Path(base_dir) if isinstance(base_dir, str) and base_dir else None
+    base_dir_path = Path(base_dir) if base_dir else None
     local_path = base_dir_path / "artifacts" / rel_path if base_dir_path else None
     if local_path is not None and local_path.is_file():
         return local_path.as_posix()
 
     # Fallback to a URL if base_url is provided
-    if isinstance(base_url, str) and base_url:
+    if base_url:
         if not base_dir_path:
             raise ExecutionError(
                 "Artifact ref with base_url requires upstream base_dir to "
@@ -66,7 +57,7 @@ def artifact_to_source(
 
 
 def maybe_resolve_artifact_ref(
-    value: Any, context: dict[str, Any] | None, node: str | None
+    value: Any, context: dict[str, BaseExecutorResult] | None, node: str | None
 ) -> Any:
     """Convert `{path: ...}` ref dicts to URL/path strings; pass others through."""
     if isinstance(value, dict) and "path" in value:

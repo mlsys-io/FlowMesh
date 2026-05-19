@@ -5,13 +5,17 @@ from collections.abc import Sequence
 from typing import Any
 
 import pandas as pd
+from pydantic import BaseModel
 
+from shared.schemas.result import BaseExecutorResult
 from shared.tasks.specs import TaskSpecStrictBase
 from shared.utils.json import validate_keys
 
 from ...utils.serialization import try_deserialize_dataframe
 from ..base_executor import ExecutionError
 from .safe_eval import safe_execute_function, safe_materialize_function
+
+_MISSING: Any = object()
 
 type MessageItem = dict[str, str]
 type Message = Sequence[MessageItem]
@@ -580,17 +584,17 @@ def _format_column_line(label: str, value: str) -> str:
     return f"• {label}: {indented}"
 
 
-def _evaluate_expr(expr: str, context: dict[str, Any]) -> Any:
+def _evaluate_expr(expr: str, context: dict[str, BaseExecutorResult]) -> Any:
     if not expr:
         return None
 
     parts = expr.split(".")
     root = parts[0]
-    data = context.get(root)
-    if data is None:
+    result = context.get(root)
+    if result is None:
         return None
 
-    value: Any = data
+    value: Any = result
     for token in parts[1:]:
         if not token:
             continue
@@ -617,6 +621,14 @@ def _evaluate_expr(expr: str, context: dict[str, Any]) -> Any:
                         f"{attr} not a valid column in DataFrame for {token}."
                     )
                 value = value[attr].tolist()
+            elif isinstance(value, BaseModel):
+                resolved = getattr(value, attr, _MISSING)
+                if resolved is _MISSING:
+                    raise ExecutionError(
+                        f"{attr} not a valid attribute of {type(value).__name__} "
+                        f"for {token}."
+                    )
+                value = resolved
             else:
                 raise ExecutionError(
                     f"{attr} in {parts} is not a valid key - "
