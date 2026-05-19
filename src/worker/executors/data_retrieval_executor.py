@@ -151,7 +151,6 @@ class DataRetrievalExecutor(DataMixin, Executor):
                 )
 
         return DataRetrievalResult(
-            ok=True,
             items=items,
             count=len(items),
         )
@@ -214,7 +213,6 @@ class DataRetrievalExecutor(DataMixin, Executor):
                 items.append(item)
 
         return DataRetrievalResult(
-            ok=True,
             type="s3",
             items=items,
             metadata=s3_result["metadata"],  # type: ignore
@@ -320,7 +318,6 @@ class DataRetrievalExecutor(DataMixin, Executor):
                 )
 
         return DataRetrievalResult(
-            ok=True,
             type="agent",
             items=items,
             count=len(items),

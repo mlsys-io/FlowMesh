@@ -23,11 +23,12 @@ from .base_executor import ExecutionError, Executor, ExecutorTask
 from .utils.graph_templates import Message, build_prompts_from_graph_template
 
 logger = logging.getLogger("worker.rag")
+EXECUTOR_NAME = "rag"
 
 
 class RAGResult(BaseExecutorResult):
     ok: bool = True
-    executor: str
+    executor: str = EXECUTOR_NAME
     qdrant: dict[str, Any]
     embedding: dict[str, Any]
     search: dict[str, Any]
@@ -36,7 +37,7 @@ class RAGResult(BaseExecutorResult):
 
 
 class RAGExecutor(Executor):
-    name = "rag"
+    name = EXECUTOR_NAME
 
     def run(self, task: ExecutorTask, out_dir: Path) -> RAGResult:
         start_ts = time.time()
@@ -195,8 +196,6 @@ class RAGExecutor(Executor):
             "RAG query completed queries=%d total_results=%d", len(queries), total_items
         )
         return RAGResult(
-            ok=True,
-            executor=self.name,
             qdrant={"collection": collection, "url": url},
             embedding={"model": model_name},
             search={"top_k": top_k},

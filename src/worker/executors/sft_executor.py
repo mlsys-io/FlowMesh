@@ -439,6 +439,23 @@ class SFTExecutor(TrainingMixin, Executor):
                 )
 
             training_time = time.time() - start_time
+            final_model: ArtifactRef | None = None
+            final_model_archive: ArtifactRef | None = None
+            if final_model_path:
+                resolved_model_path = Path(final_model_path)
+                self._final_model_dir = (
+                    resolved_model_path if resolved_model_path.exists() else None
+                )
+                final_model = ArtifactRef(
+                    path=final_model_path.relative_to(artifacts_dir).as_posix()
+                )
+                final_model_archive = (
+                    ArtifactRef(
+                        path=final_archive_path.relative_to(artifacts_dir).as_posix()
+                    )
+                    if final_archive_path
+                    else None
+                )
             result = SFTResult(
                 task_id=task.task_id,
                 training_successful=training_successful,
@@ -449,20 +466,9 @@ class SFTExecutor(TrainingMixin, Executor):
                 output_dir=out_dir.as_posix(),
                 checkpoints_dir=ArtifactRef(path="checkpoints"),
                 resume_from_path=resume_str,
+                final_model=final_model,
+                final_model_archive=final_model_archive,
             )
-
-            if final_model_path is not None:
-                resolved_model_path = Path(final_model_path)
-                self._final_model_dir = (
-                    resolved_model_path if resolved_model_path.exists() else None
-                )
-                result.final_model = ArtifactRef(
-                    path=final_model_path.relative_to(artifacts_dir).as_posix()
-                )
-                if final_archive_path is not None:
-                    result.final_model_archive = ArtifactRef(
-                        path=final_archive_path.relative_to(artifacts_dir).as_posix()
-                    )
 
             maybe_upload_artifacts(task, out_dir, logger=logger)
 

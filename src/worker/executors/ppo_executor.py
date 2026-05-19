@@ -920,15 +920,19 @@ class PPOExecutor(TrainingMixin, Executor):
             dataset_size=len(dataset),
             output_dir=out_dir.as_posix(),
             checkpoints_dir=ArtifactRef(path="checkpoints"),
+            final_model=(
+                ArtifactRef(path=final_model_path.relative_to(artifacts_dir).as_posix())
+                if final_model_path
+                else None
+            ),
+            final_model_archive=(
+                ArtifactRef(
+                    path=final_archive_path.relative_to(artifacts_dir).as_posix()
+                )
+                if final_archive_path
+                else None
+            ),
         )
-        if final_model_path is not None:
-            result.final_model = ArtifactRef(
-                path=final_model_path.relative_to(artifacts_dir).as_posix()
-            )
-        if final_archive_path is not None:
-            result.final_model_archive = ArtifactRef(
-                path=final_archive_path.relative_to(artifacts_dir).as_posix()
-            )
 
         maybe_upload_artifacts(task, out_dir, logger=logger)
 

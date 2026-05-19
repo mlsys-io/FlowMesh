@@ -305,6 +305,17 @@ class LoRASFTExecutor(TrainingMixin, Executor):
                 logger.info("Saved LoRA-adapted weights to %s", model_path)
 
             training_time = time.time() - start_time
+            final_lora: ArtifactRef | None = None
+            final_lora_archive: ArtifactRef | None = None
+            if final_adapter_path:
+                final_lora = ArtifactRef(
+                    path=final_adapter_path.relative_to(artifacts_dir).as_posix()
+                )
+                archive_path = archive_model_dir(final_adapter_path)
+                final_lora_archive = ArtifactRef(
+                    path=archive_path.relative_to(artifacts_dir).as_posix()
+                )
+                logger.info("Prepared LoRA archive at %s", archive_path)
             result = LoRAResult(
                 task_id=task.task_id,
                 training_successful=training_successful,
@@ -315,16 +326,9 @@ class LoRASFTExecutor(TrainingMixin, Executor):
                 output_dir=out_dir.as_posix(),
                 checkpoints_dir=ArtifactRef(path="checkpoints"),
                 resume_from_path=resume_str,
+                final_lora=final_lora,
+                final_lora_archive=final_lora_archive,
             )
-            if final_adapter_path is not None:
-                result.final_lora = ArtifactRef(
-                    path=final_adapter_path.relative_to(artifacts_dir).as_posix()
-                )
-                archive_path = archive_model_dir(final_adapter_path)
-                result.final_lora_archive = ArtifactRef(
-                    path=archive_path.relative_to(artifacts_dir).as_posix()
-                )
-                logger.info("Prepared LoRA archive at %s", archive_path)
 
             maybe_upload_artifacts(task, out_dir, logger=logger)
 

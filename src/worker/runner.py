@@ -135,11 +135,7 @@ class Runner:
         self._write_single_result(task_id, spec, out_dir, result)
 
         child_lookup = {entry.task_id: entry for entry in merged_children}
-        if isinstance(result, BaseExecutorResult):
-            children_payload: dict[str, Any] = dict(result.children)
-        else:
-            children_payload = result.get("children") or {}
-        for child_id, child_result in children_payload.items():
+        for child_id, child_result in result.children.items():
             child_info = child_lookup.get(child_id)
             if child_info is None:
                 continue

@@ -279,9 +279,9 @@ class AgentExecutor(Executor):
                         "execution_log": result.get("log", []),
                     },
                     agent_output=(
-                        ArtifactRef(path=agent_output_ref)
-                        if isinstance(agent_output_ref, str)
-                        else None
+                        None
+                        if agent_output_ref is None
+                        else ArtifactRef(path=agent_output_ref)
                     ),
                 )
             else:
@@ -324,9 +324,9 @@ class AgentExecutor(Executor):
                         "batch_summary": results.get("batch_summary", {}),
                     },
                     batch_summary_file=(
-                        ArtifactRef(path=batch_summary_ref)
-                        if isinstance(batch_summary_ref, str)
-                        else None
+                        None
+                        if batch_summary_ref is None
+                        else ArtifactRef(path=batch_summary_ref)
                     ),
                 )
 
