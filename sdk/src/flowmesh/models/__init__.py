@@ -1,5 +1,6 @@
 """FlowMesh SDK data models."""
 
+from .artifacts import ArtifactContext, ArtifactRef
 from .common import (
     LogEntry,
     LogEvent,
@@ -19,7 +20,7 @@ from .nodes import (
     NodeWorkerInfo,
     WorkerRegisterResponse,
 )
-from .results import PathResponse, ResultEnvelope
+from .results import BaseExecutorResult, PathResponse, ResultEnvelope
 from .tasks import HardwareUsage, TaskInfo, TaskUsage
 from .traces import (
     ActiveWaitBreakdown,
@@ -54,7 +55,10 @@ from .workflows import (
 
 __all__ = [
     "ActiveWaitBreakdown",
+    "ArtifactContext",
+    "ArtifactRef",
     "AssetSummary",
+    "BaseExecutorResult",
     "CPUInfo",
     "CriticalPathSummary",
     "E2EBreakdown",

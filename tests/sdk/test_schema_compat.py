@@ -8,6 +8,9 @@ import pytest
 
 # SDK-side imports
 from flowmesh.models import (
+    ArtifactContext,
+    ArtifactRef,
+    BaseExecutorResult,
     CPUInfo,
     GpuInfo,
     GpuPlatformInfo,
@@ -79,6 +82,9 @@ from server.schemas.workflow import (
 )
 from server.task.models import TaskInfo as SrvTaskInfo
 from server.task.models import TaskUsage as SrvTaskUsage
+from shared.schemas.artifact import ArtifactContext as SrvArtifactContext
+from shared.schemas.artifact import ArtifactRef as SrvArtifactRef
+from shared.schemas.result import BaseExecutorResult as SrvBaseExecutorResult
 from shared.schemas.result import ResultEnvelope as SrvResultEnvelope
 from shared.schemas.worker import SSHLimits as SrvSSHLimits
 from shared.tasks.task_type import TaskType as SrvTaskType
@@ -123,7 +129,11 @@ MODEL_PAIRS = [
     # Common
     (SrvOkResponse, OkResponse),
     # Results
+    (SrvBaseExecutorResult, BaseExecutorResult),
     (SrvResultEnvelope, ResultEnvelope),
+    # Artifacts
+    (SrvArtifactContext, ArtifactContext),
+    (SrvArtifactRef, ArtifactRef),
 ]
 
 

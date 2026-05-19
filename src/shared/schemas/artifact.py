@@ -8,5 +8,7 @@ class ArtifactRef(BaseModel):
 class ArtifactContext(BaseModel):
     base_dir: str = Field(description="Producing task's output directory.")
     base_url: str | None = Field(
-        default=None, description="HTTP origin (scheme://host[:port]) for upload."
+        default=None,
+        exclude_if=lambda v: v is None,
+        description="HTTP origin (scheme://host[:port]) for upload.",
     )

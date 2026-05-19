@@ -198,10 +198,9 @@ def _finalize_materialize(
         return {}, json_path, extracted
 
     envelope = ResultEnvelope.model_validate_json(json_path.read_text())
-    if _wants_artifacts(sections):
-        ctx = envelope.result["_artifacts"]
-        ctx["base_dir"] = (output_dir / task_id).resolve().as_posix()
-        ctx.pop("base_url", None)
+    if _wants_artifacts(sections) and (ctx := envelope.result.artifacts):
+        ctx.base_dir = (output_dir / task_id).resolve().as_posix()
+        ctx.base_url = None
     payload = envelope.model_dump(mode="json")
     json_path.write_text(json.dumps(payload, indent=2))
     return payload, json_path, extracted
