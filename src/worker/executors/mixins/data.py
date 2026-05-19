@@ -702,14 +702,11 @@ class DataMixin(GovernanceMixin):
         )
 
     def _populate_table(
-        self,
-        payload: dict[str, Any],
-        table_stores_list: list[pd.DataFrame],
-    ):
+        self, items: list[dict[str, Any]], table_stores_list: list[pd.DataFrame]
+    ) -> list[dict[str, Any]]:
         """
         Group row-level generation outputs back into per-table outputs.
         """
-        items = payload["items"]
         cur = 0
         grouped_items: list[dict[str, Any]] = []
         for df in table_stores_list:
@@ -724,8 +721,7 @@ class DataMixin(GovernanceMixin):
                 f"Output length {len(items)} does not match "
                 f"the total number of rows {cur} in table stores."
             )
-        payload["items"] = grouped_items
-        return payload
+        return grouped_items
 
     def _maybe_apply_dataset_shard(self, dataset, spec: TaskSpecStrictBase):
         shard_cfg = spec.shard

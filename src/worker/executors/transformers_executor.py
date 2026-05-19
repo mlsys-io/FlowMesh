@@ -57,8 +57,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from shared.schemas.artifact import ArtifactRef
-from shared.schemas.executor_result import BaseExecutorResult
 from shared.schemas.governance import SpanType
+from shared.schemas.result import BaseExecutorResult
 from shared.tasks.specs import (
     EmbeddingSpecStrict,
     InferenceSpecStrict,
@@ -411,14 +411,14 @@ class HFTransformersExecutor(InferenceMixin, Executor):
             result = self._run_inner(spec, task_id, out_dir)
         maybe_upload_artifacts(task, out_dir, logger=logger)
         maybe_upload_traces(task, out_dir, logger=logger)
-        return TransformersResult.model_validate(result)
+        return result
 
     def _run_inner(
         self,
         spec: "InferenceSpecStrict | EmbeddingSpecStrict",
         task_id: str,
         out_dir: Path,
-    ) -> dict[str, Any]:
+    ) -> TransformersResult:
         with self._span("model load", span_type=SpanType.COMPUTE):
             self._ensure_model(spec)
 
@@ -434,8 +434,6 @@ class HFTransformersExecutor(InferenceMixin, Executor):
         )
 
         assert self._model is not None
-
-        result: dict[str, Any] = {}
 
         if self._mode == "visual-embedding":
             assert self._image_processor is not None
@@ -491,15 +489,13 @@ class HFTransformersExecutor(InferenceMixin, Executor):
             emb_path = artifacts_dir / "visual_embeddings.pt"
             torch.save(grouped_visual_embeddings, emb_path)
 
-            result = {
-                "ok": True,
-                "model": self._model_name,
-                "items": [],  # Embeddings are in file
-                "count": len(grouped_visual_embeddings),
-                "embedding_file": artifact_ref("visual_embeddings.pt"),
-            }
-            if image_group_sizes is not None:
-                result["image_group_sizes"] = image_group_sizes
+            result = TransformersResult(
+                model=self._model_name,
+                items=[],
+                count=len(grouped_visual_embeddings),
+                embedding_file=artifact_ref("visual_embeddings.pt"),
+                image_group_sizes=image_group_sizes,
+            )
 
             self._dump_to_governance(
                 task_id=task_id,
@@ -605,21 +601,20 @@ class HFTransformersExecutor(InferenceMixin, Executor):
             prompt_tokens += int(input_len)
             completion_tokens += int(gen_part.shape[0])
 
-        result = {
-            "ok": True,
-            "model": self._model_name,
-            "items": items,
-            "usage": {
+        result = TransformersResult(
+            model=self._model_name,
+            items=items,
+            usage={
                 "prompt_tokens": int(prompt_tokens),
                 "completion_tokens": int(completion_tokens),
                 "total_tokens": int(prompt_tokens + completion_tokens),
                 "num_requests": len(self._prompts),
                 "latency_sec": latency,
             },
-        }
+        )
 
         if isinstance(spec, InferenceSpecStrict):
-            self._maybe_export_jsonl(spec, task_id, result, out_dir)
+            self._maybe_export_jsonl(spec, task_id, items, out_dir)
 
         self._dump_to_governance(
             task_id=task_id,

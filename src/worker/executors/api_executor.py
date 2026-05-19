@@ -7,7 +7,7 @@ from typing import Any, ClassVar
 import httpx
 from pydantic import Field
 
-from shared.schemas.executor_result import BaseExecutorResult
+from shared.schemas.result import BaseExecutorResult
 from shared.tasks.specs import ApiSpecStrict
 
 from .base_executor import ExecutionError, Executor, ExecutorTask
@@ -19,7 +19,7 @@ _ClientKey = tuple[str, float, bool, bool]
 
 
 class APIResult(BaseExecutorResult):
-    ok: bool
+    ok: bool = True
     executor: str
     method: str
     url: str

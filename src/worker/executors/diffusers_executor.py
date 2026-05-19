@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any
 from PIL import Image
 
 from shared.schemas.artifact import ArtifactRef
-from shared.schemas.executor_result import BaseExecutorResult
+from shared.schemas.result import BaseExecutorResult
 from shared.tasks.specs import DiffusionSpecStrict
 
 from ..utils.logging import configure_hf_library_logging
@@ -255,17 +255,17 @@ class DiffusersExecutor(DataMixin, Executor):
         with self._task_span(
             task_id, task.workflow_id, out_dir, owner_id=task.owner_id
         ):
-            response = self._run_inner(spec, task_id, out_dir)
+            result = self._run_inner(spec, task_id, out_dir)
         maybe_upload_artifacts(task, out_dir, logger=logger)
         maybe_upload_traces(task, out_dir, logger=logger)
-        return DiffusersResult.model_validate(response)
+        return result
 
     def _run_inner(
         self,
         spec: DiffusionSpecStrict,
         task_id: str,
         out_dir: Path,
-    ) -> dict[str, Any]:
+    ) -> DiffusersResult:
         self._ensure_pipeline(spec)
         assert self._pipe is not None
 
@@ -349,19 +349,13 @@ class DiffusersExecutor(DataMixin, Executor):
             img.save(image_dir / f"image_{idx}.png", format="PNG")
             generated_images.append(artifact_ref(f"images/image_{idx}.png"))
 
-        response: dict[str, Any] = {
-            "ok": True,
-            "model": self._model_name,
-            "images": generated_images,
-        }
-
+        result = DiffusersResult(model=self._model_name, images=generated_images)
         self._dump_to_governance(
             task_id=task_id,
-            result=response,
+            result=result,
             dependencies_by_task=dependencies_by_task,
         )
-
-        return response
+        return result
 
     def cleanup_after_run(self) -> None:
         if self._pipe is not None:

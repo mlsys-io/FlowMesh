@@ -24,6 +24,7 @@ from shared.utils.parsing import as_list, to_int
 from .base_executor import ExecutionError, ExecutorTask
 from .omni_executor_base import (
     OmniExecutorBase,
+    OmniResult,
     extract_audio_from_mm,
     extract_multimodal_output,
     save_audio,
@@ -31,12 +32,21 @@ from .omni_executor_base import (
 from .utils.checkpoints import artifact_ref
 
 logger = logging.getLogger(__name__)
+EXECUTOR_NAME = "omni_text2speech"
+
+
+class OmniText2SpeechResult(OmniResult):
+    executor: str = EXECUTOR_NAME
+    mode: str = "tts"
+    audio: dict[str, Any]
+    sample_rate: int
+    storyboard: dict[str, Any] | None = None
 
 
 class OmniText2SpeechExecutor(OmniExecutorBase):
     """Generate speech audio using vllm_omni.Omni."""
 
-    name = "omni_text2speech"
+    name = EXECUTOR_NAME
     _TASK_SPEC_TYPE = OmniText2SpeechSpecStrict
 
     def prepare(self) -> None:
@@ -51,7 +61,7 @@ class OmniText2SpeechExecutor(OmniExecutorBase):
         spec: TaskSpecStrictBase,
         spec_dict: dict[str, Any],
         out_dir: Path,
-    ) -> dict[str, Any]:
+    ) -> OmniText2SpeechResult:
         assert isinstance(spec, OmniText2SpeechSpecStrict)
         texts = self._collect_text_inputs(spec, task.task_id)
 
@@ -101,20 +111,13 @@ class OmniText2SpeechExecutor(OmniExecutorBase):
                     }
                 )
 
-        first = items[0]["audio"] if items else {}
-        result: dict[str, Any] = {
-            "ok": True,
-            "executor": self.name,
-            "mode": "tts",
-            "model": self._model_name,
-            "audio": first,
-            "items": items,
-            "sample_rate": sample_rate,
-        }
-        storyboard = spec_dict.get("storyboard")
-        if isinstance(storyboard, dict):
-            result["storyboard"] = dict(storyboard)
-        return result
+        return OmniText2SpeechResult(
+            model=self._model_name,
+            items=items,
+            audio=items[0]["audio"] if items else {},
+            sample_rate=sample_rate,
+            storyboard=spec_dict.get("storyboard"),
+        )
 
     # ── model ────────────────────────────────────────────────────────────
 

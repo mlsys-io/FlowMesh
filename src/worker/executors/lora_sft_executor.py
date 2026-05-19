@@ -19,7 +19,7 @@ from trl.trainer.sft_config import SFTConfig
 from trl.trainer.sft_trainer import SFTTrainer
 
 from shared.schemas.artifact import ArtifactRef
-from shared.schemas.executor_result import BaseExecutorResult
+from shared.schemas.result import BaseExecutorResult
 from shared.tasks.specs import LoRASFTSpecStrict
 
 from ..utils.logging import configure_hf_library_logging
@@ -115,6 +115,8 @@ class LoRASFTExecutor(TrainingMixin, Executor):
         checkpoint_dir = artifacts_dir / "checkpoints"
         checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
+        resume_path: Path | None = None
+        train_dataset: Dataset | None = None
         try:
             model_name = spec.model_name or "gpt2"
             self._model_name = model_name
@@ -137,7 +139,7 @@ class LoRASFTExecutor(TrainingMixin, Executor):
             resume_path = determine_resume_path(
                 spec, training_cfg, out_dir, logger=logger
             )
-            resume_str = str(resume_path) if resume_path else None
+            resume_str = resume_path.as_posix() if resume_path else None
 
             if bool(training_cfg.get("gradient_checkpointing", False)):
                 model.gradient_checkpointing_enable()
@@ -155,9 +157,7 @@ class LoRASFTExecutor(TrainingMixin, Executor):
                     "Resuming LoRA training from local checkpoint %s", resume_path
                 )
                 peft_model = PeftModel.from_pretrained(
-                    model,
-                    str(resume_path),
-                    is_trainable=True,
+                    model, resume_path.as_posix(), is_trainable=True
                 )
                 logger.info("Loaded existing LoRA adapters; continuing fine-tuning")
             else:
@@ -198,7 +198,7 @@ class LoRASFTExecutor(TrainingMixin, Executor):
                 logger.info("Initialized new LoRA adapters: %s", lora_target_modules)
 
             sft_config = SFTConfig(
-                output_dir=str(checkpoint_dir),
+                output_dir=checkpoint_dir.as_posix(),
                 num_train_epochs=float(training_cfg.get("num_train_epochs", 1.0)),
                 per_device_train_batch_size=int(training_cfg.get("batch_size", 2)),
                 gradient_accumulation_steps=int(
@@ -300,31 +300,29 @@ class LoRASFTExecutor(TrainingMixin, Executor):
             archive_path: Path | None = None
             if bool(training_cfg.get("save_model", True)):
                 model_path = artifacts_dir / "final_lora"
-                trainer.save_model(str(model_path))
+                trainer.save_model(model_path.as_posix())
                 tokenizer.save_pretrained(model_path)
                 final_adapter_path = model_path
                 logger.info("Saved LoRA-adapted weights to %s", model_path)
 
             training_time = time.time() - start_time
-            result_payload: dict[str, Any] = {
-                "task_id": task.task_id,
-                "training_successful": training_successful,
-                "training_time_seconds": training_time,
-                "error_message": error_msg,
-                "model_name": self._model_name,
-                "dataset_size": (
-                    len(train_dataset) if "train_dataset" in locals() else 0
-                ),
-                "output_dir": out_dir.as_posix(),
-                "checkpoints_dir": artifact_ref("checkpoints"),
-                "resume_from_path": resume_str,
-            }
+            result = LoRAResult(
+                task_id=task.task_id,
+                training_successful=training_successful,
+                training_time_seconds=training_time,
+                error_message=error_msg,
+                model_name=self._model_name,
+                dataset_size=len(train_dataset) if train_dataset is not None else 0,
+                output_dir=out_dir.as_posix(),
+                checkpoints_dir=artifact_ref("checkpoints"),
+                resume_from_path=resume_str,
+            )
             if final_adapter_path is not None:
-                result_payload["final_lora"] = artifact_ref(
+                result.final_lora = artifact_ref(
                     final_adapter_path.relative_to(artifacts_dir).as_posix()
                 )
                 archive_path = archive_model_dir(final_adapter_path)
-                result_payload["final_lora_archive"] = artifact_ref(
+                result.final_lora_archive = artifact_ref(
                     archive_path.relative_to(artifacts_dir).as_posix()
                 )
                 logger.info("Prepared LoRA archive at %s", archive_path)
@@ -337,7 +335,7 @@ class LoRASFTExecutor(TrainingMixin, Executor):
                 final_adapter_path,
                 archive_path,
             )
-            return LoRAResult.model_validate(result_payload)
+            return result
 
         except Exception as exc:  # pylint: disable=broad-except
             error_msg = str(exc)
@@ -346,22 +344,20 @@ class LoRASFTExecutor(TrainingMixin, Executor):
 
         training_time = time.time() - start_time
 
-        result: dict[str, Any] = {
-            "task_id": task.task_id,
-            "training_successful": training_successful,
-            "training_time_seconds": training_time,
-            "error_message": error_msg,
-            "model_name": self._model_name,
-            "dataset_size": len(train_dataset) if "train_dataset" in locals() else 0,
-            "output_dir": out_dir.as_posix(),
-            "checkpoints_dir": artifact_ref("checkpoints"),
-            "resume_from_path": (
-                str(resume_path) if "resume_path" in locals() and resume_path else None
-            ),
-        }
+        result = LoRAResult(
+            task_id=task.task_id,
+            training_successful=training_successful,
+            training_time_seconds=training_time,
+            error_message=error_msg,
+            model_name=self._model_name,
+            dataset_size=len(train_dataset) if train_dataset is not None else 0,
+            output_dir=out_dir.as_posix(),
+            checkpoints_dir=artifact_ref("checkpoints"),
+            resume_from_path=resume_path.as_posix() if resume_path else None,
+        )
 
         if training_successful:
-            return LoRAResult.model_validate(result)
+            return result
 
         write_executor_result(out_dir / "results.json", task.task_id, task.spec, result)
         message = error_msg or "LoRA SFT training failed"

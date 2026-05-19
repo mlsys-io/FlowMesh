@@ -29,7 +29,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import requests
 
-from shared.schemas.executor_result import BaseExecutorResult
+from shared.schemas.result import BaseExecutorResult
 from shared.tasks.components.resources import GPURequirements
 from shared.tasks.specs.ssh import (
     SSHInputSpec,

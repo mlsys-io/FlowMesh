@@ -13,12 +13,12 @@ from typing import Any
 
 from opentelemetry.trace import Span as OTelSpan
 
-from shared.schemas.executor_result import BaseExecutorResult
 from shared.schemas.governance import (
     READY_SPAN_NAME,
     TASK_SPAN_NAME,
     SpanType,
 )
+from shared.schemas.result import BaseExecutorResult
 from shared.tasks.specs import TaskSpecStrictBase
 from shared.utils.time import now_iso
 
@@ -237,32 +237,25 @@ class GovernanceMixin:
     def _dump_to_governance(
         self,
         task_id: str,
-        result: BaseExecutorResult | dict[str, Any],
+        result: BaseExecutorResult,
         dependencies_by_task: dict[str, list[str]],
     ) -> None:
         """Write parent + merged-child results and emit asset/lineage rows."""
         parent_deps = dependencies_by_task.get(task_id, [])
-        payload = (
-            result.model_dump(serialize_as_any=True)
-            if isinstance(result, BaseExecutorResult)
-            else result
-        )
-        children_payload = payload.get("children", {}) or {}
-
         collection_jobs: list[dict[str, Any]] = [
             {
                 "task_id": task_id,
-                "result": payload,
+                "result": result.model_dump(),
                 "deps": parent_deps,
                 "is_parent": True,
             }
         ]
-        for child_id, child_result in children_payload.items():
+        for child_id, child_result in result.children.items():
             child_deps = dependencies_by_task.get(child_id, [])
             collection_jobs.append(
                 {
                     "task_id": child_id,
-                    "result": child_result,
+                    "result": child_result.model_dump(),
                     "deps": child_deps,
                     "is_parent": False,
                 }

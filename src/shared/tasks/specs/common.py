@@ -2,6 +2,7 @@ from typing import Any
 
 from pydantic import Field, model_validator
 
+from ...schemas.result import BaseExecutorResult
 from .._base import StrictBaseModel, TemplateBaseModel
 from ..components import (
     AdapterConfig,
@@ -72,7 +73,7 @@ class TaskSpecStrictBase(StrictBaseModel):
     shard: ShardSpec | None = None
 
     # Server-injected stage context (reserve the user-facing key `_upstreamResults`)
-    upstreamResults: dict[str, Any] | None = Field(
+    upstreamResults: dict[str, BaseExecutorResult] | None = Field(
         default=None, alias="_upstreamResults"
     )
 
@@ -98,7 +99,7 @@ class TaskSpecTemplateBase(TemplateBaseModel):
     condition: ConditionSpec | None = None
     shard: ShardSpecTemplate | None = None
 
-    upstreamResults: dict[str, Any] | None = Field(
+    upstreamResults: dict[str, BaseExecutorResult] | None = Field(
         default=None, alias="_upstreamResults"
     )
 

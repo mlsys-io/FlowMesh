@@ -7,6 +7,7 @@ from typing import Any, cast
 
 from PIL import Image
 
+from shared.schemas.result import BaseExecutorResult
 from worker.executors.mixins.data import DataMixin
 
 
@@ -96,14 +97,16 @@ def test_dump_to_governance_with_merged_children(tmp_path: Path) -> None:
     mixin = _Mixin()
     out_dir = tmp_path / "task"
     with mixin._task_span("tsk-parent", "wfl-1", out_dir, owner_id="alice"):
-        result = {
-            "ok": True,
-            "items": [{"output": "p"}],
-            "children": {
-                "tsk-c1": {"items": [{"output": "c1"}]},
-                "tsk-c2": {"items": [{"output": "c2"}]},
-            },
-        }
+        result = BaseExecutorResult.model_validate(
+            {
+                "ok": True,
+                "items": [{"output": "p"}],
+                "children": {
+                    "tsk-c1": {"items": [{"output": "c1"}]},
+                    "tsk-c2": {"items": [{"output": "c2"}]},
+                },
+            }
+        )
         deps = {
             "tsk-parent": ["tsk-up-a"],
             "tsk-c1": ["tsk-up-b"],

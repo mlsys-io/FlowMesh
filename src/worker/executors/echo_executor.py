@@ -2,7 +2,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from shared.schemas.executor_result import BaseExecutorResult
+from shared.schemas.result import BaseExecutorResult
 from shared.tasks.specs import EchoSpecStrict
 
 from .base_executor import ExecutionError, Executor, ExecutorTask

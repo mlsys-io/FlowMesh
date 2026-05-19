@@ -1,14 +1,22 @@
 """Test that connector logs are properly redirected from worker subprocess to parent."""
 
+import logging
 import tempfile
 import time
 import uuid
 from pathlib import Path
+from typing import Any
 
+from shared.schemas.result import BaseExecutorResult
 from shared.tasks.worker_message import WorkerTaskMessage
 from tests.worker.factories import make_live_worker_config, make_worker_hardware
 from worker.executors.base_executor import Executor
 from worker.executors.mp_executor import MPExecutor
+
+
+class ConnectorLoggingResult(BaseExecutorResult):
+    ok: bool = True
+    result: dict[str, Any]
 
 
 class ConnectorLoggingExecutor(Executor):
@@ -19,9 +27,8 @@ class ConnectorLoggingExecutor(Executor):
     def prepare(self) -> None:
         pass
 
-    def run(self, task, out_dir: Path) -> dict:
+    def run(self, task, out_dir: Path) -> ConnectorLoggingResult:
         """Run a simple test that logs from different modules."""
-        import logging
 
         # Get loggers from different modules that would be used in real execution
         executor_logger = logging.getLogger("executors.test_executor")
@@ -36,13 +43,12 @@ class ConnectorLoggingExecutor(Executor):
 
         root_logger.info("Message from root logger")
 
-        return {
-            "ok": True,
-            "result": {
+        return ConnectorLoggingResult(
+            result={
                 "status": "completed",
                 "log_test": "Messages logged from different modules",
             },
-        }
+        )
 
     def cleanup_after_run(self) -> None:
         pass
@@ -89,9 +95,8 @@ def test_connector_logs_printed_to_stderr(tmp_path: Path) -> None:
 
     mp.cleanup_after_run()
 
-    # Verify the executor ran successfully
-    assert isinstance(result, dict)
-    assert result["ok"], f"Executor failed: {result}"
-    assert (
-        result.get("result", {}).get("status") == "completed"
-    ), f"Unexpected result: {result}"
+    # Verify the executor ran successfully. The MP boundary pickles the
+    # subclass instance, so the parent receives a ``ConnectorLoggingResult``.
+    assert isinstance(result, ConnectorLoggingResult), f"Unexpected result: {result}"
+    assert result.ok is True
+    assert result.result.get("status") == "completed", f"Unexpected result: {result}"

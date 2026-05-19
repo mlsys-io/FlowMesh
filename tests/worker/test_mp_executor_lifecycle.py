@@ -4,6 +4,7 @@ import tempfile
 import uuid
 from pathlib import Path
 
+from shared.schemas.result import BaseExecutorResult
 from shared.tasks import TaskType
 from shared.tasks.specs import EchoSpecStrict
 from shared.tasks.worker_message import WorkerTaskMessage
@@ -16,11 +17,16 @@ from worker.executors.base_executor import Executor
 from worker.executors.mp_executor import MPExecutor
 
 
+class _SimpleMPResult(BaseExecutorResult):
+    ok: bool = True
+    task_id: str
+
+
 class _SimpleMPExecutor(Executor):
     name = "simple_mp"
 
-    def run(self, task, out_dir: Path) -> dict:
-        return {"ok": True, "task_id": task.task_id}
+    def run(self, task, out_dir: Path) -> _SimpleMPResult:
+        return _SimpleMPResult(task_id=task.task_id)
 
     def cleanup_after_run(self) -> None:
         return None
@@ -54,8 +60,8 @@ def test_mp_executor_does_not_start_subprocess_until_first_run(tmp_path: Path) -
     with tempfile.TemporaryDirectory() as out_dir:
         result = mp.run(_simple_task_message(), Path(out_dir))
 
-    assert isinstance(result, dict)
-    assert result["ok"] is True
+    assert isinstance(result, _SimpleMPResult)
+    assert result.ok is True
     assert mp._shutdown is False
     assert mp._proc is not None
     assert mp._proc.is_alive()

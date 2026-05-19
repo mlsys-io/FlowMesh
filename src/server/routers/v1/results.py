@@ -143,9 +143,7 @@ async def get_result(
             detail=f"Result file is not valid JSON: {exc}",
         ) from exc
     try:
-        return ResultEnvelope.model_validate(content).result.model_dump(
-            serialize_as_any=True
-        )
+        return ResultEnvelope.model_validate(content).result.model_dump()
     except ValidationError as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

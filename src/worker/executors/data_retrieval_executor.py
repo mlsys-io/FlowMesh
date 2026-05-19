@@ -10,7 +10,7 @@ from typing import Any, cast
 import pandas as pd
 from PIL import Image
 
-from shared.schemas.executor_result import BaseExecutorResult
+from shared.schemas.result import BaseExecutorResult
 from shared.tasks.specs import DataRetrievalSpecStrict
 from shared.utils.json import validate_keys
 

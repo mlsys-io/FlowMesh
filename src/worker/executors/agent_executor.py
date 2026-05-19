@@ -17,7 +17,7 @@ from typing import Any
 from datasets import load_dataset
 
 from shared.schemas.artifact import ArtifactRef
-from shared.schemas.executor_result import BaseExecutorResult
+from shared.schemas.result import BaseExecutorResult
 from shared.tasks.specs import AgentSpecStrict
 
 from .base_executor import ExecutionError, Executor, ExecutorTask
@@ -57,7 +57,7 @@ logger = logging.getLogger("worker.agent")
 
 
 class AgentResult(BaseExecutorResult):
-    ok: bool
+    ok: bool = True
     model: str
     items: list[dict[str, Any]] = []
     usage: dict[str, Any] | None = None
@@ -260,32 +260,34 @@ class AgentExecutor(Executor):
                         agent_config_name, self._tasks[0], out_dir, task_timeout
                     )
                 )
+                agent_output_ref = result.get("_agent_output_ref")
 
-                output: dict[str, Any] = {
-                    "ok": True,
-                    "model": agent_config_name,
-                    "items": [
+                output = AgentResult(
+                    model=agent_config_name,
+                    items=[
                         {
                             "index": 0,
                             "output": result.get("output", ""),
                             "finish_reason": "completed",
                         }
                     ],
-                    "usage": {
+                    usage={
                         "execution_time_sec": result.get("usage", {}).get(
                             "execution_time_sec", 0
                         ),
                         "num_requests": 1,
                         "agent_config": agent_config_name,
                     },
-                    "metadata": {
+                    metadata={
                         "task": self._tasks[0],
                         "execution_log": result.get("log", []),
                     },
-                }
-                agent_output_ref = result.get("_agent_output_ref")
-                if isinstance(agent_output_ref, str):
-                    output["agent_output"] = artifact_ref(agent_output_ref)
+                    agent_output=(
+                        artifact_ref(agent_output_ref)
+                        if isinstance(agent_output_ref, str)
+                        else None
+                    ),
+                )
             else:
                 # Batch execution for multiple tasks
                 results = asyncio.run(
@@ -309,51 +311,53 @@ class AgentExecutor(Executor):
                         }
                     )
 
-                output = {
-                    "ok": True,
-                    "model": agent_config_name,
-                    "items": items,
-                    "usage": {
+                batch_summary_ref = results.get("_batch_summary_ref")
+                output = AgentResult(
+                    model=agent_config_name,
+                    items=items,
+                    usage={
                         "execution_time_sec": results.get("usage", {}).get(
                             "execution_time_sec", 0
                         ),
                         "num_requests": len(self._tasks),
                         "agent_config": agent_config_name,
                     },
-                    "metadata": {
+                    metadata={
                         "tasks_count": len(self._tasks),
                         "execution_log": results.get("log", []),
                         "batch_summary": results.get("batch_summary", {}),
                     },
-                }
-                batch_summary_ref = results.get("_batch_summary_ref")
-                if isinstance(batch_summary_ref, str):
-                    output["batch_summary_file"] = artifact_ref(batch_summary_ref)
+                    batch_summary_file=(
+                        artifact_ref(batch_summary_ref)
+                        if isinstance(batch_summary_ref, str)
+                        else None
+                    ),
+                )
 
             maybe_upload_artifacts(task, out_dir, logger=logger)
 
             logger.info(f"Agent execution completed: {len(self._tasks)} task(s)")
-            return AgentResult.model_validate(output)
+            return output
 
         except ExecutionError:
             raise
         except Exception as e:
             logger.exception(f"Agent execution failed: {e}")
-            error_output = {
-                "ok": False,
-                "model": agent_config_name,
-                "items": [],
-                "usage": {
+            error_output = AgentResult(
+                ok=False,
+                model=agent_config_name,
+                items=[],
+                usage={
                     "execution_time_sec": 0,
                     "num_requests": len(self._tasks),
                     "agent_config": agent_config_name,
                 },
-                "metadata": {
+                metadata={
                     "tasks_count": len(self._tasks),
                     "error": str(e),
                     "execution_log": [],
                 },
-            }
+            )
             write_executor_result(
                 out_dir / "results.json", task.task_id, task.spec, error_output
             )

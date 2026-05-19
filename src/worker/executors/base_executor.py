@@ -27,7 +27,7 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any, TypeVar
 
-from shared.schemas.executor_result import BaseExecutorResult
+from shared.schemas.result import BaseExecutorResult
 from shared.tasks import MergedChildTaskStrict
 from shared.tasks.specs import TaskSpecStrictBase
 from shared.tasks.worker_message import WorkerHardware, WorkerTaskMessage
@@ -85,9 +85,7 @@ class Executor(ABC):
         return None
 
     @abstractmethod
-    def run(
-        self, task: ExecutorTask, out_dir: Path
-    ) -> BaseExecutorResult | dict[str, Any]:
+    def run(self, task: ExecutorTask, out_dir: Path) -> BaseExecutorResult:
         """Execute a single task.
 
         Args:
@@ -96,8 +94,7 @@ class Executor(ABC):
             if needed.
 
         Returns:
-            A ``BaseExecutorResult`` subclass instance (preferred) or a
-            JSON-serializable dictionary summarizing the result.
+            A ``BaseExecutorResult`` subclass instance.
 
         Raises:
             ExecutionError: for expected, user-facing failures.
@@ -143,13 +140,19 @@ class Executor(ABC):
 
 
 # -------- Minimal example implementation --------
+class EchoResult(BaseExecutorResult):
+    ok: bool = True
+    executor: str
+    task_id: str
+    task_type: str
+
+
 class EchoExecutor(Executor):
     name = "echo"
 
-    def run(self, task: ExecutorTask, out_dir: Path) -> dict[str, Any]:
-        return {
-            "ok": True,
-            "executor": self.name,
-            "task_id": task.task_id,
-            "task_type": task.spec.taskType,
-        }
+    def run(self, task: ExecutorTask, out_dir: Path) -> EchoResult:
+        return EchoResult(
+            executor=self.name,
+            task_id=task.task_id,
+            task_type=task.spec.taskType,
+        )

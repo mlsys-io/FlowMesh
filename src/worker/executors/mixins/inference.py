@@ -228,7 +228,7 @@ class InferenceMixin(DataMixin):
         self,
         spec: InferenceSpecStrict,
         task_id: str,
-        result: dict[str, Any],
+        items: list[dict[str, Any]],
         out_dir: Path,
     ) -> None:
         post_cfg = (postprocess := spec.postprocess) and postprocess.jsonl_export
@@ -260,7 +260,6 @@ class InferenceMixin(DataMixin):
             ) from exc
         target_path.parent.mkdir(parents=True, exist_ok=True)
 
-        items = result.get("items") or []
         required_fields = post_cfg.required_fields or []
         records: list[dict[str, Any]] = []
 

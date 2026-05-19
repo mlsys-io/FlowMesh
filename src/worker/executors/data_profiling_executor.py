@@ -8,7 +8,7 @@ import random
 from pathlib import Path
 from typing import Any
 
-from shared.schemas.executor_result import BaseExecutorResult
+from shared.schemas.result import BaseExecutorResult
 from shared.tasks.specs import DataProfilingSpecStrict
 from shared.utils.json import to_json_serializable, validate_keys
 

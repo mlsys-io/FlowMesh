@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 import yaml
 
-from shared.schemas.executor_result import BaseExecutorResult
+from shared.schemas.result import BaseExecutorResult
 from shared.tasks.specs import TaskSpecStrictBase
 from shared.utils.parsing import to_bool, to_int
 
@@ -43,7 +43,10 @@ logger = logging.getLogger(__name__)
 
 class OmniResult(BaseExecutorResult):
     ok: bool = True
-    model: str | None = None
+    executor: str
+    mode: str
+    model: str | None
+    items: list[dict[str, Any]]
 
 
 class OmniExecutorBase(InferenceMixin, Executor):
@@ -74,7 +77,7 @@ class OmniExecutorBase(InferenceMixin, Executor):
             result = self._run_inner(task, spec, spec_dict, out_dir)
         maybe_upload_artifacts(task, out_dir, logger=logger)
         maybe_upload_traces(task, out_dir, logger=logger)
-        return OmniResult.model_validate(result)
+        return result
 
     @abstractmethod
     def _run_inner(
@@ -83,7 +86,7 @@ class OmniExecutorBase(InferenceMixin, Executor):
         spec: TaskSpecStrictBase,
         spec_dict: dict[str, Any],
         out_dir: Path,
-    ) -> dict[str, Any]:
+    ) -> OmniResult:
         """Run the executor-specific body. ``spec`` is the concrete strict
         spec; subclasses ``assert isinstance(spec, ...)`` to narrow."""
         raise NotImplementedError

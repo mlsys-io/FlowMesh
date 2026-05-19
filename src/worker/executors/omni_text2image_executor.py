@@ -21,16 +21,23 @@ from shared.tasks.specs.omni import OmniText2ImageSpecStrict
 from shared.utils.parsing import as_list
 
 from .base_executor import ExecutionError, ExecutorTask
-from .omni_executor_base import OmniExecutorBase
+from .omni_executor_base import OmniExecutorBase, OmniResult
 from .utils.checkpoints import artifact_ref
 
 logger = logging.getLogger(__name__)
+EXECUTOR_NAME = "omni_text2image"
+
+
+class OmniText2ImageResult(OmniResult):
+    executor: str = EXECUTOR_NAME
+    mode: str = "image"
+    image: dict[str, Any]
 
 
 class OmniText2ImageExecutor(OmniExecutorBase):
     """Generate images using vllm_omni.Omni."""
 
-    name = "omni_text2image"
+    name = EXECUTOR_NAME
     _TASK_SPEC_TYPE = OmniText2ImageSpecStrict
 
     def prepare(self) -> None:
@@ -45,7 +52,7 @@ class OmniText2ImageExecutor(OmniExecutorBase):
         spec: TaskSpecStrictBase,
         spec_dict: dict[str, Any],
         out_dir: Path,
-    ) -> dict[str, Any]:
+    ) -> OmniText2ImageResult:
         assert isinstance(spec, OmniText2ImageSpecStrict)
         prompts = self._collect_text_inputs(spec, task.task_id)
 
@@ -92,16 +99,11 @@ class OmniText2ImageExecutor(OmniExecutorBase):
                     }
                 )
 
-        first = items[0]["image"] if items else {}
-        result: dict[str, Any] = {
-            "ok": True,
-            "executor": self.name,
-            "mode": "image",
-            "model": self._model_name,
-            "image": first,
-            "items": items,
-        }
-        return result
+        return OmniText2ImageResult(
+            model=self._model_name,
+            image=items[0]["image"] if items else {},
+            items=items,
+        )
 
     # ── model ────────────────────────────────────────────────────────────
 

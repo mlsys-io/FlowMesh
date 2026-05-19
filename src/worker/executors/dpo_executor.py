@@ -26,7 +26,7 @@ from trl.trainer.dpo_config import DPOConfig
 from trl.trainer.dpo_trainer import DPOTrainer
 
 from shared.schemas.artifact import ArtifactRef
-from shared.schemas.executor_result import BaseExecutorResult
+from shared.schemas.result import BaseExecutorResult
 from shared.tasks.specs import DPOSpecStrict
 from shared.utils.manifest import scratch_dir
 
@@ -110,9 +110,9 @@ class DPOExecutor(TrainingMixin, Executor):
             result = self._execute_training(task, out_dir)
             logger.info(
                 "DPO training task completed in %.2f seconds",
-                result.get("training_time_seconds", 0.0),
+                result.training_time_seconds or 0.0,
             )
-            return DPOResult.model_validate(result)
+            return result
         finally:
             self._task_out_dir = None
 
@@ -369,7 +369,7 @@ class DPOExecutor(TrainingMixin, Executor):
 
         return dataset  # type: ignore[return-value]
 
-    def _execute_training(self, task: ExecutorTask, out_dir: Path) -> dict[str, Any]:
+    def _execute_training(self, task: ExecutorTask, out_dir: Path) -> DPOResult:
         spec = self.require_spec(task, DPOSpecStrict)
         training_config = spec.training or {}
         artifacts_dir = out_dir / "artifacts"
@@ -477,21 +477,21 @@ class DPOExecutor(TrainingMixin, Executor):
                     logger.warning("Failed to save model: %s", exc)
 
             training_time = time.time() - start_time
-            results: dict[str, Any] = {
-                "training_successful": True,
-                "training_time_seconds": training_time,
-                "error_message": None,
-                "model_name": self._model_name,
-                "dataset_size": len(dataset),
-                "output_dir": out_dir.as_posix(),
-                "checkpoints_dir": artifact_ref("checkpoints"),
-            }
+            result = DPOResult(
+                training_successful=True,
+                training_time_seconds=training_time,
+                error_message=None,
+                model_name=self._model_name,
+                dataset_size=len(dataset) if dataset is not None else 0,
+                output_dir=out_dir.as_posix(),
+                checkpoints_dir=artifact_ref("checkpoints"),
+            )
             if final_model_path is not None:
-                results["final_model"] = artifact_ref(
+                result.final_model = artifact_ref(
                     final_model_path.relative_to(artifacts_dir).as_posix()
                 )
             if final_archive_path is not None:
-                results["final_model_archive"] = artifact_ref(
+                result.final_model_archive = artifact_ref(
                     final_archive_path.relative_to(artifacts_dir).as_posix()
                 )
 
@@ -503,24 +503,22 @@ class DPOExecutor(TrainingMixin, Executor):
                 final_model_path,
                 final_archive_path,
             )
-            return results
+            return result
         except Exception as exc:
             training_time = time.time() - start_time
-            results = {
-                "training_successful": False,
-                "training_time_seconds": training_time,
-                "error_message": str(exc),
-                "model_name": self._model_name,
-                "dataset_size": len(dataset) if dataset is not None else 0,
-                "output_dir": out_dir.as_posix(),
-            }
+            result = DPOResult(
+                training_successful=False,
+                training_time_seconds=training_time,
+                error_message=str(exc),
+                model_name=self._model_name,
+                dataset_size=len(dataset) if dataset is not None else 0,
+                output_dir=out_dir.as_posix(),
+            )
             write_executor_result(
-                out_dir / "results.json", task.task_id, task.spec, results
+                out_dir / "results.json", task.task_id, task.spec, result
             )
             logger.exception("DPO training failed: %s", exc)
-            raise ExecutionError(
-                results["error_message"] or "DPO training failed"
-            ) from exc
+            raise ExecutionError(result.error_message or "DPO training failed") from exc
 
     def _spawn_distributed(
         self,

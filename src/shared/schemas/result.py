@@ -1,20 +1,47 @@
 """Result envelope schema shared by server and worker."""
 
+# This is necessary to allow for the recursive type hint of `children` in
+# `BaseExecutorResult`.
+from __future__ import annotations
+
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, SerializeAsAny
 
 from shared.utils.atomic import atomic_write_text
 from shared.utils.manifest import prepare_output_dir
 from shared.utils.time import now_iso
 
-from .executor_result import BaseExecutorResult
+from .artifact import ArtifactContext
+
+
+class BaseExecutorResult(BaseModel):
+    """Common shape for every executor's result payload.
+
+    ``extra="allow"`` lets the server round-trip subclass payloads through
+    this base class without losing executor-specific fields.
+    """
+
+    model_config = ConfigDict(extra="allow", serialize_by_alias=True)
+
+    children: dict[str, SerializeAsAny[BaseExecutorResult]] = Field(
+        default_factory=dict,
+        exclude_if=lambda v: not v,
+        description="Per-child result payloads for task merging.",
+    )
+    artifacts: ArtifactContext | None = Field(
+        default=None,
+        alias="_artifacts",
+        description="Resolution context for relative artifact refs.",
+    )
 
 
 class ResultEnvelope(BaseModel):
     task_id: str = Field(description="Task identifier.")
-    result: BaseExecutorResult = Field(description="Result payload data.")
+    result: SerializeAsAny[BaseExecutorResult] = Field(
+        description="Result payload data."
+    )
     worker_id: str | None = Field(
         default=None, description="Worker identifier submitting the result."
     )
@@ -40,17 +67,6 @@ def write_result(base_dir: Path, envelope: ResultEnvelope) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     atomic_write_text(path, envelope.model_dump_json(indent=2))
     return path
-
-
-def write_result_in_envelope(
-    path: Path, task_id: str, result: BaseExecutorResult | dict[str, Any]
-) -> None:
-    """Wrap ``result`` in a ``ResultEnvelope`` and persist it at ``path``."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if isinstance(result, dict):
-        result = BaseExecutorResult.model_validate(result)
-    envelope = ResultEnvelope(task_id=task_id, result=result)
-    atomic_write_text(path, envelope.model_dump_json(indent=2, serialize_as_any=True))
 
 
 def read_result(base_dir: Path, task_id: str) -> str:

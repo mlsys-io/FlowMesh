@@ -16,7 +16,7 @@ from urllib.parse import urlparse
 from datasets import load_dataset
 from qdrant_client import QdrantClient, models
 
-from shared.schemas.executor_result import BaseExecutorResult
+from shared.schemas.result import BaseExecutorResult
 from shared.tasks.specs import RagSpecStrict
 
 from .base_executor import ExecutionError, Executor, ExecutorTask

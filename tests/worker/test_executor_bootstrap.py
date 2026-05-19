@@ -10,6 +10,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from shared.schemas.result import BaseExecutorResult
 from tests.worker.factories import make_live_worker_config, make_worker_hardware
 from worker.executors.base_executor import Executor, ExecutorTask
 from worker.main import initialize_executors
@@ -23,8 +24,8 @@ class _PassthroughExecutor(Executor):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
 
-    def run(self, task: ExecutorTask, out_dir: Path) -> dict[str, Any]:  # noqa: D401
-        return {"ok": True}
+    def run(self, task: ExecutorTask, out_dir: Path) -> BaseExecutorResult:
+        return BaseExecutorResult.model_validate({"ok": True})
 
 
 class TestInitializeExecutorsHardware:

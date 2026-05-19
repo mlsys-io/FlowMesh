@@ -10,7 +10,7 @@ from typing import Any
 
 import requests
 
-from shared.schemas.executor_result import BaseExecutorResult
+from shared.schemas.result import BaseExecutorResult
 from shared.tasks import MergedChildTaskStrict
 from shared.tasks.specs import InferenceSpecStrict, TaskSpecStrictBase
 from shared.tasks.worker_message import (
@@ -128,7 +128,7 @@ class Runner:
         spec: TaskSpecStrictBase,
         merged_children: list[MergedChildTaskStrict],
         out_dir: Path,
-        result: BaseExecutorResult | dict[str, Any] | None,
+        result: BaseExecutorResult | None,
     ):
         if result is None:
             return
@@ -153,7 +153,7 @@ class Runner:
         task_id: str,
         spec: TaskSpecStrictBase,
         out_dir: Path,
-        payload: BaseExecutorResult | dict[str, Any] | None,
+        payload: BaseExecutorResult | None,
     ):
         if payload is None:
             return
@@ -181,10 +181,7 @@ class Runner:
         time.sleep(delay)
 
     def _maybe_emit_http(
-        self,
-        task_id: str,
-        spec: TaskSpecStrictBase,
-        result: BaseExecutorResult | dict[str, Any],
+        self, task_id: str, spec: TaskSpecStrictBase, result: BaseExecutorResult
     ) -> None:
         """Send task results to an HTTP endpoint when requested by the spec."""
         destination = get_http_destination(spec)
@@ -193,14 +190,9 @@ class Runner:
 
         url = destination.url
         ignore_error = destination.ignore_error
-        result_dict = (
-            result.model_dump(serialize_as_any=True)
-            if isinstance(result, BaseExecutorResult)
-            else result
-        )
         payload = {
             "task_id": task_id,
-            "result": result_dict,
+            "result": result.model_dump(),
             "worker_id": self.lifecycle.worker_id,
         }
         payload_size = len(json.dumps(payload, ensure_ascii=False).encode("utf-8"))

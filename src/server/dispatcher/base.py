@@ -9,13 +9,18 @@ from typing import Any
 from pydantic import BaseModel, ValidationError
 
 from shared.schemas.event import TaskEvent
-from shared.schemas.executor_result import BaseExecutorResult
-from shared.schemas.result import ResultEnvelope, result_file_path, write_result
+from shared.schemas.result import (
+    BaseExecutorResult,
+    ResultEnvelope,
+    result_file_path,
+    write_result,
+)
 from shared.tasks import (
     MergedChildTaskStrict,
     TaskEnvelope,
     TaskEnvelopeStrict,
     TaskEnvelopeTemplate,
+    TaskSpecStrict,
 )
 from shared.tasks.placeholders import PLACEHOLDER_PATTERN
 from shared.tasks.specs import (
@@ -708,7 +713,7 @@ class Dispatcher:
         self, task_id: str, task: TaskEnvelopeTemplate, record: TaskRecord
     ) -> TaskEnvelopeStrict:
         context = self._build_stage_context(record)
-        resolved_task = task
+        resolved_task: TaskEnvelopeTemplate = task
         if context and task.has_placeholder():
             resolved_task = self._resolve_placeholders(task, context)
 
@@ -717,7 +722,7 @@ class Dispatcher:
         )
         if upstream_results:
             existing = resolved_task.spec.upstreamResults or {}
-            merged: dict[str, Any] = {}
+            merged: dict[str, BaseExecutorResult] = {}
             if isinstance(existing, dict):
                 merged.update(copy.deepcopy(existing))
             merged.update(upstream_results)
@@ -731,7 +736,7 @@ class Dispatcher:
 
         return TaskEnvelopeStrict.model_validate(resolved_task)
 
-    def _resolve_placeholders(self, value: Any, context: dict[str, Any]) -> Any:
+    def _resolve_placeholders(self, value: Any, context: dict[str, TaskRecord]) -> Any:
         if isinstance(value, str):
             exact = PLACEHOLDER_PATTERN.fullmatch(value)
             if exact:
@@ -815,7 +820,7 @@ class Dispatcher:
             keys.append(record.graph_node_name)
         return tuple(keys)
 
-    def _resolve_reference(self, expr: str, context: dict[str, Any]) -> Any:
+    def _resolve_reference(self, expr: str, context: dict[str, TaskRecord]) -> Any:
         expr = expr.strip()
         if not expr:
             raise ValueError("Empty stage reference")
@@ -832,49 +837,47 @@ class Dispatcher:
             return stage_record.task_id
         if stage_record.status != "DONE":
             raise StageReferenceNotReady(f"Stage '{stage_name}' has not completed")
-        data = self._load_stage_result(stage_record.task_id)
-        value = self._dig_path(data, path.split("."))
+        envelope = self._load_stage_result(stage_record.task_id)
+        value = self._dig_path(envelope.result, path.split("."))
         if value is None:
             raise ValueError(f"Missing value for reference '{expr}'")
         # If the referenced value is an artifact ref ({path: "..."}), render
         # it as a full URL (when base_url is set) or an absolute filesystem
         # path using the producing stage's top-level _artifacts context.
-        if rendered := self._render_artifact_ref(value, data):
+        if rendered := self._render_artifact_ref(value, envelope):
             return rendered
         return value
 
     @staticmethod
-    def _render_artifact_ref(value: Any, stage_result: Any) -> str | None:
+    def _render_artifact_ref(value: Any, stage_result: ResultEnvelope) -> str | None:
         if not isinstance(value, dict):
             return None
         path_value = value.get("path")
         if not isinstance(path_value, str) or not path_value:
             return None
-        if not isinstance(stage_result, dict):
+        ctx = stage_result.result.artifacts
+        if ctx is None:
             return None
-        ctx = stage_result.get("_artifacts")
-        if not isinstance(ctx, dict):
-            return None
-        base_url = ctx.get("base_url")
-        base_dir = ctx.get("base_dir")
-        if isinstance(base_url, str) and base_url and isinstance(base_dir, str):
+        base_url = ctx.base_url
+        base_dir = ctx.base_dir
+        if base_url and base_dir:
             task_id = Path(base_dir).name
             return f"{base_url.rstrip('/')}/api/v1/results/{task_id}/files/{path_value}"
-        if isinstance(base_dir, str) and base_dir:
+        if base_dir:
             return (Path(base_dir) / "artifacts" / path_value).as_posix()
         return None
 
     def _collect_upstream_results(
         self, context: dict[str, TaskRecord], current_task_id: str
-    ) -> dict[str, Any]:
-        results: dict[str, Any] = {}
+    ) -> dict[str, BaseExecutorResult]:
+        results: dict[str, BaseExecutorResult] = {}
         for name, record in context.items():
             if not record or record.task_id == current_task_id:
                 continue
             if record.status != TaskStatus.DONE:
                 continue
             try:
-                data = self._load_stage_result(record.task_id)
+                envelope = self._load_stage_result(record.task_id)
             except StageReferenceNotReady as exc:
                 raise exc
             except Exception as exc:
@@ -885,11 +888,11 @@ class Dispatcher:
                     exc,
                 )
                 continue
-            results[name] = data
+            results[name] = envelope.result
         return results
 
     def _resolve_upstream_task_ids(
-        self, record: TaskRecord, spec: Any
+        self, record: TaskRecord, spec: TaskSpecStrict
     ) -> dict[str, str] | None:
         if not isinstance(spec, SSHSpecStrict) or not spec.inputs:
             return None
@@ -916,16 +919,14 @@ class Dispatcher:
             resolved[stage_name] = upstream.task_id
         return resolved or None
 
-    def _load_stage_result(self, stage_task_id: str) -> dict[str, Any]:
+    def _load_stage_result(self, stage_task_id: str) -> ResultEnvelope:
         path = result_file_path(self._results_dir, stage_task_id)
         if not path.exists():
             raise StageReferenceNotReady(
                 f"Result for task {stage_task_id} not found at {path}"
             )
         content = json.loads(path.read_text(encoding="utf-8"))
-        return ResultEnvelope.model_validate(content).result.model_dump(
-            serialize_as_any=True
-        )
+        return ResultEnvelope.model_validate(content)
 
     def _dig_path(self, data: Any, parts: list[str]) -> Any:
         current = data
@@ -948,6 +949,11 @@ class Dispatcher:
                 if idx < 0 or idx >= len(current):
                     return None
                 current = current[idx]
+                continue
+            if isinstance(current, BaseModel):
+                if not hasattr(current, part):
+                    return None
+                current = getattr(current, part)
                 continue
             return None
         return current
