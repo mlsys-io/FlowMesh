@@ -24,10 +24,9 @@ Helper utilities live in `src/worker/executors/utils/` (`artifacts`,
 
 ## Result schema
 
-Every executor's `run()` returns a typed Pydantic subclass of
-`BaseExecutorResult` (`src/shared/schemas/executor_result.py`). The base
-class carries the cross-cutting fields the rest of the runtime relies
-on:
+Every executor's `run()` returns a subclass of `BaseExecutorResult`
+(`src/shared/schemas/result.py`). The base class carries two
+cross-cutting fields:
 
 - `children: dict[str, BaseExecutorResult]` — per-child results when
   merged tasks share a dispatch.
@@ -39,15 +38,9 @@ Per-executor subclasses live next to the executor they describe — e.g.
 `src/worker/executors/lora_sft_executor.py`. They add executor-specific
 fields (`items`, `usage`, `final_lora`, `command`, …).
 
-The base class is `extra="allow"`, so the server can deserialize an
-incoming envelope as `BaseExecutorResult` without knowing the concrete
-subclass; the executor-specific fields pass through. Artifact-bearing
-fields use `ArtifactRef` (`{"path": rel_path}`); relative paths resolve
-against the producer's `_artifacts` context via
+Artifact-bearing fields use `ArtifactRef` (`{"path": rel_path}`);
+relative paths resolve against the producer's `_artifacts` context via
 `artifact_to_source` / `_render_artifact_ref`.
-
-Serializers at the wire seam pass `serialize_as_any=True` so subclass
-fields survive the round-trip.
 
 ## Agent executor (utu / youtu-agent)
 
