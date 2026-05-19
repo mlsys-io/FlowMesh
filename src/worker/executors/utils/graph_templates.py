@@ -15,7 +15,7 @@ from ...utils.serialization import try_deserialize_dataframe
 from ..base_executor import ExecutionError
 from .safe_eval import safe_execute_function, safe_materialize_function
 
-_MISSING: Any = object()
+_SENTINEL: Any = object()
 
 type MessageItem = dict[str, str]
 type Message = Sequence[MessageItem]
@@ -622,8 +622,8 @@ def _evaluate_expr(expr: str, context: dict[str, BaseExecutorResult]) -> Any:
                     )
                 value = value[attr].tolist()
             elif isinstance(value, BaseModel):
-                resolved = getattr(value, attr, _MISSING)
-                if resolved is _MISSING:
+                resolved = getattr(value, attr, _SENTINEL)
+                if resolved is _SENTINEL:
                     raise ExecutionError(
                         f"{attr} not a valid attribute of {type(value).__name__} "
                         f"for {token}."

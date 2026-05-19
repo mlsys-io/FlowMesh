@@ -38,6 +38,8 @@ from ..task.runtime import TaskRuntime
 from ..utils.time import now_iso
 from .worker_selector import DEFAULT_WORKER_SELECTION, select_worker
 
+_SENTINEL: Any = object()
+
 
 class StageReferenceNotReady(Exception):
     """Raised when a task references a stage whose artifacts are not yet available."""
@@ -951,9 +953,9 @@ class Dispatcher:
                 current = current[idx]
                 continue
             if isinstance(current, BaseModel):
-                if not hasattr(current, part):
+                current = getattr(current, part, _SENTINEL)
+                if current is _SENTINEL:
                     return None
-                current = getattr(current, part)
                 continue
             return None
         return current
