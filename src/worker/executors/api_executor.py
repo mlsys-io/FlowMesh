@@ -19,7 +19,6 @@ _ClientKey = tuple[str, float, bool, bool]
 
 
 class APIResult(BaseExecutorResult):
-    ok: bool = True
     executor: str
     method: str
     url: str

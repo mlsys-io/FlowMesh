@@ -45,7 +45,6 @@ logger = logging.getLogger("worker.sft")
 
 
 class SFTResult(BaseExecutorResult):
-    training_successful: bool = True
     training_time_seconds: float | None = None
     error_message: str | None = None
     model_name: str | None = None
@@ -75,7 +74,7 @@ class SFTExecutor(TrainingMixin, Executor):
         spec = self.require_spec(task, SFTSpecStrict)
         requested_gpu_count = self._requested_gpu_count(spec)
         start_time = time.time()
-        training_successful = False
+        ok = False
         error_msg: str | None = None
         caught_exc: Exception | None = None
         self._task_out_dir = out_dir
@@ -208,7 +207,6 @@ class SFTExecutor(TrainingMixin, Executor):
                     return SFTResult.model_validate(self.load_json(ipc_path))
                 self._task_out_dir = None
                 return SFTResult(
-                    training_successful=True,
                     spawned_torchrun=True,
                     model_name=spec.model_name,
                     output_dir=out_dir.as_posix(),
@@ -410,7 +408,7 @@ class SFTExecutor(TrainingMixin, Executor):
 
             logger.info("Starting supervised fine-tuning")
             trainer.train()
-            training_successful = True
+            ok = True
             logger.info("Training finished")
 
             final_model_path: Path | None = None
@@ -456,7 +454,7 @@ class SFTExecutor(TrainingMixin, Executor):
                     else None
                 )
             result = SFTResult(
-                training_successful=training_successful,
+                ok=ok,
                 training_time_seconds=training_time,
                 error_message=error_msg,
                 model_name=self._model_name,
@@ -492,7 +490,7 @@ class SFTExecutor(TrainingMixin, Executor):
 
         except Exception as exc:
             error_msg = str(exc)
-            training_successful = False
+            ok = False
             caught_exc = exc
             logger.exception("SFT training failed: %s", exc)
             trainer = None
@@ -506,7 +504,7 @@ class SFTExecutor(TrainingMixin, Executor):
 
         training_time = time.time() - start_time
         result = SFTResult(
-            training_successful=training_successful,
+            ok=ok,
             training_time_seconds=training_time,
             error_message=error_msg,
             model_name=self._model_name,

@@ -42,7 +42,6 @@ logger = logging.getLogger(__name__)
 
 
 class OmniResult(BaseExecutorResult):
-    ok: bool = True
     executor: str
     mode: str
     model: str | None

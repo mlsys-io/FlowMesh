@@ -27,7 +27,6 @@ EXECUTOR_NAME = "rag"
 
 
 class RAGResult(BaseExecutorResult):
-    ok: bool = True
     executor: str = EXECUTOR_NAME
     qdrant: dict[str, Any]
     embedding: dict[str, Any]

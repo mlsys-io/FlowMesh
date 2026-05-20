@@ -26,7 +26,6 @@ logger = logging.getLogger(__name__)
 
 
 class DataRetrievalResult(BaseExecutorResult):
-    ok: bool = True
     type: str | None = None
     items: list[dict[str, Any]] = []
     count: int | None = None

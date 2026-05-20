@@ -25,6 +25,7 @@ class BaseExecutorResult(BaseModel):
 
     model_config = ConfigDict(extra="allow", serialize_by_alias=True)
 
+    ok: bool = Field(default=True, description="Whether task execution succeeded.")
     children: dict[str, SerializeAsAny[BaseExecutorResult]] = Field(
         default_factory=dict,
         exclude_if=lambda v: not v,

@@ -47,7 +47,6 @@ logger = logging.getLogger("worker.dpo")
 
 
 class DPOResult(BaseExecutorResult):
-    training_successful: bool = True
     training_time_seconds: float | None = None
     error_message: str | None = None
     model_name: str | None = None
@@ -96,7 +95,6 @@ class DPOExecutor(TrainingMixin, Executor):
                 if ipc_path.exists():
                     return DPOResult.model_validate(self.load_json(ipc_path))
                 return DPOResult(
-                    training_successful=True,
                     spawned_torchrun=True,
                     model_name=(
                         spec.model.source.identifier
@@ -477,7 +475,6 @@ class DPOExecutor(TrainingMixin, Executor):
 
             training_time = time.time() - start_time
             result = DPOResult(
-                training_successful=True,
                 training_time_seconds=training_time,
                 error_message=None,
                 model_name=self._model_name,
@@ -512,7 +509,7 @@ class DPOExecutor(TrainingMixin, Executor):
         except Exception as exc:
             training_time = time.time() - start_time
             result = DPOResult(
-                training_successful=False,
+                ok=False,
                 training_time_seconds=training_time,
                 error_message=str(exc),
                 model_name=self._model_name,

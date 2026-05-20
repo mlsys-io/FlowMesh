@@ -50,7 +50,6 @@ logger = logging.getLogger("worker.sft.lora")
 
 
 class LoRAResult(BaseExecutorResult):
-    training_successful: bool = True
     training_time_seconds: float | None = None
     error_message: str | None = None
     model_name: str | None = None
@@ -77,7 +76,7 @@ class LoRASFTExecutor(TrainingMixin, Executor):
         configure_hf_library_logging()
         spec = self.require_spec(task, LoRASFTSpecStrict)
         start_time = time.time()
-        training_successful = False
+        ok = False
         error_msg: str | None = None
 
         if (
@@ -291,7 +290,7 @@ class LoRASFTExecutor(TrainingMixin, Executor):
 
             logger.info("Starting LoRA supervised fine-tuning run")
             trainer.train()
-            training_successful = True
+            ok = True
             logger.info("LoRA SFT training completed")
 
             final_adapter_path: Path | None = None
@@ -316,7 +315,7 @@ class LoRASFTExecutor(TrainingMixin, Executor):
                 )
                 logger.info("Prepared LoRA archive at %s", archive_path)
             result = LoRAResult(
-                training_successful=training_successful,
+                ok=ok,
                 training_time_seconds=training_time,
                 error_message=error_msg,
                 model_name=self._model_name,
@@ -340,13 +339,13 @@ class LoRASFTExecutor(TrainingMixin, Executor):
 
         except Exception as exc:  # pylint: disable=broad-except
             error_msg = str(exc)
-            training_successful = False
+            ok = False
             logger.exception("LoRA SFT training failed: %s", exc)
 
         training_time = time.time() - start_time
 
         result = LoRAResult(
-            training_successful=training_successful,
+            ok=ok,
             training_time_seconds=training_time,
             error_message=error_msg,
             model_name=self._model_name,
@@ -356,7 +355,7 @@ class LoRASFTExecutor(TrainingMixin, Executor):
             resume_from_path=resume_path.as_posix() if resume_path else None,
         )
 
-        if training_successful:
+        if ok:
             return result
 
         write_executor_result(out_dir / "results.json", task.task_id, task.spec, result)

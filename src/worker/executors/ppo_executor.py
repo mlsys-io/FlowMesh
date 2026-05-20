@@ -53,7 +53,6 @@ logger = logging.getLogger("worker.ppo")
 
 
 class PPOResult(BaseExecutorResult):
-    training_successful: bool = True
     training_time_seconds: float | None = None
     error_message: str | None = None
     model_name: str | None = None
@@ -433,7 +432,6 @@ class PPOExecutor(TrainingMixin, Executor):
                 return PPOResult.model_validate(self.load_json(ipc_path))
             self._task_out_dir = None
             return PPOResult(
-                training_successful=True,
                 spawned_torchrun=True,
                 model_name=spec.model_name,
                 output_dir=out_dir.as_posix(),
@@ -863,7 +861,7 @@ class PPOExecutor(TrainingMixin, Executor):
                 pass
             logger.info("PPO training completed")
 
-            training_successful = True
+            ok = True
             error_msg = None
 
             # Save model if requested
@@ -891,13 +889,13 @@ class PPOExecutor(TrainingMixin, Executor):
                     logger.warning("Failed to save model: %s", exc)
 
         except Exception as exc:
-            training_successful = False
+            ok = False
             error_msg = str(exc)
             logger.exception("PPO training failed: %s", exc)
             training_time = time.time() - start_time
             dataset_size = len(dataset) if "dataset" in locals() else 0  # type: ignore
             result = PPOResult(
-                training_successful=training_successful,
+                ok=ok,
                 training_time_seconds=training_time,
                 error_message=error_msg,
                 model_name=self._model_name,
@@ -913,7 +911,7 @@ class PPOExecutor(TrainingMixin, Executor):
         training_time = time.time() - start_time
 
         result = PPOResult(
-            training_successful=training_successful,
+            ok=ok,
             training_time_seconds=training_time,
             error_message=error_msg,
             model_name=self._model_name,

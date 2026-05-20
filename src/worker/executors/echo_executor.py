@@ -16,7 +16,6 @@ type EchoItem = str | dict[str, str]
 
 
 class EchoResult(BaseExecutorResult):
-    ok: bool = True
     items: list[dict[str, Any]] = []
     count: int = 0
 
