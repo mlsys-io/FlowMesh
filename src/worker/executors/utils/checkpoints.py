@@ -414,7 +414,7 @@ def write_executor_result(
 ) -> None:
     """Stamp ``_artifacts`` onto ``result`` and persist the envelope."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    result.artifacts = build_artifact_context(spec, path.parent)
+    result.artifacts_ = build_artifact_context(spec, path.parent)
     envelope = ResultEnvelope(task_id=task_id, result=result)
     atomic_write_text(path, envelope.model_dump_json(indent=2))
 

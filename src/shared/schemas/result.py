@@ -31,11 +31,20 @@ class BaseExecutorResult(BaseModel):
         exclude_if=lambda v: not v,
         description="Per-child result payloads for task merging.",
     )
-    artifacts: ArtifactContext | None = Field(
+    artifacts_: ArtifactContext | None = Field(
         default=None,
         alias="_artifacts",
         description="Resolution context for relative artifact refs.",
     )
+
+    @classmethod
+    def __pydantic_init_subclass__(cls, **kwargs: Any) -> None:
+        super().__pydantic_init_subclass__(**kwargs)
+        if "artifacts_" in cls.__annotations__:
+            raise TypeError(
+                f"{cls.__name__} may not redefine the internal "
+                "BaseExecutorResult.artifacts_ field"
+            )
 
 
 class ResultEnvelope(BaseModel):

@@ -23,7 +23,16 @@ class BaseExecutorResult(BaseModel):
     children: dict[str, SerializeAsAny[BaseExecutorResult]] = Field(
         default_factory=dict, exclude_if=lambda v: not v
     )
-    artifacts: ArtifactContext | None = Field(default=None, alias="_artifacts")
+    artifacts_: ArtifactContext | None = Field(default=None, alias="_artifacts")
+
+    @classmethod
+    def __pydantic_init_subclass__(cls, **kwargs: Any) -> None:
+        super().__pydantic_init_subclass__(**kwargs)
+        if "artifacts_" in cls.__annotations__:
+            raise TypeError(
+                f"{cls.__name__} may not redefine the internal "
+                "BaseExecutorResult.artifacts_ field"
+            )
 
 
 class ResultEnvelope(BaseModel):

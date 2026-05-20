@@ -24,7 +24,7 @@ def artifact_to_source(
         context
         and node
         and (node_result := context.get(node))
-        and (ctx := node_result.artifacts)
+        and (ctx := node_result.artifacts_)
     ):
         base_url = ctx.base_url
         base_dir = ctx.base_dir

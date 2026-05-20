@@ -857,7 +857,7 @@ class Dispatcher:
         path_value = value.get("path")
         if not isinstance(path_value, str) or not path_value:
             return None
-        ctx = stage_result.result.artifacts
+        ctx = stage_result.result.artifacts_
         if ctx is None:
             return None
         base_url = ctx.base_url
