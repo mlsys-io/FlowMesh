@@ -2,19 +2,23 @@
 Executor base class and a minimal example implementation.
 
 Usage:
-    from executor_base import Executor, ExecutionError, EchoExecutor
+    from shared.schemas.result import BaseExecutorResult
+    from worker.executors.base_executor import Executor, ExecutionError
+
+    class MyResult(BaseExecutorResult):
+        echo: str
 
     class MyExecutor(Executor):
         name = "my-executor"
-        def run(self, task: ExecutorTask, out_dir: Path) -> dict:
+        def run(self, task: ExecutorTask, out_dir: Path) -> MyResult:
             # ... your logic ...
-            return {"ok": True, "echo": task.task_id}
+            return MyResult(echo=task.task_id)
 
 Contract:
-- Implement `run(task: ExecutorTask, out_dir: Path) -> dict`. The runner
-  writes the returned dict to `out_dir/results.json` and injects the
-  top-level `_artifacts` context — executors should not write that file
-  themselves on the success path.
+- Implement `run(task: ExecutorTask, out_dir: Path) -> BaseExecutorResult`.
+  The runner writes the returned model to `out_dir/results.json` and
+  injects the top-level `_artifacts` context — executors should not write
+  that file themselves on the success path.
 - Drop generated files under `out_dir/artifacts/` (uploaded to the server
   when the task has an HTTP destination) or `scratch_dir(out_dir)` for
   local-only scratch data.
