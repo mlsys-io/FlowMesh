@@ -3,7 +3,9 @@
 FlowMesh-specific plugin extension surface. Carries the pieces FlowMesh adds
 on top of [`lumid-hooks`](https://github.com/mlsys-io/lumid.hooks):
 
-- `HookBindings` — concrete dataclass with FlowMesh's six fields (the five
+- `HookBindings` — runtime-checkable Protocol extending the shared one with
+  `supplier_resolvers`, used by the server's plugin gate.
+- `BaseBindings` — frozen dataclass with FlowMesh's six fields (the five
   shared from `lumid-hooks` plus `supplier_resolvers`).
 - `ResourceKind` / `ResourceAction` — FlowMesh resource and action enums.
 - `SupplierResolver` / `WorkerView` — supplier attribution at dispatch time.
