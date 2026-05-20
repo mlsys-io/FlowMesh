@@ -105,6 +105,28 @@ jobs:
             --ignore-vuln GHSA-vfmq-68hx-4jfw \
             --ignore-vuln GHSA-j7w6-vpvq-j3gm \
             --ignore-vuln GHSA-98h9-4798-4q5v \
+            --ignore-vuln PYSEC-2025-189 \
+            --ignore-vuln PYSEC-2025-190 \
+            --ignore-vuln PYSEC-2025-191 \
+            --ignore-vuln PYSEC-2025-192 \
+            --ignore-vuln PYSEC-2025-193 \
+            --ignore-vuln PYSEC-2025-194 \
+            --ignore-vuln PYSEC-2025-195 \
+            --ignore-vuln PYSEC-2025-196 \
+            --ignore-vuln PYSEC-2025-197 \
+            --ignore-vuln PYSEC-2025-210 \
+            --ignore-vuln PYSEC-2026-139 \
+            --ignore-vuln PYSEC-2025-211 \
+            --ignore-vuln PYSEC-2025-212 \
+            --ignore-vuln PYSEC-2025-213 \
+            --ignore-vuln PYSEC-2025-214 \
+            --ignore-vuln PYSEC-2025-215 \
+            --ignore-vuln PYSEC-2025-216 \
+            --ignore-vuln PYSEC-2025-217 \
+            --ignore-vuln PYSEC-2025-218 \
+            --ignore-vuln PYSEC-2026-97 \
+            --ignore-vuln PYSEC-2025-183 \
+            --ignore-vuln PYSEC-2024-277 \
             -r /tmp/requirements-worker-cpu-audit.txt
       - name: Run pip-audit (worker GPU delta)  # no --strict: flashinfer-jit-cache is unauditable on PyPI
         run: |
@@ -130,4 +152,26 @@ jobs:
             --ignore-vuln GHSA-83vm-p52w-f9pw \
             --ignore-vuln GHSA-j7w6-vpvq-j3gm \
             --ignore-vuln GHSA-98h9-4798-4q5v \
+            --ignore-vuln PYSEC-2025-189 \
+            --ignore-vuln PYSEC-2025-190 \
+            --ignore-vuln PYSEC-2025-191 \
+            --ignore-vuln PYSEC-2025-192 \
+            --ignore-vuln PYSEC-2025-193 \
+            --ignore-vuln PYSEC-2025-194 \
+            --ignore-vuln PYSEC-2025-195 \
+            --ignore-vuln PYSEC-2025-196 \
+            --ignore-vuln PYSEC-2025-197 \
+            --ignore-vuln PYSEC-2025-210 \
+            --ignore-vuln PYSEC-2026-139 \
+            --ignore-vuln PYSEC-2025-211 \
+            --ignore-vuln PYSEC-2025-212 \
+            --ignore-vuln PYSEC-2025-213 \
+            --ignore-vuln PYSEC-2025-214 \
+            --ignore-vuln PYSEC-2025-215 \
+            --ignore-vuln PYSEC-2025-216 \
+            --ignore-vuln PYSEC-2025-217 \
+            --ignore-vuln PYSEC-2025-218 \
+            --ignore-vuln PYSEC-2026-97 \
+            --ignore-vuln PYSEC-2025-183 \
+            --ignore-vuln PYSEC-2024-277 \
             -r src/worker/requirements/requirements.gpu.txt

@@ -89,13 +89,13 @@ CI runs `pip-audit` against each generated requirements file
 When pip-audit reports a new CVE, the only real fix is to bump the
 offending dep in `pyproject.toml`, then `uv lock` and `uv run
 scripts/dev/sync_requirements.py --write`. Silencing via `--ignore-vuln`
-is a last resort; every silenced GHSA needs a written upgrade-blocker.
-The currently-ignored advisories and the upgrade blocker that justifies
-each are listed below; the same list is encoded as `--ignore-vuln`
-flags in `.github/workflows/security.yml`.
+is a last resort; every silenced advisory needs a written
+upgrade-blocker. The currently-ignored advisories and the upgrade
+blocker that justifies each are listed below; the same list is encoded
+as `--ignore-vuln` flags in `.github/workflows/security.yml`.
 
-| GHSA | Package | Fix version | Why ignored |
-|------|---------|-------------|-------------|
+| Advisory | Package | Fix version | Why ignored |
+|----------|---------|-------------|-------------|
 | GHSA-69w3-r845-3855 | transformers | 5.0.0rc3 | held by vllm/vllm-omni 0.18 compatibility |
 | GHSA-pf3h-qjgv-vcpr | vllm | 0.19.0 | held by transformers 4.57 + adjacent inference deps |
 | GHSA-pq5c-rjhq-qp7p | vllm | 0.19.0 | same |
@@ -117,6 +117,28 @@ flags in `.github/workflows/security.yml`.
 | GHSA-w8v5-vhqr-4h9v | diskcache | (none) | upstream unmaintained, no fixed version published |
 | GHSA-j7w6-vpvq-j3gm | diffusers | 0.38.0 | fix requires safetensors>=0.8.0rc0 pre-release; uv lock won't pick up pre-releases without explicit opt-in |
 | GHSA-98h9-4798-4q5v | diffusers | 0.38.0 | same blocker as GHSA-j7w6-vpvq-j3gm — both fixed in 0.38.0 |
+| PYSEC-2025-189 | torch | (none) | no fix version published |
+| PYSEC-2025-190 | torch | (none) | same |
+| PYSEC-2025-191 | torch | (none) | same |
+| PYSEC-2025-192 | torch | (none) | same |
+| PYSEC-2025-193 | torch | (none) | same |
+| PYSEC-2025-194 | torch | (none) | same |
+| PYSEC-2025-195 | torch | (none) | same |
+| PYSEC-2025-196 | torch | (none) | same |
+| PYSEC-2025-197 | torch | (none) | same |
+| PYSEC-2025-210 | torch | (none) | same |
+| PYSEC-2026-139 | torch | (none) | same |
+| PYSEC-2025-211 | transformers | (none) | no fix version published; transformers also held by vllm-omni 0.18 |
+| PYSEC-2025-212 | transformers | (none) | same |
+| PYSEC-2025-213 | transformers | (none) | same |
+| PYSEC-2025-214 | transformers | (none) | same |
+| PYSEC-2025-215 | transformers | (none) | same |
+| PYSEC-2025-216 | transformers | (none) | same |
+| PYSEC-2025-217 | transformers | (none) | same |
+| PYSEC-2025-218 | transformers | (none) | same |
+| PYSEC-2026-97 | nltk | (none) | no fix version published |
+| PYSEC-2025-183 | pyjwt | (none) | no fix version published |
+| PYSEC-2024-277 | joblib | (none) | no fix version published |
 
 When a blocker lifts (e.g. transformers 5 ↔ vllm 0.19 line stabilizes),
 drop the corresponding `--ignore-vuln` flag from the workflow and the
