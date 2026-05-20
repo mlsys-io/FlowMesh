@@ -166,6 +166,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - ${SERVER_WORKER_CONFIG:-./configs/worker_config.yaml}:/etc/flowmesh/worker_config.yaml:ro
       - ${FLOWMESH_PLUGIN_DIR:-./plugins}:/app/plugins:ro
+      - ${FLOWMESH_PLUGIN_DATA_DIR:-./plugin-data}:/app/plugin-data
       - ${REDIS_TLS_DIR:-./secrets/tls/redis}:/etc/ssl/redis:ro
       - ${SERVER_TLS_DIR:-./secrets/tls/server}:/etc/ssl/server:ro
     restart: unless-stopped
@@ -199,3 +200,6 @@ volumes:
     name: ${FLOWMESH_STACK_SLUG:-flowmesh_node}_metrics
   flowmesh_server_logs:
     name: ${FLOWMESH_STACK_SLUG:-flowmesh_node}_server_logs
+  flowmesh_plugin_data:
+    external: true
+    name: ${FLOWMESH_PLUGIN_DATA_VOLUME:-flowmesh_plugin_data}

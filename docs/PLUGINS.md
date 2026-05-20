@@ -134,6 +134,11 @@ Each subdirectory of `FLOWMESH_PLUGIN_DIR` is importable as a
 top-level module. The mount is read-only, so the plugin code is
 treated as static deployment artifact.
 
+For writable persistence, `FLOWMESH_PLUGIN_DATA_DIR` (default
+`./plugin-data`) is mounted read-write at `/app/plugin-data`. A path
+value is a host bind-mount (auto-created on `stack up`); a bare name
+is an external Docker volume of that name.
+
 This handles plugin **code** without rebuilding the server image.
 When that isn't enough, build a thin overlay on top of the prebuilt
 image. Two patterns, pick by need:

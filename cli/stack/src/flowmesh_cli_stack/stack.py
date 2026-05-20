@@ -35,6 +35,7 @@ from .env_schema import STACK_ENV_SCHEMA, deploy_overrides, role_overrides
 from .utils import (
     DEFAULT_ENV_FILE,
     STACK_PATH_KEYS,
+    apply_plugin_data_env,
     apply_stack_resource_env,
     ensure_deploy_paths,
     parse_node_role,
@@ -58,6 +59,7 @@ def _stack() -> DockerComposeStack:
         except ValueError as exc:
             logging.error(str(exc))
             raise typer.Exit(code=1)
+        apply_plugin_data_env(Path.cwd())
 
     return DockerComposeStack(
         compose_file=stack_compose_file(),

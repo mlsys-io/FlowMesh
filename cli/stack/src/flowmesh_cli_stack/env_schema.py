@@ -530,10 +530,11 @@ STACK_ENV_SCHEMA = EnvSchema(
             title="External Plugins",
             description=[
                 "Plugins are Python packages dropped under FLOWMESH_PLUGIN_DIR ",
-                "(host-mounted to /app/plugins on the server) and selected by ",
-                "FLOWMESH_PLUGINS as a comma-separated list of top-level module ",
-                "names. Each named module must expose `install()` returning a ",
-                "`HookBindings`. Leave both empty unless you ship a plugin.",
+                "(read-only at /app/plugins) and selected by FLOWMESH_PLUGINS as ",
+                "a comma-separated list of top-level module names. Each must ",
+                "expose `install()` returning a `HookBindings`. ",
+                "FLOWMESH_PLUGIN_DATA_DIR is writable at /app/plugin-data for ",
+                "plugin state. Leave all empty unless you ship a plugin.",
             ],
             vars=[
                 EnvVar(
@@ -542,6 +543,15 @@ STACK_ENV_SCHEMA = EnvSchema(
                     var_type=EnvVarType.DIR_PATH,
                     use_default=True,
                     ensure_path="create",
+                ),
+                EnvVar(
+                    "FLOWMESH_PLUGIN_DATA_DIR",
+                    "./plugin-data",
+                    use_default=True,
+                    description=[
+                        "A path (`./x`, `/abs/x`) -> host bind-mount (auto-created).",
+                        "A bare name -> external Docker volume of that name.",
+                    ],
                 ),
                 EnvVar("FLOWMESH_PLUGINS", ""),
             ],
