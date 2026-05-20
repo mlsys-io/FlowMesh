@@ -57,6 +57,22 @@ def apply_stack_resource_env() -> None:
         os.environ[WORKER_RESULTS_DIR_ENV] = results_volume
 
 
+_PLUGIN_DATA_PATH_PREFIXES = ("/", "./", "../", "~/", "~")
+_PLUGIN_DATA_ALIAS = "flowmesh_plugin_data"
+_PLUGIN_DATA_DEFAULT = "./plugin-data"
+
+
+def apply_plugin_data_env(base_dir: Path) -> None:
+    raw = os.environ.get("FLOWMESH_PLUGIN_DATA_DIR", "").strip()
+    if not raw or raw.startswith(_PLUGIN_DATA_PATH_PREFIXES):
+        resolved = resolve_path(raw, default=_PLUGIN_DATA_DEFAULT, base_dir=base_dir)
+        ensure_dir(resolved)
+        os.environ["FLOWMESH_PLUGIN_DATA_DIR"] = str(resolved)
+    else:
+        os.environ["FLOWMESH_PLUGIN_DATA_VOLUME"] = raw
+        os.environ["FLOWMESH_PLUGIN_DATA_DIR"] = _PLUGIN_DATA_ALIAS
+
+
 def stack_compose_file() -> Path:
     return asset_path("flowmesh_cli_stack.assets", "compose.yml")
 
