@@ -85,7 +85,7 @@ def build_prompts_from_graph_template(
 def _maybe_broadcast_image_prompts(
     prompts: Sequence[str | Message],
     data_cfg: dict[str, Any],
-    context: dict[str, Any],
+    context: dict[str, BaseExecutorResult],
 ) -> list[str | Message]:
     image_embedding = data_cfg.get("image_embedding")
     if not isinstance(image_embedding, dict):
@@ -99,7 +99,7 @@ def _maybe_broadcast_image_prompts(
 
 
 def _resolve_image_embedding_count(
-    image_embedding: dict[str, Any], context: dict[str, Any]
+    image_embedding: dict[str, Any], context: dict[str, BaseExecutorResult]
 ) -> int | None:
     node = image_embedding.get("node")
     if not isinstance(node, str):
@@ -109,15 +109,17 @@ def _resolve_image_embedding_count(
     if not isinstance(node, str) or not node:
         return None
     upstream = context.get(node)
-    if not isinstance(upstream, dict):
+    if upstream is None:
         return None
-    count = upstream.get("count")
+    count = getattr(upstream, "count", _SENTINEL)
     if isinstance(count, int) and count > 0:
         return count
     return None
 
 
-def _resolve_columns(columns_cfg: Any, context: dict[str, Any]) -> list[dict[str, Any]]:
+def _resolve_columns(
+    columns_cfg: Any, context: dict[str, BaseExecutorResult]
+) -> list[dict[str, Any]]:
     if not isinstance(columns_cfg, list):
         raise ExecutionError("graph_template.template.columns must be a list.")
 

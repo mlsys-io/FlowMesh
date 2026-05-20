@@ -77,7 +77,7 @@ class DataRetrievalExecutor(DataMixin, Executor):
         return result
 
     def _run_sql(
-        self, data_cfg: dict[str, Any], context: dict[str, Any]
+        self, data_cfg: dict[str, Any], context: dict[str, BaseExecutorResult]
     ) -> DataRetrievalResult:
         """
         Execute SQL queries based on the provided data configuration and context.
@@ -85,7 +85,7 @@ class DataRetrievalExecutor(DataMixin, Executor):
         :param data_cfg: Description
         :type data_cfg: dict[str, Any]
         :param context: Description
-        :type context: dict[str, Any]
+        :type context: dict[str, BaseExecutorResult]
         :return: Description
         :rtype: dict[str, Any]
         """
@@ -158,7 +158,7 @@ class DataRetrievalExecutor(DataMixin, Executor):
     def _run_s3(
         self,
         data_cfg: dict[str, Any],
-        context: dict[str, Any],
+        context: dict[str, BaseExecutorResult],
         out_dir: Path,
     ) -> DataRetrievalResult:
         validate_keys(
@@ -221,7 +221,7 @@ class DataRetrievalExecutor(DataMixin, Executor):
     def _run_agent(
         self,
         data_cfg: dict[str, Any],
-        context: dict[str, Any],
+        context: dict[str, BaseExecutorResult],
         out_dir: Path,
     ) -> DataRetrievalResult:
         """Drive lumid.data's data agent for NL-driven retrieval."""

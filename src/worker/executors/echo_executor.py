@@ -32,7 +32,9 @@ class EchoExecutor(DataMixin, Executor):
         out_items.append({"output": value})
 
     @staticmethod
-    def _resolve_expr_item(item: dict[str, Any], context: dict[str, Any]) -> Any:
+    def _resolve_expr_item(
+        item: dict[str, Any], context: dict[str, BaseExecutorResult]
+    ) -> Any:
         expr = item.get("expr")
         if not expr:
             node = item.get("node")
@@ -51,7 +53,9 @@ class EchoExecutor(DataMixin, Executor):
             )
         return resolved
 
-    def _resolve_item(self, item: EchoItem, context: dict[str, Any]) -> Any:
+    def _resolve_item(
+        self, item: EchoItem, context: dict[str, BaseExecutorResult]
+    ) -> Any:
         if isinstance(item, str):
             return item
         elif isinstance(item, dict):
