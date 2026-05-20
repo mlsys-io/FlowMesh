@@ -174,4 +174,6 @@ jobs:
             --ignore-vuln PYSEC-2026-97 \
             --ignore-vuln PYSEC-2025-183 \
             --ignore-vuln PYSEC-2024-277 \
+            --ignore-vuln PYSEC-2025-222 \
+            --ignore-vuln PYSEC-2024-274 \
             -r src/worker/requirements/requirements.gpu.txt

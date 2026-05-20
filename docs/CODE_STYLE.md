@@ -139,6 +139,8 @@ as `--ignore-vuln` flags in `.github/workflows/security.yml`.
 | PYSEC-2026-97 | nltk | (none) | no fix version published |
 | PYSEC-2025-183 | pyjwt | (none) | no fix version published |
 | PYSEC-2024-277 | joblib | (none) | no fix version published |
+| PYSEC-2025-222 | vllm | (none) | no fix version published; held by vllm-omni 0.18 pin |
+| PYSEC-2024-274 | gradio | (none) | no fix version published; vllm-omni 0.18 pins gradio==5.50 |
 
 When a blocker lifts (e.g. transformers 5 ↔ vllm 0.19 line stabilizes),
 drop the corresponding `--ignore-vuln` flag from the workflow and the
