@@ -57,19 +57,19 @@ def apply_stack_resource_env() -> None:
         os.environ[WORKER_RESULTS_DIR_ENV] = results_volume
 
 
-_PLUGIN_DATA_PATH_PREFIXES = ("/", "./", "../", "~/", "~")
+_PLUGIN_DATA_PATH_PREFIXES = ("/", "./", "../", "~")
 _PLUGIN_DATA_ALIAS = "flowmesh_plugin_data"
 _PLUGIN_DATA_DEFAULT = "./plugin-data"
+_PLUGIN_DATA_VOLUME_ENV = "FLOWMESH_PLUGIN_DATA_VOLUME"
 
 
 def apply_plugin_data_env(base_dir: Path) -> None:
     raw = os.environ.get("FLOWMESH_PLUGIN_DATA_DIR", "").strip()
     if not raw or raw.startswith(_PLUGIN_DATA_PATH_PREFIXES):
         resolved = resolve_path(raw, default=_PLUGIN_DATA_DEFAULT, base_dir=base_dir)
-        ensure_dir(resolved)
-        os.environ["FLOWMESH_PLUGIN_DATA_DIR"] = str(resolved)
+        os.environ["FLOWMESH_PLUGIN_DATA_DIR"] = resolved.as_posix()
     else:
-        os.environ["FLOWMESH_PLUGIN_DATA_VOLUME"] = raw
+        os.environ[_PLUGIN_DATA_VOLUME_ENV] = raw
         os.environ["FLOWMESH_PLUGIN_DATA_DIR"] = _PLUGIN_DATA_ALIAS
 
 
@@ -134,6 +134,14 @@ def ensure_deploy_paths(base_dir: Path) -> None:
             base_dir=base_dir,
         )
     )
+    if not os.environ.get(_PLUGIN_DATA_VOLUME_ENV):
+        ensure_dir(
+            resolve_path(
+                os.getenv("FLOWMESH_PLUGIN_DATA_DIR", ""),
+                default=_PLUGIN_DATA_DEFAULT,
+                base_dir=base_dir,
+            )
+        )
 
 
 def parse_node_role(raw: str) -> NodeRole:
