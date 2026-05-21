@@ -202,4 +202,4 @@ volumes:
     name: ${FLOWMESH_STACK_SLUG:-flowmesh_node}_server_logs
   flowmesh_plugin_data:
     external: true
-    name: ${FLOWMESH_PLUGIN_DATA_VOLUME:-flowmesh_plugin_data}
+    name: ${FLOWMESH_PLUGIN_DATA_VOLUME:-${FLOWMESH_STACK_SLUG:-flowmesh_node}_plugin_data}
