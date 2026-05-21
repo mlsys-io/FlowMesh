@@ -20,7 +20,7 @@ if __name__ == "__main__" and __package__ is None:
 
 from shared._version import FLOWMESH_RELEASE_VERSION
 
-from .auth import purge_stale_resources, refresh_resources, resolve_system_principal
+from .auth import reconcile_resources, resolve_system_principal
 from .clients import RedisClient
 from .config import NodeRole, ServerConfig
 from .dispatcher.factory import create_dispatcher
@@ -335,9 +335,8 @@ async def _reconcile_resources() -> None:
             for task_id in record.task_ids:
                 refs.append(ResourceRef(kind=ResourceKind.TASK.value, id=task_id))
 
-    logger.info("Startup reconcile: refreshing %d resource(s)", len(refs))
-    failed = await refresh_resources(refs, logger)
-    await purge_stale_resources(logger, skip=failed)
+    logger.info("Startup reconcile: %d live resource(s)", len(refs))
+    await reconcile_resources(refs, logger)
 
 
 @asynccontextmanager

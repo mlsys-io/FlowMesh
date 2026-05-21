@@ -30,8 +30,7 @@ from server.auth.security import (
     authenticate_api_key,
     authenticate_connection,
     deregister_resource,
-    purge_stale_resources,
-    refresh_resources,
+    reconcile_resources,
     register_resource,
     require_permission,
     resolve_accessible_ids,
@@ -607,8 +606,7 @@ class _RecordingRegistrar:
     def __init__(self) -> None:
         self.registered: list[tuple[str, ResourceRef]] = []
         self.deregistered: list[tuple[str, ResourceRef]] = []
-        self.refreshed: list[list[ResourceRef]] = []
-        self.purged: int = 0
+        self.reconciled: list[list[ResourceRef]] = []
 
     async def register(
         self,
@@ -626,15 +624,12 @@ class _RecordingRegistrar:
     ) -> None:
         self.deregistered.append((principal.principal_id, resource))
 
-    async def refresh(
+    async def reconcile(
         self,
         resources: Iterable[ResourceRef],
         logger: logging.Logger,
     ) -> None:
-        self.refreshed.append(list(resources))
-
-    async def purge_stale(self, logger: logging.Logger) -> None:
-        self.purged += 1
+        self.reconciled.append(list(resources))
 
 
 class TestResourceRegistrarComposition:
@@ -701,10 +696,7 @@ class TestResourceRegistrarComposition:
             async def deregister(self, *args: Any, **kwargs: Any) -> None:
                 return None
 
-            async def refresh(self, *args: Any, **kwargs: Any) -> None:
-                return None
-
-            async def purge_stale(self, *args: Any, **kwargs: Any) -> None:
+            async def reconcile(self, *args: Any, **kwargs: Any) -> None:
                 return None
 
         register(BaseBindings(resource_registrars=[_Boom()]))
@@ -715,7 +707,7 @@ class TestResourceRegistrarComposition:
             )
 
     @pytest.mark.anyio
-    async def test_refresh_fans_out_with_full_batch(
+    async def test_reconcile_fans_out_with_full_batch(
         self, logger: logging.Logger
     ) -> None:
         first = _RecordingRegistrar()
@@ -726,29 +718,18 @@ class TestResourceRegistrarComposition:
             ResourceRef(kind=ResourceKind.WORKFLOW.value, id="wfl-1"),
             ResourceRef(kind=ResourceKind.WORKER.value, id="wkr-1"),
         ]
-        await refresh_resources(refs, logger)
+        await reconcile_resources(refs, logger)
 
         for r in (first, second):
-            assert r.refreshed == [refs]
+            assert r.reconciled == [refs]
 
     @pytest.mark.anyio
-    async def test_purge_stale_fans_out(self, logger: logging.Logger) -> None:
-        first = _RecordingRegistrar()
-        second = _RecordingRegistrar()
-        register(BaseBindings(resource_registrars=[first, second]))
-
-        await purge_stale_resources(logger)
-
-        assert first.purged == 1
-        assert second.purged == 1
-
-    @pytest.mark.anyio
-    async def test_refresh_failure_is_logged_and_collected(
+    async def test_reconcile_failure_is_logged_and_isolated(
         self, logger: logging.Logger
     ) -> None:
         ok = _RecordingRegistrar()
 
-        class _FailingRefresh:
+        class _FailingReconcile:
             name = "failing"
 
             async def register(self, *args: Any, **kwargs: Any) -> None:
@@ -757,54 +738,14 @@ class TestResourceRegistrarComposition:
             async def deregister(self, *args: Any, **kwargs: Any) -> None:
                 return None
 
-            async def refresh(self, *args: Any, **kwargs: Any) -> None:
-                raise RuntimeError("refresh boom")
+            async def reconcile(self, *args: Any, **kwargs: Any) -> None:
+                raise RuntimeError("reconcile boom")
 
-            async def purge_stale(self, *args: Any, **kwargs: Any) -> None:
-                return None
-
-        failing = _FailingRefresh()
+        failing = _FailingReconcile()
         register(BaseBindings(resource_registrars=[failing, ok]))
 
-        failed = await refresh_resources([], logger)
+        # Sweep does not raise — failure is logged and the OK registrar
+        # still runs.
+        await reconcile_resources([], logger)
 
-        assert failed == frozenset({"failing"})
-        assert ok.refreshed == [[]]  # the OK registrar still ran
-
-    @pytest.mark.anyio
-    async def test_purge_stale_skips_failed_registrars(
-        self, logger: logging.Logger
-    ) -> None:
-        ok = _RecordingRegistrar()
-        skipped = _RecordingRegistrar()
-        skipped.name = "skipped"
-        register(BaseBindings(resource_registrars=[ok, skipped]))
-
-        await purge_stale_resources(logger, skip=frozenset({"skipped"}))
-
-        assert ok.purged == 1
-        assert skipped.purged == 0
-
-    @pytest.mark.anyio
-    async def test_purge_stale_propagates_unexpected_failure(
-        self, logger: logging.Logger
-    ) -> None:
-        class _Boom:
-            name = "boom"
-
-            async def register(self, *args: Any, **kwargs: Any) -> None:
-                return None
-
-            async def deregister(self, *args: Any, **kwargs: Any) -> None:
-                return None
-
-            async def refresh(self, *args: Any, **kwargs: Any) -> None:
-                return None
-
-            async def purge_stale(self, *args: Any, **kwargs: Any) -> None:
-                raise RuntimeError("purge boom")
-
-        register(BaseBindings(resource_registrars=[_Boom()]))
-
-        with pytest.raises(RuntimeError, match="purge boom"):
-            await purge_stale_resources(logger)
+        assert ok.reconciled == [[]]

@@ -207,46 +207,25 @@ async def deregister_resource(
         await registrar.deregister(principal, resource, logger)
 
 
-async def refresh_resources(
+async def reconcile_resources(
     resources: Iterable[ResourceRef],
     logger: logging.Logger,
-) -> frozenset[str]:
-    """Notify every registered `ResourceRegistrar` of the current live set.
+) -> None:
+    """Tell every registered `ResourceRegistrar` to replace its stored live
+    set with `resources`.
 
     Called once during startup reconcile with every live workflow / task /
-    node / worker. A registrar whose `refresh` raises is logged and its
-    name is returned in the failed set; the sweep does not abort — pass
-    the result to `purge_stale_resources(..., skip=...)` so failed
-    registrars don't wipe rows they never marked live.
+    node / worker. Each registrar's `reconcile` is atomic — on failure the
+    registrar's store is unchanged — so a raised exception is logged and
+    the sweep continues with the next registrar. The failing registrar
+    retries next boot.
     """
     refs = list(resources)
-    failed: set[str] = set()
     for registrar in RESOURCE_REGISTRARS:
         try:
-            await registrar.refresh(refs, logger)
+            await registrar.reconcile(refs, logger)
         except Exception:
             logger.exception(
-                "ResourceRegistrar %s.refresh failed; skipping its purge_stale.",
+                "ResourceRegistrar %s.reconcile failed; store left untouched.",
                 registrar.name,
             )
-            failed.add(registrar.name)
-    return frozenset(failed)
-
-
-async def purge_stale_resources(
-    logger: logging.Logger,
-    *,
-    skip: frozenset[str] = frozenset(),
-) -> None:
-    """Tell each `ResourceRegistrar` to drop records the reconcile sweep
-    didn't touch.
-
-    Called once after `refresh_resources`. Registrars whose name is in
-    `skip` are bypassed — typically the set of registrars whose `refresh`
-    raised in the same sweep, so they don't wipe their rows on a partial
-    refresh.
-    """
-    for registrar in RESOURCE_REGISTRARS:
-        if registrar.name in skip:
-            continue
-        await registrar.purge_stale(logger)

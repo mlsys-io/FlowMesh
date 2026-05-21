@@ -63,13 +63,13 @@ The hooks:
   runs a reconcile sweep — after plugins load, the system principal
   resolves, and the supervisor handshake completes — enumerating
   every live workflow, task, worker, and node and calling
-  `refresh(resources, logger)` once per registrar with the full
-  batch, then `purge_stale(logger)` once. A registrar whose `refresh`
-  raises is logged and excluded from the same boot's `purge_stale`
-  call so it doesn't wipe rows it never marked live. Persistent
-  registrars use this pair to drop records for resources the server
-  no longer knows about — stateless registrars implement both as
-  no-ops.
+  `reconcile(resources, logger)` once per registrar with the full
+  batch. `reconcile` is atomic per the `lumid-hooks` contract: on
+  failure the registrar's store is unchanged, so the server logs
+  the exception and moves on without risk of a partial wipe.
+  Persistent registrars use this call to drop records for resources
+  the server no longer knows about — stateless registrars implement
+  it as a no-op.
 
 The shared protocols treat `kind` and `action` as plain strings —
 `lumid-hooks` does not enumerate kinds. FlowMesh layers the
