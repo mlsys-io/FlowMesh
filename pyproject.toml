@@ -29,7 +29,7 @@ runtime-server = [
     "flowmesh-hook",
     "grpcio>=1.76.0",
     "httpx>=0.28.1",
-    "lumid-hooks>=0.1.0,<0.2.0",
+    "lumid-hooks>=0.2.0",
     "protobuf>=5.29.6",
     "pydantic>=2.12.3",
     "python-multipart>=0.0.26",
@@ -241,6 +241,9 @@ flowmesh-cli-stack = { workspace = true }
 flowmesh-hook = { workspace = true }
 flowmesh-sdk = { workspace = true }
 flowmesh-sdk-stack = { workspace = true }
+# Local development against the in-flight lumid-hooks 0.2.0; drop once
+# 0.2.0 is published to PyPI.
+lumid-hooks = { path = "../lumid.hooks", editable = true }
 
 [tool.uv.workspace]
 members = ["cli", "cli/stack", "hook", "sdk", "sdk/stack"]

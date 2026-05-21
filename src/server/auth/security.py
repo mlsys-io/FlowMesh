@@ -17,7 +17,7 @@ helpers short-circuit to "no filter, no gate".
 """
 
 import logging
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from typing import Any
 
 from fastapi import HTTPException, WebSocket, WebSocketException, status
@@ -205,3 +205,25 @@ async def deregister_resource(
     resource = ResourceRef(kind=resource_kind.value, id=resource_id)
     for registrar in RESOURCE_REGISTRARS:
         await registrar.deregister(principal, resource, logger)
+
+
+async def refresh_resources(
+    resources: Iterable[ResourceRef],
+    logger: logging.Logger,
+) -> None:
+    """Notify every registered `ResourceRegistrar` of the current live set.
+
+    Called once during startup reconcile with every live workflow / task /
+    node / worker. Registrars use this to mark records as still live before
+    `purge_stale_resources` clears anything untouched.
+    """
+    refs = list(resources)
+    for registrar in RESOURCE_REGISTRARS:
+        await registrar.refresh(refs, logger)
+
+
+async def purge_stale_resources(logger: logging.Logger) -> None:
+    """Tell every registered `ResourceRegistrar` to drop records the
+    reconcile sweep didn't touch. Called once after `refresh_resources`."""
+    for registrar in RESOURCE_REGISTRARS:
+        await registrar.purge_stale(logger)

@@ -7,7 +7,7 @@ disconnected from a call site.
 """
 
 import logging
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterable, Iterator, Sequence
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
@@ -30,6 +30,8 @@ from server.auth.security import (
     authenticate_api_key,
     authenticate_connection,
     deregister_resource,
+    purge_stale_resources,
+    refresh_resources,
     register_resource,
     require_permission,
     resolve_accessible_ids,
@@ -605,6 +607,8 @@ class _RecordingRegistrar:
     def __init__(self) -> None:
         self.registered: list[tuple[str, ResourceRef]] = []
         self.deregistered: list[tuple[str, ResourceRef]] = []
+        self.refreshed: list[list[ResourceRef]] = []
+        self.purged: int = 0
 
     async def register(
         self,
@@ -621,6 +625,16 @@ class _RecordingRegistrar:
         logger: logging.Logger,
     ) -> None:
         self.deregistered.append((principal.principal_id, resource))
+
+    async def refresh(
+        self,
+        resources: Iterable[ResourceRef],
+        logger: logging.Logger,
+    ) -> None:
+        self.refreshed.append(list(resources))
+
+    async def purge_stale(self, logger: logging.Logger) -> None:
+        self.purged += 1
 
 
 class TestResourceRegistrarComposition:
@@ -687,9 +701,43 @@ class TestResourceRegistrarComposition:
             async def deregister(self, *args: Any, **kwargs: Any) -> None:
                 return None
 
+            async def refresh(self, *args: Any, **kwargs: Any) -> None:
+                return None
+
+            async def purge_stale(self, *args: Any, **kwargs: Any) -> None:
+                return None
+
         register(BaseBindings(resource_registrars=[_Boom()]))
 
         with pytest.raises(RuntimeError, match="plugin failure"):
             await register_resource(
                 principal, ResourceKind.WORKFLOW, "wfl-1", {}, logger
             )
+
+    @pytest.mark.anyio
+    async def test_refresh_fans_out_with_full_batch(
+        self, logger: logging.Logger
+    ) -> None:
+        first = _RecordingRegistrar()
+        second = _RecordingRegistrar()
+        register(BaseBindings(resource_registrars=[first, second]))
+
+        refs = [
+            ResourceRef(kind=ResourceKind.WORKFLOW.value, id="wfl-1"),
+            ResourceRef(kind=ResourceKind.WORKER.value, id="wkr-1"),
+        ]
+        await refresh_resources(refs, logger)
+
+        for r in (first, second):
+            assert r.refreshed == [refs]
+
+    @pytest.mark.anyio
+    async def test_purge_stale_fans_out(self, logger: logging.Logger) -> None:
+        first = _RecordingRegistrar()
+        second = _RecordingRegistrar()
+        register(BaseBindings(resource_registrars=[first, second]))
+
+        await purge_stale_resources(logger)
+
+        assert first.purged == 1
+        assert second.purged == 1

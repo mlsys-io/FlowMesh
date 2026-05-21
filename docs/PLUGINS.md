@@ -59,7 +59,13 @@ The hooks:
   tables so subsequent `PermissionChecker` calls have data to decide
   on. `RESULT` ownership is inferred from the owning task; `RESULT`
   permission checks are always paired with a `task_id`, and
-  workflow-level operations check `WORKFLOW`.
+  workflow-level operations check `WORKFLOW`. At startup the server
+  runs a reconcile sweep: it enumerates every live workflow, task,
+  worker, and node and calls `refresh(resources, logger)` once per
+  registrar with the full batch, then `purge_stale(logger)` once.
+  Persistent registrars use this pair to drop records for resources
+  the server no longer knows about — stateless registrars implement
+  both as no-ops.
 
 The shared protocols treat `kind` and `action` as plain strings —
 `lumid-hooks` does not enumerate kinds. FlowMesh layers the

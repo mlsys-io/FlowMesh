@@ -8,7 +8,8 @@ from contextlib import AsyncExitStack, asynccontextmanager
 
 import uvicorn
 from fastapi import FastAPI
-from lumid_hooks import HookBindings
+from flowmesh_hook import ResourceKind
+from lumid_hooks import HookBindings, ResourceRef
 
 if __name__ == "__main__" and __package__ is None:
     import sys
@@ -19,7 +20,7 @@ if __name__ == "__main__" and __package__ is None:
 
 from shared._version import FLOWMESH_RELEASE_VERSION
 
-from .auth import resolve_system_principal
+from .auth import purge_stale_resources, refresh_resources, resolve_system_principal
 from .clients import RedisClient
 from .config import NodeRole, ServerConfig
 from .dispatcher.factory import create_dispatcher
@@ -305,6 +306,40 @@ async def _load_plugins(stack: AsyncExitStack) -> None:
         register(bindings)
 
 
+async def _reconcile_resources() -> None:
+    """Refresh registrar-tracked records for every live resource, then purge
+    anything the sweep didn't touch. Runs once at startup after plugins load
+    so registrars don't drop grants on resources that outlived their TTL.
+    """
+    refs: list[ResourceRef] = []
+
+    # Nodes (always present).
+    for node in await NODE_REGISTRY.list_nodes_async():
+        refs.append(ResourceRef(kind=ResourceKind.NODE.value, id=node.node_id))
+
+    # Workers and workflows live on the root node.
+    if WORKER_REGISTRY is not None:
+        for worker in await WORKER_REGISTRY.list_workers_async():
+            refs.append(
+                ResourceRef(kind=ResourceKind.WORKER.value, id=worker.worker_id)
+            )
+    if WORKFLOW_REGISTRY is not None:
+        workflow_ids = await WORKFLOW_REGISTRY.get_workflow_ids_async()
+        for workflow_id in workflow_ids:
+            record = await WORKFLOW_REGISTRY.get_workflow_record_async(workflow_id)
+            if record is None:
+                continue
+            refs.append(
+                ResourceRef(kind=ResourceKind.WORKFLOW.value, id=workflow_id)
+            )
+            for task_id in record.task_ids:
+                refs.append(ResourceRef(kind=ResourceKind.TASK.value, id=task_id))
+
+    logger.info("Startup reconcile: refreshing %d resource(s)", len(refs))
+    await refresh_resources(refs, logger)
+    await purge_stale_resources(logger)
+
+
 @asynccontextmanager
 async def _lifespan(_: FastAPI):
     async with AsyncExitStack() as plugin_stack:
@@ -315,6 +350,9 @@ async def _lifespan(_: FastAPI):
             config.identity.api_key, logger
         )
         app.state.system_principal = system_principal
+
+        # --- Startup reconcile (registrar plugins) ---
+        await _reconcile_resources()
 
         # --- Root-only startup ---
         if IS_ROOT_NODE:
