@@ -336,8 +336,8 @@ async def _reconcile_resources() -> None:
                 refs.append(ResourceRef(kind=ResourceKind.TASK.value, id=task_id))
 
     logger.info("Startup reconcile: refreshing %d resource(s)", len(refs))
-    await refresh_resources(refs, logger)
-    await purge_stale_resources(logger)
+    failed = await refresh_resources(refs, logger)
+    await purge_stale_resources(logger, skip=failed)
 
 
 @asynccontextmanager
@@ -350,9 +350,6 @@ async def _lifespan(_: FastAPI):
             config.identity.api_key, logger
         )
         app.state.system_principal = system_principal
-
-        # --- Startup reconcile (registrar plugins) ---
-        await _reconcile_resources()
 
         # --- Root-only startup ---
         if IS_ROOT_NODE:
@@ -370,6 +367,11 @@ async def _lifespan(_: FastAPI):
             # for the supervisor's SV_UNREGISTER event on shutdown.
             if EVENT_MONITOR is not None:
                 EVENT_MONITOR.set_own_node(SUPERVISOR.node_id)
+
+        # --- Startup reconcile (registrar plugins) ---
+        # Runs after the supervisor handshake so this node is in NODE_REGISTRY
+        # and is included in the live batch.
+        await _reconcile_resources()
 
         try:
             yield

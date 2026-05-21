@@ -741,3 +741,70 @@ class TestResourceRegistrarComposition:
 
         assert first.purged == 1
         assert second.purged == 1
+
+    @pytest.mark.anyio
+    async def test_refresh_failure_is_logged_and_collected(
+        self, logger: logging.Logger
+    ) -> None:
+        ok = _RecordingRegistrar()
+
+        class _FailingRefresh:
+            name = "failing"
+
+            async def register(self, *args: Any, **kwargs: Any) -> None:
+                return None
+
+            async def deregister(self, *args: Any, **kwargs: Any) -> None:
+                return None
+
+            async def refresh(self, *args: Any, **kwargs: Any) -> None:
+                raise RuntimeError("refresh boom")
+
+            async def purge_stale(self, *args: Any, **kwargs: Any) -> None:
+                return None
+
+        failing = _FailingRefresh()
+        register(BaseBindings(resource_registrars=[failing, ok]))
+
+        failed = await refresh_resources([], logger)
+
+        assert failed == frozenset({"failing"})
+        assert ok.refreshed == [[]]  # the OK registrar still ran
+
+    @pytest.mark.anyio
+    async def test_purge_stale_skips_failed_registrars(
+        self, logger: logging.Logger
+    ) -> None:
+        ok = _RecordingRegistrar()
+        skipped = _RecordingRegistrar()
+        skipped.name = "skipped"
+        register(BaseBindings(resource_registrars=[ok, skipped]))
+
+        await purge_stale_resources(logger, skip=frozenset({"skipped"}))
+
+        assert ok.purged == 1
+        assert skipped.purged == 0
+
+    @pytest.mark.anyio
+    async def test_purge_stale_propagates_unexpected_failure(
+        self, logger: logging.Logger
+    ) -> None:
+        class _Boom:
+            name = "boom"
+
+            async def register(self, *args: Any, **kwargs: Any) -> None:
+                return None
+
+            async def deregister(self, *args: Any, **kwargs: Any) -> None:
+                return None
+
+            async def refresh(self, *args: Any, **kwargs: Any) -> None:
+                return None
+
+            async def purge_stale(self, *args: Any, **kwargs: Any) -> None:
+                raise RuntimeError("purge boom")
+
+        register(BaseBindings(resource_registrars=[_Boom()]))
+
+        with pytest.raises(RuntimeError, match="purge boom"):
+            await purge_stale_resources(logger)

@@ -210,20 +210,43 @@ async def deregister_resource(
 async def refresh_resources(
     resources: Iterable[ResourceRef],
     logger: logging.Logger,
-) -> None:
+) -> frozenset[str]:
     """Notify every registered `ResourceRegistrar` of the current live set.
 
     Called once during startup reconcile with every live workflow / task /
-    node / worker. Registrars use this to mark records as still live before
-    `purge_stale_resources` clears anything untouched.
+    node / worker. A registrar whose `refresh` raises is logged and its
+    name is returned in the failed set; the sweep does not abort — pass
+    the result to `purge_stale_resources(..., skip=...)` so failed
+    registrars don't wipe rows they never marked live.
     """
     refs = list(resources)
+    failed: set[str] = set()
     for registrar in RESOURCE_REGISTRARS:
-        await registrar.refresh(refs, logger)
+        try:
+            await registrar.refresh(refs, logger)
+        except Exception:
+            logger.exception(
+                "ResourceRegistrar %s.refresh failed; skipping its purge_stale.",
+                registrar.name,
+            )
+            failed.add(registrar.name)
+    return frozenset(failed)
 
 
-async def purge_stale_resources(logger: logging.Logger) -> None:
-    """Tell every registered `ResourceRegistrar` to drop records the
-    reconcile sweep didn't touch. Called once after `refresh_resources`."""
+async def purge_stale_resources(
+    logger: logging.Logger,
+    *,
+    skip: frozenset[str] = frozenset(),
+) -> None:
+    """Tell each `ResourceRegistrar` to drop records the reconcile sweep
+    didn't touch.
+
+    Called once after `refresh_resources`. Registrars whose name is in
+    `skip` are bypassed — typically the set of registrars whose `refresh`
+    raised in the same sweep, so they don't wipe their rows on a partial
+    refresh.
+    """
     for registrar in RESOURCE_REGISTRARS:
+        if registrar.name in skip:
+            continue
         await registrar.purge_stale(logger)

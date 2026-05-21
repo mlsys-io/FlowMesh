@@ -241,8 +241,8 @@ flowmesh-cli-stack = { workspace = true }
 flowmesh-hook = { workspace = true }
 flowmesh-sdk = { workspace = true }
 flowmesh-sdk-stack = { workspace = true }
-# Local development against the in-flight lumid-hooks 0.2.0; drop once
-# 0.2.0 is published to PyPI.
+# TODO(lumid-hooks-0.2.0): drop this override and re-sync requirements
+# files once lumid-hooks 0.2.0 ships to PyPI.
 lumid-hooks = { path = "../lumid.hooks", editable = true }
 
 [tool.uv.workspace]
