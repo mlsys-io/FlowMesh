@@ -3,7 +3,7 @@
 aiohttp==3.13.5
 cryptography==47.0.0
 docker==7.1.0
-fastapi==0.120.3
+fastapi==0.136.1
 grpcio==1.76.0
 httpx==0.28.1
 lumid-hooks==0.1.0
