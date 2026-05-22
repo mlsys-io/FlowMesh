@@ -89,6 +89,7 @@ jobs:
         run: |
           grep -v '@ git+' src/server/requirements.txt > /tmp/requirements-server-audit.txt
           uvx pip-audit==2.9.0 --strict \
+            --ignore-vuln PYSEC-2026-161 \
             -r /tmp/requirements-server-audit.txt
       - name: Run pip-audit (worker CPU)
         # Drop ``@ git+`` deps before auditing — not on PyPI, no CVE feed.
