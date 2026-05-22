@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 2
 requires-python = ">=3.12"
 resolution-markers = [
     "python_full_version >= '3.14'",
@@ -3644,23 +3644,13 @@ wheels = [
 [[package]]
 name = "lumid-hooks"
 version = "0.2.0"
-source = { editable = "../lumid.hooks" }
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pydantic" },
 ]
-
-[package.metadata]
-requires-dist = [{ name = "pydantic", specifier = ">=2.12.3" }]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "black", specifier = ">=25.12.0" },
-    { name = "codespell", specifier = ">=2.4.1" },
-    { name = "isort", specifier = ">=7.0.0" },
-    { name = "mypy", specifier = ">=1.19.1" },
-    { name = "pre-commit", specifier = ">=4.5.1" },
-    { name = "pytest", specifier = ">=8.4.2" },
-    { name = "ruff", specifier = ">=0.14.10" },
+sdist = { url = "https://files.pythonhosted.org/packages/34/b7/f2c4544b4df91ce80908f17cd5645611ec2538ddc6444bc00ad8e5961531/lumid_hooks-0.2.0.tar.gz", hash = "sha256:3c33d067c238337c16be88708d674448d83642e767bc0724e0ab1b5f6122010d", size = 11655, upload-time = "2026-05-22T03:49:57.706Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/67/ac/1b39a49650a27f012b847b6be939866cec39d4aea96d50177ec8861d21ea/lumid_hooks-0.2.0-py3-none-any.whl", hash = "sha256:a3e471ee38cfe83eb46199a64c269bc0ad9f81154d820e68d45c604a16e1f2e7", size = 13002, upload-time = "2026-05-22T03:49:56.281Z" },
 ]
 
 [[package]]
