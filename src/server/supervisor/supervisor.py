@@ -19,10 +19,10 @@ from ..config import (
 )
 from ..hooks import PrincipalContext
 from ..utils.concurrent import (
+    MP_CTX,
     TaskReceiver,
     TaskSender,
     create_task_channel,
-    get_mp_context,
 )
 
 _CMD_TIMEOUT = 120.0
@@ -50,7 +50,7 @@ class WorkerSupervisor:
         self._process: BaseProcess | None = None
         self._cmd_sender: TaskSender[CommandMessage, CommandResponse] | None = None
         self._cmd_receiver: TaskReceiver[CommandMessage, CommandResponse] | None = None
-        self._node_id_queue: MPQueue[str] = get_mp_context().Queue(maxsize=1)
+        self._node_id_queue: MPQueue[str] = MP_CTX.Queue(maxsize=1)
         self._node_id: str | None = None
 
     @property
@@ -71,7 +71,7 @@ class WorkerSupervisor:
             return
 
         self._cmd_sender, self._cmd_receiver = create_task_channel()
-        self._process = get_mp_context().Process(
+        self._process = MP_CTX.Process(
             target=_run_supervisor,
             kwargs={
                 "identity": self._identity,
