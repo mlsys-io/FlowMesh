@@ -105,6 +105,7 @@ jobs:
             --ignore-vuln GHSA-vfmq-68hx-4jfw \
             --ignore-vuln GHSA-j7w6-vpvq-j3gm \
             --ignore-vuln GHSA-98h9-4798-4q5v \
+            --ignore-vuln GHSA-7wx4-6vff-v64p \
             --ignore-vuln PYSEC-2025-189 \
             --ignore-vuln PYSEC-2025-190 \
             --ignore-vuln PYSEC-2025-191 \
@@ -152,6 +153,7 @@ jobs:
             --ignore-vuln GHSA-83vm-p52w-f9pw \
             --ignore-vuln GHSA-j7w6-vpvq-j3gm \
             --ignore-vuln GHSA-98h9-4798-4q5v \
+            --ignore-vuln GHSA-7wx4-6vff-v64p \
             --ignore-vuln PYSEC-2025-189 \
             --ignore-vuln PYSEC-2025-190 \
             --ignore-vuln PYSEC-2025-191 \

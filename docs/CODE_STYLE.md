@@ -117,6 +117,7 @@ as `--ignore-vuln` flags in `.github/workflows/security.yml`.
 | GHSA-w8v5-vhqr-4h9v | diskcache | (none) | upstream unmaintained, no fixed version published |
 | GHSA-j7w6-vpvq-j3gm | diffusers | 0.38.0 | fix requires safetensors>=0.8.0rc0 pre-release; uv lock won't pick up pre-releases without explicit opt-in |
 | GHSA-98h9-4798-4q5v | diffusers | 0.38.0 | same blocker as GHSA-j7w6-vpvq-j3gm — both fixed in 0.38.0 |
+| GHSA-7wx4-6vff-v64p | diffusers | 0.38.0 | same blocker as GHSA-j7w6-vpvq-j3gm — fixed in 0.38.0 |
 | PYSEC-2025-189 | torch | (none) | no fix version published |
 | PYSEC-2025-190 | torch | (none) | same |
 | PYSEC-2025-191 | torch | (none) | same |
