@@ -2,9 +2,9 @@
 
 import asyncio
 import logging
-import multiprocessing as mp
 import os
 import signal
+from multiprocessing.process import BaseProcess
 from multiprocessing.queues import Queue as MPQueue
 from queue import Empty as QueueEmpty
 
@@ -18,7 +18,12 @@ from ..config import (
     WorkerManagementConfig,
 )
 from ..hooks import PrincipalContext
-from ..utils.concurrent import TaskReceiver, TaskSender, create_task_channel
+from ..utils.concurrent import (
+    TaskReceiver,
+    TaskSender,
+    create_task_channel,
+    get_mp_context,
+)
 
 _CMD_TIMEOUT = 120.0
 _NODE_ID_HANDSHAKE_TIMEOUT = 30.0
@@ -42,10 +47,10 @@ class WorkerSupervisor:
         self._worker_management = worker_management
         self._logging_config = logging_config
         self._logger = logger
-        self._process: mp.Process | None = None
+        self._process: BaseProcess | None = None
         self._cmd_sender: TaskSender[CommandMessage, CommandResponse] | None = None
         self._cmd_receiver: TaskReceiver[CommandMessage, CommandResponse] | None = None
-        self._node_id_queue: MPQueue[str] = mp.Queue(maxsize=1)
+        self._node_id_queue: MPQueue[str] = get_mp_context().Queue(maxsize=1)
         self._node_id: str | None = None
 
     @property
@@ -66,7 +71,7 @@ class WorkerSupervisor:
             return
 
         self._cmd_sender, self._cmd_receiver = create_task_channel()
-        self._process = mp.Process(
+        self._process = get_mp_context().Process(
             target=_run_supervisor,
             kwargs={
                 "identity": self._identity,
