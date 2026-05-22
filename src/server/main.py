@@ -315,13 +315,13 @@ async def _reconcile_resources() -> None:
 
     # Nodes (always present).
     for node in await NODE_REGISTRY.list_nodes_async():
-        refs.append(ResourceRef(kind=ResourceKind.NODE.value, id=node.node_id))
+        refs.append(ResourceRef(kind=ResourceKind.NODE.value, id=node.id))
 
     # Workers and workflows live on the root node.
     if WORKER_REGISTRY is not None:
         for worker in await WORKER_REGISTRY.list_workers_async():
             refs.append(
-                ResourceRef(kind=ResourceKind.WORKER.value, id=worker.worker_id)
+                ResourceRef(kind=ResourceKind.WORKER.value, id=worker.id)
             )
     if WORKFLOW_REGISTRY is not None:
         workflow_ids = await WORKFLOW_REGISTRY.get_workflow_ids_async()
