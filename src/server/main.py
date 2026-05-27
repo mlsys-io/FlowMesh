@@ -363,7 +363,7 @@ async def _lifespan(_: FastAPI):
             if EVENT_MONITOR is not None:
                 EVENT_MONITOR.set_own_node(SUPERVISOR.node_id)
 
-        # --- Startup reconcile (registrar plugins) ---
+        # --- Startup reconcile ---
         # Runs after the supervisor handshake so this node is in NODE_REGISTRY
         # and is included in the live batch.
         await _reconcile_resources()
