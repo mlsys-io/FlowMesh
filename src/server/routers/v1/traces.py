@@ -111,9 +111,13 @@ async def upload_task_trace(
     task_id: str,
     trace_type: str,
     file: UploadFile = File(...),
-    _: PrincipalContext = Depends(authenticate_connection),
+    principal: PrincipalContext = Depends(authenticate_connection),
     results_dir: Path = Depends(get_results_dir),
+    logger: logging.Logger = Depends(get_logger),
 ) -> PathResponse:
+    await require_permission(
+        principal, ResourceKind.RESULT, None, ResourceAction.WRITE, logger
+    )
     filename = _TYPE_TO_FILENAME.get(trace_type)
     if filename is None:
         raise HTTPException(

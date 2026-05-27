@@ -73,11 +73,15 @@ def _resolve_artifact_path(filename: str) -> Path:
 )
 async def ingest_result(
     envelope: ResultEnvelope,
-    _: PrincipalContext = Depends(authenticate_connection),
+    principal: PrincipalContext = Depends(authenticate_connection),
     runtime: TaskRuntime = Depends(get_runtime),
     event_monitor: EventMonitor = Depends(get_event_monitor),
     results_dir: Path = Depends(get_results_dir),
+    logger: logging.Logger = Depends(get_logger),
 ) -> PathResponse:
+    await require_permission(
+        principal, ResourceKind.RESULT, None, ResourceAction.WRITE, logger
+    )
     task_id = envelope.task_id.strip()
     if not task_id:
         raise HTTPException(
@@ -161,9 +165,13 @@ async def upload_result_file(
     task_id: str,
     file: UploadFile = File(...),
     runtime: TaskRuntime = Depends(get_runtime),
-    _: PrincipalContext = Depends(authenticate_connection),
+    principal: PrincipalContext = Depends(authenticate_connection),
     results_dir: Path = Depends(get_results_dir),
+    logger: logging.Logger = Depends(get_logger),
 ) -> PathResponse:
+    await require_permission(
+        principal, ResourceKind.RESULT, None, ResourceAction.WRITE, logger
+    )
     base_dir = result_file_path(results_dir, task_id).parent
     relative_path = _resolve_artifact_path(file.filename or "")
     target_path = (base_dir / relative_path).resolve()

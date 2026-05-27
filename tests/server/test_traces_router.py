@@ -1,16 +1,66 @@
 """Tests for the workflow traces router."""
 
 import json
+import logging
+from collections.abc import Iterator
 from io import BytesIO
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
-from fastapi import HTTPException, UploadFile
+from fastapi import HTTPException, UploadFile, status
 from fastapi.responses import StreamingResponse
+from lumid_hooks import PrincipalContext, ResourceRef
 
+from server.hooks import PERMISSION_CHECKERS
 from server.routers.v1 import traces as traces_router
+
+
+@pytest.fixture
+def logger() -> logging.Logger:
+    return logging.getLogger("test.traces_router")
+
+
+def _principal() -> PrincipalContext:
+    return PrincipalContext(
+        principal_id="p-1",
+        org_id="org",
+        external_id="ext",
+        principal_type="user",
+        scopes=[],
+    )
+
+
+class _DenyAllChecker:
+    name = "deny-all"
+
+    async def require(
+        self,
+        principal: PrincipalContext,
+        resource: ResourceRef,
+        action: str,
+        logger: logging.Logger,
+    ) -> None:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="denied")
+
+    async def accessible_ids(
+        self,
+        principal: PrincipalContext,
+        kind: str,
+        action: str,
+        logger: logging.Logger,
+    ) -> frozenset[str] | None:
+        return frozenset[str]()
+
+
+@pytest.fixture
+def deny_all_permissions() -> Iterator[None]:
+    PERMISSION_CHECKERS.append(_DenyAllChecker())
+    try:
+        yield
+    finally:
+        PERMISSION_CHECKERS.clear()
 
 
 def _otel_span(
@@ -276,3 +326,17 @@ async def test_upload_task_trace_unknown_type_400(tmp_path: Path) -> None:
             results_dir=tmp_path,
         )
     assert excinfo.value.status_code == 400
+
+
+@pytest.mark.anyio
+async def test_upload_task_trace_denied_without_permission(
+    deny_all_permissions: None, logger: logging.Logger
+) -> None:
+    with pytest.raises(HTTPException) as exc:
+        await traces_router.upload_task_trace(
+            task_id="tsk-x",
+            trace_type="spans",
+            principal=_principal(),
+            logger=logger,
+        )
+    assert exc.value.status_code == status.HTTP_403_FORBIDDEN

@@ -1,11 +1,63 @@
+import logging
+from collections.abc import Iterator
 from pathlib import Path
 from typing import cast
 
 import pytest
+from fastapi import HTTPException, status
 from fastapi.responses import FileResponse
 from fastapi.routing import APIRoute
+from lumid_hooks import PrincipalContext, ResourceRef
 
+from server.hooks import PERMISSION_CHECKERS
 from server.routers.v1 import results as results_router
+from shared.schemas.result import BaseExecutorResult, ResultEnvelope
+
+
+@pytest.fixture
+def logger() -> logging.Logger:
+    return logging.getLogger("test.results_router")
+
+
+def _principal() -> PrincipalContext:
+    return PrincipalContext(
+        principal_id="p-1",
+        org_id="org",
+        external_id="ext",
+        principal_type="user",
+        scopes=[],
+    )
+
+
+class _DenyAllChecker:
+    name = "deny-all"
+
+    async def require(
+        self,
+        principal: PrincipalContext,
+        resource: ResourceRef,
+        action: str,
+        logger: logging.Logger,
+    ) -> None:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="denied")
+
+    async def accessible_ids(
+        self,
+        principal: PrincipalContext,
+        kind: str,
+        action: str,
+        logger: logging.Logger,
+    ) -> frozenset[str] | None:
+        return frozenset[str]()
+
+
+@pytest.fixture
+def deny_all_permissions() -> Iterator[None]:
+    PERMISSION_CHECKERS.append(_DenyAllChecker())
+    try:
+        yield
+    finally:
+        PERMISSION_CHECKERS.clear()
 
 
 def test_download_result_file_route_uses_path_converter() -> None:
@@ -76,3 +128,26 @@ def test_resolve_artifact_relative_path_scopes_nested_paths_to_artifacts() -> No
 def test_resolve_artifact_relative_path_rejects_invalid_paths() -> None:
     with pytest.raises(Exception):
         results_router._resolve_artifact_path("../result.json")
+
+
+@pytest.mark.anyio
+async def test_ingest_result_denied_without_permission(
+    deny_all_permissions: None, logger: logging.Logger
+) -> None:
+    envelope = ResultEnvelope(task_id="t-1", result=BaseExecutorResult())
+    with pytest.raises(HTTPException) as exc:
+        await results_router.ingest_result(
+            envelope=envelope, principal=_principal(), logger=logger
+        )
+    assert exc.value.status_code == status.HTTP_403_FORBIDDEN
+
+
+@pytest.mark.anyio
+async def test_upload_result_file_denied_without_permission(
+    deny_all_permissions: None, logger: logging.Logger
+) -> None:
+    with pytest.raises(HTTPException) as exc:
+        await results_router.upload_result_file(
+            task_id="t-1", principal=_principal(), logger=logger
+        )
+    assert exc.value.status_code == status.HTTP_403_FORBIDDEN
