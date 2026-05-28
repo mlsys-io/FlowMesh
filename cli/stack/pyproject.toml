@@ -4,15 +4,15 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "flowmesh-cli-stack"
-version = "0.1.1"
+version = "0.1.2"
 description = "FlowMesh CLI stack commands"
 readme = "README.md"
 requires-python = ">=3.12"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
 dependencies = [
-    "flowmesh-cli==0.1.1",
-    "flowmesh-sdk-stack==0.1.1",
+    "flowmesh-cli==0.1.2",
+    "flowmesh-sdk-stack==0.1.2",
     "docker>=7.1.0",
     "packaging>=24",
     "pyyaml>=6.0.2",
