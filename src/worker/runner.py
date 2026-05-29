@@ -560,8 +560,14 @@ class Runner:
                         shard_index=shard_index,
                         shard_total=shard_total,
                     )
-                    self.lifecycle.set_failed(task_id, str(e), metadata=metadata)
-                    if isinstance(e, ExecutionError):
+                    is_execution_error = isinstance(e, ExecutionError)
+                    self.lifecycle.set_failed(
+                        task_id,
+                        str(e),
+                        metadata=metadata,
+                        retryable=not is_execution_error,
+                    )
+                    if is_execution_error:
                         self.logger.error("Task %s failed: %s", task_id, e)
                     else:
                         self.logger.exception("Task %s failed", task_id)

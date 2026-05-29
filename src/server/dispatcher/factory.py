@@ -57,5 +57,6 @@ def create_dispatcher(
         lambda_config=lambda_config,
         selection_jitter_epsilon=config.selection_jitter,
         enable_stage_weight_stickiness=config.enable_stage_weight_stickiness,
+        no_eligible_worker_grace_sec=config.no_eligible_worker_grace_sec,
         metrics_recorder=metrics_recorder,
     )

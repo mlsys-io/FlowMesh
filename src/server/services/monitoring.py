@@ -48,13 +48,38 @@ from ..registries.node import NodeRegistry
 from ..registries.worker import WorkerRegistry
 from ..schemas.logs import LogEvent
 from ..task.metadata import extract_model_dataset_names
-from ..task.models import TaskStatus, TaskUsage
+from ..task.models import TaskRecord, TaskStatus, TaskUsage
 from ..task.runtime import TaskRuntime
 from ..utils.logging import log_node_event, log_worker_event
 from ..utils.time import now_iso
 from .metrics import MetricsRecorder
 from .ssh_forward import SshForwardService
 from .watchdog import WorkerWatchdog
+
+
+def failed_task_can_retry(
+    record: TaskRecord | None,
+    retryable: bool | None,
+    untried_eligible: int,
+) -> bool:
+    """Decide whether a failed task should be retried.
+
+    A controlled executor failure (``retryable is False``) is deterministic and
+    is never retried. Otherwise a retry happens only while the attempt budget
+    holds and at least one eligible worker has not yet failed this task — so the
+    effective retry count is bounded by the number of distinct eligible workers.
+    """
+    if record is None:
+        return False
+    if record.status in (TaskStatus.FAILED, TaskStatus.CANCELLED, TaskStatus.DONE):
+        return False
+    if retryable is False:
+        return False
+    max_attempts = record.max_attempts
+    within_budget = (
+        max_attempts is None or max_attempts < 0 or record.attempts < max_attempts
+    )
+    return within_budget and untried_eligible > 0
 
 
 class EventMonitor:
@@ -330,10 +355,24 @@ class EventMonitor:
                 self._maybe_close_workflow_log_stream(event.task_id)
             case "TASK_FAILED":
                 record = self._runtime.get_record(event.task_id)
+                if record:
+                    if event.worker_id and event.worker_id not in record.failed_workers:
+                        record.failed_workers.append(event.worker_id)
+                    if event.worker_id:
+                        record.last_failed_worker = event.worker_id
+                    if event.error:
+                        record.last_error = event.error
+
                 attempts = record.attempts if record else 0
                 max_attempts = record.max_attempts if record else None
-                can_retry = record and (
-                    max_attempts is None or max_attempts < 0 or attempts < max_attempts
+                untried_eligible = 0
+                if record:
+                    untried_eligible = len(
+                        self._dispatcher.eligible_worker_ids(record)
+                        - set(record.failed_workers)
+                    )
+                can_retry = failed_task_can_retry(
+                    record, event.retryable, untried_eligible
                 )
                 if can_retry:
                     self._unregister_forward_task(event.task_id)
@@ -342,13 +381,13 @@ class EventMonitor:
                         if max_attempts is None or max_attempts < 0
                         else max_attempts
                     )
-                    if event.worker_id and record:
-                        record.last_failed_worker = event.worker_id
                     self._logger.warning(
-                        "Retrying task %s after worker failure (%d/%s)",
+                        "Retrying task %s on an untried worker (%d/%s, "
+                        "%d eligible untried)",
                         event.task_id,
                         attempts + 1,
                         limit_display,
+                        untried_eligible,
                     )
                     self._dispatcher._requeue_task(  # noqa: SLF001
                         event.task_id,
@@ -369,7 +408,7 @@ class EventMonitor:
                     event.worker_id,
                     payload,
                     event.ts,
-                    error=event.error,
+                    error=(record.last_error if record else None) or event.error,
                 )
                 self._schedule_emit_usage(usages)
                 self._metrics.finalize_task_failure(event.task_id)

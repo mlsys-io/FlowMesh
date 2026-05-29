@@ -109,6 +109,17 @@ class TaskRecord(BaseModel):
     last_failed_worker: str | None = Field(
         default=None, description="Last worker that failed the task."
     )
+    failed_workers: list[str] = Field(
+        default_factory=list,
+        description="Distinct workers that have failed this task.",
+    )
+    last_error: str | None = Field(
+        default=None, description="Most recent executor error message."
+    )
+    no_eligible_since: float | None = Field(
+        default=None,
+        description="Epoch seconds when no eligible worker was first observed.",
+    )
     local_name: str | None = Field(default=None, description="Workflow stage name.")
     graph_node_name: str | None = Field(default=None, description="Graph node name.")
     load: int = Field(default=0, description="Load score.")

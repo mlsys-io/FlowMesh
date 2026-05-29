@@ -62,6 +62,7 @@ class Dispatcher:
         lambda_config: dict[str, float] | None = None,
         selection_jitter_epsilon: float = 1e-3,
         enable_stage_weight_stickiness: bool = False,
+        no_eligible_worker_grace_sec: int = 60,
         metrics_recorder: MetricsRecorder | None = None,
     ) -> None:
         self._runtime = runtime
@@ -76,6 +77,7 @@ class Dispatcher:
         self._lambda_config = lambda_config or {}
         self._selection_jitter = max(0.0, float(selection_jitter_epsilon))
         self._stage_weight_stickiness_enabled = bool(enable_stage_weight_stickiness)
+        self._no_eligible_grace_sec = max(0, int(no_eligible_worker_grace_sec))
         self._metrics = metrics_recorder
         self._weight_reference_hints: tuple[str, ...] = (
             "checkpoint",
@@ -87,6 +89,36 @@ class Dispatcher:
             "load",
             "artifact",
         )
+
+    def eligible_worker_ids(self, record: TaskRecord) -> set[str]:
+        """Worker ids whose hardware satisfies the task, honoring selected_worker."""
+        eligible = {
+            worker.id
+            for worker in self._worker_registry.satisfying_workers(record.task)
+        }
+        if record.selected_worker:
+            eligible &= set(record.selected_worker)
+        return eligible
+
+    def _handle_no_eligible_worker(self, task_id: str, record: TaskRecord) -> bool:
+        """Wait out a grace period for a satisfying worker, then fail terminally."""
+        now = time.time()
+        if record.no_eligible_since is None:
+            record.no_eligible_since = now
+        waited = now - record.no_eligible_since
+        if waited >= self._no_eligible_grace_sec:
+            self._logger.warning(
+                "No eligible worker for %s after %.0fs; failing", task_id, waited
+            )
+            self._fail_task(
+                task_id,
+                record.last_error
+                or "No worker satisfies the task hardware requirements",
+                payload={"reason": "no_eligible_worker"},
+            )
+            return False
+        self._requeue_task(task_id, reason="no_eligible_worker", count_retry=False)
+        return False
 
     def dispatch_once(self, task_id: str) -> bool:
         """Dispatch a single task if possible; requeue when no worker."""
@@ -113,55 +145,59 @@ class Dispatcher:
         if record.selected_worker:
             pool = [c for c in pool if c.id in record.selected_worker]
 
-        # 3. If no workers -> requeue
+        # Eligible workers (any status) drive the retry-exhaustion and
+        # no-eligible-worker decisions below.
+        eligible_ids = self.eligible_worker_ids(record)
+        failed_ids = set(record.failed_workers or [])
+        untried_eligible = eligible_ids - failed_ids
+        if eligible_ids:
+            record.no_eligible_since = None
+
+        # 3. No idle worker right now.
         if not pool:
+            if not eligible_ids:
+                return self._handle_no_eligible_worker(task_id, record)
             reason = (
                 "candidate_workers_busy" if record.selected_worker else "no_idle_worker"
             )
-            if record.selected_worker:
-                self._logger.debug(
-                    "No candidate worker available for %s; allowed=%s",
-                    task_id,
-                    sorted(record.selected_worker),
-                )
-            else:
-                self._logger.debug(
-                    "No idle worker available for %s; requeueing", task_id
-                )
+            self._logger.debug("No idle worker available for %s; requeueing", task_id)
             self._requeue_task(task_id, reason=reason, count_retry=False)
             return False
 
-        # 4. Filter out last_failed_worker
-        last_failed_worker = (getattr(record, "last_failed_worker", None) or "").strip()
-        if last_failed_worker:
-            filtered_pool = [
-                candidate for candidate in pool if candidate.id != last_failed_worker
-            ]
-            if not filtered_pool:
-                # Only available worker is the one that previously failed.
-                # Requeue and count as a retry so max_attempts is respected;
-                # the task will be failed once attempts are exhausted.
-                self._logger.info(
-                    "Only worker %s available for %s (previously failed); "
-                    "requeueing with retry count",
-                    last_failed_worker,
+        # 4. Prefer workers that have not failed this task. Exclude failed ones
+        #    only while an untried eligible worker still exists.
+        if failed_ids:
+            filtered_pool = [c for c in pool if c.id not in failed_ids]
+            if filtered_pool:
+                pool = filtered_pool
+            elif untried_eligible:
+                # Untried eligible workers exist but are busy; wait for them.
+                self._logger.debug(
+                    "All idle candidates for %s already failed it; "
+                    "waiting for an untried worker",
                     task_id,
                 )
-                record.last_failed_worker = None
                 self._requeue_task(
-                    task_id, reason="only_failed_worker_available", count_retry=True
+                    task_id, reason="untried_workers_busy", count_retry=False
                 )
                 return False
-            if len(filtered_pool) != len(pool):
-                self._logger.debug(
-                    "Excluding last failed worker %s from candidate pool for %s "
-                    "(size %d -> %d)",
-                    last_failed_worker,
+            else:
+                # Every eligible worker has already failed this task.
+                self._logger.info(
+                    "All %d eligible worker(s) failed %s; failing terminally",
+                    len(eligible_ids),
                     task_id,
-                    len(pool),
-                    len(filtered_pool),
                 )
-            pool = filtered_pool
+                self._fail_task(
+                    task_id,
+                    record.last_error or "All eligible workers failed the task",
+                    worker_id=record.last_failed_worker,
+                    payload={
+                        "reason": "eligible_workers_exhausted",
+                        "failed_workers": sorted(failed_ids),
+                    },
+                )
+                return False
 
         # 5. Worker selection (best-fit scoring by default)
         selection_info: dict[str, Any] = {}
@@ -474,9 +510,10 @@ class Dispatcher:
             ):
                 self._fail_task(
                     task_id,
-                    "max_attempts_exceeded",
+                    record.last_error or "max_attempts_exceeded",
                     payload={
-                        "reason": reason,
+                        "reason": "max_attempts_exceeded",
+                        "requeue_reason": reason,
                         "attempts": attempts,
                         "max_attempts": max_attempts,
                     },

@@ -32,6 +32,13 @@ class TaskEvent(BaseEvent):
     task_id: str = Field(..., description="Associated task identifier.")
     status: str | None = Field(default=None, description="Task status.")
     error: str | None = Field(default=None, description="Error message if any.")
+    retryable: bool | None = Field(
+        default=None,
+        description=(
+            "Whether a failure may be retried on another worker. None leaves the "
+            "decision to the server, which treats it as retryable."
+        ),
+    )
     payload: dict[str, Any] = Field(
         default_factory=dict, description="Additional event payload."
     )

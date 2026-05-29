@@ -65,6 +65,16 @@ The runtime is two top-level processes:
 `PENDING → DISPATCHED → (DONE | FAILED | CANCELLED)`. Retried tasks
 cycle back to `PENDING` until exhausted.
 
+Retry is fleet-aware. A controlled executor failure (`ExecutionError`,
+reported as non-retryable on the `TASK_FAILED` event) is deterministic
+and fails terminally on the first attempt. Other failures retry only on
+an *eligible worker that has not already failed this task* — workers
+whose hardware satisfies the spec, tracked per task in
+`failed_workers` — bounded by `max_attempts`. Once no untried eligible
+worker remains the task fails terminally, carrying the executor's own
+error rather than a generic `max_attempts_exceeded`. A task no worker
+can satisfy waits `TASK_NO_ELIGIBLE_WORKER_GRACE_SEC` before failing.
+
 ## Directory map
 
 ```

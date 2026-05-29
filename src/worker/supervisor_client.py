@@ -257,13 +257,18 @@ class SupervisorClient:
         self._send_event(event)
 
     def task_failed(
-        self, task_id: str, error: str | None, metadata: dict[str, Any] | None = None
+        self,
+        task_id: str,
+        error: str | None,
+        metadata: dict[str, Any] | None = None,
+        retryable: bool = True,
     ) -> None:
         event = TaskEvent(
             type="TASK_FAILED",
             worker_id=self.worker_id,
             task_id=task_id,
             error=error,
+            retryable=retryable,
             payload=metadata or {},
         )
         self._send_event(event)
