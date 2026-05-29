@@ -21,7 +21,7 @@ from shared.tasks.worker_message import (
 from shared.utils.manifest import prepare_output_dir, sync_manifest
 from shared.utils.time import now_iso
 
-from .executors.base_executor import Executor, TaskCancelledError
+from .executors.base_executor import ExecutionError, Executor, TaskCancelledError
 from .executors.utils.checkpoints import (
     get_http_destination,
     write_executor_result,
@@ -561,7 +561,10 @@ class Runner:
                         shard_total=shard_total,
                     )
                     self.lifecycle.set_failed(task_id, str(e), metadata=metadata)
-                    self.logger.exception("Task %s failed", task_id)
+                    if isinstance(e, ExecutionError):
+                        self.logger.error("Task %s failed: %s", task_id, e)
+                    else:
+                        self.logger.exception("Task %s failed", task_id)
                 finally:
                     self._current_task_id = None
                     with self._active_executor_lock:

@@ -258,6 +258,8 @@ class _JsonlLogSink:
 class TaskLogEmitter(logging.Handler):
     """Per-task log handler that emits Python logging records to the server."""
 
+    _traceback_formatter = logging.Formatter()
+
     def __init__(
         self,
         stub: supervisor_pb2_grpc.SupervisorStub,
@@ -304,6 +306,13 @@ class TaskLogEmitter(logging.Handler):
             message = record.getMessage()
         except Exception:
             message = str(getattr(record, "msg", ""))
+        if record.exc_info:
+            if not record.exc_text:
+                record.exc_text = self._traceback_formatter.formatException(
+                    record.exc_info
+                )
+            if exc_text := record.exc_text:
+                message = f"{message}\n{exc_text}" if message else exc_text
         if not message:
             return
 
