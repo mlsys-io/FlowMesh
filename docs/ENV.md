@@ -32,7 +32,7 @@ listed here is in `.env.example`.
 | `ENABLE_CONTEXT_REUSE` | `true` | Bias toward workers with cached models |
 | `WORKER_CACHE_TTL_SEC` | `3600` | Cache metadata TTL |
 | `ENABLE_STAGE_WEIGHT_STICKINESS` | `false` | Pin stages to checkpoint-producing workers |
-| `TASK_NO_ELIGIBLE_WORKER_GRACE_SEC` | `60` | Grace before failing a task no worker can satisfy |
+| `TASK_NO_WORKER_GRACE_SEC` | `60` | Grace before failing a task no worker can satisfy |
 | `ENABLE_WORKER_WATCHDOG` | `true` | Worker death detection |
 | `WORKER_DEATH_GRACE_SEC` | `60` | Grace period before marking dead |
 | `FLOWMESH_PLUGINS` | – | Comma-separated plugin module names |

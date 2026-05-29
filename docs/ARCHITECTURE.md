@@ -73,7 +73,7 @@ whose hardware satisfies the spec, tracked per task in
 `failed_workers` — bounded by `max_attempts`. Once no untried eligible
 worker remains the task fails terminally, carrying the executor's own
 error rather than a generic `max_attempts_exceeded`. A task no worker
-can satisfy waits `TASK_NO_ELIGIBLE_WORKER_GRACE_SEC` before failing.
+can satisfy waits `TASK_NO_WORKER_GRACE_SEC` before failing.
 
 ## Directory map
 

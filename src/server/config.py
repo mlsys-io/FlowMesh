@@ -185,7 +185,7 @@ class DispatchConfig:
                 "ENABLE_STAGE_WEIGHT_STICKINESS", False
             ),
             no_eligible_worker_grace_sec=max(
-                0, parse_int_env("TASK_NO_ELIGIBLE_WORKER_GRACE_SEC", 60)
+                0, parse_int_env("TASK_NO_WORKER_GRACE_SEC", 60)
             ),
         )
 

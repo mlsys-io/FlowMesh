@@ -389,7 +389,7 @@ STACK_ENV_SCHEMA = EnvSchema(
                     var_type=EnvVarType.BOOL,
                 ),
                 EnvVar(
-                    "TASK_NO_ELIGIBLE_WORKER_GRACE_SEC",
+                    "TASK_NO_WORKER_GRACE_SEC",
                     "60",
                     var_type=EnvVarType.INT,
                     min_value=0,
