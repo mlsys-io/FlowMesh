@@ -145,18 +145,15 @@ class Dispatcher:
         if record.selected_worker:
             pool = [c for c in pool if c.id in record.selected_worker]
 
-        # Eligible workers (any status) drive the retry-exhaustion and
-        # no-eligible-worker decisions below.
-        eligible_ids = self.eligible_worker_ids(record)
         failed_ids = set(record.failed_workers or [])
-        untried_eligible = eligible_ids - failed_ids
-        if eligible_ids:
-            record.no_eligible_since = None
 
-        # 3. No idle worker right now.
+        # 3. No idle worker right now: wait for a busy one, or — if no worker
+        #    can satisfy the task at all — fail after a grace period. The
+        #    eligibility scan only runs on this cold path, not on every dispatch.
         if not pool:
-            if not eligible_ids:
+            if not self.eligible_worker_ids(record):
                 return self._handle_no_eligible_worker(task_id, record)
+            record.no_eligible_since = None
             reason = (
                 "candidate_workers_busy" if record.selected_worker else "no_idle_worker"
             )
@@ -164,24 +161,28 @@ class Dispatcher:
             self._requeue_task(task_id, reason=reason, count_retry=False)
             return False
 
+        # A dispatchable idle worker exists, so the task is satisfiable.
+        record.no_eligible_since = None
+
         # 4. Prefer workers that have not failed this task. Exclude failed ones
         #    only while an untried eligible worker still exists.
         if failed_ids:
             filtered_pool = [c for c in pool if c.id not in failed_ids]
             if filtered_pool:
                 pool = filtered_pool
-            elif untried_eligible:
-                # Untried eligible workers exist but are busy; wait for them.
-                self._logger.debug(
-                    "All idle candidates for %s already failed it; "
-                    "waiting for an untried worker",
-                    task_id,
-                )
-                self._requeue_task(
-                    task_id, reason="untried_workers_busy", count_retry=False
-                )
-                return False
             else:
+                eligible_ids = self.eligible_worker_ids(record)
+                if eligible_ids - failed_ids:
+                    # Untried eligible workers exist but are busy; wait for them.
+                    self._logger.debug(
+                        "All idle candidates for %s already failed it; "
+                        "waiting for an untried worker",
+                        task_id,
+                    )
+                    self._requeue_task(
+                        task_id, reason="untried_workers_busy", count_retry=False
+                    )
+                    return False
                 # Every eligible worker has already failed this task.
                 self._logger.info(
                     "All %d eligible worker(s) failed %s; failing terminally",

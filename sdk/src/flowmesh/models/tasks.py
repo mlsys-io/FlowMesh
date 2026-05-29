@@ -2,7 +2,7 @@
 
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from .common import TaskStatus
 
@@ -48,7 +48,7 @@ class TaskInfo(BaseModel):
     shard_total: int | None = None
     next_retry_at: str | None = None
     last_failed_worker: str | None = None
-    failed_workers: list[str] = []
+    failed_workers: list[str] = Field(default_factory=list)
     last_error: str | None = None
     no_eligible_since: float | None = None
     local_name: str | None = None
