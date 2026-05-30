@@ -62,13 +62,8 @@ def failed_task_can_retry(
     retryable: bool | None,
     untried_eligible: int,
 ) -> bool:
-    """Decide whether a failed task should be retried.
-
-    A controlled executor failure (``retryable is False``) is deterministic and
-    is never retried. Otherwise a retry happens only while the attempt budget
-    holds and at least one eligible worker has not yet failed this task — so the
-    effective retry count is bounded by the number of distinct eligible workers.
-    """
+    """Whether a failed task may be retried: retryable, within the attempt
+    budget, and with an eligible worker that has not yet failed it."""
     if record is None:
         return False
     if record.status in (TaskStatus.FAILED, TaskStatus.CANCELLED, TaskStatus.DONE):
@@ -358,8 +353,6 @@ class EventMonitor:
                 if record:
                     if event.worker_id and event.worker_id not in record.failed_workers:
                         record.failed_workers.append(event.worker_id)
-                    if event.worker_id:
-                        record.last_failed_worker = event.worker_id
                     if event.error:
                         record.last_error = event.error
 
@@ -597,8 +590,6 @@ class EventMonitor:
                                 self._close_task_log_stream(task_id)
                                 self._maybe_close_workflow_log_stream(task_id)
                             else:
-                                if record:
-                                    record.last_failed_worker = worker_id
                                 to_requeue.append(task_id)
                         if to_requeue:
                             self._logger.info(

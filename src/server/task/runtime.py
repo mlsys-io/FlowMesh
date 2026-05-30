@@ -813,7 +813,7 @@ class TaskRuntime:
         with self._cv:
             record = self._tasks.get(task_id)
             if record:
-                if record.status in (TaskStatus.CANCELLED, TaskStatus.FAILED):
+                if record.status == TaskStatus.CANCELLED:
                     return [], [], usages
                 record.status = TaskStatus.FAILED
                 record.error = message
@@ -822,7 +822,6 @@ class TaskRuntime:
                     record.started_ts = started_ts
                 if worker_id:
                     record.assigned_worker = worker_id
-                    record.last_failed_worker = worker_id
                 record.merged_children = None
                 if usage is not None:
                     record.usages.append(usage)

@@ -78,7 +78,7 @@ def _setup(
         worker_registry=registry,
         results_dir=Path("/tmp/flowmesh-test"),  # noqa: S108 - unused in these paths
         logger=logging.getLogger("test_dispatch_once_retry"),
-        no_eligible_worker_grace_sec=60,
+        no_worker_grace_sec=60,
     )
     return disp, task_id
 

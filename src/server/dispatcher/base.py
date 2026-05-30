@@ -62,7 +62,7 @@ class Dispatcher:
         lambda_config: dict[str, float] | None = None,
         selection_jitter_epsilon: float = 1e-3,
         enable_stage_weight_stickiness: bool = False,
-        no_eligible_worker_grace_sec: int = 60,
+        no_worker_grace_sec: int = 60,
         metrics_recorder: MetricsRecorder | None = None,
     ) -> None:
         self._runtime = runtime
@@ -77,7 +77,7 @@ class Dispatcher:
         self._lambda_config = lambda_config or {}
         self._selection_jitter = max(0.0, float(selection_jitter_epsilon))
         self._stage_weight_stickiness_enabled = bool(enable_stage_weight_stickiness)
-        self._no_eligible_grace_sec = max(0, int(no_eligible_worker_grace_sec))
+        self._no_worker_grace_sec = max(0, int(no_worker_grace_sec))
         self._metrics = metrics_recorder
         self._weight_reference_hints: tuple[str, ...] = (
             "checkpoint",
@@ -106,7 +106,7 @@ class Dispatcher:
         if record.no_eligible_since is None:
             record.no_eligible_since = now
         waited = now - record.no_eligible_since
-        if waited >= self._no_eligible_grace_sec:
+        if waited >= self._no_worker_grace_sec:
             self._logger.warning(
                 "No eligible worker for %s after %.0fs; failing", task_id, waited
             )
@@ -145,11 +145,8 @@ class Dispatcher:
         if record.selected_worker:
             pool = [c for c in pool if c.id in record.selected_worker]
 
-        failed_ids = set(record.failed_workers or [])
-
-        # 3. No idle worker right now: wait for a busy one, or — if no worker
-        #    can satisfy the task at all — fail after a grace period. The
-        #    eligibility scan only runs on this cold path, not on every dispatch.
+        # 3. No idle worker: wait for a busy one, or fail after a grace period
+        #    when no worker can satisfy the task at all.
         if not pool:
             if not self.eligible_worker_ids(record):
                 return self._handle_no_eligible_worker(task_id, record)
@@ -161,11 +158,11 @@ class Dispatcher:
             self._requeue_task(task_id, reason=reason, count_retry=False)
             return False
 
-        # A dispatchable idle worker exists, so the task is satisfiable.
         record.no_eligible_since = None
 
-        # 4. Prefer workers that have not failed this task. Exclude failed ones
-        #    only while an untried eligible worker still exists.
+        # 4. Prefer workers that have not failed this task; fail once every
+        #    eligible worker has.
+        failed_ids = set(record.failed_workers)
         if failed_ids:
             filtered_pool = [c for c in pool if c.id not in failed_ids]
             if filtered_pool:
@@ -173,7 +170,6 @@ class Dispatcher:
             else:
                 eligible_ids = self.eligible_worker_ids(record)
                 if eligible_ids - failed_ids:
-                    # Untried eligible workers exist but are busy; wait for them.
                     self._logger.debug(
                         "All idle candidates for %s already failed it; "
                         "waiting for an untried worker",
@@ -183,7 +179,6 @@ class Dispatcher:
                         task_id, reason="untried_workers_busy", count_retry=False
                     )
                     return False
-                # Every eligible worker has already failed this task.
                 self._logger.info(
                     "All %d eligible worker(s) failed %s; failing terminally",
                     len(eligible_ids),

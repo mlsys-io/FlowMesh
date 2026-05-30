@@ -22,7 +22,7 @@ def _dispatcher(
         worker_registry=registry,
         results_dir=Path("/tmp/flowmesh-test"),  # noqa: S108 - unused in these paths
         logger=logging.getLogger("test_retry_eligibility"),
-        no_eligible_worker_grace_sec=grace_sec,
+        no_worker_grace_sec=grace_sec,
     )
 
 
