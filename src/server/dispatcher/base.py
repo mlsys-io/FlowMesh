@@ -145,8 +145,7 @@ class Dispatcher:
         if record.selected_worker:
             pool = [c for c in pool if c.id in record.selected_worker]
 
-        # 3. No idle worker: wait for a busy one, or fail after a grace period
-        #    when no worker can satisfy the task at all.
+        # 3. No idle worker: wait for a busy one or fail after a grace period
         if not pool:
             if not self.eligible_worker_ids(record):
                 return self._handle_no_eligible_worker(task_id, record)
@@ -160,8 +159,8 @@ class Dispatcher:
 
         record.no_eligible_since = None
 
-        # 4. Prefer workers that have not failed this task; fail once every
-        #    eligible worker has.
+        # 4. Prefer workers that have not failed this task; fail once every eligible
+        # worker has.
         failed_ids = set(record.failed_workers)
         if failed_ids:
             filtered_pool = [c for c in pool if c.id not in failed_ids]
@@ -171,8 +170,8 @@ class Dispatcher:
                 eligible_ids = self.eligible_worker_ids(record)
                 if eligible_ids - failed_ids:
                     self._logger.debug(
-                        "All idle candidates for %s already failed it; "
-                        "waiting for an untried worker",
+                        "All idle candidates for %s already failed it; waiting for an "
+                        "untried worker",
                         task_id,
                     )
                     self._requeue_task(

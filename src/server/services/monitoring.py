@@ -355,15 +355,17 @@ class EventMonitor:
                         record.failed_workers.append(event.worker_id)
                     if event.error:
                         record.last_error = event.error
-
-                attempts = record.attempts if record else 0
-                max_attempts = record.max_attempts if record else None
-                untried_eligible = 0
-                if record:
+                    attempts = record.attempts
+                    max_attempts: int | None = record.max_attempts
                     untried_eligible = len(
                         self._dispatcher.eligible_worker_ids(record)
                         - set(record.failed_workers)
                     )
+                else:
+                    attempts = 0
+                    max_attempts = None
+                    untried_eligible = 0
+
                 can_retry = failed_task_can_retry(
                     record, event.retryable, untried_eligible
                 )

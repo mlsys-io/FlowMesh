@@ -35,8 +35,8 @@ class TaskEvent(BaseEvent):
     retryable: bool | None = Field(
         default=None,
         description=(
-            "Whether the failure may be retried on another worker. None when the "
-            "reporter has no opinion."
+            "Whether the failure may be retried on another worker. None to defer the "
+            "decision to the server."
         ),
     )
     payload: dict[str, Any] = Field(
