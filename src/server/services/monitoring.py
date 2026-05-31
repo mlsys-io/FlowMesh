@@ -57,13 +57,9 @@ from .ssh_forward import SshForwardService
 from .watchdog import WorkerWatchdog
 
 
-def failed_task_can_retry(
-    record: TaskRecord | None,
-    retryable: bool | None,
-    untried_eligible: int,
-) -> bool:
-    """Whether a failed task may be retried: retryable, within the attempt
-    budget, and with an eligible worker that has not yet failed it."""
+def failed_task_can_retry(record: TaskRecord | None, retryable: bool | None) -> bool:
+    """Whether a failed task may be requeued: retryable and within the attempt
+    budget."""
     if record is None:
         return False
     if record.status in (TaskStatus.FAILED, TaskStatus.CANCELLED, TaskStatus.DONE):
@@ -71,10 +67,7 @@ def failed_task_can_retry(
     if retryable is False:
         return False
     max_attempts = record.max_attempts
-    within_budget = (
-        max_attempts is None or max_attempts < 0 or record.attempts < max_attempts
-    )
-    return within_budget and untried_eligible > 0
+    return max_attempts is None or max_attempts < 0 or record.attempts < max_attempts
 
 
 class EventMonitor:
@@ -357,19 +350,11 @@ class EventMonitor:
                         record.last_error = event.error
                     attempts = record.attempts
                     max_attempts: int | None = record.max_attempts
-                    untried_eligible = len(
-                        self._dispatcher.eligible_worker_ids(record)
-                        - set(record.failed_workers)
-                    )
                 else:
                     attempts = 0
                     max_attempts = None
-                    untried_eligible = 0
 
-                can_retry = failed_task_can_retry(
-                    record, event.retryable, untried_eligible
-                )
-                if can_retry:
+                if failed_task_can_retry(record, event.retryable):
                     self._unregister_forward_task(event.task_id)
                     limit_display = (
                         "∞"
@@ -377,12 +362,10 @@ class EventMonitor:
                         else max_attempts
                     )
                     self._logger.warning(
-                        "Retrying task %s on an untried worker (%d/%s, "
-                        "%d eligible untried)",
+                        "Retrying task %s after failure (%d/%s)",
                         event.task_id,
                         attempts + 1,
                         limit_display,
-                        untried_eligible,
                     )
                     self._dispatcher._requeue_task(  # noqa: SLF001
                         event.task_id,

@@ -100,24 +100,34 @@ class Dispatcher:
             eligible &= set(record.selected_worker)
         return eligible
 
-    def _handle_no_eligible_worker(self, task_id: str, record: TaskRecord) -> bool:
-        """Wait out a grace period for a satisfying worker, then fail terminally."""
+    def _grace_then_fail(
+        self,
+        task_id: str,
+        record: TaskRecord,
+        reason: str,
+        message: str,
+        extra_payload: dict[str, Any] | None = None,
+    ) -> bool:
+        """Wait out the no-worker grace, then fail the task terminally."""
         now = time.time()
         if record.no_eligible_since is None:
             record.no_eligible_since = now
         waited = now - record.no_eligible_since
         if waited >= self._no_worker_grace_sec:
             self._logger.warning(
-                "No eligible worker for %s after %.0fs; failing", task_id, waited
+                "No worker for %s after %.0fs (%s); failing", task_id, waited, reason
             )
+            payload = {"reason": reason}
+            if extra_payload:
+                payload.update(extra_payload)
             self._fail_task(
                 task_id,
-                record.last_error
-                or "No worker satisfies the task hardware requirements",
-                payload={"reason": "no_eligible_worker"},
+                record.last_error or message,
+                worker_id=record.last_failed_worker,
+                payload=payload,
             )
             return False
-        self._requeue_task(task_id, reason="no_eligible_worker", count_retry=False)
+        self._requeue_task(task_id, reason=reason, count_retry=False)
         return False
 
     def dispatch_once(self, task_id: str) -> bool:
@@ -148,7 +158,12 @@ class Dispatcher:
         # 3. No idle worker: wait for a busy one or fail after a grace period
         if not pool:
             if not self.eligible_worker_ids(record):
-                return self._handle_no_eligible_worker(task_id, record)
+                return self._grace_then_fail(
+                    task_id,
+                    record,
+                    reason="no_eligible_worker",
+                    message="No worker satisfies the task hardware requirements",
+                )
             record.no_eligible_since = None
             reason = (
                 "candidate_workers_busy" if record.selected_worker else "no_idle_worker"
@@ -157,42 +172,36 @@ class Dispatcher:
             self._requeue_task(task_id, reason=reason, count_retry=False)
             return False
 
-        record.no_eligible_since = None
-
-        # 4. Prefer workers that have not failed this task; fail once every eligible
-        # worker has.
+        # 4. Prefer workers that have not failed this task.
         failed_ids = set(record.failed_workers)
         if failed_ids:
             filtered_pool = [c for c in pool if c.id not in failed_ids]
             if filtered_pool:
                 pool = filtered_pool
-            else:
-                eligible_ids = self.eligible_worker_ids(record)
-                if eligible_ids - failed_ids:
-                    self._logger.debug(
-                        "All idle candidates for %s already failed it; waiting for an "
-                        "untried worker",
-                        task_id,
-                    )
-                    self._requeue_task(
-                        task_id, reason="untried_workers_busy", count_retry=False
-                    )
-                    return False
-                self._logger.info(
-                    "All %d eligible worker(s) failed %s; failing terminally",
-                    len(eligible_ids),
+            elif self.eligible_worker_ids(record) - failed_ids:
+                # Untried eligible workers exist but are busy; wait for them.
+                record.no_eligible_since = None
+                self._logger.debug(
+                    "All idle candidates for %s already failed it; waiting for an "
+                    "untried worker",
                     task_id,
                 )
-                self._fail_task(
-                    task_id,
-                    record.last_error or "All eligible workers failed the task",
-                    worker_id=record.last_failed_worker,
-                    payload={
-                        "reason": "eligible_workers_exhausted",
-                        "failed_workers": sorted(failed_ids),
-                    },
+                self._requeue_task(
+                    task_id, reason="untried_workers_busy", count_retry=False
                 )
                 return False
+            else:
+                # Every eligible worker has failed this task; grace-then-fail so a
+                # newly joined worker can still pick it up.
+                return self._grace_then_fail(
+                    task_id,
+                    record,
+                    reason="eligible_workers_exhausted",
+                    message="All eligible workers failed the task",
+                    extra_payload={"failed_workers": sorted(failed_ids)},
+                )
+
+        record.no_eligible_since = None
 
         # 5. Worker selection (best-fit scoring by default)
         selection_info: dict[str, Any] = {}
