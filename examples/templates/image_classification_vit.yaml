@@ -36,6 +36,8 @@ spec:
     batch_size: 32
     gradient_accumulation_steps: 1
     learning_rate: 5.0e-5
+    optimizer: adamw_torch        # also accepts "adam" / "sgd" (TrainingArguments.optim)
+    augmentation: false           # true -> horizontal flip + 4px-pad random crop on train
     logging_steps: 10
     save_steps: 100
     save_strategy: epoch

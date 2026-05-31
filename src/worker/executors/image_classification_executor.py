@@ -11,6 +11,7 @@ does.
 
 import gc
 import logging
+import random
 import time
 from pathlib import Path
 from typing import Any
@@ -18,6 +19,7 @@ from typing import Any
 import numpy as np
 import torch
 from datasets import Dataset, load_dataset
+from PIL import Image, ImageOps
 from transformers import (
     AutoImageProcessor,
     AutoModelForImageClassification,
@@ -51,6 +53,7 @@ class ImageClassificationResult(BaseExecutorResult):
     dataset_size: int = 0
     num_labels: int = 0
     eval_accuracy: float | None = None
+    train_losses: list[float] = []
     output_dir: str | None = None
     checkpoints_dir: ArtifactRef | None = None
     resume_from_path: str | None = None
@@ -153,12 +156,13 @@ class ImageClassificationExecutor(TrainingMixin, Executor):
                 model.gradient_checkpointing_enable()
             self._current_model = model
 
+            augment = bool(training_cfg.get("augmentation", False))
             train_dataset = self._apply_transform(
-                train_dataset, processor, image_field, label_field
+                train_dataset, processor, image_field, label_field, augment=augment
             )
             if eval_dataset is not None:
                 eval_dataset = self._apply_transform(
-                    eval_dataset, processor, image_field, label_field
+                    eval_dataset, processor, image_field, label_field, augment=False
                 )
 
             eval_strategy = "epoch" if eval_dataset is not None else "no"
@@ -175,6 +179,7 @@ class ImageClassificationExecutor(TrainingMixin, Executor):
                     training_cfg.get("gradient_accumulation_steps", 1)
                 ),
                 learning_rate=float(training_cfg.get("learning_rate", 5e-5)),
+                optim=_resolve_optim(training_cfg.get("optimizer")),
                 weight_decay=float(training_cfg.get("weight_decay", 0.0)),
                 warmup_steps=int(training_cfg.get("warmup_steps", 0)),
                 warmup_ratio=float(training_cfg.get("warmup_ratio", 0.0)),
@@ -212,6 +217,12 @@ class ImageClassificationExecutor(TrainingMixin, Executor):
             trainer.train(resume_from_checkpoint=resume_str)
             ok = True
             logger.info("Training finished")
+
+            train_losses = [
+                round(float(entry["loss"]), 6)
+                for entry in trainer.state.log_history
+                if "loss" in entry
+            ]
 
             eval_accuracy: float | None = None
             if eval_dataset is not None:
@@ -257,6 +268,7 @@ class ImageClassificationExecutor(TrainingMixin, Executor):
                 dataset_size=len(train_dataset),
                 num_labels=num_labels,
                 eval_accuracy=eval_accuracy,
+                train_losses=train_losses,
                 output_dir=out_dir.as_posix(),
                 checkpoints_dir=ArtifactRef(path="checkpoints"),
                 resume_from_path=resume_str,
@@ -422,16 +434,45 @@ class ImageClassificationExecutor(TrainingMixin, Executor):
 
     @staticmethod
     def _apply_transform(
-        dataset: Dataset, processor: Any, image_field: str, label_field: str
+        dataset: Dataset,
+        processor: Any,
+        image_field: str,
+        label_field: str,
+        augment: bool = False,
     ) -> Dataset:
         def _transform(batch: dict[str, Any]) -> dict[str, Any]:
             images = [img.convert("RGB") for img in batch[image_field]]
+            if augment:
+                images = [_augment_image(img) for img in images]
             encoded = processor(images=images, return_tensors="pt")
             encoded["labels"] = batch[label_field]
             return encoded
 
         dataset.set_transform(_transform)
         return dataset
+
+
+_OPTIM_ALIASES = {"adam": "adamw_torch", "adamw": "adamw_torch", "sgd": "sgd"}
+
+
+def _resolve_optim(optimizer: Any) -> str:
+    """Map a spec optimizer name onto a Transformers ``TrainingArguments.optim``."""
+    if not optimizer:
+        return "adamw_torch"
+    name = str(optimizer).lower()
+    return _OPTIM_ALIASES.get(name, name)
+
+
+def _augment_image(img: Image.Image) -> Image.Image:
+    """Horizontal flip (p=0.5) + 4px-pad random crop, matching the loop's aug."""
+    if random.random() < 0.5:
+        img = img.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
+    w, h = img.size
+    pad = 4
+    padded = ImageOps.expand(img, border=pad, fill=0)
+    left = random.randint(0, 2 * pad)
+    top = random.randint(0, 2 * pad)
+    return padded.crop((left, top, left + w, top + h))
 
 
 def _image_collate(features: list[dict[str, Any]]) -> dict[str, Any]:
