@@ -283,7 +283,7 @@ class HFTransformersExecutor(InferenceMixin, Executor):
                 self._model.to(device)  # type: ignore[arg-type]
             self._model.eval()
         except Exception as e:
-            raise ExecutionError(f"Failed to load model/tokenizer: {e}")
+            raise ExecutionError(f"Failed to load model/tokenizer: {e}", retryable=True)
 
         self._device = (
             device

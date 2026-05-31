@@ -486,7 +486,8 @@ class DataMixin(GovernanceMixin):
                         )
                     if not s3_result.get("success"):
                         raise ExecutionError(
-                            f"S3 retrieval failed: {s3_result.get('error')}"
+                            f"S3 retrieval failed: {s3_result.get('error')}",
+                            retryable=True,
                         )
                     file_data = s3_result.get("data")
                     if file_data is None:

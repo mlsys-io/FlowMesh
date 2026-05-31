@@ -357,7 +357,7 @@ class AgentExecutor(Executor):
             write_executor_result(
                 out_dir / "results.json", task.task_id, task.spec, error_output
             )
-            raise ExecutionError(f"Agent execution failed: {e}") from e
+            raise ExecutionError(f"Agent execution failed: {e}", retryable=True) from e
 
     async def _run_agent_task(
         self,
@@ -534,10 +534,10 @@ class AgentExecutor(Executor):
 
         except TimeoutError:
             logger.error(f"⏰ Task timeout ({task_timeout} seconds)")
-            raise ExecutionError("Agent task timed out")
+            raise ExecutionError("Agent task timed out", retryable=True)
         except Exception as e:
             logger.error(f"❌ Error during execution: {str(e)}")
-            raise ExecutionError(f"Agent task failed: {str(e)}")
+            raise ExecutionError(f"Agent task failed: {str(e)}", retryable=True)
 
         # Extract output based on result type
         if hasattr(result, "final_output") and result.final_output:
@@ -695,7 +695,7 @@ class AgentExecutor(Executor):
 
         except Exception as e:
             logger.error(f"Batch execution failed: {e}")
-            raise ExecutionError(f"Batch execution failed: {e}")
+            raise ExecutionError(f"Batch execution failed: {e}", retryable=True)
 
         # Save batch summary
         batch_summary = {

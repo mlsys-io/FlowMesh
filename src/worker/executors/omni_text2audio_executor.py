@@ -165,7 +165,8 @@ class OmniText2AudioExecutor(OmniExecutorBase):
                     outputs = omni.generate(omni_prompt, sampling)
                 except Exception as exc:
                     raise ExecutionError(
-                        f"omni_text2audio generation failed: {exc}"
+                        f"omni_text2audio generation failed: {exc}",
+                        retryable=True,
                     ) from exc
                 per_prompt_outputs.append((prompt_idx, prompt, outputs))
 

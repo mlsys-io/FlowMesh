@@ -198,7 +198,9 @@ class DataRetrievalExecutor(DataMixin, Executor):
 
                 s3_result = connector.execute(group_keys, encoding=encoding)
                 if not s3_result["success"]:
-                    raise ExecutionError(f"S3 retrieval failed: {s3_result['error']}")
+                    raise ExecutionError(
+                        f"S3 retrieval failed: {s3_result['error']}", retryable=True
+                    )
                 contents = [
                     self._serialize_s3_content(s3_result["data"][key], out_dir)
                     for key in group_keys

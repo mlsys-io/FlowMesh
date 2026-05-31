@@ -126,7 +126,8 @@ class OmniText2GeneralExecutor(OmniExecutorBase):
                 )
             except Exception as exc:
                 raise ExecutionError(
-                    f"omni_text2general generation failed to start: {exc}"
+                    f"omni_text2general generation failed to start: {exc}",
+                    retryable=True,
                 ) from exc
 
             for stage_outputs in generator:
