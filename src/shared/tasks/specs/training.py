@@ -63,3 +63,15 @@ class DPOSpecStrict(TrainingSpecStrict):
 
 class DPOSpecTemplate(TrainingSpecTemplate):
     taskType: Literal[TaskType.DPO]
+
+
+class ImageClassificationSpecStrict(TrainingSpecStrict):
+    taskType: Literal[TaskType.IMAGE_CLASSIFICATION]
+
+    checkpoint: dict[str, Any] | None = None
+
+
+class ImageClassificationSpecTemplate(TrainingSpecTemplate):
+    taskType: Literal[TaskType.IMAGE_CLASSIFICATION]
+
+    checkpoint: dict[str, Any] | None = None

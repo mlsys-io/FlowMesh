@@ -12,6 +12,7 @@ class TestExecutorRegistry:
             "dpo",
             "sft",
             "lora_sft",
+            "image_classification",
             "default",
             "rag",
             "agent",

@@ -9,7 +9,8 @@ The worker resolves `spec.taskType` against an executor registry in
 | `inference` | `VLLMExecutor` / `TransformersExecutor` | LLM inference |
 | `diffusion` | `DiffusersExecutor` | Image / video diffusion models |
 | `omni_text2{audio,image,speech,general}` | `Omni*Executor` | Multimodal generation |
-| `training` | `SFTExecutor` / `LoRASFTExecutor` / `DPOExecutor` / `PPOExecutor` | Fine-tuning |
+| `training` | `SFTExecutor` / `LoRASFTExecutor` / `DPOExecutor` / `PPOExecutor` | LLM fine-tuning |
+| `image_classification` | `ImageClassificationExecutor` | Vision classification fine-tuning (`AutoModelForImageClassification` + HF `Trainer`) |
 | `rag` | `RAGExecutor` | Retrieval-augmented generation |
 | `agent` | `AgentExecutor` | Tool-using LLM agent (utu / youtu-agent backend) |
 | `data_profiling` | `DataProfilingExecutor` | DataFrame profiling |

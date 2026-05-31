@@ -1,0 +1,54 @@
+apiVersion: flowmesh/v1
+kind: ImageClassificationTask
+metadata:
+  name: vit-cifar10-demo
+  owner: research
+  annotations:
+    description: Fine-tune ViT-base on CIFAR-10 using ImageClassificationExecutor
+
+spec:
+  taskType: image_classification
+
+  resources:
+    hardware:
+      cpu: 8
+      memory: 32Gi
+      gpu:
+        count: 1
+        type: any
+
+  model:
+    source:
+      type: huggingface
+      identifier: google/vit-base-patch16-224
+
+  data:
+    dataset_name: cifar10
+    split: "train[:5%]"
+    eval_split: "test[:5%]"
+    image_column: img
+    label_column: label
+    max_samples: 1000
+    max_eval_samples: 200
+
+  training:
+    num_train_epochs: 1
+    batch_size: 32
+    gradient_accumulation_steps: 1
+    learning_rate: 5.0e-5
+    logging_steps: 10
+    save_steps: 100
+    save_strategy: epoch
+    save_model: true
+    gradient_checkpointing: false
+    fp16: false
+    bf16: true
+
+  output:
+    destination:
+      type: local
+    artifacts:
+      - results.json
+      - logs
+      - artifacts/checkpoints
+      - artifacts/final_model
