@@ -109,6 +109,7 @@ class TaskRecord(BaseModel):
     failed_workers: list[str] = Field(
         default_factory=list,
         description="Distinct workers that have failed this task.",
+        exclude=True,
     )
     last_error: str | None = Field(
         default=None, description="Most recent executor error message."
