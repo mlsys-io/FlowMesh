@@ -25,15 +25,21 @@ else:
     core_title = pr_title
     is_breaking = False
 
-# Validate type: feat, fix, refactor, chore, test, perf, docs
+# Validate type with an optional (scope): feat: ... or feat(server): ...
 types_re = "|".join(re.escape(t) for t in ALLOWED_TYPES)
-type_match = re.match(rf"^({types_re}):\s+.+$", core_title, re.IGNORECASE)
+type_match = re.match(
+    rf"^({types_re})(\([^()\s]+\))?:\s+.+$", core_title, re.IGNORECASE
+)
 if not type_match:
     print(f"❌ Invalid PR title: '{pr_title}'")
-    print("   Expected format: type: description")
+    print("   Expected format: type: description  (or type(scope): description)")
     print(f"   Allowed types: {', '.join(ALLOWED_TYPES)}")
     sys.exit(1)
 
 change_type = type_match.group(1).lower()
+scope = type_match.group(2) or ""
 breaking_info = " (BREAKING CHANGE)" if is_breaking else ""
-print(f"✅ PR title is valid: {pr_title}\n" f"   type: {change_type}{breaking_info}")
+print(
+    f"✅ PR title is valid: {pr_title}\n"
+    f"   type: {change_type}{scope}{breaking_info}"
+)
