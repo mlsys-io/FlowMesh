@@ -229,6 +229,7 @@ class APIExecutor(Executor):
             message = f"API request returned status {resp.status_code}"
             if body_text:
                 message = f"{message}: {body_text[:200]}"
-            raise ExecutionError(message, retryable=resp.status_code >= 500)
+            retryable = resp.status_code >= 500 or resp.status_code in (408, 429)
+            raise ExecutionError(message, retryable=retryable)
 
         return result
