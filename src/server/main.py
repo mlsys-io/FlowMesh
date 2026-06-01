@@ -29,7 +29,6 @@ from .hooks import register
 from .registries import WorkerRegistry, WorkflowRegistry
 from .registries.node import NodeRegistry
 from .routers import docs, health, v1
-from .services.cleanup import clear_redis_state
 from .services.log_archiver import TaskLogArchiver
 from .services.metrics import MetricsRecorder
 from .services.monitoring import EventMonitor
@@ -182,7 +181,7 @@ if IS_ROOT_NODE:
     )
 
 # --------------------------------------------------------------------------- #
-# Metrics export & cleanup hooks
+# Metrics export hook
 # --------------------------------------------------------------------------- #
 
 
@@ -201,8 +200,6 @@ def _export_metrics_on_exit() -> None:
         logger.warning("Failed to export metrics summary: %s", exc)
 
 
-if IS_ROOT_NODE:
-    atexit.register(clear_redis_state, REDIS_CLIENT, logger)
 atexit.register(_export_metrics_on_exit)
 
 # --------------------------------------------------------------------------- #
@@ -250,8 +247,6 @@ def _stop_background() -> None:
     for thread in BACKGROUND_THREADS:
         thread.join(timeout=2.0)
     BACKGROUND_THREADS.clear()
-    if IS_ROOT_NODE:
-        clear_redis_state(REDIS_CLIENT, logger)
 
 
 # --------------------------------------------------------------------------- #

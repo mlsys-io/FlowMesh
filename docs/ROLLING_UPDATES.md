@@ -70,3 +70,12 @@ workflow is lost.
 - **Co-located root workers are recreated.** Workers running on the root host die
   with the root's supervisor; their tasks requeue and re-run. To avoid this,
   prefer not to run workers on the root node.
+
+## State lifetime
+
+Cluster state (workflows, durable scheduler records, the task-event stream)
+lives as long as the Redis volumes — **not** the server process. Stopping or
+recreating the server never clears it, which is what lets a restart resume
+in-flight work; a plain `stack down` / `stack up` likewise resumes the queue.
+To reset to a clean slate, remove the Redis volumes with `flowmesh stack clean`
+(`down -v`).
