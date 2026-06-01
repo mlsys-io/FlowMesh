@@ -113,6 +113,16 @@ class NodeClient:
             return False
         return True
 
+    def drain_workers(self, *, ignore_unreachable: bool = False) -> bool:
+        """Drain the node's managed workers ahead of a service restart.
+
+        Destroys every worker the node manages so their in-flight tasks are
+        released (``WORKER_UNREGISTER`` → requeue) before the worker-managing
+        service is recreated. Returns ``True`` on success, ``False`` when
+        ``ignore_unreachable=True`` and the server was unreachable.
+        """
+        return self.destroy_all_workers(ignore_unreachable=ignore_unreachable)
+
     def worker_names(self) -> list[str]:
         """Return a list of all worker names."""
         data = self.list_workers()
