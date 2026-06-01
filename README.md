@@ -137,19 +137,22 @@ for the full registry and per-executor fields.
 
 | `taskType` | What it does |
 |---|---|
+| **LLM — inference & agents** | |
 | `inference` | LLM inference (vLLM / HF transformers) |
-| `diffusion` | Image / video diffusion models |
 | `omni_text2{audio,image,speech,general}` | Multimodal generation |
-| `sft` / `lora_sft` / `dpo` / `ppo` | LLM fine-tuning (TRL) |
-| `image_classification_training` | Vision classifier fine-tuning (HF `AutoModelForImageClassification`) |
 | `rag` | Retrieval-augmented generation |
 | `agent` | Tool-using LLM agent |
-| `ssh` | Interactive SSH session or non-interactive container job |
-| **Misc / data** | |
+| **LLM — training** | |
+| `sft` / `lora_sft` / `dpo` / `ppo` | LLM fine-tuning (TRL) |
+| **Deep learning (non-LLM)** | |
+| `image_classification_training` | Vision classifier fine-tuning (HF `AutoModelForImageClassification`) |
+| `diffusion` | Image / video diffusion models |
+| **Misc / data & utility** | |
 | `data_profiling` | DataFrame profiling |
 | `data_retrieval` | DataFrame loading from sources |
 | `embedding` | Text embeddings |
 | `api` | Outbound HTTP API call step |
+| `ssh` | Interactive SSH session or non-interactive container job |
 | `echo` | Echo input back (smoke tests) |
 
 ## Extending FlowMesh
