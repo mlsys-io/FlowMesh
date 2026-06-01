@@ -73,11 +73,11 @@ class Dispatcher:
         self._context_reuse_enabled = enable_context_reuse
         self._task_merge_enabled = enable_task_merge
         self._task_merge_max_batch_size = max(1, task_merge_max_batch_size)
-        self._cache_ttl_sec = max(0, int(reuse_cache_ttl_sec))
+        self._cache_ttl_sec = max(0, reuse_cache_ttl_sec)
         self._lambda_config = lambda_config or {}
-        self._selection_jitter = max(0.0, float(selection_jitter_epsilon))
-        self._stage_weight_stickiness_enabled = bool(enable_stage_weight_stickiness)
-        self._no_worker_grace_sec = max(0, int(no_worker_grace_sec))
+        self._selection_jitter = max(0.0, selection_jitter_epsilon)
+        self._stage_weight_stickiness_enabled = enable_stage_weight_stickiness
+        self._no_worker_grace_sec = max(0, no_worker_grace_sec)
         self._metrics = metrics_recorder
         self._weight_reference_hints: tuple[str, ...] = (
             "checkpoint",
@@ -130,6 +130,18 @@ class Dispatcher:
         self._requeue_task(task_id, reason=reason, count_retry=False)
         return False
 
+    def _grace_then_fail_exhausted(
+        self, task_id: str, record: TaskRecord, failed_ids: set[str]
+    ) -> bool:
+        """Grace-then-fail once every eligible worker has failed the task."""
+        return self._grace_then_fail(
+            task_id,
+            record,
+            reason="eligible_workers_exhausted",
+            message="All eligible workers failed the task",
+            extra_payload={"failed_workers": sorted(failed_ids)},
+        )
+
     def dispatch_once(self, task_id: str) -> bool:
         """Dispatch a single task if possible; requeue when no worker."""
         record = self._runtime.get_record(task_id)
@@ -155,15 +167,22 @@ class Dispatcher:
         if record.selected_worker:
             pool = [c for c in pool if c.id in record.selected_worker]
 
-        # 3. No idle worker: wait for a busy one or fail after a grace period
+        failed_ids = set(record.failed_workers)
+
+        # 3. No idle worker: wait for a busy one, or grace-then-fail when no
+        #    worker can take the task — none satisfies it, or every eligible
+        #    worker has already failed it (waiting on those would just refail).
         if not pool:
-            if not self.eligible_worker_ids(record):
+            eligible = self.eligible_worker_ids(record)
+            if not eligible:
                 return self._grace_then_fail(
                     task_id,
                     record,
                     reason="no_eligible_worker",
                     message="No worker satisfies the task hardware requirements",
                 )
+            if not eligible - failed_ids:
+                return self._grace_then_fail_exhausted(task_id, record, failed_ids)
             record.no_eligible_since = None
             reason = (
                 "candidate_workers_busy" if record.selected_worker else "no_idle_worker"
@@ -173,7 +192,6 @@ class Dispatcher:
             return False
 
         # 4. Prefer workers that have not failed this task.
-        failed_ids = set(record.failed_workers)
         if failed_ids:
             filtered_pool = [c for c in pool if c.id not in failed_ids]
             if filtered_pool:
@@ -193,13 +211,7 @@ class Dispatcher:
             else:
                 # Every eligible worker has failed this task; grace-then-fail so a
                 # newly joined worker can still pick it up.
-                return self._grace_then_fail(
-                    task_id,
-                    record,
-                    reason="eligible_workers_exhausted",
-                    message="All eligible workers failed the task",
-                    extra_payload={"failed_workers": sorted(failed_ids)},
-                )
+                return self._grace_then_fail_exhausted(task_id, record, failed_ids)
 
         record.no_eligible_since = None
 

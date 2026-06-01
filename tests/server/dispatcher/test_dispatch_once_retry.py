@@ -74,6 +74,19 @@ def test_exhausted_requeues_within_grace() -> None:
     assert disp.requeued[0][1]["reason"] == "eligible_workers_exhausted"
 
 
+def test_all_eligible_failed_but_busy_grace_then_fails() -> None:
+    # No idle worker (the only eligible one is busy) and it already failed the
+    # task: grace-then-fail rather than waiting on a worker that would refail.
+    disp, tid = _setup(idle_ids=[], satisfying_ids=["w-1"], failed=["w-1"])
+    with mock.patch("server.dispatcher.base.time.time", return_value=1000.0):
+        disp.dispatch_once(tid)
+    record = disp._runtime.get_record(tid)
+    assert record is not None and record.no_eligible_since == 1000.0
+    assert disp.failed == []
+    assert len(disp.requeued) == 1
+    assert disp.requeued[0][1]["reason"] == "eligible_workers_exhausted"
+
+
 def test_exhausted_fails_after_grace() -> None:
     disp, tid = _setup(idle_ids=["w-1"], satisfying_ids=["w-1"], failed=["w-1"])
     record = disp._runtime.get_record(tid)
@@ -87,6 +100,7 @@ def test_exhausted_fails_after_grace() -> None:
     _, message, kwargs = disp.failed[0]
     assert message == "boom"
     assert kwargs["payload"]["reason"] == "eligible_workers_exhausted"
+    assert kwargs["payload"]["failed_workers"] == ["w-1"]
 
 
 def test_zero_eligible_enters_grace_then_waits() -> None:
