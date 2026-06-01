@@ -37,3 +37,36 @@ def test_destroy_all_workers_raises_connection_error_by_default() -> None:
 def test_destroy_all_workers_returns_false_when_ignored() -> None:
     client = _client_against_unreachable()
     assert client.destroy_all_workers(ignore_unreachable=True) is False
+
+
+class _CapturingHTTP:
+    """Stub httpx.Client that records requests and returns 204 No Content."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str]] = []
+
+    def request(self, method: str, url: str, **_kwargs: Any) -> httpx.Response:
+        self.calls.append((method, url))
+        return httpx.Response(204, request=httpx.Request(method, url))
+
+    def close(self) -> None:
+        return None
+
+
+def _client_capturing() -> tuple[NodeClient, _CapturingHTTP]:
+    client = NodeClient(base_url="http://localhost:8000", token="t")
+    client._http.close()
+    http = _CapturingHTTP()
+    client._http = http  # type: ignore[assignment]
+    return client, http
+
+
+def test_drain_workers_issues_delete_against_stack_workers() -> None:
+    client, http = _client_capturing()
+    assert client.drain_workers() is True
+    assert http.calls == [("DELETE", "/api/v1/stack/workers")]
+
+
+def test_drain_workers_returns_false_when_unreachable_and_ignored() -> None:
+    client = _client_against_unreachable()
+    assert client.drain_workers(ignore_unreachable=True) is False

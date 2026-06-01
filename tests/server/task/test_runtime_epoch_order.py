@@ -28,6 +28,22 @@ class _WorkflowRegistryStub:
     def mark_task_cancelled(self, workflow_id: str, *task_ids: str) -> None:
         return None
 
+    def save_task_states(self, items: Any) -> None:
+        return None
+
+    async def save_task_states_async(self, items: Any) -> None:
+        return None
+
+    def save_workflow_sched(
+        self, workflow_id: str, in_epoch_order: bool, frontier: int
+    ) -> None:
+        return None
+
+    async def save_workflow_sched_async(
+        self, workflow_id: str, in_epoch_order: bool, frontier: int
+    ) -> None:
+        return None
+
 
 class _WorkerRegistryStub:
     def __init__(self) -> None:
