@@ -14,6 +14,8 @@ from redis.connection import SSLConnection as SyncSSLConnection
 from redis.typing import EncodableT
 
 TASK_EVENT_CHANNEL = "tasks:events"
+TASK_EVENT_STREAM_KEY = "tasks:events:stream"
+TASK_EVENT_CURSOR_KEY = "tasks:events:cursor"
 
 WORKFLOWS_SET_KEY = "workflows:ids"
 
@@ -48,6 +50,14 @@ def workflow_failed_tasks_key(workflow_id: str) -> str:
 
 def workflow_cancelled_tasks_key(workflow_id: str) -> str:
     return f"workflow:{workflow_id}:cancelled_tasks"
+
+
+def workflow_sched_key(workflow_id: str) -> str:
+    return f"workflow:{workflow_id}:sched"
+
+
+def task_state_key(task_id: str) -> str:
+    return f"task:{task_id}:state"
 
 
 def worker_key(worker_id: str) -> str:

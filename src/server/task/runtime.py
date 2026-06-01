@@ -13,7 +13,7 @@ from shared.utils import new_workflow_id
 
 from ..hooks import SUPPLIER_RESOLVERS
 from ..registries.worker import Worker, WorkerRegistry
-from ..registries.workflow import WorkflowRegistry
+from ..registries.workflow import PersistedTask, WorkflowRegistry, WorkflowSched
 from ..utils.time import parse_iso_ts
 from .models import (
     TaskInfo,
@@ -81,6 +81,36 @@ class TaskRuntime:
 
         self._lock = threading.RLock()
         self._cv = threading.Condition(self._lock)
+
+    # ------------------------------------------------------------------ #
+    # Durable state persistence (for restart rehydration)
+    # ------------------------------------------------------------------ #
+
+    def _persisted_task_locked(self, task_id: str) -> PersistedTask | None:
+        record = self._tasks.get(task_id)
+        if record is None:
+            return None
+        return PersistedTask(
+            record=record,
+            depends_on=self._original_deps.get(task_id, set()),
+            epoch_index=self._task_epoch_index.get(task_id),
+        )
+
+    def _persist_locked(self, *task_ids: str) -> None:
+        items = [
+            persisted
+            for task_id in dict.fromkeys(task_ids)
+            if (persisted := self._persisted_task_locked(task_id)) is not None
+        ]
+        if items:
+            self._workflow_registry.save_task_states(items)
+
+    def _persist_sched_locked(self, workflow_id: str) -> None:
+        self._workflow_registry.save_workflow_sched(
+            workflow_id,
+            self._workflow_in_epoch_order.get(workflow_id, False),
+            self._workflow_epoch_frontier.get(workflow_id, 0),
+        )
 
     # ------------------------------------------------------------------ #
     # Registration & submission
@@ -218,6 +248,19 @@ class TaskRuntime:
 
         await self._workflow_registry.register_workflow_async(workflow_id, task_records)
 
+        with self._cv:
+            persisted = [
+                item
+                for record in task_records
+                if (item := self._persisted_task_locked(record.task_id)) is not None
+            ]
+            in_epoch_order = self._workflow_in_epoch_order.get(workflow_id, False)
+            frontier = self._workflow_epoch_frontier.get(workflow_id, 0)
+        await self._workflow_registry.save_task_states_async(persisted)
+        await self._workflow_registry.save_workflow_sched_async(
+            workflow_id, in_epoch_order, frontier
+        )
+
         new_ready = False
         with self._cv:
             for task_id in candidate_ready:
@@ -232,6 +275,103 @@ class TaskRuntime:
                 self._cv.notify_all()
 
         return workflow_id, results
+
+    # ------------------------------------------------------------------ #
+    # Rehydration (restart recovery)
+    # ------------------------------------------------------------------ #
+
+    def rehydrate(self) -> int:
+        """Rebuild in-memory scheduler state from durable Redis records.
+
+        Reconstructs every live workflow's DAG, ready queue, and epoch state
+        from the persisted per-task snapshots. In-flight (DISPATCHED /
+        CANCELLING) tasks are left assigned to their worker: completions that
+        landed during the restart arrive via the replayed task-event stream,
+        and genuinely departed workers are recovered by the watchdog. Returns
+        the number of workflows restored.
+        """
+        workflow_ids = self._workflow_registry.get_workflow_ids()
+        restored = 0
+        for workflow_id in sorted(workflow_ids):
+            wf_record = self._workflow_registry.get_workflow_record(workflow_id)
+            if wf_record is None:
+                continue
+            tasks: list[PersistedTask] = []
+            for task_id in wf_record.task_ids:
+                state = self._workflow_registry.load_task_state(task_id)
+                if state is not None:
+                    tasks.append(state)
+            if not tasks:
+                continue
+            sched = self._workflow_registry.load_workflow_sched(workflow_id)
+            with self._cv:
+                self._install_rehydrated_workflow_locked(workflow_id, tasks, sched)
+                self._cv.notify_all()
+            restored += 1
+        if restored:
+            self._logger.info("Rehydrated %d workflow(s) from durable state", restored)
+        return restored
+
+    def _install_rehydrated_workflow_locked(
+        self,
+        workflow_id: str,
+        tasks: list[PersistedTask],
+        sched: "WorkflowSched | None",
+    ) -> None:
+        terminal = (TaskStatus.DONE, TaskStatus.FAILED, TaskStatus.CANCELLED)
+        in_epoch_order = bool(sched.in_epoch_order) if sched else False
+        frontier = int(sched.epoch_frontier) if sched else 0
+        epoch_members: dict[int, set[str]] = defaultdict(set)
+
+        for persisted in tasks:
+            record = persisted.record
+            task_id = record.task_id
+            self._tasks[task_id] = record
+            self._original_deps[task_id] = set(persisted.depends_on)
+            selected_worker_hint = (
+                record.selected_worker[0]
+                if record.selected_worker and len(record.selected_worker) == 1
+                else None
+            )
+            self._merge_key_by_task[task_id] = (record.merge_key, selected_worker_hint)
+            if persisted.epoch_index is not None:
+                self._task_epoch_index[task_id] = persisted.epoch_index
+                epoch_members[persisted.epoch_index].add(task_id)
+            if record.status == TaskStatus.DONE:
+                self._completed.add(task_id)
+            elif record.status == TaskStatus.FAILED:
+                self._failed.add(task_id)
+
+        for persisted in tasks:
+            record = persisted.record
+            task_id = record.task_id
+            original = self._original_deps.get(task_id, set())
+            for dep in original:
+                self._dependents[dep].add(task_id)
+            if record.status in terminal:
+                continue
+            self._pending_deps[task_id] = {
+                dep for dep in original if dep not in self._completed
+            }
+
+        if in_epoch_order:
+            self._workflow_in_epoch_order[workflow_id] = True
+            self._ready_by_workflow.setdefault(workflow_id, [])
+        if epoch_members:
+            epoch_queue: deque[set[str]] = deque(
+                epoch_members[idx] for idx in sorted(epoch_members) if idx >= frontier
+            )
+            if epoch_queue:
+                self._workflow_epoch_tasks[workflow_id] = epoch_queue
+                self._workflow_epoch_frontier[workflow_id] = frontier
+
+        for persisted in tasks:
+            record = persisted.record
+            if record.status != TaskStatus.PENDING:
+                continue
+            if self._pending_deps.get(record.task_id):
+                continue
+            self._enqueue_ready_locked(record.task_id)
 
     # ------------------------------------------------------------------ #
     # Ready queue helpers
@@ -460,6 +600,7 @@ class TaskRuntime:
                         record.attempts = record.attempts + 1
                 except Exception:
                     record.attempts = (record.attempts or 0) + 1
+            self._persist_locked(task_id)
 
     def requeue(self, task_id: str, *, front: bool = False) -> bool:
         """Reinsert a task into the ready queue."""
@@ -531,6 +672,7 @@ class TaskRuntime:
                 sibling_record.assigned_worker = None
                 sibling_record.merge_slice = None
         self._workflow_registry.mark_task_dispatched(record.workflow_id, *siblings)
+        self._persist_locked(task_id, *siblings)
 
         return siblings
 
@@ -544,6 +686,7 @@ class TaskRuntime:
             parent = self._tasks.get(task_id)
             if parent:
                 parent.merged_children = None
+            self._persist_locked(task_id)
             return
         parent = self._tasks.get(task_id)
         if parent:
@@ -563,6 +706,7 @@ class TaskRuntime:
             else:
                 self._remove_from_ready_locked(child_id)
                 self._enqueue_ready_locked(child_id, front=True)
+        self._persist_locked(task_id, *children)
         self._cv.notify_all()
 
     def _finalize_merged_child_success(
@@ -683,6 +827,7 @@ class TaskRuntime:
             self._workflow_registry.mark_task_dispatched(record.workflow_id, task_id)
             self._remove_from_ready_locked(task_id)
             self._merge_bucket_remove(task_id)
+            self._persist_locked(task_id)
 
     def mark_started(
         self,
@@ -701,12 +846,14 @@ class TaskRuntime:
             if worker_id:
                 record.assigned_worker = worker_id
             self._workflow_registry.mark_task_dispatched(record.workflow_id, task_id)
+            self._persist_locked(task_id)
 
     def mark_updated(self, task_id: str, payload: dict[str, Any]) -> None:
         with self._lock:
             record = self._tasks.get(task_id)
             if record is not None:
                 record.latest_update = payload
+                self._persist_locked(task_id)
 
     def mark_succeeded(
         self,
@@ -779,6 +926,10 @@ class TaskRuntime:
                 ready_children.extend(
                     self._try_advance_epoch_frontier_locked(record.workflow_id)
                 )
+
+            self._persist_locked(task_id, *merged_children_ids)
+            if record is not None:
+                self._persist_sched_locked(record.workflow_id)
 
             if ready_children:
                 self._cv.notify_all()
@@ -876,6 +1027,12 @@ class TaskRuntime:
                     )
                 )
 
+            self._persist_locked(
+                task_id, *merged_children_ids, *(dep_id for dep_id, _ in impacted)
+            )
+            if record is not None:
+                self._persist_sched_locked(record.workflow_id)
+
             return impacted, merged_children_ids, usages
 
     # ------------------------------------------------------------------ #
@@ -933,6 +1090,8 @@ class TaskRuntime:
             self._workflow_in_epoch_order.pop(workflow_id, None)
             for task_id in workflow_task_ids:
                 self._task_epoch_index.pop(task_id, None)
+            self._persist_locked(*cancelled)
+            self._persist_sched_locked(workflow_id)
 
         for task_id in cancelled:
             maybe_record = self._tasks.get(task_id)
@@ -984,6 +1143,7 @@ class TaskRuntime:
             self._merge_children_map.pop(task_id, None)
             self._workflow_registry.mark_task_cancelled(record.workflow_id, task_id)
             record.assigned_worker = None
+            self._persist_locked(task_id)
             return usages
 
     def get_record(self, task_id: str) -> TaskRecord | None:
