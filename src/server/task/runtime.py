@@ -880,6 +880,9 @@ class TaskRuntime:
             if record:
                 if record.status == TaskStatus.CANCELLED:
                     return usages
+                if record.status == TaskStatus.DONE:
+                    # Idempotent: a replayed TASK_SUCCEEDED must not re-apply.
+                    return []
                 record.status = TaskStatus.DONE
                 record.error = None
                 record.finished_ts = finished_ts
@@ -966,6 +969,9 @@ class TaskRuntime:
             if record:
                 if record.status == TaskStatus.CANCELLED:
                     return [], [], usages
+                if record.status == TaskStatus.FAILED:
+                    # Idempotent: a replayed TASK_FAILED must not re-apply.
+                    return [], [], []
                 record.status = TaskStatus.FAILED
                 record.error = message
                 record.finished_ts = finished_ts

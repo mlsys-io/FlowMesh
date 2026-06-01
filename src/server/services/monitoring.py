@@ -25,7 +25,8 @@ from shared.utils.manifest import RESULTS_NAME, sync_manifest
 from ..auth import default_principal, deregister_resource, register_resource
 from ..clients.redis import (
     NODE_EVENT_CHANNEL,
-    TASK_EVENT_CHANNEL,
+    TASK_EVENT_CURSOR_KEY,
+    TASK_EVENT_STREAM_KEY,
     WORKER_EVENT_CHANNEL,
     SyncRedisClient,
     iter_pubsub_messages,
@@ -249,19 +250,49 @@ class EventMonitor:
     # ------------------------------------------------------------------ #
 
     def _tasks_events_loop(self) -> None:
-        event_key = TASK_EVENT_CHANNEL
+        """Consume task events from a durable Redis stream.
+
+        Resumes from the last persisted cursor so events emitted while the
+        server was down (e.g. during a rolling restart) are replayed rather
+        than lost. Handlers are idempotent, so reprocessing the tail of a
+        batch after a crash is safe.
+        """
+        cursor = self._redis_client.get(TASK_EVENT_CURSOR_KEY) or "$"
         while not self._stop_event.is_set():
             try:
-                for event in self._get_event_stream(event_key):
-                    if isinstance(event, TaskEvent):
-                        self._handle_task_event(event)
+                rows = self._redis_client.xread_telemetry(
+                    {TASK_EVENT_STREAM_KEY: cursor}, count=200, block_ms=1000
+                )
             except Exception as exc:
                 if self._stop_event.is_set():
                     break
                 self._logger.warning(
-                    "%s listener error: %s; reconnecting...", event_key, exc
+                    "%s listener error: %s; reconnecting...",
+                    TASK_EVENT_STREAM_KEY,
+                    exc,
                 )
                 time.sleep(2.0)
+                continue
+            for _stream_key, entries in rows:
+                for entry_id, fields in entries:
+                    cursor = entry_id
+                    event = self._parse_stream_event(fields)
+                    if isinstance(event, TaskEvent):
+                        self._handle_task_event(event)
+                    if self._stop_event.is_set():
+                        break
+                if entries:
+                    self._redis_client.set_value(TASK_EVENT_CURSOR_KEY, cursor)
+
+    def _parse_stream_event(self, fields: dict[str, Any]) -> Event | None:
+        raw = fields.get("payload")
+        if raw is None:
+            return None
+        try:
+            return parse_event(json.loads(raw))
+        except Exception as exc:
+            self._logger.debug("Failed to parse task stream event: %s (%s)", raw, exc)
+            return None
 
     def _handle_task_event(self, event: TaskEvent) -> None:
         payload = event.payload or {}

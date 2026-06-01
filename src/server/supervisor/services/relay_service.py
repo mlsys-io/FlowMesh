@@ -7,7 +7,8 @@ from typing import Any
 from shared.schemas.event import TaskEvent, WorkerEvent, parse_event, serialize_event
 
 from ...clients.redis import (
-    TASK_EVENT_CHANNEL,
+    TASK_EVENT_STREAM_KEY,
+    TASK_EVENT_STREAM_MAXLEN,
     WORKER_EVENT_CHANNEL,
     SyncRedisClient,
     task_log_stream_key,
@@ -114,9 +115,10 @@ class RelayService:
                 event = parse_event(item)
                 if isinstance(event, TaskEvent):
                     self.logger.debug("Forwarding task event: %s", event)
-                    self._redis.publish_telemetry(
-                        TASK_EVENT_CHANNEL,
-                        json.dumps(serialize_event(event)),
+                    self._redis.xadd_telemetry(
+                        TASK_EVENT_STREAM_KEY,
+                        {"payload": json.dumps(serialize_event(event))},
+                        maxlen=TASK_EVENT_STREAM_MAXLEN,
                     )
                 elif isinstance(event, WorkerEvent):
                     self.logger.debug("Forwarding worker event: %s", event)

@@ -5,7 +5,11 @@ import time
 
 from shared.schemas.event import TaskEvent, serialize_event
 
-from ..clients.redis import TASK_EVENT_CHANNEL, SyncRedisClient
+from ..clients.redis import (
+    TASK_EVENT_STREAM_KEY,
+    TASK_EVENT_STREAM_MAXLEN,
+    SyncRedisClient,
+)
 from ..dispatcher import Dispatcher
 from ..registries.worker import WorkerRegistry
 from ..task.runtime import TaskRuntime
@@ -154,7 +158,11 @@ class WorkerWatchdog:
             )
             try:
                 event_payload = json.dumps(serialize_event(event), ensure_ascii=False)
-                self._redis.publish_telemetry(TASK_EVENT_CHANNEL, event_payload)
+                self._redis.xadd_telemetry(
+                    TASK_EVENT_STREAM_KEY,
+                    {"payload": event_payload},
+                    maxlen=TASK_EVENT_STREAM_MAXLEN,
+                )
             except Exception as exc:
                 self._logger.error(
                     "Failed to publish synthetic TASK_FAILED for %s "
