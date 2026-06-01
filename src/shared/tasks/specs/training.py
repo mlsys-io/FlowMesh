@@ -1,5 +1,7 @@
 from typing import Any, Literal
 
+from pydantic import model_validator
+
 from ..placeholders import TemplateInt
 from ..task_type import TaskType
 from .common import ModelSpecStrict, ModelSpecTemplate
@@ -65,13 +67,21 @@ class DPOSpecTemplate(TrainingSpecTemplate):
     taskType: Literal[TaskType.DPO]
 
 
-class ImageClassificationSpecStrict(TrainingSpecStrict):
-    taskType: Literal[TaskType.IMAGE_CLASSIFICATION]
+class ImageClassificationTrainingSpecStrict(TrainingSpecStrict):
+    taskType: Literal[TaskType.IMAGE_CLASSIFICATION_TRAINING]
 
     checkpoint: dict[str, Any] | None = None
 
+    @model_validator(mode="after")
+    def _require_model(self) -> "ImageClassificationTrainingSpecStrict":
+        if not self.model_name:
+            raise ValueError(
+                "image_classification_training requires model.source.identifier"
+            )
+        return self
 
-class ImageClassificationSpecTemplate(TrainingSpecTemplate):
-    taskType: Literal[TaskType.IMAGE_CLASSIFICATION]
+
+class ImageClassificationTrainingSpecTemplate(TrainingSpecTemplate):
+    taskType: Literal[TaskType.IMAGE_CLASSIFICATION_TRAINING]
 
     checkpoint: dict[str, Any] | None = None

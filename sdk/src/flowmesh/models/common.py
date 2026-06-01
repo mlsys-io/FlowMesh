@@ -54,7 +54,7 @@ class TaskType(StrEnum):
     LORA_SFT = "lora_sft"
     PPO = "ppo"
     DPO = "dpo"
-    IMAGE_CLASSIFICATION = "image_classification"
+    IMAGE_CLASSIFICATION_TRAINING = "image_classification_training"
     ECHO = "echo"
     AGENT = "agent"
     DATA_PROFILING = "data_profiling"

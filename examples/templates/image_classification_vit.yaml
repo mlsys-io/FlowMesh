@@ -7,7 +7,7 @@ metadata:
     description: Fine-tune ViT-base on CIFAR-10 using ImageClassificationExecutor
 
 spec:
-  taskType: image_classification
+  taskType: image_classification_training
 
   resources:
     hardware:

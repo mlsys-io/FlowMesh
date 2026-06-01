@@ -29,7 +29,7 @@ from transformers import (
 
 from shared.schemas.artifact import ArtifactRef
 from shared.schemas.result import BaseExecutorResult
-from shared.tasks.specs import ImageClassificationSpecStrict
+from shared.tasks.specs import ImageClassificationTrainingSpecStrict
 
 from ..utils.logging import configure_hf_library_logging
 from .base_executor import ExecutionError, Executor, ExecutorTask
@@ -74,7 +74,7 @@ class ImageClassificationExecutor(TrainingMixin, Executor):
 
     def run(self, task: ExecutorTask, out_dir: Path) -> ImageClassificationResult:
         configure_hf_library_logging()
-        spec = self.require_spec(task, ImageClassificationSpecStrict)
+        spec = self.require_spec(task, ImageClassificationTrainingSpecStrict)
         start_time = time.time()
         ok = False
         error_msg: str | None = None
@@ -97,7 +97,11 @@ class ImageClassificationExecutor(TrainingMixin, Executor):
         train_dataset: Dataset | None = None
         eval_dataset: Dataset | None = None
         try:
-            model_name = spec.model_name or "google/vit-base-patch16-224"
+            model_name = spec.model_name
+            if not model_name:
+                raise ExecutionError(
+                    "image_classification_training requires model.source.identifier"
+                )
             self._model_name = model_name
 
             resume_path = determine_resume_path(
@@ -341,7 +345,7 @@ class ImageClassificationExecutor(TrainingMixin, Executor):
         gc.collect()
 
     def _prepare_dataset(
-        self, spec: ImageClassificationSpecStrict
+        self, spec: ImageClassificationTrainingSpecStrict
     ) -> tuple[Dataset, Dataset | None, dict[str, int], dict[int, str], str, str]:
         data_cfg = spec.data or {}
         dataset_name = data_cfg.get("dataset_name")
