@@ -504,7 +504,7 @@ def _drain_workers(env_file: Path) -> None:
     """Destroy all dynamically spawned workers before stopping the server."""
     try:
         client = stack_node_client(env_file, base_url=None, token=None)
-        client.destroy_all_workers()
+        client.drain_workers()
     except Exception as exc:
         logging.warning(f"Unable to drain workers; continuing shutdown. {exc}")
 
@@ -531,33 +531,86 @@ def down(
     logging.success("FlowMesh stack stopped.")
 
 
+STACK_SERVICES = ("server", "redis_control", "redis_telemetry")
+"""Compose services that can be restarted individually."""
+
+WORKER_MANAGING_SERVICES = ("server",)
+"""Services whose restart tears down the supervisor; drain workers first."""
+
+
 @app.command()
 def restart(
+    service: str | None = typer.Argument(
+        None,
+        help=(
+            "Restart only this compose service in place (one of: "
+            f"{', '.join(STACK_SERVICES)}), leaving the rest of the stack "
+            "running. Omit to restart the whole stack."
+        ),
+    ),
     env_file: Path = typer.Option(
         DEFAULT_ENV_FILE, "--env-file", help="Env file for compose"
     ),
     image_tag: str | None = typer.Option(
         None, "--image-tag", help="Override FLOWMESH_VERSION"
     ),
+    pull: bool = typer.Option(
+        True, "--pull/--no-pull", help="Pull the target image before recreating."
+    ),
 ) -> None:
-    """Drain workers and restart the stack."""
-    logging.info("Draining workers...")
-    _drain_workers(env_file)
-    _compose(
-        ["down"],
-        env_file=env_file,
-        env=image_env_overrides(image_tag),
-        profile="root",
-    )
+    """Drain workers and restart the stack, or recreate a single service in place.
+
+    With a SERVICE argument the stack is left running and only that service is
+    recreated (``--no-deps --force-recreate``); when the service manages workers
+    (the server / supervisor) its workers are drained first so their in-flight
+    tasks requeue onto other nodes. This is the per-node primitive for a rolling
+    image update: recreate the server on each node in turn, leaving Redis up.
+    """
+    if service is None:
+        logging.info("Draining workers...")
+        _drain_workers(env_file)
+        _compose(
+            ["down"],
+            env_file=env_file,
+            env=image_env_overrides(image_tag),
+            profile="root",
+        )
+        profile = "root" if _node_role(env_file) == NodeRole.ROOT else None
+        _compose(
+            ["up", "-d", "--wait"],
+            env_file=env_file,
+            env=image_env_overrides(image_tag),
+            to_deploy=True,
+            profile=profile,
+        )
+        logging.success("FlowMesh stack is up.")
+        return
+
+    if service not in STACK_SERVICES:
+        logging.error(
+            f"Unknown service {service!r}. "
+            f"Known services: {', '.join(STACK_SERVICES)}."
+        )
+        raise typer.Exit(code=1)
+
+    if service in WORKER_MANAGING_SERVICES:
+        logging.info("Draining workers...")
+        _drain_workers(env_file)
+
     profile = "root" if _node_role(env_file) == NodeRole.ROOT else None
+    up_args = ["up", "-d", "--no-deps", "--force-recreate", "--wait"]
+    if pull:
+        up_args += ["--pull", "always"]
+    up_args.append(service)
+    logging.info(f"Recreating service '{service}'...")
     _compose(
-        ["up", "-d", "--wait"],
+        up_args,
         env_file=env_file,
         env=image_env_overrides(image_tag),
         to_deploy=True,
         profile=profile,
     )
-    logging.success("FlowMesh stack is up.")
+    logging.success(f"Service '{service}' restarted.")
 
 
 @app.command()
