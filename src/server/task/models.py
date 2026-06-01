@@ -117,6 +117,7 @@ class TaskRecord(BaseModel):
     no_eligible_since: float | None = Field(
         default=None,
         description="Epoch seconds when no eligible worker was first observed.",
+        exclude=True,
     )
     local_name: str | None = Field(default=None, description="Workflow stage name.")
     graph_node_name: str | None = Field(default=None, description="Graph node name.")

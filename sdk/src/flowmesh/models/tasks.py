@@ -49,7 +49,6 @@ class TaskInfo(BaseModel):
     next_retry_at: str | None = None
     last_failed_worker: str | None = None
     last_error: str | None = None
-    no_eligible_since: float | None = None
     local_name: str | None = None
     graph_node_name: str | None = None
     load: int

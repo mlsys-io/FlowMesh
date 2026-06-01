@@ -169,9 +169,8 @@ class Dispatcher:
 
         failed_ids = set(record.failed_workers)
 
-        # 3. No idle worker: wait for a busy one, or grace-then-fail when no
-        #    worker can take the task — none satisfies it, or every eligible
-        #    worker has already failed it (waiting on those would just refail).
+        # 3. No idle worker: wait for a busy one, or grace-then-fail when no worker can
+        # take the task, or every eligible worker has already failed it.
         if not pool:
             eligible = self.eligible_worker_ids(record)
             if not eligible:
@@ -181,7 +180,7 @@ class Dispatcher:
                     reason="no_eligible_worker",
                     message="No worker satisfies the task hardware requirements",
                 )
-            if not eligible - failed_ids:
+            if not (eligible - failed_ids):
                 return self._grace_then_fail_exhausted(task_id, record, failed_ids)
             record.no_eligible_since = None
             reason = (
