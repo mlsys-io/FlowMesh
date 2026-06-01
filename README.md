@@ -11,9 +11,11 @@ A service fabric for running LLM agentic workflows on distributed GPU workers.
 FlowMesh accepts workflow definitions (YAML, JSON, or n8n graph format), parses
 them into a DAG of tasks, schedules and dispatches each task to a suitable
 worker, and collects results and artifacts. It supports inference (vLLM, HF
-transformers, diffusers), training (SFT, LoRA, DPO, PPO), retrieval-augmented
-generation, agent execution, SSH-style interactive sessions, and arbitrary
-container jobs.
+transformers, diffusers), LLM training (SFT, LoRA, DPO, PPO), image
+classification training, retrieval-augmented generation, agent execution,
+SSH-style interactive sessions, and arbitrary container jobs — plus
+miscellaneous data/utility tasks (data profiling, data retrieval, embeddings,
+HTTP API calls, echo).
 
 ## Architecture
 
@@ -127,6 +129,28 @@ spec:
 Multi-stage DAGs, conditional execution, graph-template prompts, task merging,
 and SSH sessions are all supported. See `examples/templates/` for end-to-end examples
 and `AGENTS.md` for the full schema reference.
+
+## Task types
+
+Set `spec.taskType` to pick an executor. See [`docs/EXECUTORS.md`](docs/EXECUTORS.md)
+for the full registry and per-executor fields.
+
+| `taskType` | What it does |
+|---|---|
+| `inference` | LLM inference (vLLM / HF transformers) |
+| `diffusion` | Image / video diffusion models |
+| `omni_text2{audio,image,speech,general}` | Multimodal generation |
+| `sft` / `lora_sft` / `dpo` / `ppo` | LLM fine-tuning (TRL) |
+| `image_classification_training` | Vision classifier fine-tuning (HF `AutoModelForImageClassification`) |
+| `rag` | Retrieval-augmented generation |
+| `agent` | Tool-using LLM agent |
+| `ssh` | Interactive SSH session or non-interactive container job |
+| **Misc / data** | |
+| `data_profiling` | DataFrame profiling |
+| `data_retrieval` | DataFrame loading from sources |
+| `embedding` | Text embeddings |
+| `api` | Outbound HTTP API call step |
+| `echo` | Echo input back (smoke tests) |
 
 ## Extending FlowMesh
 
