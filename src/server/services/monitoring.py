@@ -272,7 +272,9 @@ class EventMonitor:
 
         Resuming from the persisted cursor is what lets events emitted while
         the server was down (e.g. during a rolling restart) be replayed rather
-        than lost.
+        than lost. The cursor is kept on the control Redis while the stream
+        lives on the telemetry Redis, so durable resume relies on both volumes
+        surviving — which the rolling-restart flow already requires.
 
         The stream is length-bounded (``TASK_EVENT_STREAM_MAXLEN``), so a
         consumer that stays down long enough for its cursor to fall behind the
@@ -297,14 +299,35 @@ class EventMonitor:
                 time.sleep(2.0)
                 continue
             for _stream_key, entries in rows:
-                for entry_id, fields in entries:
-                    event = self._parse_stream_event(fields)
-                    if isinstance(event, TaskEvent):
-                        self._handle_task_event(event)
-                    cursor = entry_id
-                    self._redis_client.set_value(TASK_EVENT_CURSOR_KEY, cursor)
-                    if self._stop_event.is_set():
-                        break
+                cursor = self._consume_stream_batch(entries, cursor)
+                if self._stop_event.is_set():
+                    break
+
+    def _consume_stream_batch(
+        self, entries: list[tuple[str, dict[str, Any]]], cursor: str
+    ) -> str:
+        """Handle one batch of stream entries, advancing the cursor per entry.
+
+        A handler that raises must not take down the consumer thread: a single
+        poison event would otherwise stop every later completion from being
+        processed. The failure is logged and the cursor advances past the entry
+        so the stream keeps flowing; a task left stuck by the skipped event is
+        reclaimed by the watchdog.
+        """
+        for entry_id, fields in entries:
+            try:
+                event = self._parse_stream_event(fields)
+                if isinstance(event, TaskEvent):
+                    self._handle_task_event(event)
+            except Exception as exc:
+                self._logger.error(
+                    "Failed to handle task event %s; skipping: %s", entry_id, exc
+                )
+            cursor = entry_id
+            self._redis_client.set_value(TASK_EVENT_CURSOR_KEY, cursor)
+            if self._stop_event.is_set():
+                break
+        return cursor
 
     def _warn_if_cursor_trimmed(self, cursor: str) -> None:
         """Log if the persisted cursor has fallen behind the stream's trim horizon.
