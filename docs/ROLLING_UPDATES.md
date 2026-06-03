@@ -46,11 +46,17 @@ restart safe:
   ready queue, and epoch frontiers from these records
   (`TaskRuntime.rehydrate`).
 - **Replayable task events.** Task lifecycle events flow through a durable Redis
-  stream consumed from a persisted cursor. Completions that occur while the root
-  is down are replayed on startup rather than dropped; event handlers are
-  idempotent so replay cannot double-apply. In-flight tasks are left assigned to
-  their worker — surviving workers' completions arrive via the stream, and
-  workers that genuinely departed are reclaimed by the watchdog.
+  stream consumed from a persisted cursor. The ordering is what makes replay
+  safe: a transition is written to durable scheduler state *before* its event is
+  emitted, and the consumer advances the cursor only *after* it has handled an
+  entry. Delivery is therefore at-least-once — a crash between handling an entry
+  and persisting the cursor simply replays that entry on the next startup.
+  Handlers are idempotent (a terminal task ignores late dispatch / start /
+  update events, and a repeated completion is dropped), so replay cannot
+  double-apply. Completions that occur while the root is down are replayed on
+  startup rather than dropped. In-flight tasks are left assigned to their worker
+  — surviving workers' completions arrive via the stream, and workers that
+  genuinely departed are reclaimed by the watchdog.
 
 Rehydration runs inside the ASGI lifespan **before it yields**, so the server
 does not accept traffic (and its healthcheck does not pass) until scheduling

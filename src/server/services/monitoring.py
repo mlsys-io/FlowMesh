@@ -252,10 +252,17 @@ class EventMonitor:
     def _tasks_events_loop(self) -> None:
         """Consume task events from a durable Redis stream.
 
-        Resumes from the last persisted cursor so events emitted while the
-        server was down (e.g. during a rolling restart) are replayed rather
-        than lost. Handlers are idempotent, so reprocessing the tail of a
-        batch after a crash is safe.
+        Replay contract: a task transition is persisted to durable scheduler
+        state *before* its event is emitted, and the consumer advances the
+        persisted cursor only *after* an entry is handled. Delivery is
+        therefore at-least-once — a crash between handling an entry and
+        persisting the cursor replays that entry on the next startup. Event
+        handlers are idempotent (terminal tasks ignore late dispatch/start/
+        update events and repeated completions), so replay never double-applies.
+
+        Resuming from the persisted cursor is what lets events emitted while
+        the server was down (e.g. during a rolling restart) be replayed rather
+        than lost.
         """
         cursor = self._redis_client.get(TASK_EVENT_CURSOR_KEY) or "$"
         while not self._stop_event.is_set():
@@ -275,14 +282,13 @@ class EventMonitor:
                 continue
             for _stream_key, entries in rows:
                 for entry_id, fields in entries:
-                    cursor = entry_id
                     event = self._parse_stream_event(fields)
                     if isinstance(event, TaskEvent):
                         self._handle_task_event(event)
+                    cursor = entry_id
+                    self._redis_client.set_value(TASK_EVENT_CURSOR_KEY, cursor)
                     if self._stop_event.is_set():
                         break
-                if entries:
-                    self._redis_client.set_value(TASK_EVENT_CURSOR_KEY, cursor)
 
     def _parse_stream_event(self, fields: dict[str, Any]) -> Event | None:
         raw = fields.get("payload")
