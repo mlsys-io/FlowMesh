@@ -27,6 +27,7 @@ from ..clients.redis import (
     NODE_EVENT_CHANNEL,
     TASK_EVENT_CURSOR_KEY,
     TASK_EVENT_STREAM_KEY,
+    TASK_EVENT_STREAM_MAXLEN,
     WORKER_EVENT_CHANNEL,
     SyncRedisClient,
     iter_pubsub_messages,
@@ -56,6 +57,15 @@ from ..utils.time import now_iso
 from .metrics import MetricsRecorder
 from .ssh_forward import SshForwardService
 from .watchdog import WorkerWatchdog
+
+
+def _stream_id_tuple(entry_id: str) -> tuple[int, int]:
+    """Parse a Redis stream id (``<ms>-<seq>``) into a comparable tuple."""
+    ms, _, seq = entry_id.partition("-")
+    try:
+        return int(ms), int(seq or 0)
+    except ValueError:
+        return 0, 0
 
 
 def failed_task_can_retry(record: TaskRecord | None, retryable: bool | None) -> bool:
@@ -263,8 +273,14 @@ class EventMonitor:
         Resuming from the persisted cursor is what lets events emitted while
         the server was down (e.g. during a rolling restart) be replayed rather
         than lost.
+
+        The stream is length-bounded (``TASK_EVENT_STREAM_MAXLEN``), so a
+        consumer that stays down long enough for its cursor to fall behind the
+        trim horizon loses the events in between. That is detected and logged on
+        resume rather than passing silently.
         """
         cursor = self._redis_client.get(TASK_EVENT_CURSOR_KEY) or "$"
+        self._warn_if_cursor_trimmed(cursor)
         while not self._stop_event.is_set():
             try:
                 rows = self._redis_client.xread_telemetry(
@@ -289,6 +305,35 @@ class EventMonitor:
                     self._redis_client.set_value(TASK_EVENT_CURSOR_KEY, cursor)
                     if self._stop_event.is_set():
                         break
+
+    def _warn_if_cursor_trimmed(self, cursor: str) -> None:
+        """Log if the persisted cursor has fallen behind the stream's trim horizon.
+
+        Trimming removes entries from the front of the stream, so the oldest
+        surviving entry being newer than the cursor means every entry between
+        them was discarded before this consumer read it.
+        """
+        if cursor in ("$", "0", "0-0"):
+            return
+        try:
+            first = self._redis_client.xrange_telemetry(TASK_EVENT_STREAM_KEY, count=1)
+        except Exception as exc:
+            self._logger.debug(
+                "Could not inspect %s head: %s", TASK_EVENT_STREAM_KEY, exc
+            )
+            return
+        if not first:
+            return
+        first_id = first[0][0]
+        if _stream_id_tuple(first_id) > _stream_id_tuple(cursor):
+            self._logger.warning(
+                "%s cursor %s fell behind the stream head %s (maxlen=%d); "
+                "events in between were trimmed before they were consumed",
+                TASK_EVENT_STREAM_KEY,
+                cursor,
+                first_id,
+                TASK_EVENT_STREAM_MAXLEN,
+            )
 
     def _parse_stream_event(self, fields: dict[str, Any]) -> Event | None:
         raw = fields.get("payload")
