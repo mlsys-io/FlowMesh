@@ -82,6 +82,12 @@ workflow is lost.
 - **Co-located root workers are recreated.** Workers running on the root host die
   with the root's supervisor; their tasks requeue and re-run. To avoid this,
   prefer not to run workers on the root node.
+- **The no-worker grace restarts on a root restart.** The window before a task
+  that no worker can satisfy is failed (`TASK_NO_WORKER_GRACE_SEC`) is tracked
+  with ephemeral scheduler state that is intentionally not persisted, so it
+  starts fresh after a restart. This is deliberate: the restart is itself a
+  disruption, and a fresh window avoids grace-failing a waiting task the instant
+  the control plane comes back.
 
 ## State lifetime
 
