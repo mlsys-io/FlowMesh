@@ -79,6 +79,7 @@ class TaskRuntime:
         self._workflow_epoch_frontier: dict[str, int] = {}
         self._workflow_in_epoch_order: dict[str, bool] = {}
         self._task_epoch_index: dict[str, int] = {}
+        self._rehydrated_dispatched: dict[str, float] = {}
 
         self._lock = threading.RLock()
         self._cv = threading.Condition(self._lock)
@@ -292,6 +293,7 @@ class TaskRuntime:
         the number of workflows restored.
         """
         workflow_ids = self._workflow_registry.get_workflow_ids()
+        rehydrated_at = time.time()
         restored = 0
         for workflow_id in sorted(workflow_ids):
             wf_record = self._workflow_registry.get_workflow_record(workflow_id)
@@ -306,7 +308,9 @@ class TaskRuntime:
                 continue
             sched = self._workflow_registry.load_workflow_sched(workflow_id)
             with self._cv:
-                self._install_rehydrated_workflow_locked(workflow_id, tasks, sched)
+                self._install_rehydrated_workflow_locked(
+                    workflow_id, tasks, sched, rehydrated_at
+                )
                 self._cv.notify_all()
             restored += 1
         if restored:
@@ -318,6 +322,7 @@ class TaskRuntime:
         workflow_id: str,
         tasks: list[PersistedTask],
         sched: "WorkflowSched | None",
+        rehydrated_at: float,
     ) -> None:
         terminal = TERMINAL_TASK_STATUSES
         in_epoch_order = bool(sched.in_epoch_order) if sched else False
@@ -342,6 +347,8 @@ class TaskRuntime:
                 self._completed.add(task_id)
             elif record.status == TaskStatus.FAILED:
                 self._failed.add(task_id)
+            elif record.status in (TaskStatus.DISPATCHED, TaskStatus.CANCELLING):
+                self._rehydrated_dispatched[task_id] = rehydrated_at
 
         for persisted in tasks:
             record = persisted.record
@@ -1204,8 +1211,36 @@ class TaskRuntime:
                     continue
                 if record.status not in (TaskStatus.DISPATCHED, TaskStatus.CANCELLING):
                     continue
+                self._rehydrated_dispatched.pop(task_id, None)
                 recovered.append(task_id)
         return recovered
+
+    def has_rehydrated_in_flight(self, worker_id: str, within_sec: float) -> bool:
+        """
+        Whether ``worker_id`` still owns an in-flight task that was rehydrated
+        within the last ``within_sec`` seconds.
+
+        Worker heartbeats are dropped while the root is down, so a surviving
+        worker looks briefly stale right after a restart. The watchdog uses this
+        to extend a worker's death grace until its rehydrated tasks' window has
+        elapsed, giving the worker time to re-register before its tasks are
+        reclaimed.
+        """
+        now = time.time()
+        with self._cv:
+            for task_id, rehydrated_at in list(self._rehydrated_dispatched.items()):
+                record = self._tasks.get(task_id)
+                if record is None or record.status not in (
+                    TaskStatus.DISPATCHED,
+                    TaskStatus.CANCELLING,
+                ):
+                    self._rehydrated_dispatched.pop(task_id, None)
+                    continue
+                if now - rehydrated_at >= within_sec:
+                    continue
+                if record.assigned_worker == worker_id:
+                    return True
+        return False
 
     def shutdown(self) -> None:
         with self._cv:

@@ -57,6 +57,12 @@ restart safe:
   startup rather than dropped. In-flight tasks are left assigned to their worker
   — surviving workers' completions arrive via the stream, and workers that
   genuinely departed are reclaimed by the watchdog.
+- **Heartbeat grace for rehydrated work.** Worker heartbeats are dropped while
+  the root is down, so a surviving worker briefly looks stale once the root is
+  back. The watchdog gives any worker that owns rehydrated in-flight tasks an
+  extended grace (`WORKER_REHYDRATION_GRACE_SEC`, default 120s) before it may
+  reclaim those tasks, so a worker that is merely catching up is not mistaken
+  for a dead one and its tasks are not needlessly requeued.
 
 Rehydration runs inside the ASGI lifespan **before it yields**, so the server
 does not accept traffic (and its healthcheck does not pass) until scheduling

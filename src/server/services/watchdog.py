@@ -28,6 +28,7 @@ class WorkerWatchdog:
         enabled: bool,
         check_interval: int,
         grace_seconds: int,
+        rehydration_grace_seconds: int = 0,
     ) -> None:
         self._redis = redis_client
         self._worker_registry = worker_registry
@@ -37,6 +38,7 @@ class WorkerWatchdog:
         self._enabled = bool(enabled)
         self._check_interval = max(1, int(check_interval))
         self._grace_seconds = max(0, int(grace_seconds))
+        self._rehydration_grace_seconds = max(0, int(rehydration_grace_seconds))
         self._lock = threading.RLock()
         self._dead_marks: set[str] = set()
         self._thread: threading.Thread | None = None
@@ -108,7 +110,14 @@ class WorkerWatchdog:
                     continue
 
                 first_seen = stale_since.setdefault(worker_id, now)
-                if now - first_seen < self._grace_seconds:
+                grace = self._grace_seconds
+                if self._rehydration_grace_seconds > grace and (
+                    self._runtime.has_rehydrated_in_flight(
+                        worker_id, self._rehydration_grace_seconds
+                    )
+                ):
+                    grace = self._rehydration_grace_seconds
+                if now - first_seen < grace:
                     continue
                 if worker_id in declared_dead:
                     continue

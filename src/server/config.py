@@ -193,6 +193,7 @@ class WatchdogConfig:
     enabled: bool = True
     check_interval: int = 30
     grace_sec: int = 60
+    rehydration_grace_sec: int = 120
 
     @classmethod
     def from_env(cls) -> "WatchdogConfig":
@@ -200,6 +201,9 @@ class WatchdogConfig:
             enabled=parse_bool_env("ENABLE_WORKER_WATCHDOG", True),
             check_interval=max(5, parse_int_env("WORKER_DEATH_CHECK_INTERVAL", 30)),
             grace_sec=max(0, parse_int_env("WORKER_DEATH_GRACE_SEC", 60)),
+            rehydration_grace_sec=max(
+                0, parse_int_env("WORKER_REHYDRATION_GRACE_SEC", 120)
+            ),
         )
 
 

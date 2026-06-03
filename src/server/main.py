@@ -154,6 +154,7 @@ if IS_ROOT_NODE:
         enabled=config.watchdog.enabled,
         check_interval=config.watchdog.check_interval,
         grace_seconds=config.watchdog.grace_sec,
+        rehydration_grace_seconds=config.watchdog.rehydration_grace_sec,
     )
 
     EVENT_MONITOR = EventMonitor(
