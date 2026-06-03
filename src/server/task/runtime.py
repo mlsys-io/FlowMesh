@@ -16,6 +16,7 @@ from ..registries.worker import Worker, WorkerRegistry
 from ..registries.workflow import PersistedTask, WorkflowRegistry, WorkflowSched
 from ..utils.time import parse_iso_ts
 from .models import (
+    TERMINAL_TASK_STATUSES,
     TaskInfo,
     TaskParsingResult,
     TaskRecord,
@@ -318,7 +319,7 @@ class TaskRuntime:
         tasks: list[PersistedTask],
         sched: "WorkflowSched | None",
     ) -> None:
-        terminal = (TaskStatus.DONE, TaskStatus.FAILED, TaskStatus.CANCELLED)
+        terminal = TERMINAL_TASK_STATUSES
         in_epoch_order = bool(sched.in_epoch_order) if sched else False
         frontier = int(sched.epoch_frontier) if sched else 0
         epoch_members: dict[int, set[str]] = defaultdict(set)
@@ -818,6 +819,9 @@ class TaskRuntime:
             record = self._tasks.get(task_id)
             if not record:
                 return
+            if record.status in TERMINAL_TASK_STATUSES:
+                # A replayed or late dispatch must not regress a terminal task.
+                return
             record.status = TaskStatus.DISPATCHED
             record.assigned_worker = worker.id
             record.topic = "tasks"
@@ -841,6 +845,9 @@ class TaskRuntime:
             record = self._tasks.get(task_id)
             if not record:
                 return
+            if record.status in TERMINAL_TASK_STATUSES:
+                # A replayed or late start must not regress a terminal task.
+                return
             record.status = TaskStatus.DISPATCHED
             record.started_ts = started_ts
             if worker_id:
@@ -851,9 +858,11 @@ class TaskRuntime:
     def mark_updated(self, task_id: str, payload: dict[str, Any]) -> None:
         with self._lock:
             record = self._tasks.get(task_id)
-            if record is not None:
-                record.latest_update = payload
-                self._persist_locked(task_id)
+            if record is None or record.status in TERMINAL_TASK_STATUSES:
+                # A replayed or late progress update must not touch a terminal task.
+                return
+            record.latest_update = payload
+            self._persist_locked(task_id)
 
     def mark_succeeded(
         self,

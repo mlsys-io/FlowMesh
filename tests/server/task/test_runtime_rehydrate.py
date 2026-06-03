@@ -211,3 +211,25 @@ def test_mark_succeeded_is_idempotent_under_replay() -> None:
     stop = threading.Event()
     assert runtime.next_ready(stop, timeout=0.01) == b
     assert runtime.ready_queue_length() == 0
+
+
+def test_terminal_task_does_not_regress_on_replayed_dispatch_or_start() -> None:
+    registry = FakeWorkflowRegistry()
+    runtime = _runtime(registry)
+    _, ids = _register(runtime, GRAPH)
+    a = ids["a"]
+
+    worker = SimpleNamespace(id="wkr-1", node_id="nde-1")
+    runtime.mark_dispatched(a, cast(Any, worker))
+    runtime.mark_succeeded(a, "wkr-1", {}, "2026-06-01T00:00:00Z")
+
+    # A replayed dispatch / start / progress update must not move a's status
+    # back to DISPATCHED.
+    runtime.mark_dispatched(a, cast(Any, worker))
+    runtime.mark_started(a, "wkr-1", {}, "2026-06-01T00:00:01Z")
+    runtime.mark_updated(a, {"note": "stale"})
+
+    record = runtime.get_record(a)
+    assert record is not None
+    assert record.status == TaskStatus.DONE
+    assert record.latest_update is None
