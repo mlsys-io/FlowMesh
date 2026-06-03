@@ -358,6 +358,9 @@ class TaskRuntime:
                 self._dependents[dep].add(task_id)
             if record.status in terminal:
                 continue
+            # Only completed deps are subtracted, not failed ones: a failure
+            # cascade-fails its dependents and persists them FAILED atomically,
+            # so a non-terminal task here never has a FAILED dep to clear.
             self._pending_deps[task_id] = {
                 dep for dep in original if dep not in self._completed
             }

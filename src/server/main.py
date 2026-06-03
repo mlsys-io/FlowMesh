@@ -345,10 +345,9 @@ async def _lifespan(_: FastAPI):
 
         # --- Root-only startup ---
         if IS_ROOT_NODE:
-            # Rebuild dispatch state from durable records before the dispatch
-            # loop or event consumer start, so a restarted root resumes
-            # scheduling instead of losing in-flight workflows. The server only
-            # begins serving once this (and the rest of startup) completes.
+            # Rehydrate before the dispatch loop and event consumer start (and
+            # before the lifespan yields), so readiness is implicit: the server
+            # accepts no traffic until scheduling state is restored.
             if RUNTIME is not None:
                 await asyncio.to_thread(RUNTIME.rehydrate)
             if SSH_FORWARD_SERVICE is not None:

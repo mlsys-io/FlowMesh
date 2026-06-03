@@ -40,10 +40,10 @@ class WorkflowRegistryStub:
     async def save_task_states_async(self, items: Any) -> None: ...
     def save_workflow_sched(
         self, wid: str, in_epoch_order: bool, frontier: int
-    ) -> None: ...  # noqa: E501
+    ) -> None: ...
     async def save_workflow_sched_async(
         self, wid: str, in_epoch_order: bool, frontier: int
-    ) -> None: ...  # noqa: E501
+    ) -> None: ...
 
 
 def make_capturing_dispatcher(

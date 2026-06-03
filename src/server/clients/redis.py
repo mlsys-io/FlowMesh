@@ -13,7 +13,6 @@ from redis.client import Pipeline, PubSub
 from redis.connection import SSLConnection as SyncSSLConnection
 from redis.typing import EncodableT
 
-TASK_EVENT_CHANNEL = "tasks:events"
 TASK_EVENT_STREAM_KEY = "tasks:events:stream"
 TASK_EVENT_CURSOR_KEY = "tasks:events:cursor"
 TASK_EVENT_STREAM_MAXLEN = 100_000
