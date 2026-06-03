@@ -1,4 +1,5 @@
 import logging
+import time
 from pathlib import Path
 from typing import Any
 
@@ -65,6 +66,20 @@ class EchoExecutor(DataMixin, Executor):
                 "a string literal or a mapping"
             )
 
+    @staticmethod
+    def _maybe_delay(delay_sec: Any) -> None:
+        """Sleep for ``spec.data.delay_sec`` seconds, holding the task in flight.
+
+        Lets a workflow keep a task RUNNING long enough to exercise dispatch and
+        recovery paths (e.g. restarting the server mid-task).
+        """
+        if delay_sec is None:
+            return
+        if not isinstance(delay_sec, (int, float)) or isinstance(delay_sec, bool):
+            raise ExecutionError("echo executor 'delay_sec' must be a number")
+        if delay_sec > 0:
+            time.sleep(float(delay_sec))
+
     def run(self, task: ExecutorTask, out_dir: Path) -> EchoResult:
         spec = self.require_spec(task, EchoSpecStrict)
         task_id = task.task_id.strip()
@@ -85,6 +100,8 @@ class EchoExecutor(DataMixin, Executor):
                 raise ExecutionError(
                     "echo executor requires spec._upstreamResults to be a mapping"
                 )
+
+            self._maybe_delay(data_cfg.get("delay_sec"))
 
             merged_items: list[dict[str, Any]] = []
             for item in items_cfg:
