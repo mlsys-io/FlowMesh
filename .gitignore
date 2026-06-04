@@ -178,3 +178,6 @@ cython_debug/
 worker/executors/agent/secrets.yaml
 secrets/
 dump.rdb
+
+plugins/
+plugin-data/
