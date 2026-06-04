@@ -67,56 +67,6 @@ spec:
             output_format: jsonl
             verify: false
 
-      - name: summary
-        dependsOn: ["sql_ohlc", "news_html", "agent_ohlc"]
-        spec:
-          taskType: inference
-          resources:
-            hardware:
-              cpu: 2
-              memory: 8GiB
-              gpu:
-                type: any
-                count: 1
-          model:
-            source:
-              type: huggingface
-              identifier: Qwen/Qwen2.5-1.5B-Instruct
-          inference:
-            max_tokens: 256
-            temperature: 0.3
-          data:
-            type: dataframe
-            columns:
-              # access_chain from sql_ohlc: the SQL ops the server ran to materialise the result
-              - label: sql_chain
-                node: sql_ohlc
-                path: items.access_chain
-              # access_chain from agent_ohlc: the SQL ops the agent ran
-              - label: agent_chain
-                node: agent_ohlc
-                path: items.access_chain
-              # materialized rows table pointer from sql_ohlc
-              - label: table
-                node: sql_ohlc
-                path: items.table
-              # raw HTML content fetched by the s3 node
-              - label: content
-                node: news_html
-                path: items.content
-            messages:
-              - role: system
-                content: Concise financial analyst. Exactly two sentences.
-              - role: user
-                content: |
-                  SQL access chain: {sql_chain}
-                  Agent access chain: {agent_chain}
-                  Materialized OHLC rows: {table}
-                  News article HTML: {content}
-
-                  Write two sentences: (1) the headline trend in the OHLC data;
-                  (2) how the news context changes that assessment.
-
   output:
     destination:
       type: local
