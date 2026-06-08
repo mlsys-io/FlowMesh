@@ -18,7 +18,7 @@ from typing import Any
 
 import numpy as np
 import torch
-from datasets import Dataset, load_dataset
+from datasets import ClassLabel, Dataset, load_dataset
 from PIL import Image, ImageOps
 from transformers import (
     AutoImageProcessor,
@@ -288,11 +288,6 @@ class ImageClassificationExecutor(TrainingMixin, Executor):
                 final_archive_path,
             )
 
-            trainer = None
-            model = None  # type: ignore[assignment]
-            processor = None
-            train_dataset = None
-            eval_dataset = None
             self._current_trainer = None
             self._current_model = None
             self._current_processor = None
@@ -380,7 +375,7 @@ class ImageClassificationExecutor(TrainingMixin, Executor):
             )
 
         max_samples = data_cfg.get("max_samples")
-        if max_samples is not None:
+        if max_samples:
             max_samples = int(max_samples)
             train_dataset = train_dataset.select(
                 range(min(len(train_dataset), max_samples))
@@ -391,8 +386,7 @@ class ImageClassificationExecutor(TrainingMixin, Executor):
             eval_kwargs = dict(load_kwargs)
             eval_kwargs["split"] = eval_split
             eval_dataset = load_dataset(dataset_name, config_name, **eval_kwargs)
-            max_eval = data_cfg.get("max_eval_samples", max_samples)
-            if max_eval is not None:
+            if max_eval := (data_cfg.get("max_eval_samples") or max_samples):
                 max_eval = int(max_eval)
                 eval_dataset = eval_dataset.select(
                     range(min(len(eval_dataset), max_eval))
@@ -422,12 +416,12 @@ class ImageClassificationExecutor(TrainingMixin, Executor):
                 {idx: name for idx, name in enumerate(explicit_names)},
             )
 
-        features = dataset.features.get(label_field)
-        feature_names: Any = getattr(features, "names", None)
-        if feature_names:
+        feature = dataset.features[label_field]
+        if isinstance(feature, ClassLabel):
+            names = [str(name) for name in feature.names]
             return (
-                {str(name): idx for idx, name in enumerate(feature_names)},
-                {idx: str(name) for idx, name in enumerate(feature_names)},
+                {name: idx for idx, name in enumerate(names)},
+                {idx: name for idx, name in enumerate(names)},
             )
 
         unique = sorted({str(row[label_field]) for row in dataset})
@@ -489,5 +483,5 @@ def _compute_accuracy(eval_pred: Any) -> dict[str, float]:
     predictions, labels = eval_pred
     preds = np.argmax(predictions, axis=-1)
     correct = int((preds == labels).sum())
-    total = int(labels.shape[0]) if hasattr(labels, "shape") else len(labels)
+    total = len(labels)
     return {"accuracy": correct / total if total else 0.0}

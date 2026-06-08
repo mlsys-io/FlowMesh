@@ -8,7 +8,14 @@ from shared.tasks.worker_message import HardwareUsage
 
 from ..utils.time import now_iso
 
-TRAINING_TASK_TYPES = {"sft", "lora_sft", "ppo", "dpo", "training"}
+TRAINING_TASK_TYPES = {
+    "sft",
+    "lora_sft",
+    "ppo",
+    "dpo",
+    "training",
+    "image_classification_training",
+}
 
 
 def categorize_task_type(task_type: str | None) -> str:
