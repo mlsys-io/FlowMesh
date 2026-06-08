@@ -22,7 +22,7 @@ all = [
 [dependency-groups]
 # Runtime/container dependencies.
 runtime-server = [
-    "aiohttp>=3.13.4",
+    "aiohttp>=3.14.0",
     "cryptography>=46.0.7",
     "docker>=7.1.0",
     "fastapi>=0.135.0",
@@ -78,7 +78,7 @@ runtime-training-gpu = [
 ]
 runtime-agent = [
     "aiofiles>=24.1.0",
-    "aiohttp>=3.13.4",
+    "aiohttp>=3.14.0",
     "art>=6.5",
     "arxiv>=2.2.0",
     "beautifulsoup4>=4.14.3",
