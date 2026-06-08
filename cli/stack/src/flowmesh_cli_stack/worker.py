@@ -18,7 +18,13 @@ from flowmesh_stack.workers import (
     select_worker_images,
 )
 
-from .utils import DEFAULT_ENV_FILE, STACK_PATH_KEYS, stack_node_client
+from .utils import (
+    DEFAULT_ENV_FILE,
+    STACK_PATH_KEYS,
+    STACK_SLUG_ENV,
+    stack_node_client,
+    stack_resource_env_overrides,
+)
 
 app = get_typer(help="Create and manage workers on the local node.")
 
@@ -74,6 +80,15 @@ def worker_up(
             "Repeat --config-raw to provide multiple configs."
         ),
     ),
+    name_template: str | None = typer.Option(
+        None,
+        "--name-template",
+        help=(
+            "Worker name template for cpu/gpu presets. Placeholders: "
+            "{slug}, {kind}, {idx}, {gpu}. "
+            "Default: '{slug}_worker_{kind}_{idx|gpu}'."
+        ),
+    ),
     env_file: Path = typer.Option(
         DEFAULT_ENV_FILE, "--env-file", help="Env file to load defaults"
     ),
@@ -84,6 +99,11 @@ def worker_up(
 ) -> None:
     """Create and start one or more workers from presets or a custom config file."""
     client = stack_node_client(env_file, base_url, token or None)
+    try:
+        slug = stack_resource_env_overrides(os.environ)[STACK_SLUG_ENV]
+    except ValueError as exc:
+        logging.error(str(exc))
+        raise typer.Exit(code=1)
     logging.info("Creating workers...")
     try:
         created = create_workers(
@@ -93,6 +113,8 @@ def worker_up(
             targets=targets,
             config_paths=config,
             config_raw=config_raw,
+            name_template=name_template,
+            slug=slug,
         )
     except FlowMeshError as exc:
         logging.error(str(exc))

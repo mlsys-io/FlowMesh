@@ -65,12 +65,20 @@ def create_workers(
     targets: str = "all",
     config_paths: list[Path] | None = None,
     config_raw: list[str] | None = None,
+    name_template: str | None = None,
+    slug: str | None = None,
 ) -> list[tuple[str, dict[str, Any]]]:
     """Create node workers from configs or built-in cpu/gpu presets.
 
     When ``kind`` is "gpu", if ``count`` is equal to 1, a single worker with the
     specified GPU targets will be created. If ``count`` is greater than 1, one worker
     will be created per GPU target, and the number of targets must match ``count``.
+
+    For the built-in cpu/gpu presets, ``slug`` prefixes the generated worker
+    aliases so names are scoped to a stack, and ``name_template`` overrides the
+    naming entirely (placeholders ``{slug}``, ``{kind}``, ``{idx}``, ``{gpu}``).
+    Both are ignored when ``config_paths`` / ``config_raw`` are provided, since
+    those payloads carry their own aliases.
     """
     payloads = _payloads_for_worker_create(
         kind=kind,
@@ -78,6 +86,8 @@ def create_workers(
         targets=targets,
         config_paths=config_paths,
         config_raw=config_raw,
+        name_template=name_template,
+        slug=slug,
     )
     if not payloads:
         return []
@@ -162,12 +172,46 @@ def detect_gpu_targets(targets: str) -> list[str]:
     return [item.strip() for item in result.stdout.splitlines() if item.strip()]
 
 
+_ALIAS_FIELDS = "{slug}, {kind}, {idx}, {gpu}"
+
+
+class _StrictFormatDict(dict[str, Any]):
+    def __missing__(self, key: str) -> Any:
+        raise KeyError(key)
+
+
+def _worker_alias(
+    kind: str,
+    idx: int,
+    slug: str | None,
+    template: str | None,
+    gpu: str | None = None,
+) -> str:
+    if template is not None:
+        fields: dict[str, Any] = {"slug": slug or "", "kind": kind, "idx": idx}
+        if gpu is not None:
+            fields["gpu"] = gpu
+        try:
+            return template.format_map(_StrictFormatDict(fields))
+        except (KeyError, IndexError) as exc:
+            raise FlowMeshError(
+                f"--name-template references unavailable placeholder {exc}; "
+                f"available: {_ALIAS_FIELDS}"
+            ) from exc
+    base = f"{slug}_" if slug else ""
+    if gpu is not None:
+        return f"{base}worker_{kind}_{gpu}"
+    return f"{base}worker_{kind}_{idx}"
+
+
 def _payloads_for_worker_create(
     kind: str,
     count: int,
     targets: str,
     config_paths: list[Path] | None,
     config_raw: list[str] | None,
+    name_template: str | None = None,
+    slug: str | None = None,
 ) -> list[tuple[str, str]]:
     if count < 1:
         raise FlowMeshError("Worker count must be at least 1.")
@@ -183,25 +227,19 @@ def _payloads_for_worker_create(
             _extend_payloads(payloads, f"worker from raw#{idx}", raw)
         return payloads
 
-    if kind == "cpu":
-        return [
-            (
-                json.dumps(
-                    {
-                        "provider": "docker",
-                        "init_on_start": True,
-                        "worker_config": {
-                            "worker_type": "cpu",
-                            "worker_alias": f"worker_cpu_{idx}",
-                        },
-                    }
-                ),
-                "CPU worker",
-            )
-            for idx in range(count)
-        ]
+    specs: list[tuple[str, dict[str, Any], str]] = []
 
-    if kind == "gpu":
+    if kind == "cpu":
+        for idx in range(count):
+            alias = _worker_alias("cpu", idx, slug, name_template)
+            specs.append(
+                (
+                    alias,
+                    {"worker_type": "cpu", "worker_alias": alias},
+                    "CPU worker",
+                )
+            )
+    elif kind == "gpu":
         raw_gpu_ids = detect_gpu_targets(targets)
         gpu_ids: list[int] = []
         for raw_gpu_id in raw_gpu_ids:
@@ -217,47 +255,59 @@ def _payloads_for_worker_create(
                     f"Consider setting count={len(gpu_ids)} or specifying exactly "
                     f"{count} GPU targets."
                 )
-            gpu_payloads = [
-                (
-                    json.dumps(
+            for idx, gpu_id in enumerate(gpu_ids):
+                alias = _worker_alias("gpu", idx, slug, name_template, gpu=str(gpu_id))
+                specs.append(
+                    (
+                        alias,
                         {
-                            "provider": "docker",
-                            "init_on_start": True,
-                            "worker_config": {
-                                "worker_type": "gpu",
-                                "cuda_devices": [gpu_id],
-                                "worker_alias": f"worker_gpu_{gpu_id}",
-                            },
-                        }
-                    ),
-                    f"GPU worker for GPU {gpu_id}",
+                            "worker_type": "gpu",
+                            "cuda_devices": [gpu_id],
+                            "worker_alias": alias,
+                        },
+                        f"GPU worker for GPU {gpu_id}",
+                    )
                 )
-                for gpu_id in gpu_ids
-            ]
         else:
             worker_suffix = "all" if targets == "all" else "_".join(raw_gpu_ids)
-            gpu_payloads = [
+            alias = _worker_alias("gpu", 0, slug, name_template, gpu=worker_suffix)
+            specs.append(
                 (
-                    json.dumps(
-                        {
-                            "provider": "docker",
-                            "init_on_start": True,
-                            "worker_config": {
-                                "worker_type": "gpu",
-                                "cuda_devices": gpu_ids,
-                                "worker_alias": f"worker_gpu_{worker_suffix}",
-                            },
-                        }
-                    ),
+                    alias,
+                    {
+                        "worker_type": "gpu",
+                        "cuda_devices": gpu_ids,
+                        "worker_alias": alias,
+                    },
                     f"GPU worker for GPUs {', '.join(raw_gpu_ids)}",
                 )
-            ]
+            )
 
-        if not gpu_payloads:
+        if not specs:
             raise FlowMeshError("No GPUs detected or specified.")
-        return gpu_payloads
+    else:
+        raise FlowMeshError("worker up expects kind cpu|gpu or use --config")
 
-    raise FlowMeshError("worker up expects kind cpu|gpu or use --config")
+    aliases = [alias for alias, _, _ in specs]
+    if len(set(aliases)) != len(aliases):
+        raise FlowMeshError(
+            "--name-template produced duplicate worker names; "
+            "include {idx} or {gpu} to disambiguate"
+        )
+
+    return [
+        (
+            json.dumps(
+                {
+                    "provider": "docker",
+                    "init_on_start": True,
+                    "worker_config": worker_config,
+                }
+            ),
+            label,
+        )
+        for _, worker_config, label in specs
+    ]
 
 
 def _extend_payloads(
