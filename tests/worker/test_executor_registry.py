@@ -42,6 +42,15 @@ class TestExecutorRegistry:
                     key in IMPORT_ERRORS or EXECUTOR_CLASS_NAMES[key] in IMPORT_ERRORS
                 )
 
+    def test_training_executors_are_wrapped_for_isolation(self) -> None:
+        """Training executors run in a subprocess for GPU cleanup; ensure the
+        image classification executor is in the wrap set (and thus instantiated
+        by the worker), guarding against registry/worker drift."""
+        from worker.main import _EXECUTORS_TO_WRAP
+
+        assert "image_classification_training" in _EXECUTORS_TO_WRAP
+        assert "image_classification_training" in EXECUTOR_REGISTRY
+
     def test_safe_import_does_not_crash(self) -> None:
         """The registry should load without raising, even when deps are missing."""
         # If we got here, the import at module level already succeeded
