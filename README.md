@@ -130,31 +130,6 @@ Multi-stage DAGs, conditional execution, graph-template prompts, task merging,
 and SSH sessions are all supported. See `examples/templates/` for end-to-end examples
 and `AGENTS.md` for the full schema reference.
 
-## Task types
-
-Set `spec.taskType` to pick an executor. See [`docs/EXECUTORS.md`](docs/EXECUTORS.md)
-for the full registry and per-executor fields.
-
-| `taskType` | What it does |
-|---|---|
-| **LLM — inference & agents** | |
-| `inference` | LLM inference (vLLM / HF transformers) |
-| `omni_text2{audio,image,speech,general}` | Multimodal generation |
-| `rag` | Retrieval-augmented generation |
-| `agent` | Tool-using LLM agent |
-| **LLM — training** | |
-| `sft` / `lora_sft` / `dpo` / `ppo` | LLM fine-tuning (TRL) |
-| **Deep learning (non-LLM)** | |
-| `image_classification_training` | Vision classifier fine-tuning (HF `AutoModelForImageClassification`) |
-| `diffusion` | Image / video diffusion models |
-| **Misc / data & utility** | |
-| `data_profiling` | DataFrame profiling |
-| `data_retrieval` | DataFrame loading from sources |
-| `embedding` | Text embeddings |
-| `api` | Outbound HTTP API call step |
-| `ssh` | Interactive SSH session or non-interactive container job |
-| `echo` | Echo input back (smoke tests) |
-
 ## Extending FlowMesh
 
 FlowMesh exposes plugin hooks for organisations that want to layer additional
