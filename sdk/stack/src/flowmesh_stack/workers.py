@@ -193,10 +193,10 @@ def _worker_alias(
             fields["gpu"] = gpu
         try:
             return template.format_map(_StrictFormatDict(fields))
-        except (KeyError, IndexError) as exc:
+        except (KeyError, IndexError, ValueError) as exc:
             raise FlowMeshError(
-                f"--name-template references unavailable placeholder {exc}; "
-                f"available: {_ALIAS_FIELDS}"
+                f"invalid --name-template ({exc}); "
+                f"available placeholders: {_ALIAS_FIELDS}"
             ) from exc
     base = f"{slug}_" if slug else ""
     if gpu is not None:
@@ -282,9 +282,6 @@ def _payloads_for_worker_create(
                     f"GPU worker for GPUs {', '.join(raw_gpu_ids)}",
                 )
             )
-
-        if not specs:
-            raise FlowMeshError("No GPUs detected or specified.")
     else:
         raise FlowMeshError("worker up expects kind cpu|gpu or use --config")
 

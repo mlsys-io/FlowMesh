@@ -59,6 +59,11 @@ def test_unknown_placeholder_raises_with_available_fields() -> None:
     assert "{slug}, {kind}, {idx}, {gpu}" in message
 
 
+def test_malformed_template_raises_flowmesh_error() -> None:
+    with pytest.raises(FlowMeshError, match="invalid --name-template"):
+        _cpu_payloads(1, name_template="{slug")
+
+
 def test_template_missing_index_collides() -> None:
     with pytest.raises(FlowMeshError, match="duplicate worker names"):
         _cpu_payloads(2, name_template="{slug}-static")
