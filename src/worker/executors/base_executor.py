@@ -45,7 +45,16 @@ SpecT = TypeVar("SpecT", bound=TaskSpecStrictBase)
 
 
 class ExecutionError(RuntimeError):
-    """Raised when an executor fails in an expected / controlled way."""
+    """Raised when an executor fails in an expected / controlled way.
+
+    ``retryable`` marks failures that may succeed on another worker (transient network
+    or I/O errors). Deterministic failures (invalid spec, unsupported config) leave it
+    ``False`` so they fail without retry.
+    """
+
+    def __init__(self, *args: object, retryable: bool = False) -> None:
+        super().__init__(*args)
+        self.retryable = retryable
 
 
 class TaskCancelledError(RuntimeError):

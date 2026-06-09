@@ -51,7 +51,7 @@ def resolve_jsonl_path(
                             fh.write(chunk)
         except requests.RequestException as exc:
             raise ExecutionError(
-                f"Failed to download JSONL dataset from {value}: {exc}"
+                f"Failed to download JSONL dataset from {value}: {exc}", retryable=True
             ) from exc
 
         if logger:

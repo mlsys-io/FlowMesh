@@ -822,7 +822,6 @@ class TaskRuntime:
                     record.started_ts = started_ts
                 if worker_id:
                     record.assigned_worker = worker_id
-                    record.last_failed_worker = worker_id
                 record.merged_children = None
                 if usage is not None:
                     record.usages.append(usage)

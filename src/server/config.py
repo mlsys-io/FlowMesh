@@ -164,6 +164,7 @@ class DispatchConfig:
     enable_context_reuse: bool = True
     worker_cache_ttl_sec: int = 3600
     enable_stage_weight_stickiness: bool = False
+    no_worker_grace_sec: int = 60
 
     @classmethod
     def from_env(cls) -> "DispatchConfig":
@@ -183,6 +184,7 @@ class DispatchConfig:
             enable_stage_weight_stickiness=parse_bool_env(
                 "ENABLE_STAGE_WEIGHT_STICKINESS", False
             ),
+            no_worker_grace_sec=max(0, parse_int_env("TASK_NO_WORKER_GRACE_SEC", 60)),
         )
 
 

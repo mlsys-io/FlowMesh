@@ -48,13 +48,26 @@ from ..registries.node import NodeRegistry
 from ..registries.worker import WorkerRegistry
 from ..schemas.logs import LogEvent
 from ..task.metadata import extract_model_dataset_names
-from ..task.models import TaskStatus, TaskUsage
+from ..task.models import TaskRecord, TaskStatus, TaskUsage
 from ..task.runtime import TaskRuntime
 from ..utils.logging import log_node_event, log_worker_event
 from ..utils.time import now_iso
 from .metrics import MetricsRecorder
 from .ssh_forward import SshForwardService
 from .watchdog import WorkerWatchdog
+
+
+def failed_task_can_retry(record: TaskRecord | None, retryable: bool | None) -> bool:
+    """Whether a failed task may be requeued: retryable and within the attempt
+    budget."""
+    if record is None:
+        return False
+    if record.status in (TaskStatus.FAILED, TaskStatus.CANCELLED, TaskStatus.DONE):
+        return False
+    if retryable is False:
+        return False
+    max_attempts = record.max_attempts
+    return max_attempts is None or max_attempts < 0 or record.attempts < max_attempts
 
 
 class EventMonitor:
@@ -330,22 +343,26 @@ class EventMonitor:
                 self._maybe_close_workflow_log_stream(event.task_id)
             case "TASK_FAILED":
                 record = self._runtime.get_record(event.task_id)
-                attempts = record.attempts if record else 0
-                max_attempts = record.max_attempts if record else None
-                can_retry = record and (
-                    max_attempts is None or max_attempts < 0 or attempts < max_attempts
-                )
-                if can_retry:
+                if record:
+                    if event.worker_id and event.worker_id not in record.failed_workers:
+                        record.failed_workers.append(event.worker_id)
+                    if event.error:
+                        record.last_error = event.error
+                    attempts = record.attempts
+                    max_attempts: int | None = record.max_attempts
+                else:
+                    attempts = 0
+                    max_attempts = None
+
+                if failed_task_can_retry(record, event.retryable):
                     self._unregister_forward_task(event.task_id)
                     limit_display = (
                         "∞"
                         if max_attempts is None or max_attempts < 0
                         else max_attempts
                     )
-                    if event.worker_id and record:
-                        record.last_failed_worker = event.worker_id
                     self._logger.warning(
-                        "Retrying task %s after worker failure (%d/%s)",
+                        "Retrying task %s after failure (%d/%s)",
                         event.task_id,
                         attempts + 1,
                         limit_display,
@@ -369,7 +386,7 @@ class EventMonitor:
                     event.worker_id,
                     payload,
                     event.ts,
-                    error=event.error,
+                    error=(record.last_error if record else None) or event.error,
                 )
                 self._schedule_emit_usage(usages)
                 self._metrics.finalize_task_failure(event.task_id)
@@ -558,8 +575,6 @@ class EventMonitor:
                                 self._close_task_log_stream(task_id)
                                 self._maybe_close_workflow_log_stream(task_id)
                             else:
-                                if record:
-                                    record.last_failed_worker = worker_id
                                 to_requeue.append(task_id)
                         if to_requeue:
                             self._logger.info(

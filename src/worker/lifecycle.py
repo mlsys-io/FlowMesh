@@ -125,9 +125,12 @@ class Lifecycle:
         task_id: str,
         error: str | None = None,
         metadata: dict[str, Any] | None = None,
+        retryable: bool = True,
     ):
         try:
-            self.client.task_failed(task_id, error=error, metadata=metadata)
+            self.client.task_failed(
+                task_id, error=error, metadata=metadata, retryable=retryable
+            )
         except Exception:
             pass
 

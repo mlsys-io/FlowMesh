@@ -376,6 +376,17 @@ class WorkerRegistry:
                 available.append(worker)
         return self.sort_workers(available)
 
+    def satisfying_workers(self, task: TaskEnvelope) -> list[Worker]:
+        """Non-stale workers whose hardware satisfies the task, any status."""
+        available: list[Worker] = []
+        for worker_id in self.get_worker_ids():
+            worker = self.get_worker(worker_id)
+            if not worker or self.is_worker_stale(worker.id):
+                continue
+            if hw_satisfies(worker, task):
+                available.append(worker)
+        return self.sort_workers(available)
+
     def sort_workers(self, workers: list[Worker]) -> list[Worker]:
         decorated: list[tuple[Worker, int, int, int, int]] = []
         for worker in workers:

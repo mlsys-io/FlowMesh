@@ -122,8 +122,7 @@ class DataRetrievalExecutor(DataMixin, Executor):
                 sql_result = connector.execute(query)
                 if not sql_result["success"]:
                     raise ExecutionError(
-                        f"SQL execution failed for query {idx}: "
-                        f"{sql_result['error']}"
+                        f"SQL execution failed for query {idx}: {sql_result['error']}"
                     )
                 df: pd.DataFrame = sql_result["data"]
                 if df.columns.duplicated().any():
@@ -198,7 +197,9 @@ class DataRetrievalExecutor(DataMixin, Executor):
 
                 s3_result = connector.execute(group_keys, encoding=encoding)
                 if not s3_result["success"]:
-                    raise ExecutionError(f"S3 retrieval failed: {s3_result['error']}")
+                    raise ExecutionError(
+                        f"S3 retrieval failed: {s3_result['error']}", retryable=True
+                    )
                 contents = [
                     self._serialize_s3_content(s3_result["data"][key], out_dir)
                     for key in group_keys
@@ -295,7 +296,8 @@ class DataRetrievalExecutor(DataMixin, Executor):
                 )
                 if not outcome["success"]:
                     raise ExecutionError(
-                        f"Agent retrieval failed (idx={idx}): {outcome['error']}"
+                        f"Agent retrieval failed (idx={idx}): {outcome['error']}",
+                        retryable=True,
                     )
                 df = self._load_table(out_path, output_format)
                 items.append(

@@ -48,6 +48,7 @@ class TaskInfo(BaseModel):
     shard_total: int | None = None
     next_retry_at: str | None = None
     last_failed_worker: str | None = None
+    last_error: str | None = None
     local_name: str | None = None
     graph_node_name: str | None = None
     load: int

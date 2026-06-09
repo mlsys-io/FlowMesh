@@ -1,7 +1,7 @@
 import time
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, computed_field
 
 from shared.tasks import TaskEnvelopeTemplate
 from shared.tasks.worker_message import HardwareUsage
@@ -113,8 +113,18 @@ class TaskRecord(BaseModel):
     shard_index: int | None = Field(default=None, description="Shard index.")
     shard_total: int | None = Field(default=None, description="Total shard count.")
     next_retry_at: str | None = Field(default=None, description="Next retry timestamp.")
-    last_failed_worker: str | None = Field(
-        default=None, description="Last worker that failed the task."
+    failed_workers: list[str] = Field(
+        default_factory=list,
+        description="Distinct workers that have failed this task.",
+        exclude=True,
+    )
+    last_error: str | None = Field(
+        default=None, description="Most recent executor error message."
+    )
+    no_eligible_since: float | None = Field(
+        default=None,
+        description="Epoch seconds when no eligible worker was first observed.",
+        exclude=True,
     )
     local_name: str | None = Field(default=None, description="Workflow stage name.")
     graph_node_name: str | None = Field(default=None, description="Graph node name.")
@@ -138,6 +148,12 @@ class TaskRecord(BaseModel):
     latest_update: dict[str, Any] | None = Field(
         default=None, description="Latest mid-task update payload."
     )
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def last_failed_worker(self) -> str | None:
+        """The most recent worker to have failed this task."""
+        return self.failed_workers[-1] if self.failed_workers else None
 
 
 class TaskInfo(TaskRecord):

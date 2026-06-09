@@ -172,7 +172,7 @@ def download_and_unpack(load_cfg: dict[str, Any], out_dir: Path) -> Path:
                         fh.write(chunk)
     except requests.RequestException as exc:
         raise ExecutionError(
-            f"Failed to download checkpoint from {url}: {exc}"
+            f"Failed to download checkpoint from {url}: {exc}", retryable=True
         ) from exc
 
     archive_format = str(load_cfg.get("archive_format", "auto")).lower()
@@ -457,7 +457,7 @@ def maybe_upload_artifacts(
         except Exception as exc:
             if not skip_errors:
                 raise ExecutionError(
-                    f"Artifact upload failed for {file_path}: {exc}"
+                    f"Artifact upload failed for {file_path}: {exc}", retryable=True
                 ) from exc
             if logger:
                 logger.warning("Failed to upload artifact %s: %s", rel_name, exc)
@@ -510,7 +510,7 @@ def maybe_upload_traces(
         except Exception as exc:
             if not skip_errors:
                 raise ExecutionError(
-                    f"Trace upload failed for {file_path}: {exc}"
+                    f"Trace upload failed for {file_path}: {exc}", retryable=True
                 ) from exc
             if logger:
                 logger.warning("Failed to upload trace %s: %s", trace_type, exc)

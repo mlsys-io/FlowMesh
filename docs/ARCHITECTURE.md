@@ -65,6 +65,12 @@ The runtime is two top-level processes:
 `PENDING → DISPATCHED → (DONE | FAILED | CANCELLED)`. Retried tasks
 cycle back to `PENDING` until exhausted.
 
+Retries are routed to a worker that has not already failed the task and
+stop once every eligible worker has been tried or `max_attempts` is
+reached; the terminal error is the executor's own message. Controlled
+executor errors are not retried. A task that no worker can satisfy fails
+after `TASK_NO_WORKER_GRACE_SEC`.
+
 ## Directory map
 
 ```

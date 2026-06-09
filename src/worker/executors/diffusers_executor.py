@@ -137,7 +137,9 @@ class DiffusersExecutor(DataMixin, Executor):
             pipe.to(device)
             self._pipe = pipe
         except Exception as e:
-            raise ExecutionError(f"Failed to load Diffusers pipeline: {e}")
+            raise ExecutionError(
+                f"Failed to load Diffusers pipeline: {e}", retryable=True
+            )
         logger.info(f"Loaded Diffusers pipeline: {ident} on {device}")
 
         self._device = device

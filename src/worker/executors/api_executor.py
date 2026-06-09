@@ -179,7 +179,7 @@ class APIExecutor(Executor):
                 **request_kwargs,
             )
         except httpx.RequestError as exc:
-            raise ExecutionError(f"API request failed: {exc}") from exc
+            raise ExecutionError(f"API request failed: {exc}", retryable=True) from exc
 
         body_bytes = resp.content
         truncated = False
@@ -226,10 +226,10 @@ class APIExecutor(Executor):
             result.text = body_text
 
         if raise_for_status and resp.is_error:
+            message = f"API request returned status {resp.status_code}"
             if body_text:
-                raise ExecutionError(
-                    f"API request returned status {resp.status_code}: {body_text[:200]}"
-                )
-            raise ExecutionError(f"API request returned status {resp.status_code}")
+                message = f"{message}: {body_text[:200]}"
+            retryable = resp.status_code >= 500 or resp.status_code in (408, 429)
+            raise ExecutionError(message, retryable=retryable)
 
         return result

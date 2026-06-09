@@ -1274,7 +1274,8 @@ class SSHExecutor(Executor):
             self._extract_result_bundle(tmp_path, destination_dir)
         except requests.RequestException as exc:
             raise ExecutionError(
-                f"Failed to download SSH input result bundle for {task_id}: {exc}"
+                f"Failed to download SSH input result bundle for {task_id}: {exc}",
+                retryable=True,
             ) from exc
         except tarfile.TarError as exc:
             raise ExecutionError(

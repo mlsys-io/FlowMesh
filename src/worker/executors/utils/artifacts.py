@@ -101,4 +101,6 @@ def resolve_artifact(source: str, timeout: float = 1800) -> Path:
                     f.write(chunk)
         return local_path
     except Exception as exc:
-        raise ExecutionError(f"Failed to resolve embedding artifact: {exc}") from exc
+        raise ExecutionError(
+            f"Failed to resolve embedding artifact: {exc}", retryable=True
+        ) from exc
