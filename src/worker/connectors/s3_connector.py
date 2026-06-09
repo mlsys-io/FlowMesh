@@ -213,7 +213,6 @@ class S3Connector(BaseConnector):
     def execute(
         self,
         query: str | list[str],
-        *args: Any,
         encoding: str = "utf-8",
         as_dataframe: bool = False,
         **_,

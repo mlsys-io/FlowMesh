@@ -92,7 +92,8 @@ class TestLumidDataConnectorSql:
             result = conn.execute("SELECT 1", mode="sql", out_path=out_path)
 
         assert result["success"] is False
-        assert "401" in result["error"]
+        error = result["error"]
+        assert error is not None and "401" in error.lower()
 
     def test_sql_rejects_multi_element_list(self, tmp_path: Path) -> None:
         with LumidDataConnector(base_url="http://lumid-data", token="tok") as conn:
@@ -100,7 +101,8 @@ class TestLumidDataConnectorSql:
                 ["SELECT 1", "SELECT 2"], mode="sql", out_path=tmp_path / "r.jsonl"
             )
         assert result["success"] is False
-        assert "single query" in result["error"]
+        error = result["error"]
+        assert error is not None and "single query" in error.lower()
 
     def test_unconnected_raises(self, tmp_path: Path) -> None:
         conn = LumidDataConnector(base_url="http://lumid-data")
@@ -170,7 +172,8 @@ class TestLumidDataConnectorAgent:
             )
 
         assert result["success"] is False
-        assert "schema not found" in result["error"]
+        error = result["error"]
+        assert error is not None and "schema not found" in error.lower()
 
     @respx.mock
     def test_agent_401_returns_failure(self, tmp_path: Path) -> None:
@@ -185,7 +188,8 @@ class TestLumidDataConnectorAgent:
             )
 
         assert result["success"] is False
-        assert "401" in result["error"]
+        error = result["error"]
+        assert error is not None and "401" in error.lower()
 
     def test_agent_rejects_multi_element_list(self, tmp_path: Path) -> None:
         with LumidDataConnector(base_url="http://lumid-data", token="tok") as conn:
@@ -195,7 +199,8 @@ class TestLumidDataConnectorAgent:
                 out_path=tmp_path / "r.jsonl",
             )
         assert result["success"] is False
-        assert "single description" in result["error"]
+        error = result["error"]
+        assert error is not None and "single description" in error.lower()
 
 
 class TestLumidDataConnectorS3:
@@ -540,7 +545,8 @@ class TestLumidDataConnectorAgentSseEdgeCases:
             )
 
         assert result["success"] is False
-        assert "done" in result["error"].lower()
+        error = result["error"]
+        assert error is not None and "done" in error.lower()
 
     @respx.mock
     def test_done_frame_with_null_result_returns_failure(self, tmp_path: Path) -> None:
@@ -565,7 +571,8 @@ class TestLumidDataConnectorAgentSseEdgeCases:
             )
 
         assert result["success"] is False
-        assert "result" in result["error"].lower()
+        error = result["error"]
+        assert error is not None and "result" in error.lower()
 
 
 class TestLumidDataConnectorTokenFromEnv:

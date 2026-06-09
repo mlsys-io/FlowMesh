@@ -66,7 +66,6 @@ class PostgreSQLConnector(BaseConnector):
     def execute(
         self,
         query: str | list[str],
-        *args: Any,
         params_identifier: dict[str, str] | None = None,
         params_literal: dict[str, Any] | None = None,
         fetch_size: int | None = None,
@@ -83,9 +82,7 @@ class PostgreSQLConnector(BaseConnector):
         Returns:
             Dict with:
                 - success: bool
-                - query: The executed query string
                 - data: List of dicts for SELECT queries, or None for DML/DDL
-                - rows_affected: Number of rows affected (for INSERT/UPDATE/DELETE)
                 - error: Error message if failed
                 - metadata: Query execution time, row count, etc.
         """
