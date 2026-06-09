@@ -187,21 +187,22 @@ def _worker_alias(
     template: str | None,
     gpu: str | None = None,
 ) -> str:
-    if template is not None:
-        fields: dict[str, Any] = {"slug": slug or "", "kind": kind, "idx": idx}
-        if gpu is not None:
-            fields["gpu"] = gpu
-        try:
-            return template.format_map(_StrictFormatDict(fields))
-        except (KeyError, IndexError, ValueError) as exc:
-            raise FlowMeshError(
-                f"invalid --name-template ({exc}); "
-                f"available placeholders: {_ALIAS_FIELDS}"
-            ) from exc
-    base = f"{slug}_" if slug else ""
+    if template is None:
+        template = (
+            ("{slug}_" if slug else "")
+            + f"worker_{kind}_"
+            + ("{idx}" if gpu is None else "{gpu}")
+        )
+    fields: dict[str, Any] = {"slug": slug or "", "kind": kind, "idx": idx}
     if gpu is not None:
-        return f"{base}worker_{kind}_{gpu}"
-    return f"{base}worker_{kind}_{idx}"
+        fields["gpu"] = gpu
+    try:
+        return template.format_map(_StrictFormatDict(fields))
+    except (KeyError, IndexError, ValueError) as exc:
+        raise FlowMeshError(
+            f"invalid --name-template ({exc}); "
+            f"available placeholders: {_ALIAS_FIELDS}"
+        ) from exc
 
 
 def _payloads_for_worker_create(
@@ -227,18 +228,16 @@ def _payloads_for_worker_create(
             _extend_payloads(payloads, f"worker from raw#{idx}", raw)
         return payloads
 
-    specs: list[tuple[str, dict[str, Any], str]] = []
-
+    specs: list[tuple[str, dict[str, Any], str]]  # alias, worker_config, label
     if kind == "cpu":
-        for idx in range(count):
-            alias = _worker_alias("cpu", idx, slug, name_template)
-            specs.append(
-                (
-                    alias,
-                    {"worker_type": "cpu", "worker_alias": alias},
-                    "CPU worker",
-                )
+        specs = [
+            (
+                (alias := _worker_alias("cpu", idx, slug, name_template)),
+                {"worker_type": "cpu", "worker_alias": alias},
+                "CPU worker",
             )
+            for idx in range(count)
+        ]
     elif kind == "gpu":
         raw_gpu_ids = detect_gpu_targets(targets)
         gpu_ids: list[int] = []
@@ -255,25 +254,31 @@ def _payloads_for_worker_create(
                     f"Consider setting count={len(gpu_ids)} or specifying exactly "
                     f"{count} GPU targets."
                 )
-            for idx, gpu_id in enumerate(gpu_ids):
-                alias = _worker_alias("gpu", idx, slug, name_template, gpu=str(gpu_id))
-                specs.append(
+            specs = [
+                (
                     (
-                        alias,
-                        {
-                            "worker_type": "gpu",
-                            "cuda_devices": [gpu_id],
-                            "worker_alias": alias,
-                        },
-                        f"GPU worker for GPU {gpu_id}",
-                    )
+                        alias := _worker_alias(
+                            "gpu", idx, slug, name_template, gpu=str(gpu_id)
+                        )
+                    ),
+                    {
+                        "worker_type": "gpu",
+                        "cuda_devices": [gpu_id],
+                        "worker_alias": alias,
+                    },
+                    f"GPU worker for GPU {gpu_id}",
                 )
+                for idx, gpu_id in enumerate(gpu_ids)
+            ]
         else:
             worker_suffix = "all" if targets == "all" else "_".join(raw_gpu_ids)
-            alias = _worker_alias("gpu", 0, slug, name_template, gpu=worker_suffix)
-            specs.append(
+            specs = [
                 (
-                    alias,
+                    (
+                        alias := _worker_alias(
+                            "gpu", 0, slug, name_template, gpu=worker_suffix
+                        )
+                    ),
                     {
                         "worker_type": "gpu",
                         "cuda_devices": gpu_ids,
@@ -281,7 +286,7 @@ def _payloads_for_worker_create(
                     },
                     f"GPU worker for GPUs {', '.join(raw_gpu_ids)}",
                 )
-            )
+            ]
     else:
         raise FlowMeshError("worker up expects kind cpu|gpu or use --config")
 
