@@ -13,6 +13,7 @@ import gc
 import logging
 import random
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -46,7 +47,7 @@ from .utils.huggingface import pick_torch_dtype
 logger = logging.getLogger("worker.image_classification")
 
 
-class ImageClassificationResult(BaseExecutorResult):
+class ImageClassificationTrainingResult(BaseExecutorResult):
     training_time_seconds: float | None = None
     error_message: str | None = None
     model_name: str | None = None
@@ -61,8 +62,8 @@ class ImageClassificationResult(BaseExecutorResult):
     final_model_archive: ArtifactRef | None = None
 
 
-class ImageClassificationExecutor(TrainingMixin, Executor):
-    name = "image_classification_executor"
+class ImageClassificationTrainingExecutor(TrainingMixin, Executor):
+    name = "image_classification_training_executor"
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
@@ -72,7 +73,9 @@ class ImageClassificationExecutor(TrainingMixin, Executor):
         self._current_processor: Any | None = None
         self._final_model_dir: Path | None = None
 
-    def run(self, task: ExecutorTask, out_dir: Path) -> ImageClassificationResult:
+    def run(
+        self, task: ExecutorTask, out_dir: Path
+    ) -> ImageClassificationTrainingResult:
         configure_hf_library_logging()
         spec = self.require_spec(task, ImageClassificationTrainingSpecStrict)
         start_time = time.time()
@@ -80,10 +83,10 @@ class ImageClassificationExecutor(TrainingMixin, Executor):
         error_msg: str | None = None
         caught_exc: Exception | None = None
 
-        training_cfg = spec.training or {}
+        training_cfg = spec.training.copy() if spec.training else {}
         if bool(training_cfg.get("allow_multi_gpu", False)):
             logger.warning(
-                "ImageClassificationExecutor currently runs on a single GPU; "
+                "ImageClassificationTrainingExecutor currently runs on a single GPU; "
                 "ignoring allow_multi_gpu request"
             )
             training_cfg["allow_multi_gpu"] = False
@@ -116,6 +119,7 @@ class ImageClassificationExecutor(TrainingMixin, Executor):
                 id2label,
                 image_field,
                 label_field,
+                label_to_id,
             ) = self._prepare_dataset(spec)
             num_labels = len(id2label)
             logger.info(
@@ -162,11 +166,21 @@ class ImageClassificationExecutor(TrainingMixin, Executor):
 
             augment = bool(training_cfg.get("augmentation", False))
             train_dataset = self._apply_transform(
-                train_dataset, processor, image_field, label_field, augment=augment
+                train_dataset,
+                processor,
+                image_field,
+                label_field,
+                label_to_id,
+                augment=augment,
             )
             if eval_dataset is not None:
                 eval_dataset = self._apply_transform(
-                    eval_dataset, processor, image_field, label_field, augment=False
+                    eval_dataset,
+                    processor,
+                    image_field,
+                    label_field,
+                    label_to_id,
+                    augment=False,
                 )
 
             eval_strategy = "epoch" if eval_dataset is not None else "no"
@@ -207,6 +221,7 @@ class ImageClassificationExecutor(TrainingMixin, Executor):
                 train_dataset=train_dataset,
                 eval_dataset=eval_dataset,
                 data_collator=_image_collate,
+                processing_class=processor,
                 compute_metrics=_compute_accuracy if eval_dataset is not None else None,
             )
             self._current_trainer = trainer
@@ -231,7 +246,8 @@ class ImageClassificationExecutor(TrainingMixin, Executor):
             eval_accuracy: float | None = None
             if eval_dataset is not None:
                 metrics = trainer.evaluate()
-                eval_accuracy = float(metrics.get("eval_accuracy", 0.0)) or None
+                acc = metrics.get("eval_accuracy")
+                eval_accuracy = float(acc) if acc is not None else None
                 logger.info("Eval metrics: %s", metrics)
 
             final_model_path: Path | None = None
@@ -264,7 +280,7 @@ class ImageClassificationExecutor(TrainingMixin, Executor):
                         path=final_archive_path.relative_to(artifacts_dir).as_posix()
                     )
 
-            result = ImageClassificationResult(
+            result = ImageClassificationTrainingResult(
                 ok=ok,
                 training_time_seconds=training_time,
                 error_message=error_msg,
@@ -307,7 +323,7 @@ class ImageClassificationExecutor(TrainingMixin, Executor):
 
         training_time = time.time() - start_time
         rows = len(train_dataset) if train_dataset is not None else 0
-        result = ImageClassificationResult(
+        result = ImageClassificationTrainingResult(
             ok=ok,
             training_time_seconds=training_time,
             error_message=error_msg,
@@ -339,9 +355,15 @@ class ImageClassificationExecutor(TrainingMixin, Executor):
             logger.debug("Failed to empty CUDA cache", exc_info=True)
         gc.collect()
 
-    def _prepare_dataset(
-        self, spec: ImageClassificationTrainingSpecStrict
-    ) -> tuple[Dataset, Dataset | None, dict[str, int], dict[int, str], str, str]:
+    def _prepare_dataset(self, spec: ImageClassificationTrainingSpecStrict) -> tuple[
+        Dataset,
+        Dataset | None,
+        dict[str, int],
+        dict[int, str],
+        str,
+        str,
+        Callable[[Any], int],
+    ]:
         data_cfg = spec.data or {}
         dataset_name = data_cfg.get("dataset_name")
         if not dataset_name:
@@ -392,7 +414,7 @@ class ImageClassificationExecutor(TrainingMixin, Executor):
                     range(min(len(eval_dataset), max_eval))
                 )
 
-        label2id, id2label = self._resolve_label_maps(
+        label2id, id2label, label_to_id = self._resolve_label_maps(
             train_dataset, data_cfg, label_field
         )
         return (
@@ -402,33 +424,35 @@ class ImageClassificationExecutor(TrainingMixin, Executor):
             id2label,
             image_field,
             label_field,
+            label_to_id,
         )
 
     @staticmethod
     def _resolve_label_maps(
         dataset: Dataset, data_cfg: dict[str, Any], label_field: str
-    ) -> tuple[dict[str, int], dict[int, str]]:
+    ) -> tuple[dict[str, int], dict[int, str], Callable[[Any], int]]:
+        """Build the label maps and a function that turns a raw dataset label
+        into its target id.
+
+        A ``ClassLabel`` column already stores integer indices aligned with
+        ``feature.names``, so its remap is the identity; string / arbitrary
+        labels are looked up by name through ``label2id``.
+        """
         explicit = data_cfg.get("labels")
         if explicit:
-            explicit_names: list[str] = [str(n) for n in explicit]
-            return (
-                {name: idx for idx, name in enumerate(explicit_names)},
-                {idx: name for idx, name in enumerate(explicit_names)},
-            )
+            names = [str(n) for n in explicit]
+        else:
+            feature = dataset.features[label_field]
+            if isinstance(feature, ClassLabel):
+                names = [str(name) for name in feature.names]
+                label2id = {name: idx for idx, name in enumerate(names)}
+                id2label = {idx: name for idx, name in enumerate(names)}
+                return label2id, id2label, lambda raw: int(raw)
+            names = sorted({str(row[label_field]) for row in dataset})
 
-        feature = dataset.features[label_field]
-        if isinstance(feature, ClassLabel):
-            names = [str(name) for name in feature.names]
-            return (
-                {name: idx for idx, name in enumerate(names)},
-                {idx: name for idx, name in enumerate(names)},
-            )
-
-        unique = sorted({str(row[label_field]) for row in dataset})
-        return (
-            {name: idx for idx, name in enumerate(unique)},
-            {idx: name for idx, name in enumerate(unique)},
-        )
+        label2id = {name: idx for idx, name in enumerate(names)}
+        id2label = {idx: name for idx, name in enumerate(names)}
+        return label2id, id2label, lambda raw: label2id[str(raw)]
 
     @staticmethod
     def _apply_transform(
@@ -436,6 +460,7 @@ class ImageClassificationExecutor(TrainingMixin, Executor):
         processor: Any,
         image_field: str,
         label_field: str,
+        label_to_id: Callable[[Any], int],
         augment: bool = False,
     ) -> Dataset:
         def _transform(batch: dict[str, Any]) -> dict[str, Any]:
@@ -443,7 +468,7 @@ class ImageClassificationExecutor(TrainingMixin, Executor):
             if augment:
                 images = [_augment_image(img) for img in images]
             encoded = processor(images=images, return_tensors="pt")
-            encoded["labels"] = batch[label_field]
+            encoded["labels"] = [label_to_id(raw) for raw in batch[label_field]]
             return encoded
 
         dataset.set_transform(_transform)

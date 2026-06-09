@@ -4,7 +4,7 @@ metadata:
   name: vit-cifar10-demo
   owner: research
   annotations:
-    description: Fine-tune ViT-base on CIFAR-10 using ImageClassificationExecutor
+    description: Fine-tune ViT-base on CIFAR-10 using ImageClassificationTrainingExecutor
 
 spec:
   taskType: image_classification_training

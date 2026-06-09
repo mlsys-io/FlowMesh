@@ -4,7 +4,10 @@ import pytest
 from pydantic import ValidationError
 
 from shared.tasks.envelope import TaskEnvelopeStrict
-from shared.tasks.specs import ImageClassificationTrainingSpecStrict
+from shared.tasks.specs import (
+    ImageClassificationTrainingSpecStrict,
+    ImageClassificationTrainingSpecTemplate,
+)
 from shared.tasks.task_type import TaskType
 
 _BASE = {
@@ -28,3 +31,9 @@ def test_model_identifier_is_required() -> None:
     spec_without_model = {k: v for k, v in _BASE.items() if k != "model"}
     with pytest.raises(ValidationError, match="model.source.identifier"):
         ImageClassificationTrainingSpecStrict.model_validate(spec_without_model)
+
+
+def test_template_model_identifier_is_required() -> None:
+    spec_without_model = {k: v for k, v in _BASE.items() if k != "model"}
+    with pytest.raises(ValidationError, match="model.source.identifier"):
+        ImageClassificationTrainingSpecTemplate.model_validate(spec_without_model)

@@ -18,8 +18,8 @@ PPOExecutor = _safe_import("PPOExecutor", ".ppo_executor")
 DPOExecutor = _safe_import("DPOExecutor", ".dpo_executor")
 SFTExecutor = _safe_import("SFTExecutor", ".sft_executor")
 LoRASFTExecutor = _safe_import("LoRASFTExecutor", ".lora_sft_executor")
-ImageClassificationExecutor = _safe_import(
-    "ImageClassificationExecutor", ".image_classification_executor"
+ImageClassificationTrainingExecutor = _safe_import(
+    "ImageClassificationTrainingExecutor", ".image_classification_executor"
 )
 HFTransformersExecutor = _safe_import(
     "HFTransformersExecutor", ".transformers_executor"
@@ -56,7 +56,7 @@ EXECUTOR_REGISTRY: dict[str, type | None] = {
     "dpo": DPOExecutor,
     "sft": SFTExecutor,
     "lora_sft": LoRASFTExecutor,
-    "image_classification_training": ImageClassificationExecutor,
+    "image_classification_training": ImageClassificationTrainingExecutor,
     "default": HFTransformersExecutor,
     "rag": RAGExecutor,
     "agent": AgentExecutor,
@@ -79,7 +79,7 @@ EXECUTOR_CLASS_NAMES: dict[str, str] = {
     "dpo": "DPOExecutor",
     "sft": "SFTExecutor",
     "lora_sft": "LoRASFTExecutor",
-    "image_classification_training": "ImageClassificationExecutor",
+    "image_classification_training": "ImageClassificationTrainingExecutor",
     "default": "HFTransformersExecutor",
     "rag": "RAGExecutor",
     "agent": "AgentExecutor",
@@ -106,7 +106,7 @@ __all__ = [
         "DPOExecutor": DPOExecutor,
         "SFTExecutor": SFTExecutor,
         "LoRASFTExecutor": LoRASFTExecutor,
-        "ImageClassificationExecutor": ImageClassificationExecutor,
+        "ImageClassificationTrainingExecutor": ImageClassificationTrainingExecutor,
         "HFTransformersExecutor": HFTransformersExecutor,
         "RAGExecutor": RAGExecutor,
         "AgentExecutor": AgentExecutor,
