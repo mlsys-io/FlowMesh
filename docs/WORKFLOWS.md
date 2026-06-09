@@ -99,7 +99,7 @@ data:
   max_steps: 20
   output_format: jsonl
 
-# Object mode — fetch raw blobs by key (mirrors S3 object retrieval)
+# S3 Object mode — fetch raw blobs by key
 data:
   type: lumid
   mode: s3

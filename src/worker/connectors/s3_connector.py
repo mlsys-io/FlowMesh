@@ -276,21 +276,22 @@ class S3Connector(BaseConnector):
 
                     # Read content
                     content_bytes: bytes = response["Body"].read()
+                    content_type: str = response.get("ContentType") or ""
 
                     # Store metadata
                     file_metadata[file_key] = {
                         "size": response["ContentLength"],
-                        "content_type": response["ContentType"],
+                        "content_type": content_type,
                         "last_modified": response["LastModified"].isoformat(),
                         "etag": response["ETag"],
                     }
 
                     # Decode content
                     content: pd.DataFrame | Image.Image | str
-                    if as_dataframe and file_key.endswith(".csv"):
+                    if as_dataframe and file_key.lower().endswith(".csv"):
                         # Parse as CSV DataFrame
                         content = pd.read_csv(io.BytesIO(content_bytes))
-                    elif file_key.endswith(".png"):
+                    elif content_type.startswith("image/"):
                         content = Image.open(io.BytesIO(content_bytes)).convert("RGB")
                     else:
                         content = content_bytes.decode(encoding)
