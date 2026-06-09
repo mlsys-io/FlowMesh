@@ -198,9 +198,9 @@ class TestLumidDataConnectorAgent:
         assert "single description" in result["error"]
 
 
-class TestLumidDataConnectorObject:
+class TestLumidDataConnectorS3:
     @respx.mock
-    def test_object_text_decoded_and_keyed(self, tmp_path: Path) -> None:
+    def test_s3_text_decoded_and_keyed(self, tmp_path: Path) -> None:
         respx.get("/blobs/demo/news/doc1.txt").mock(
             return_value=httpx.Response(200, text="hello world")
         )
@@ -208,7 +208,7 @@ class TestLumidDataConnectorObject:
         with LumidDataConnector(base_url="http://lumid-data", token="tok") as conn:
             result = conn.execute(
                 "demo/news/doc1.txt",
-                mode="object",
+                mode="s3",
                 encoding="utf-8",
             )
 
@@ -216,9 +216,7 @@ class TestLumidDataConnectorObject:
         assert result["data"]["demo/news/doc1.txt"] == "hello world"
 
     @respx.mock
-    def test_object_csv_decoded_as_dataframe_when_flag_set(
-        self, tmp_path: Path
-    ) -> None:
+    def test_s3_csv_decoded_as_dataframe_when_flag_set(self, tmp_path: Path) -> None:
         csv_bytes = b"a,b\n1,x\n2,y\n"
         respx.get("/blobs/demo/data.csv").mock(
             return_value=httpx.Response(
@@ -231,7 +229,7 @@ class TestLumidDataConnectorObject:
         with LumidDataConnector(base_url="http://lumid-data", token="tok") as conn:
             result = conn.execute(
                 "demo/data.csv",
-                mode="object",
+                mode="s3",
                 as_dataframe=True,
             )
 
@@ -241,14 +239,14 @@ class TestLumidDataConnectorObject:
         assert len(df) == 2
 
     @respx.mock
-    def test_object_multiple_keys_returned_as_dict(self, tmp_path: Path) -> None:
+    def test_s3_multiple_keys_returned_as_dict(self, tmp_path: Path) -> None:
         respx.get("/blobs/a.txt").mock(return_value=httpx.Response(200, text="aaa"))
         respx.get("/blobs/b.txt").mock(return_value=httpx.Response(200, text="bbb"))
 
         with LumidDataConnector(base_url="http://lumid-data", token="tok") as conn:
             result = conn.execute(
                 ["a.txt", "b.txt"],
-                mode="object",
+                mode="s3",
             )
 
         assert result["success"] is True
@@ -333,7 +331,7 @@ class TestDataRetrievalExecutorLumidBranch:
         assert "table" in item
 
     @respx.mock
-    def test_object_mode_serializes_content(self, tmp_path: Path) -> None:
+    def test_s3_mode_serializes_content(self, tmp_path: Path) -> None:
         respx.get("/blobs/demo/unstructured/news-html/doc1.html").mock(
             return_value=httpx.Response(200, text="<html>news</html>")
         )

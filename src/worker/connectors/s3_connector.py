@@ -23,7 +23,7 @@ except ImportError:
 
     _HAS_BOTO3 = False
 
-from .base_connector import BaseConnector, ConnectorError
+from .base_connector import BaseConnector, ConnectorError, ConnectorResult
 
 logger = logging.getLogger(__name__)
 
@@ -213,10 +213,11 @@ class S3Connector(BaseConnector):
     def execute(
         self,
         query: str | list[str],
+        *args: Any,
         encoding: str = "utf-8",
         as_dataframe: bool = False,
         **_,
-    ) -> dict[str, Any]:
+    ) -> ConnectorResult:
         """Retrieve files from S3/MinIO.
 
         Args:
@@ -242,7 +243,7 @@ class S3Connector(BaseConnector):
             self.connect()
 
         start_time = time.time()
-        result: dict[str, Any] = {
+        result: ConnectorResult = {
             "success": False,
             "data": None,
             "error": None,

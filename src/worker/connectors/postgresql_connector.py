@@ -9,7 +9,7 @@ import psycopg
 from psycopg.rows import tuple_row
 from psycopg.sql import SQL, Identifier, Literal
 
-from .base_connector import BaseConnector, ConnectorError
+from .base_connector import BaseConnector, ConnectorError, ConnectorResult
 
 logger = logging.getLogger(__name__)
 
@@ -66,11 +66,12 @@ class PostgreSQLConnector(BaseConnector):
     def execute(
         self,
         query: str | list[str],
+        *args: Any,
         params_identifier: dict[str, str] | None = None,
         params_literal: dict[str, Any] | None = None,
         fetch_size: int | None = None,
         **_,
-    ) -> dict[str, Any]:
+    ) -> ConnectorResult:
         """Execute a SQL query on PostgreSQL.
 
         Args:
@@ -98,14 +99,13 @@ class PostgreSQLConnector(BaseConnector):
             assert self._connection is not None
 
         start_time = time.time()
-        result: dict[str, Any] = {
+        result: ConnectorResult = {
             "success": False,
-            "query": None,
             "data": None,
-            "rows_affected": 0,
             "error": None,
             "metadata": {},
         }
+        formatted_query: str | None = None
 
         try:
             with self._connection.cursor() as cursor:
@@ -123,8 +123,8 @@ class PostgreSQLConnector(BaseConnector):
                     },
                     **{key: Literal(value) for key, value in params_literal.items()},
                 )
-                logger.debug("Formatted query: %s", query_formatted.as_string(cursor))
-                result["query"] = query_formatted.as_string(cursor)
+                formatted_query = query_formatted.as_string(cursor)
+                logger.debug("Formatted query: %s", formatted_query)
 
                 # Execute query with optional parameters
                 cursor.execute(query_formatted)
@@ -140,12 +140,11 @@ class PostgreSQLConnector(BaseConnector):
                         data = cursor.fetchall()
                     assert cursor.description is not None
                     header = [desc.name for desc in cursor.description]
-                    result["rows_affected"] = len(data)
                     df = pd.DataFrame(data, columns=header)
                     if len(df) == 0:
                         logger.warning(
                             "Query returned an empty result set. Query: %s",
-                            result["query"],
+                            formatted_query,
                         )
                     result["data"] = df
                 else:

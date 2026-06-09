@@ -1,6 +1,6 @@
 """HTTP connector for lumid-data-app.
 
-Supports SQL queries, agent-driven retrieval, and raw object fetches.
+Supports SQL queries, agent-driven retrieval, and S3-style blob fetches.
 """
 
 import io
@@ -8,12 +8,13 @@ import json
 import logging
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 import pandas as pd
 from PIL import Image
 
-from .base_connector import BaseConnector, ConnectorError
+from .base_connector import BaseConnector, ConnectorError, ConnectorResult
 
 logger = logging.getLogger(__name__)
 
@@ -24,17 +25,16 @@ class LumidDataConnector(BaseConnector):
     Supports three retrieval modes dispatched via :meth:`execute`:
     - ``sql``: run a SQL query and materialise the result to a local file.
     - ``agent``: drive the NL data agent via SSE and materialise the result.
-    - ``object``: fetch raw blobs by key and decode them by content type.
+    - ``s3``: fetch raw blobs by key and decode them by content type.
     """
 
     name = "lumid_data"
 
     def __init__(
         self,
-        *,
         base_url: str,
         token: str | None = None,
-        verify: bool = False,
+        verify: bool = True,
         timeout: float = 300.0,
         **kwargs: Any,
     ) -> None:
@@ -45,7 +45,8 @@ class LumidDataConnector(BaseConnector):
             token: Caller-supplied bearer token (the user's PAT, passed from
                 the workflow spec's ``lumid_data_token`` field).  When ``None``
                 no ``Authorization`` header is sent.
-            verify: Whether to verify TLS certificates.
+            verify: Whether to verify TLS certificates. Defaults to ``True`` so
+                bearer tokens are never sent over an unverified TLS channel.
             timeout: Request timeout in seconds.
         """
         super().__init__(**kwargs)
@@ -76,7 +77,6 @@ class LumidDataConnector(BaseConnector):
     def execute(
         self,
         query: str | list[str],
-        *,
         mode: str,
         out_path: Path | None = None,
         output_format: str = "jsonl",
@@ -85,23 +85,23 @@ class LumidDataConnector(BaseConnector):
         model: str | None = None,
         encoding: str = "utf-8",
         as_dataframe: bool = False,
-    ) -> dict[str, Any]:
+    ) -> ConnectorResult:
         """Dispatch a retrieval request in one of three modes.
 
         Args:
             query: SQL string (sql mode), NL description (agent mode), or key /
-                list of keys (object mode).
-            mode: One of ``"sql"``, ``"agent"``, or ``"object"``.
+                list of keys (s3 mode).
+            mode: One of ``"sql"``, ``"agent"``, or ``"s3"``.
             out_path: Where to write the materialised result file (sql / agent).
             output_format: ``"jsonl"`` or ``"csv"`` (sql / agent).
             schema_scope: Optional schema restriction directive (agent only).
             max_steps: Maximum agent iterations (agent only).
             model: Model override (agent only).
-            encoding: Text encoding for blob decode (object only).
-            as_dataframe: Decode CSV blobs as DataFrames (object only).
+            encoding: Text encoding for blob decode (s3 only).
+            as_dataframe: Decode CSV blobs as DataFrames (s3 only).
 
         Returns:
-            Standard ``{"success", "data", "error", "metadata"}`` dict.
+            A :class:`ConnectorResult` envelope.
         """
         if self._client is None:
             raise ConnectorError("lumid_data connector is not connected")
@@ -119,8 +119,8 @@ class LumidDataConnector(BaseConnector):
                     max_steps=max_steps,
                     model=model,
                 )
-            if mode == "object":
-                return self._execute_object(
+            if mode == "s3":
+                return self._execute_s3(
                     query, encoding=encoding, as_dataframe=as_dataframe
                 )
             return {
@@ -149,10 +149,9 @@ class LumidDataConnector(BaseConnector):
     def _execute_sql(
         self,
         query: str | list[str],
-        *,
         out_path: Path | None,
         output_format: str,
-    ) -> dict[str, Any]:
+    ) -> ConnectorResult:
         if isinstance(query, list):
             if len(query) != 1:
                 raise ConnectorError(
@@ -207,13 +206,12 @@ class LumidDataConnector(BaseConnector):
     def _execute_agent(
         self,
         query: str | list[str],
-        *,
         out_path: Path | None,
         output_format: str,
         schema_scope: str | None,
         max_steps: int | None,
         model: str | None,
-    ) -> dict[str, Any]:
+    ) -> ConnectorResult:
         if isinstance(query, list):
             if len(query) != 1:
                 raise ConnectorError(
@@ -321,13 +319,12 @@ class LumidDataConnector(BaseConnector):
             },
         }
 
-    def _execute_object(
+    def _execute_s3(
         self,
         query: str | list[str],
-        *,
         encoding: str,
         as_dataframe: bool,
-    ) -> dict[str, Any]:
+    ) -> ConnectorResult:
         keys: list[str] = [query] if isinstance(query, str) else query
         if self._client is None:
             raise ConnectorError("not connected")
@@ -335,13 +332,15 @@ class LumidDataConnector(BaseConnector):
         contents: dict[str, Any] = {}
         file_info: dict[str, dict[str, Any]] = {}
         for key in keys:
-            resp = self._client.get(f"/blobs/{key}")
+            encoded_key = quote(key, safe="/")
+            resp = self._client.get(f"/blobs/{encoded_key}")
             if not resp.is_success:
                 return {
                     "success": False,
                     "data": None,
                     "error": (
-                        f"GET /blobs/{key} returned " f"{resp.status_code}: {resp.text}"
+                        f"GET /blobs/{encoded_key} returned "
+                        f"{resp.status_code}: {resp.text}"
                     ),
                     "metadata": {},
                 }
@@ -349,9 +348,9 @@ class LumidDataConnector(BaseConnector):
             raw: bytes = resp.content
             file_info[key] = {"size": len(raw), "content_type": content_type}
 
-            if as_dataframe and key.endswith(".csv"):
+            if as_dataframe and key.lower().endswith(".csv"):
                 contents[key] = pd.read_csv(io.BytesIO(raw))
-            elif key.endswith(".png"):
+            elif content_type.startswith("image/"):
                 contents[key] = Image.open(io.BytesIO(raw)).convert("RGB")
             else:
                 try:
@@ -368,62 +367,3 @@ class LumidDataConnector(BaseConnector):
                 "files": file_info,
             },
         }
-
-    def list_objects(
-        self,
-        prefix: str = "",
-        delimiter: str | None = None,
-        limit: int | None = None,
-    ) -> dict[str, Any]:
-        """List objects from the blob store.
-
-        Args:
-            prefix: Key prefix filter.
-            delimiter: Grouping delimiter (e.g. ``"/"``).
-            limit: Maximum number of results to return.
-
-        Returns:
-            Standard ``{"success", "data", "error", "metadata"}`` dict where
-            ``data`` is ``{objects, common_prefixes, truncated}``.
-        """
-        if self._client is None:
-            raise ConnectorError("lumid_data connector is not connected")
-        params: dict[str, Any] = {"prefix": prefix}
-        if delimiter is not None:
-            params["delimiter"] = delimiter
-        if limit is not None:
-            params["limit"] = limit
-        try:
-            resp = self._client.get("/blobs", params=params)
-            if not resp.is_success:
-                return {
-                    "success": False,
-                    "data": None,
-                    "error": f"GET /blobs returned {resp.status_code}: {resp.text}",
-                    "metadata": {},
-                }
-            body: dict[str, Any] = resp.json()
-            return {
-                "success": True,
-                "data": {
-                    "objects": body["objects"],
-                    "common_prefixes": body["common_prefixes"],
-                    "truncated": body["truncated"],
-                },
-                "error": None,
-                "metadata": {},
-            }
-        except httpx.TimeoutException as exc:
-            return {
-                "success": False,
-                "data": None,
-                "error": f"request timed out: {exc}",
-                "metadata": {},
-            }
-        except httpx.HTTPError as exc:
-            return {
-                "success": False,
-                "data": None,
-                "error": f"HTTP error: {exc}",
-                "metadata": {},
-            }

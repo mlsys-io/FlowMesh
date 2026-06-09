@@ -1,11 +1,25 @@
 """Base connector class for external tool calling / data sources."""
 
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import Any, TypedDict
 
 
 class ConnectorError(RuntimeError):
     """Raised when a connector operation fails in a controlled way."""
+
+
+class ConnectorResult(TypedDict):
+    """Standard envelope returned by :meth:`BaseConnector.execute`.
+
+    ``data`` is connector-specific on success; ``error`` is a human-readable
+    message on failure. ``metadata`` carries auxiliary fields (execution time,
+    row count, materialised URI, etc.).
+    """
+
+    success: bool
+    data: Any
+    error: str | None
+    metadata: dict[str, Any]
 
 
 class BaseConnector(ABC):
@@ -45,7 +59,7 @@ class BaseConnector(ABC):
     @abstractmethod
     def execute(
         self, query: str | list[str], *args: Any, **kwargs: Any
-    ) -> dict[str, Any]:
+    ) -> ConnectorResult:
         """Execute a query/command on the external system.
 
         Args:

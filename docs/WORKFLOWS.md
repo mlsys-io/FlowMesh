@@ -114,10 +114,6 @@ data:
           - 2024-01-15-nvda-earnings.html
 ```
 
-Result items carry `run_id`, `access_chain`, `materialized_uri`, and
-(for agent mode) `transcript_url`, `tokens_in`, `tokens_out`,
-`steps_taken`, `replay_latency_ms`.
-
 ## Schedule hints
 
 Workflows can declare scheduling preferences via

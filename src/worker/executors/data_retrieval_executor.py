@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Template-driven data retrieval executor for SQL, S3, and lumid-data-app sources."""
+"""Template-driven data retrieval executor for SQL, S3, and lumid-data-app sources.
+
+Lumid retrieval (``type: lumid``) emits one ``DataRetrievalResult`` item per
+rendered param row. Every item carries ``run_id``, ``access_chain``, and
+``materialized_uri``. Agent-mode items additionally carry ``transcript_url``,
+``tokens_in``, ``tokens_out``, ``steps_taken``, and ``replay_latency_ms``.
+"""
 
 import logging
 import uuid
@@ -224,7 +230,7 @@ class DataRetrievalExecutor(DataMixin, Executor):
         context: dict[str, BaseExecutorResult],
         out_dir: Path,
     ) -> DataRetrievalResult:
-        """Execute a lumid-data-app retrieval in sql, agent, or object mode."""
+        """Execute a lumid-data-app retrieval in sql, agent, or s3 mode."""
         validate_keys(
             data_cfg,
             "DataRetrievalExecutor.spec.data",
@@ -390,6 +396,7 @@ class DataRetrievalExecutor(DataMixin, Executor):
                             f"{outcome['error']}"
                         )
                     df = self._load_table(out_path, output_format)
+                    outcome_data = outcome["data"]
                     items.append(
                         {
                             "index": idx,
@@ -397,14 +404,14 @@ class DataRetrievalExecutor(DataMixin, Executor):
                             "params": params_row,
                             "table": serialize_dataframe(df),
                             "rows": len(df),
-                            "access_chain": outcome["data"]["access_chain"],
-                            "run_id": outcome["data"]["run_id"],
-                            "transcript_url": outcome["data"]["transcript_url"],
-                            "tokens_in": outcome["data"]["tokens_in"],
-                            "tokens_out": outcome["data"]["tokens_out"],
-                            "steps_taken": outcome["data"]["steps_taken"],
-                            "replay_latency_ms": outcome["data"]["replay_latency_ms"],
-                            "materialized_uri": outcome["data"]["materialized_uri"],
+                            "access_chain": outcome_data["access_chain"],
+                            "run_id": outcome_data["run_id"],
+                            "transcript_url": outcome_data["transcript_url"],
+                            "tokens_in": outcome_data["tokens_in"],
+                            "tokens_out": outcome_data["tokens_out"],
+                            "steps_taken": outcome_data["steps_taken"],
+                            "replay_latency_ms": outcome_data["replay_latency_ms"],
+                            "materialized_uri": outcome_data["materialized_uri"],
                         }
                     )
 
@@ -441,15 +448,14 @@ class DataRetrievalExecutor(DataMixin, Executor):
                             "Rendered object template did not produce text output."
                         )
 
-                    obj_result = conn.execute(
-                        group_keys, mode="object", encoding=encoding
-                    )
+                    obj_result = conn.execute(group_keys, mode="s3", encoding=encoding)
                     if not obj_result["success"]:
                         raise ExecutionError(
-                            f"lumid object retrieval failed: {obj_result['error']}"
+                            f"lumid s3 retrieval failed: {obj_result['error']}"
                         )
+                    obj_data = obj_result["data"]
                     contents = [
-                        self._serialize_s3_content(obj_result["data"][key], out_dir)
+                        self._serialize_s3_content(obj_data[key], out_dir)
                         for key in group_keys
                     ]
                     item: dict[str, Any] = {

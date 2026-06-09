@@ -1,6 +1,6 @@
 """Connectors for external systems (databases, APIs, etc.)."""
 
-from .base_connector import BaseConnector, ConnectorError
+from .base_connector import BaseConnector, ConnectorError, ConnectorResult
 from .lumid_data_connector import LumidDataConnector
 from .postgresql_connector import PostgreSQLConnector
 from .s3_connector import S3Connector
@@ -8,6 +8,7 @@ from .s3_connector import S3Connector
 __all__ = [
     "BaseConnector",
     "ConnectorError",
+    "ConnectorResult",
     "LumidDataConnector",
     "PostgreSQLConnector",
     "S3Connector",
