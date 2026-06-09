@@ -11,11 +11,11 @@ A service fabric for running LLM agentic workflows on distributed GPU workers.
 FlowMesh accepts workflow definitions (YAML, JSON, or n8n graph format), parses
 them into a DAG of tasks, schedules and dispatches each task to a suitable
 worker, and collects results and artifacts. It supports inference (vLLM, HF
-transformers, diffusers), LLM training (SFT, LoRA, DPO, PPO), image
+transformers, diffusers), LLM fine-tuning (SFT, LoRA, DPO, PPO), image
 classification training, retrieval-augmented generation, agent execution,
-SSH-style interactive sessions, and arbitrary container jobs — plus
-miscellaneous data/utility tasks (data profiling, data retrieval, embeddings,
-HTTP API calls, echo).
+SSH-style interactive sessions, arbitrary container jobs, and miscellaneous
+data/utility tasks (data profiling, data retrieval, embeddings, HTTP API calls,
+echo).
 
 ## Architecture
 
