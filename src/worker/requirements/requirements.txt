@@ -2,7 +2,7 @@
 # Regenerate with: uv run scripts/dev/sync_requirements.py --write
 accelerate==1.12.0
 aiofiles==24.1.0
-aiohttp==3.13.5
+aiohttp==3.14.1
 arize-phoenix-client==1.21.0
 arize-phoenix-otel==0.13.1
 art==6.5
