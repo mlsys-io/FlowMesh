@@ -80,6 +80,20 @@ flowmesh stack worker up gpu --targets 0   # 1 GPU worker pinned to GPU 0
 flowmesh stack down
 ```
 
+Preset workers (`cpu` / `gpu`) are named after the stack slug, so they are
+isolated across stacks sharing a host the same way other stack objects are:
+`flowmesh_node_worker_cpu_0` by default, `flowmesh_node_<suffix>_worker_cpu_0`
+when `FLOWMESH_STACK_SUFFIX` is set. Override the naming with
+`--name-template`, which accepts the placeholders `{slug}`, `{kind}`, `{idx}`,
+and `{gpu}`:
+
+```bash
+flowmesh stack worker up cpu 2 --name-template '{slug}-run-{idx}'  # {slug}-run-0, {slug}-run-1
+```
+
+The template must keep names unique within one `up` invocation — include
+`{idx}` or `{gpu}` when creating more than one worker.
+
 `flowmesh stack up` reads `NODE_ROLE` from the env file (default `root`). On a
 root node, both local Redis services are deployed alongside the server. On a
 worker node (`NODE_ROLE=worker`), Redis services are skipped — the worker

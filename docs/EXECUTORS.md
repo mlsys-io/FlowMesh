@@ -14,7 +14,7 @@ The worker resolves `spec.taskType` against an executor registry in
 | `rag` | `RAGExecutor` | Retrieval-augmented generation |
 | `agent` | `AgentExecutor` | Tool-using LLM agent (utu / youtu-agent backend) |
 | `data_profiling` | `DataProfilingExecutor` | DataFrame profiling |
-| `data_retrieval` | `DataRetrievalExecutor` | DataFrame loading from sources |
+| `data_retrieval` | `DataRetrievalExecutor` | DataFrame loading from sources (`type: sql`, `type: s3`, `type: lumid` with `mode: sql\|s3\|agent` via lumid-data-app; `type: lumid` (mode `sql`/`s3`/`agent`) requires `lumid_data_token`, the bearer forwarded to lumid-data-app) |
 | `ssh` | `SSHExecutor` | Interactive SSH session or non-interactive container job |
 
 Helper utilities live in `src/worker/executors/utils/` (`artifacts`,

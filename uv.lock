@@ -1749,7 +1749,7 @@ wheels = [
 
 [[package]]
 name = "flowmesh"
-version = "0.1.2"
+version = "0.1.3rc1"
 source = { editable = "." }
 
 [package.optional-dependencies]
@@ -1805,7 +1805,6 @@ ci = [
     { name = "ipython" },
     { name = "isort" },
     { name = "jinja2" },
-    { name = "lumid-data-sdk" },
     { name = "lumid-hooks" },
     { name = "matplotlib" },
     { name = "mcp" },
@@ -1927,7 +1926,6 @@ runtime-agent = [
 ]
 runtime-analytics = [
     { name = "boto3" },
-    { name = "lumid-data-sdk" },
     { name = "pandas" },
     { name = "psycopg", extra = ["binary"] },
     { name = "sqlalchemy" },
@@ -2022,7 +2020,6 @@ runtime-worker-cpu = [
     { name = "hydra-core" },
     { name = "ipython" },
     { name = "jinja2" },
-    { name = "lumid-data-sdk" },
     { name = "matplotlib" },
     { name = "mcp" },
     { name = "nvidia-ml-py" },
@@ -2113,7 +2110,6 @@ ci = [
     { name = "ipython", specifier = ">=9.5.0" },
     { name = "isort", specifier = ">=7.0.0" },
     { name = "jinja2", specifier = ">=3.1.6" },
-    { name = "lumid-data-sdk", specifier = ">=0.1.0" },
     { name = "lumid-hooks", specifier = ">=0.2.0" },
     { name = "matplotlib", specifier = ">=3.10.6" },
     { name = "mcp", specifier = ">=1.23.0" },
@@ -2235,7 +2231,6 @@ runtime-agent = [
 ]
 runtime-analytics = [
     { name = "boto3", specifier = ">=1.41.5" },
-    { name = "lumid-data-sdk", specifier = ">=0.1.0" },
     { name = "pandas", specifier = ">=2.3.3" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2.12" },
     { name = "sqlalchemy", specifier = ">=2.0.44" },
@@ -2328,7 +2323,6 @@ runtime-worker-cpu = [
     { name = "hydra-core", specifier = ">=1.3.2" },
     { name = "ipython", specifier = ">=9.5.0" },
     { name = "jinja2", specifier = ">=3.1.6" },
-    { name = "lumid-data-sdk", specifier = ">=0.1.0" },
     { name = "matplotlib", specifier = ">=3.10.6" },
     { name = "mcp", specifier = ">=1.23.0" },
     { name = "nvidia-ml-py", specifier = ">=13.580.82" },
@@ -2373,7 +2367,7 @@ runtime-worker-gpu = [
 
 [[package]]
 name = "flowmesh-cli"
-version = "0.1.2"
+version = "0.1.3rc1"
 source = { editable = "cli" }
 dependencies = [
     { name = "flowmesh-sdk" },
@@ -2401,7 +2395,7 @@ provides-extras = ["stack"]
 
 [[package]]
 name = "flowmesh-cli-stack"
-version = "0.1.2"
+version = "0.1.3rc1"
 source = { editable = "cli/stack" }
 dependencies = [
     { name = "docker" },
@@ -2414,15 +2408,15 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "docker", specifier = ">=7.1.0" },
-    { name = "flowmesh-cli", specifier = "==0.1.2" },
-    { name = "flowmesh-sdk-stack", specifier = "==0.1.2" },
+    { name = "flowmesh-cli", specifier = "==0.1.3rc1" },
+    { name = "flowmesh-sdk-stack", specifier = "==0.1.3rc1" },
     { name = "packaging", specifier = ">=24" },
     { name = "pyyaml", specifier = ">=6.0.2" },
 ]
 
 [[package]]
 name = "flowmesh-hook"
-version = "0.1.2"
+version = "0.1.3rc1"
 source = { editable = "hook" }
 dependencies = [
     { name = "lumid-hooks" },
@@ -2433,7 +2427,7 @@ requires-dist = [{ name = "lumid-hooks", specifier = ">=0.2.0" }]
 
 [[package]]
 name = "flowmesh-sdk"
-version = "0.1.2"
+version = "0.1.3rc1"
 source = { editable = "sdk" }
 dependencies = [
     { name = "httpx" },
@@ -2452,7 +2446,7 @@ requires-dist = [
 
 [[package]]
 name = "flowmesh-sdk-stack"
-version = "0.1.2"
+version = "0.1.3rc1"
 source = { editable = "sdk/stack" }
 dependencies = [
     { name = "docker" },
@@ -2464,7 +2458,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "docker", specifier = ">=7.1.0" },
-    { name = "flowmesh-sdk", specifier = "==0.1.2" },
+    { name = "flowmesh-sdk", specifier = "==0.1.3rc1" },
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "pyyaml", specifier = ">=6.0.0" },
 ]
@@ -3640,20 +3634,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/3a/05/a1dae3dffd1116099471c643b8924f5aa6524411dc6c63fdae648c4f1aca/loguru-0.7.3.tar.gz", hash = "sha256:19480589e77d47b8d85b2c827ad95d49bf31b0dcde16593892eb51dd18706eb6", size = 63559, upload-time = "2024-12-06T11:20:56.608Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/0c/29/0348de65b8cc732daa3e33e67806420b2ae89bdce2b04af740289c5c6c8c/loguru-0.7.3-py3-none-any.whl", hash = "sha256:31a33c10c8e1e10422bfd431aeb5d351c7cf7fa671e3c4df004162264b28220c", size = 61595, upload-time = "2024-12-06T11:20:54.538Z" },
-]
-
-[[package]]
-name = "lumid-data-sdk"
-version = "0.1.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "httpx" },
-    { name = "httpx-sse" },
-    { name = "pydantic" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/44/f1/14ecb5d1a2f729c44d3aa405a8d6e673e4e6be3020b32366b9c3c93f9539/lumid_data_sdk-0.1.0.tar.gz", hash = "sha256:aded95d578055c7f116b8075b7dd5fb95c598c703fdec819c7e16783e33c821b", size = 11475, upload-time = "2026-05-12T09:09:33.9Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/b9/26/6bb059c078fc5681b00dad6a03dbbf344d330c6191cb9c4e9d31ac8ac077/lumid_data_sdk-0.1.0-py3-none-any.whl", hash = "sha256:9218d00b94d407b1090e92dca38d8bb25fb5fbdf1c66d240116a18ee95c7da84", size = 11897, upload-time = "2026-05-12T09:09:32.629Z" },
 ]
 
 [[package]]

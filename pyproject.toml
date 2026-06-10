@@ -1,6 +1,6 @@
 [project]
 name = "flowmesh"
-version = "0.1.2"
+version = "0.1.3rc1"
 description = "FlowMesh: A Multi-tenant Service Fabric for LLM Agentic Workflows"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -10,13 +10,13 @@ dependencies = []
 
 [project.optional-dependencies]
 # Public PyPI install surface.
-sdk = ["flowmesh-sdk==0.1.2"]
-cli = ["flowmesh-cli[stack]==0.1.2"]
-hook = ["flowmesh-hook==0.1.2"]
+sdk = ["flowmesh-sdk==0.1.3rc1"]
+cli = ["flowmesh-cli[stack]==0.1.3rc1"]
+hook = ["flowmesh-hook==0.1.3rc1"]
 all = [
-    "flowmesh-cli[stack]==0.1.2",
-    "flowmesh-hook==0.1.2",
-    "flowmesh-sdk==0.1.2",
+    "flowmesh-cli[stack]==0.1.3rc1",
+    "flowmesh-hook==0.1.3rc1",
+    "flowmesh-sdk==0.1.3rc1",
 ]
 
 [dependency-groups]
@@ -119,7 +119,6 @@ runtime-analytics = [
     "pandas>=2.3.3",
     "psycopg[binary]>=3.2.12",
     "sqlalchemy>=2.0.44",
-    "lumid-data-sdk>=0.1.0",
 ]
 runtime-worker-cpu = [
     { include-group = "runtime-worker-core" },
@@ -214,7 +213,7 @@ module = [
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
-module = ["pynvml", "vllm_omni.*", "deepspeed.*", "lumid_data.sdk"]
+module = ["pynvml", "vllm_omni.*", "deepspeed.*"]
 follow_untyped_imports = true
 
 [tool.codespell]

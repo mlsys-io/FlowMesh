@@ -1,0 +1,74 @@
+# data_retrieval.yaml — three lumid retrieval modes (sql / s3 / agent) feeding one inference node.
+#
+# Each `type: lumid` node routes through lumid-data-app and returns a pointer
+# (materialized_uri under /blobs/) plus an access_chain — never inline rows.
+# Each lumid node requires `lumid_data_token` (the bearer sent to lumid-data-app) —
+# set it to your lum.id PAT or a local dev key. See the PR description for how to run.
+
+apiVersion: flowmesh/v1
+kind: InferenceTask
+metadata:
+  name: lumid-data-retrieval
+  annotations:
+    description: Three lumid retrieval modes (sql/s3/agent) feeding a single inference node; demonstrates access_chain usage
+
+spec:
+  taskType: inference
+
+  graph:
+    nodes:
+      - name: sql_ohlc
+        spec:
+          taskType: data_retrieval
+          resources:
+            hardware:
+              cpu: 2
+              memory: 2GiB
+          data:
+            type: lumid
+            mode: sql
+            lumid_data_url: "${LUMID_BASE_URL}"
+            lumid_data_token: "${LUMID_PAT}"
+            template: "SELECT symbol, close FROM demo.fact_ohlc_10m ORDER BY timestamp LIMIT 5"
+            output_format: jsonl
+            verify: false
+
+      - name: news_html
+        spec:
+          taskType: data_retrieval
+          resources:
+            hardware:
+              cpu: 2
+              memory: 2GiB
+          data:
+            type: lumid
+            mode: s3
+            lumid_data_url: "${LUMID_BASE_URL}"
+            lumid_data_token: "${LUMID_PAT}"
+            template: "${NEWS_KEY}"
+            encoding: utf-8
+            verify: false
+
+      - name: agent_ohlc
+        spec:
+          taskType: data_retrieval
+          resources:
+            hardware:
+              cpu: 2
+              memory: 4GiB
+          data:
+            type: lumid
+            mode: agent
+            lumid_data_url: "${LUMID_BASE_URL}"
+            lumid_data_token: "${LUMID_PAT}"
+            description: "Retrieve the 5 most recent OHLC rows for NVDA from the demo schema."
+            schema_scope: demo
+            max_steps: 10
+            output_format: jsonl
+            verify: false
+
+  output:
+    destination:
+      type: local
+    artifacts:
+      - results.json
