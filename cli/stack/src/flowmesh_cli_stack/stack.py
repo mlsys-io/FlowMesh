@@ -504,7 +504,7 @@ def _drain_workers(env_file: Path) -> None:
     """Destroy all dynamically spawned workers before stopping the server."""
     try:
         client = stack_node_client(env_file, base_url=None, token=None)
-        client.drain_workers()
+        client.destroy_all_workers()
     except Exception as exc:
         logging.warning(f"Unable to drain workers; continuing shutdown. {exc}")
 
@@ -540,10 +540,10 @@ WORKER_MANAGING_SERVICES = ("server",)
 
 @app.command()
 def restart(
-    service: str | None = typer.Argument(
+    services: list[str] | None = typer.Argument(
         None,
         help=(
-            "Restart only this compose service in place (one of: "
+            "Restart only these compose services in place (any of: "
             f"{', '.join(STACK_SERVICES)}), leaving the rest of the stack "
             "running. Omit to restart the whole stack."
         ),
@@ -558,15 +558,16 @@ def restart(
         True, "--pull/--no-pull", help="Pull the target image before recreating."
     ),
 ) -> None:
-    """Drain workers and restart the stack, or recreate a single service in place.
+    """Drain workers and restart the stack, or recreate specific services in place.
 
-    With a SERVICE argument the stack is left running and only that service is
-    recreated (``--no-deps --force-recreate``); when the service manages workers
-    (the server / supervisor) its workers are drained first so their in-flight
-    tasks requeue onto other nodes. This is the per-node primitive for a rolling
-    image update: recreate the server on each node in turn, leaving Redis up.
+    With one or more SERVICE arguments the stack is left running and only those
+    services are recreated (``--no-deps --force-recreate``); when any of them
+    manages workers (the server / supervisor) its workers are drained first so
+    their in-flight tasks requeue onto other nodes. This is the per-node
+    primitive for a rolling image update: recreate the server on each node in
+    turn, leaving Redis up.
     """
-    if service is None:
+    if not services:
         logging.info("Draining workers...")
         _drain_workers(env_file)
         _compose(
@@ -586,14 +587,16 @@ def restart(
         logging.success("FlowMesh stack is up.")
         return
 
-    if service not in STACK_SERVICES:
+    requested = list(dict.fromkeys(services))
+    unknown = [svc for svc in requested if svc not in STACK_SERVICES]
+    if unknown:
         logging.error(
-            f"Unknown service {service!r}. "
+            f"Unknown service(s): {', '.join(unknown)}. "
             f"Known services: {', '.join(STACK_SERVICES)}."
         )
         raise typer.Exit(code=1)
 
-    if service in WORKER_MANAGING_SERVICES:
+    if any(svc in WORKER_MANAGING_SERVICES for svc in requested):
         logging.info("Draining workers...")
         _drain_workers(env_file)
 
@@ -601,8 +604,9 @@ def restart(
     up_args = ["up", "-d", "--no-deps", "--force-recreate", "--wait"]
     if pull:
         up_args += ["--pull", "always"]
-    up_args.append(service)
-    logging.info(f"Recreating service '{service}'...")
+    up_args += requested
+    joined = ", ".join(requested)
+    logging.info(f"Recreating service(s): {joined}...")
     _compose(
         up_args,
         env_file=env_file,
@@ -610,7 +614,7 @@ def restart(
         to_deploy=True,
         profile=profile,
     )
-    logging.success(f"Service '{service}' restarted.")
+    logging.success(f"Service(s) restarted: {joined}.")
 
 
 @app.command()
