@@ -1,5 +1,4 @@
 import argparse
-import asyncio
 import atexit
 import importlib
 import inspect
@@ -345,11 +344,8 @@ async def _lifespan(_: FastAPI):
 
         # --- Root-only startup ---
         if IS_ROOT_NODE:
-            # Rehydrate before the dispatch loop and event consumer start (and
-            # before the lifespan yields), so readiness is implicit: the server
-            # accepts no traffic until scheduling state is restored.
             if RUNTIME is not None:
-                await asyncio.to_thread(RUNTIME.rehydrate)
+                await RUNTIME.rehydrate()
             if SSH_FORWARD_SERVICE is not None:
                 await SSH_FORWARD_SERVICE.start()
             _start_root_threads()

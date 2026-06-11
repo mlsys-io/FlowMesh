@@ -85,36 +85,6 @@ class TaskRuntime:
         self._cv = threading.Condition(self._lock)
 
     # ------------------------------------------------------------------ #
-    # Durable state persistence (for restart rehydration)
-    # ------------------------------------------------------------------ #
-
-    def _persisted_task_locked(self, task_id: str) -> PersistedTask | None:
-        record = self._tasks.get(task_id)
-        if record is None:
-            return None
-        return PersistedTask(
-            record=record,
-            depends_on=self._original_deps.get(task_id, set()),
-            epoch_index=self._task_epoch_index.get(task_id),
-        )
-
-    def _persist_locked(self, *task_ids: str) -> None:
-        items = [
-            persisted
-            for task_id in dict.fromkeys(task_ids)
-            if (persisted := self._persisted_task_locked(task_id)) is not None
-        ]
-        if items:
-            self._workflow_registry.save_task_states(items)
-
-    def _persist_sched_locked(self, workflow_id: str) -> None:
-        self._workflow_registry.save_workflow_sched(
-            workflow_id,
-            self._workflow_in_epoch_order.get(workflow_id, False),
-            self._workflow_epoch_frontier.get(workflow_id, 0),
-        )
-
-    # ------------------------------------------------------------------ #
     # Registration & submission
     # ------------------------------------------------------------------ #
 
@@ -254,7 +224,7 @@ class TaskRuntime:
             persisted = [
                 item
                 for record in task_records
-                if (item := self._persisted_task_locked(record.task_id)) is not None
+                if (item := self._persisted_task_locked(record.task_id))
             ]
             in_epoch_order = self._workflow_in_epoch_order.get(workflow_id, False)
             frontier = self._workflow_epoch_frontier.get(workflow_id, 0)
@@ -279,34 +249,39 @@ class TaskRuntime:
         return workflow_id, results
 
     # ------------------------------------------------------------------ #
-    # Rehydration (restart recovery)
+    # Rehydration
     # ------------------------------------------------------------------ #
 
-    def rehydrate(self) -> int:
+    async def rehydrate(self) -> int:
         """Rebuild in-memory scheduler state from durable Redis records.
 
-        Reconstructs every live workflow's DAG, ready queue, and epoch state
-        from the persisted per-task snapshots. In-flight (DISPATCHED /
-        CANCELLING) tasks are left assigned to their worker: completions that
-        landed during the restart arrive via the replayed task-event stream,
-        and genuinely departed workers are recovered by the watchdog. Returns
-        the number of workflows restored.
+        Reconstructs every live workflow's DAG, ready queue, and epoch state from the
+        persisted per-task snapshots. In-flight (DISPATCHED / CANCELLING) tasks are left
+        assigned to their worker: completions that landed during the restart arrive via
+        the replayed task-event stream, and genuinely departed workers are recovered by
+        the watchdog. Returns the number of workflows restored.
         """
-        workflow_ids = self._workflow_registry.get_workflow_ids()
+        workflow_ids = await self._workflow_registry.get_workflow_ids_async()
         rehydrated_at = time.time()
         restored = 0
         for workflow_id in sorted(workflow_ids):
-            wf_record = self._workflow_registry.get_workflow_record(workflow_id)
+            wf_record = await self._workflow_registry.get_workflow_record_async(
+                workflow_id
+            )
             if wf_record is None:
                 continue
-            tasks: list[PersistedTask] = []
-            for task_id in wf_record.task_ids:
-                state = self._workflow_registry.load_task_state(task_id)
-                if state is not None:
-                    tasks.append(state)
+            tasks: list[PersistedTask] = [
+                state
+                for task_id in wf_record.task_ids
+                if (
+                    state := await self._workflow_registry.load_task_state_async(
+                        task_id
+                    )
+                )
+            ]
             if not tasks:
                 continue
-            sched = self._workflow_registry.load_workflow_sched(workflow_id)
+            sched = await self._workflow_registry.load_workflow_sched_async(workflow_id)
             with self._cv:
                 self._install_rehydrated_workflow_locked(
                     workflow_id, tasks, sched, rehydrated_at
@@ -321,12 +296,12 @@ class TaskRuntime:
         self,
         workflow_id: str,
         tasks: list[PersistedTask],
-        sched: "WorkflowSched | None",
+        sched: WorkflowSched | None,
         rehydrated_at: float,
     ) -> None:
         terminal = TERMINAL_TASK_STATUSES
-        in_epoch_order = bool(sched.in_epoch_order) if sched else False
-        frontier = int(sched.epoch_frontier) if sched else 0
+        in_epoch_order = sched.in_epoch_order if sched else False
+        frontier = sched.epoch_frontier if sched else 0
         epoch_members: dict[int, set[str]] = defaultdict(set)
 
         for persisted in tasks:
@@ -353,7 +328,7 @@ class TaskRuntime:
         for persisted in tasks:
             record = persisted.record
             task_id = record.task_id
-            original = self._original_deps.get(task_id, set())
+            original = self._original_deps.get(task_id) or set()
             for dep in original:
                 self._dependents[dep].add(task_id)
             if record.status in terminal:
@@ -383,6 +358,36 @@ class TaskRuntime:
             if self._pending_deps.get(record.task_id):
                 continue
             self._enqueue_ready_locked(record.task_id)
+
+    # ------------------------------------------------------------------ #
+    # Durable state persistence
+    # ------------------------------------------------------------------ #
+
+    def _persisted_task_locked(self, task_id: str) -> PersistedTask | None:
+        record = self._tasks.get(task_id)
+        if record is None:
+            return None
+        return PersistedTask(
+            record=record,
+            depends_on=self._original_deps.get(task_id) or set(),
+            epoch_index=self._task_epoch_index.get(task_id),
+        )
+
+    def _persist_locked(self, *task_ids: str) -> None:
+        items = [
+            persisted
+            for task_id in dict.fromkeys(task_ids)
+            if (persisted := self._persisted_task_locked(task_id))
+        ]
+        if items:
+            self._workflow_registry.save_task_states(items)
+
+    def _persist_sched_locked(self, workflow_id: str) -> None:
+        self._workflow_registry.save_workflow_sched(
+            workflow_id,
+            self._workflow_in_epoch_order.get(workflow_id, False),
+            self._workflow_epoch_frontier.get(workflow_id, 0),
+        )
 
     # ------------------------------------------------------------------ #
     # Ready queue helpers
@@ -1220,14 +1225,13 @@ class TaskRuntime:
 
     def has_rehydrated_in_flight(self, worker_id: str, within_sec: float) -> bool:
         """
-        Whether ``worker_id`` still owns an in-flight task that was rehydrated
-        within the last ``within_sec`` seconds.
+        Whether ``worker_id`` still owns an in-flight task that was rehydrated within
+        the last ``within_sec`` seconds.
 
-        Worker heartbeats are dropped while the root is down, so a surviving
-        worker looks briefly stale right after a restart. The watchdog uses this
-        to extend a worker's death grace until its rehydrated tasks' window has
-        elapsed, giving the worker time to re-register before its tasks are
-        reclaimed.
+        Worker heartbeats are dropped while the root is down, so a surviving worker
+        looks briefly stale right after a restart. The watchdog uses this to extend a
+        worker's death grace until its rehydrated tasks' window has elapsed, giving the
+        worker time to re-register before its tasks are reclaimed.
         """
         now = time.time()
         with self._cv:
