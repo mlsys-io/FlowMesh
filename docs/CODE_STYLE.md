@@ -103,6 +103,7 @@ as `--ignore-vuln` flags in `.github/workflows/security.yml`.
 | GHSA-hpv8-x276-m59f | vllm | 0.20.0 | same |
 | GHSA-x368-4g9h-fvv4 | vllm | 0.19.1 | same |
 | GHSA-83vm-p52w-f9pw | vllm | 0.20.0 | same |
+| GHSA-3ww4-5jv9-j5gm | vllm | 0.22.0 | same |
 | GHSA-cfh3-3jmp-rvhc | pillow | 12.1.1 | gradio 5.50 caps pillow<12 (transitive via vllm-omni) |
 | GHSA-whj4-6x5x-4v2j | pillow | 12.2.0 | same cap |
 | GHSA-wjx4-4jcj-g98j | pillow | 12.2.0 | same cap |
@@ -129,6 +130,7 @@ as `--ignore-vuln` flags in `.github/workflows/security.yml`.
 | PYSEC-2025-197 | torch | (none) | same |
 | PYSEC-2025-210 | torch | (none) | same |
 | PYSEC-2026-139 | torch | (none) | same |
+| GHSA-rrmf-rvhw-rf47 | torch | (none) | same |
 | PYSEC-2025-211 | transformers | (none) | no fix version published; transformers also held by vllm-omni 0.18 |
 | PYSEC-2025-212 | transformers | (none) | same |
 | PYSEC-2025-213 | transformers | (none) | same |
