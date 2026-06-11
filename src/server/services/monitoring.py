@@ -262,13 +262,13 @@ class EventMonitor:
     def _tasks_events_loop(self) -> None:
         """Consume task events from a durable Redis stream.
 
-        Replay contract: a task transition is persisted to durable scheduler
-        state *before* its event is emitted, and the consumer advances the
-        persisted cursor only *after* an entry is handled. Delivery is
-        therefore at-least-once — a crash between handling an entry and
-        persisting the cursor replays that entry on the next startup. Event
-        handlers are idempotent (terminal tasks ignore late dispatch/start/
-        update events and repeated completions), so replay never double-applies.
+        Replay contract: a task transition is persisted to durable scheduler state
+        *before* its event is emitted, and the consumer advances the persisted cursor
+        only *after* an entry is handled. Delivery is therefore at-least-once — a crash
+        between handling an entry and persisting the cursor replays that entry on the
+        next startup. Event handlers are idempotent (terminal tasks ignore late
+        dispatch/start/update events and repeated completions), so replay never
+        double-applies.
 
         Resuming from the persisted cursor is what lets events emitted while
         the server was down (e.g. during a rolling restart) be replayed rather
@@ -292,13 +292,11 @@ class EventMonitor:
                 if self._stop_event.is_set():
                     break
                 self._logger.warning(
-                    "%s listener error: %s; reconnecting...",
-                    TASK_EVENT_STREAM_KEY,
-                    exc,
+                    "%s listener error: %s; reconnecting...", TASK_EVENT_STREAM_KEY, exc
                 )
                 time.sleep(2.0)
                 continue
-            for _stream_key, entries in rows:
+            for _, entries in rows:
                 cursor = self._consume_stream_batch(entries, cursor)
                 if self._stop_event.is_set():
                     break

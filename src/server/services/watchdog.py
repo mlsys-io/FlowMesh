@@ -35,10 +35,10 @@ class WorkerWatchdog:
         self._runtime = runtime
         self._dispatcher = dispatcher
         self._logger = logger
-        self._enabled = bool(enabled)
-        self._check_interval = max(1, int(check_interval))
-        self._grace_seconds = max(0, int(grace_seconds))
-        self._rehydration_grace_seconds = max(0, int(rehydration_grace_seconds))
+        self._enabled = enabled
+        self._check_interval = max(1, check_interval)
+        self._grace_seconds = max(0, grace_seconds)
+        self._rehydration_grace_seconds = max(0, rehydration_grace_seconds)
         self._lock = threading.RLock()
         self._dead_marks: set[str] = set()
         self._thread: threading.Thread | None = None
