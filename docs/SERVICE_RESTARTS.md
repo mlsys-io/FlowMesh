@@ -103,7 +103,8 @@ root's durable state carries its in-flight workflows across its own restart.
   Updating the Redis image is a heavier, control-plane-wide outage and is out of
   scope for a brief in-place restart.
 - **Co-located root workers are recreated.** Workers running on the root host die
-  with the root's supervisor; their tasks requeue and re-run. To avoid this,
+  with the root's supervisor; their batch tasks requeue and re-run (cancellable
+  in-flight work such as an SSH session is cancelled instead). To avoid this,
   prefer not to run workers on the root node.
 - **The no-worker grace restarts on a root restart.** The window before a task
   that no worker can satisfy is failed (`TASK_NO_WORKER_GRACE_SEC`) is tracked
