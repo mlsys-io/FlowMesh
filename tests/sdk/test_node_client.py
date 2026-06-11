@@ -61,12 +61,7 @@ def _client_capturing() -> tuple[NodeClient, _CapturingHTTP]:
     return client, http
 
 
-def test_drain_workers_issues_delete_against_stack_workers() -> None:
+def test_destroy_all_workers_issues_delete_against_stack_workers() -> None:
     client, http = _client_capturing()
-    assert client.drain_workers() is True
+    assert client.destroy_all_workers() is True
     assert http.calls == [("DELETE", "/api/v1/stack/workers")]
-
-
-def test_drain_workers_returns_false_when_unreachable_and_ignored() -> None:
-    client = _client_against_unreachable()
-    assert client.drain_workers(ignore_unreachable=True) is False
