@@ -1,32 +1,39 @@
-# Rolling image updates
+# Service restarts
 
-FlowMesh nodes can be updated to a new image one at a time without tearing the
-whole cluster down. The rollout itself is driven externally — by an operator or
-a cluster-management tool — and FlowMesh provides the primitives that make each
-node safe to recreate and the root node able to resume in-flight work.
+FlowMesh supports fine-grained, in-place restarts: any Compose service — most
+importantly the root server — can be recreated without tearing the cluster down
+and without losing in-flight work. The same machinery covers every kind of
+restart — a crash, a config change, a single-service redeploy, or a rolling
+image bump — because the root's scheduling state is durable and rebuilt on
+startup and task lifecycle events are replayable. A restarted root resumes its
+in-flight workflows instead of dropping them.
 
-## Operator flow
+## The restart primitive
 
-Recreate one node at a time, leaving the others serving. Update the **root node
-last**.
+`flowmesh stack restart [SERVICE ...]` (see [`CLI.md`](CLI.md)) recreates one or
+more Compose services in place, leaving the rest of the stack running:
 
 ```bash
-# On each node host, in turn:
-flowmesh stack restart server --image-tag <new-version>
+flowmesh stack restart server                # recreate just the server in place
+flowmesh stack restart redis_control server  # recreate several services in one call
+flowmesh stack restart                       # whole-stack drain + down + up
 ```
 
-`flowmesh stack restart server` (see [`CLI.md`](CLI.md)):
+For each invocation it:
 
-1. Drains the node's managed workers, so their in-flight tasks are released and
-   requeued onto other nodes.
-2. Recreates only the `server` Compose service (`--no-deps --force-recreate`),
-   pulling the new image. Redis and any other services keep running.
-3. Blocks (`--wait`) until the recreated server passes its healthcheck.
+1. Drains the node's managed workers **once** if any named service manages
+   workers (the `server` / supervisor), so their in-flight tasks are released
+   and requeued onto other nodes.
+2. Recreates only the named services (`--no-deps --force-recreate`), optionally
+   pulling a new image (`--pull`, on by default). Redis and any unnamed service
+   keep running.
+3. Blocks (`--wait`) until the recreated services pass their healthchecks.
 
-Because the worker-managing process is the `server` service on both root and
-worker nodes, the same command works everywhere.
+With no argument it restarts the whole stack (drain + `down` + `up`). Because
+the worker-managing process is the `server` service on both root and worker
+nodes, the same command works everywhere.
 
-## What happens to in-flight work
+## What survives a restart
 
 **Worker nodes.** Draining a node tears down its workers. Each worker's
 departure produces a `WORKER_UNREGISTER` (the supervisor synthesizes one if the
@@ -36,15 +43,14 @@ re-creates its configured workers, which re-register themselves on startup. No
 cordon step is required.
 
 **Root node.** The root holds the dispatcher's scheduling state in memory, so a
-naive restart would lose every in-flight workflow. Two mechanisms make a root
+naive restart would lose every in-flight workflow. Three mechanisms make a root
 restart safe:
 
 - **Durable scheduler state.** Each task's mutable state (status, attempts,
   assigned worker, failed workers, merge linkage), its dependency edges, and its
   epoch index are persisted to Redis on every transition, along with per-workflow
   epoch ordering and frontier. On startup the server rebuilds the full task DAG,
-  ready queue, and epoch frontiers from these records
-  (`TaskRuntime.rehydrate`).
+  ready queue, and epoch frontiers from these records (`TaskRuntime.rehydrate`).
 - **Replayable task events.** Task lifecycle events flow through a durable Redis
   stream consumed from a persisted cursor. The ordering is what makes replay
   safe: a transition is written to durable scheduler state *before* its event is
@@ -73,12 +79,29 @@ The result is a brief control-plane pause on the root (the server container
 recreate plus rehydration) during which workers keep running their tasks; no
 workflow is lost.
 
+## Use case: rolling image updates
+
+Because each node survives an in-place server restart, a cluster can be moved to
+a new image one node at a time without a full teardown. The rollout itself is
+driven externally — by an operator or a cluster-management tool — using the same
+primitive with an explicit tag:
+
+```bash
+# On each node host, in turn — update the root node last:
+flowmesh stack restart server --image-tag <new-version>
+```
+
+Recreate one node at a time, leaving the others serving, and update the **root
+node last** so the control plane is the final hop. Each worker node's in-flight
+tasks requeue while it is down and its workers re-register once it is back; the
+root's durable state carries its in-flight workflows across its own restart.
+
 ## Constraints
 
 - **Recreate only the `server` service on the root.** Leave `redis_control` and
   `redis_telemetry` running so durable state and the event stream survive.
   Updating the Redis image is a heavier, control-plane-wide outage and is out of
-  scope for a brief-pause rolling update.
+  scope for a brief in-place restart.
 - **Co-located root workers are recreated.** Workers running on the root host die
   with the root's supervisor; their tasks requeue and re-run. To avoid this,
   prefer not to run workers on the root node.
@@ -92,8 +115,20 @@ workflow is lost.
 ## State lifetime
 
 Cluster state (workflows, durable scheduler records, the task-event stream)
-lives as long as the Redis volumes — **not** the server process. Stopping or
-recreating the server never clears it, which is what lets a restart resume
-in-flight work; a plain `stack down` / `stack up` likewise resumes the queue.
-To reset to a clean slate, remove the Redis volumes with `flowmesh stack clean`
-(`down -v`).
+lives in the two Redis instances, which snapshot to disk (`redis-server --save`)
+on named Docker volumes — `<slug>_redis_control_data` and
+`<slug>_redis_telemetry_data`. The state therefore follows the *volumes*, not
+the container or the server process:
+
+- `stack restart` and `stack down` recreate or stop containers **without**
+  `-v`, so the volumes and the state persist; Redis saves on the SIGTERM
+  from a graceful stop and reloads the snapshot on the next start. This is what
+  lets a restart (or a plain `stack down` / `stack up`) resume in-flight work.
+- `flowmesh stack clean` is the only command that wipes the state: it runs
+  `down -v`, removing the volumes. (`stack purge` only deletes images; it does
+  not touch the volumes.)
+
+Persistence is snapshot-based (RDB), not write-synchronous, so a *graceful*
+restart preserves everything, but an abrupt loss of a Redis container (kill,
+OOM, host crash) can drop up to the last snapshot window — 60s for control,
+300s for telemetry.

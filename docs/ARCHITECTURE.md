@@ -139,17 +139,14 @@ scripts/dev/            compile_protos, sync_requirements, check_env_examples
     `LOG_STREAM_MAXLEN_TASK` / `LOG_STREAM_MAXLEN_WORKFLOW` and
     expired `LOG_STREAM_TTL_SEC` after close.
 
-## Rolling image updates
+## Service restarts
 
-Nodes can be updated to a new image one at a time without a full cluster
-teardown. The dispatcher's scheduling state is persisted to Redis on every
-task transition and rebuilt on startup (`TaskRuntime.rehydrate`), and task
-lifecycle events flow through a durable, replayable Redis stream consumed from
-a persisted cursor — so a restarted root resumes in-flight workflows instead of
-losing them. Rehydration runs in the ASGI lifespan before it yields, making
-readiness implicit. The per-node primitive is `flowmesh stack restart server`,
-which drains managed workers then recreates only the server service. See
-[`ROLLING_UPDATES.md`](ROLLING_UPDATES.md).
+Any Compose service can be recreated in place with `flowmesh stack restart
+[SERVICE ...]`, without a full teardown. The root server survives its own
+restart without losing in-flight work: scheduling state is persisted to Redis
+and rebuilt on startup (`TaskRuntime.rehydrate`), and task events replay from a
+durable stream. Rolling a new image across the cluster one node at a time is one
+application. See [`SERVICE_RESTARTS.md`](SERVICE_RESTARTS.md).
 
 ## Plugin extension points
 

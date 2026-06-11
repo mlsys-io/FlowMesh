@@ -5,7 +5,7 @@ The worker resolves `spec.taskType` against an executor registry in
 
 | `taskType` | Executor | Use case |
 |-----------|----------|----------|
-| `echo` | `EchoExecutor` | Echo input back as result (smoke tests). `spec.data.delay_sec` holds the task in flight for N seconds, useful for exercising dispatch/recovery paths |
+| `echo` | `EchoExecutor` | Echo input back as result (smoke tests) |
 | `inference` | `VLLMExecutor` / `TransformersExecutor` | LLM inference |
 | `diffusion` | `DiffusersExecutor` | Image / video diffusion models |
 | `omni_text2{audio,image,speech,general}` | `Omni*Executor` | Multimodal generation |
