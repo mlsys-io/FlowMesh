@@ -560,12 +560,9 @@ def restart(
 ) -> None:
     """Drain workers and restart the stack, or recreate specific services in place.
 
-    With one or more SERVICE arguments the stack is left running and only those
-    services are recreated (``--no-deps --force-recreate``); when any of them
-    manages workers (the server / supervisor) its workers are drained first so
-    their in-flight tasks requeue onto other nodes. This is the per-node
-    primitive for a rolling image update: recreate the server on each node in
-    turn, leaving Redis up.
+    With one or more SERVICE arguments the stack is left running and only those services
+    are recreated; when any of them manages workers (the server / supervisor) its
+    workers are drained first so their in-flight tasks requeue onto other nodes.
     """
     if not services:
         logging.info("Draining workers...")
