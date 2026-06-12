@@ -5,8 +5,12 @@ import logging
 import threading
 from typing import Any, cast
 
-from server.services.monitoring import EventMonitor, _stream_id_tuple
-from shared.schemas.event import TaskEvent
+from server.services.monitoring import (
+    TASK_EVENT_HANDLER_MAX_ATTEMPTS,
+    EventMonitor,
+    _stream_id_tuple,
+)
+from shared.schemas.event import Event, TaskEvent
 
 
 def test_stream_id_tuple_orders_by_ms_then_seq() -> None:
@@ -71,28 +75,45 @@ class _RecordingRedis:
         self.cursors.append(value)
 
 
-def _consumer(
-    handle_raises_on: set[str] | None = None,
-) -> tuple[EventMonitor, _RecordingRedis, list[str]]:
-    monitor = EventMonitor.__new__(EventMonitor)
-    redis = _RecordingRedis()
-    monitor._redis_client = cast(Any, redis)
-    monitor._stop_event = threading.Event()
-    monitor._logger = logging.getLogger("consumer-test")
-    handled: list[str] = []
-    raises_on = handle_raises_on or set()
+class _ConsumerMonitor(EventMonitor):
+    """EventMonitor double with parse/handle overridden for batch-consume tests."""
 
-    def parse(fields: dict[str, Any]) -> TaskEvent:
-        return TaskEvent(type="TASK_STARTED", task_id=fields["task_id"])
+    def __init__(
+        self,
+        redis: _RecordingRedis,
+        fail_times: dict[str, int] | None = None,
+        parse_raises_on: set[str] | None = None,
+    ) -> None:
+        self._redis_client = cast(Any, redis)
+        self._stop_event = threading.Event()
+        self._logger = logging.getLogger("consumer-test")
+        self._event_handler_attempts: dict[str, int] = {}
+        self.handled: list[str] = []
+        self._fail_times = dict(fail_times or {})
+        self._parse_raises_on = parse_raises_on or set()
+        self._handle_calls: dict[str, int] = {}
 
-    def handle(event: TaskEvent) -> None:
-        if event.task_id in raises_on:
+    def _parse_stream_event(self, fields: dict[str, Any]) -> Event | None:
+        task_id = fields["task_id"]
+        if task_id in self._parse_raises_on:
+            raise ValueError(f"malformed {task_id}")
+        return TaskEvent(type="TASK_STARTED", task_id=task_id)
+
+    def _handle_task_event(self, event: TaskEvent) -> None:
+        seen = self._handle_calls.get(event.task_id, 0) + 1
+        self._handle_calls[event.task_id] = seen
+        if seen <= self._fail_times.get(event.task_id, 0):
             raise RuntimeError(f"boom {event.task_id}")
-        handled.append(event.task_id)
+        self.handled.append(event.task_id)
 
-    monitor._parse_stream_event = parse  # type: ignore[method-assign]
-    monitor._handle_task_event = handle  # type: ignore[method-assign]
-    return monitor, redis, handled
+
+def _consumer(
+    fail_times: dict[str, int] | None = None,
+    parse_raises_on: set[str] | None = None,
+) -> tuple[_ConsumerMonitor, _RecordingRedis, list[str]]:
+    redis = _RecordingRedis()
+    monitor = _ConsumerMonitor(redis, fail_times, parse_raises_on)
+    return monitor, redis, monitor.handled
 
 
 def test_batch_advances_cursor_per_entry() -> None:
@@ -104,15 +125,44 @@ def test_batch_advances_cursor_per_entry() -> None:
     assert handled == ["tsk-1", "tsk-2", "tsk-3"]
 
 
-def test_batch_survives_handler_exception_and_skips_poison_entry() -> None:
-    monitor, redis, handled = _consumer(handle_raises_on={"tsk-2"})
+def test_batch_skips_malformed_entry_immediately() -> None:
+    # A parse failure is deterministic poison: skipped without retry.
+    monitor, redis, handled = _consumer(parse_raises_on={"tsk-2"})
     entries = [(f"{i}-0", {"task_id": f"tsk-{i}"}) for i in range(1, 4)]
-    # A raising handler must not propagate out of the consumer.
     cursor = monitor._consume_stream_batch(entries, "$")
-    # Cursor advances past the poison entry so the stream keeps flowing.
     assert cursor == "3-0"
     assert redis.cursors == ["1-0", "2-0", "3-0"]
-    # The poison entry is skipped; the others are still handled.
+    assert handled == ["tsk-1", "tsk-3"]
+
+
+def test_batch_retries_transient_handler_failure_without_loss() -> None:
+    # tsk-2's handler fails once then succeeds: the entry must be retried, not lost.
+    monitor, redis, handled = _consumer(fail_times={"tsk-2": 1})
+    entries = [(f"{i}-0", {"task_id": f"tsk-{i}"}) for i in range(1, 4)]
+    # First pass advances past tsk-1, then stops at tsk-2 without advancing.
+    cursor = monitor._consume_stream_batch(entries, "$")
+    assert cursor == "1-0"
+    assert handled == ["tsk-1"]
+    # The stream re-delivers from after the cursor; the retry now succeeds.
+    cursor = monitor._consume_stream_batch(entries[1:], cursor)
+    assert cursor == "3-0"
+    assert handled == ["tsk-1", "tsk-2", "tsk-3"]
+
+
+def test_batch_dead_letters_poison_handler_after_max_attempts() -> None:
+    # A handler that always raises is dropped once the attempt budget is spent,
+    # so a persistent poison event cannot stall the stream forever.
+    monitor, redis, handled = _consumer(fail_times={"tsk-2": 999})
+    entries = [(f"{i}-0", {"task_id": f"tsk-{i}"}) for i in range(1, 4)]
+    cursor = monitor._consume_stream_batch(entries, "$")
+    assert cursor == "1-0"  # stuck on tsk-2, not advanced
+    remaining = entries[1:]
+    for _ in range(TASK_EVENT_HANDLER_MAX_ATTEMPTS - 2):
+        cursor = monitor._consume_stream_batch(remaining, cursor)
+        assert cursor == "1-0"
+    # Final attempt exhausts the budget: tsk-2 is dropped and tsk-3 proceeds.
+    cursor = monitor._consume_stream_batch(remaining, cursor)
+    assert cursor == "3-0"
     assert handled == ["tsk-1", "tsk-3"]
 
 

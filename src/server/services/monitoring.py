@@ -58,6 +58,8 @@ from .metrics import MetricsRecorder
 from .ssh_forward import SshForwardService
 from .watchdog import WorkerWatchdog
 
+TASK_EVENT_HANDLER_MAX_ATTEMPTS = 5
+
 
 def _stream_id_tuple(entry_id: str) -> tuple[int, int]:
     """Parse a Redis stream id (``<ms>-<seq>``) into a comparable tuple."""
@@ -115,6 +117,9 @@ class EventMonitor:
 
         self._pending_result_clones: dict[str, list[str]] = {}
         self._pending_lock = threading.RLock()
+
+        # Per-entry handler-failure counts backing the consumer's retry budget.
+        self._event_handler_attempts: dict[str, int] = {}
 
         self._loop: asyncio.AbstractEventLoop | None = None
         self._threads: list[threading.Thread] | None = None
@@ -281,7 +286,7 @@ class EventMonitor:
         trim horizon loses the events in between. That is detected and logged on
         resume rather than passing silently.
         """
-        cursor = self._redis_client.get(TASK_EVENT_CURSOR_KEY) or "$"
+        cursor = self._redis_client.get(TASK_EVENT_CURSOR_KEY) or "0-0"
         self._warn_if_cursor_trimmed(cursor)
         while not self._stop_event.is_set():
             try:
@@ -306,26 +311,59 @@ class EventMonitor:
     ) -> str:
         """Handle one batch of stream entries, advancing the cursor per entry.
 
-        A handler that raises must not take down the consumer thread: a single
-        poison event would otherwise stop every later completion from being
-        processed. The failure is logged and the cursor advances past the entry
-        so the stream keeps flowing; a task left stuck by the skipped event is
-        reclaimed by the watchdog.
+        Parse failures are skipped; handler failures are retried without advancing the
+        cursor, then dead-lettered after ``TASK_EVENT_HANDLER_MAX_ATTEMPTS`` attempts.
         """
         for entry_id, fields in entries:
             try:
                 event = self._parse_stream_event(fields)
-                if isinstance(event, TaskEvent):
-                    self._handle_task_event(event)
             except Exception as exc:
                 self._logger.error(
-                    "Failed to handle task event %s; skipping: %s", entry_id, exc
+                    "Failed to parse task event %s; skipping malformed entry: %s",
+                    entry_id,
+                    exc,
                 )
-            cursor = entry_id
-            self._redis_client.set_value(TASK_EVENT_CURSOR_KEY, cursor)
+                self._event_handler_attempts.pop(entry_id, None)
+                cursor = self._advance_event_cursor(entry_id)
+                if self._stop_event.is_set():
+                    break
+                continue
+
+            if isinstance(event, TaskEvent):
+                try:
+                    self._handle_task_event(event)
+                except Exception as exc:
+                    # Don't advance past a handler failure: it may be transient,
+                    # and the watchdog only reclaims dead workers (not a task stuck
+                    # under a live one), so advancing would lose the transition.
+                    attempts = self._event_handler_attempts.get(entry_id, 0) + 1
+                    if attempts < TASK_EVENT_HANDLER_MAX_ATTEMPTS:
+                        self._event_handler_attempts[entry_id] = attempts
+                        self._logger.warning(
+                            "Failed to apply task event %s (attempt %d/%d); "
+                            "will retry: %s",
+                            entry_id,
+                            attempts,
+                            TASK_EVENT_HANDLER_MAX_ATTEMPTS,
+                            exc,
+                        )
+                        return cursor
+                    self._logger.error(
+                        "Dropping task event %s after %d failed attempts: %s",
+                        entry_id,
+                        attempts,
+                        exc,
+                    )
+                self._event_handler_attempts.pop(entry_id, None)
+
+            cursor = self._advance_event_cursor(entry_id)
             if self._stop_event.is_set():
                 break
         return cursor
+
+    def _advance_event_cursor(self, entry_id: str) -> str:
+        self._redis_client.set_value(TASK_EVENT_CURSOR_KEY, entry_id)
+        return entry_id
 
     def _warn_if_cursor_trimmed(self, cursor: str) -> None:
         """Log if the persisted cursor has fallen behind the stream's trim horizon.
