@@ -179,8 +179,12 @@ async def test_rehydrate_restores_completed_and_ready_state() -> None:
     restored = _runtime(registry)
     assert await restored.rehydrate() == 1
 
-    assert restored.get_record(a).status == TaskStatus.DONE  # type: ignore[union-attr]
-    assert restored.get_record(b).status == TaskStatus.PENDING  # type: ignore[union-attr]
+    record_a = restored.get_record(a)
+    record_b = restored.get_record(b)
+    assert record_a is not None
+    assert record_a.status == TaskStatus.DONE
+    assert record_b is not None
+    assert record_b.status == TaskStatus.PENDING
 
     # b's only dependency completed, so it is the sole ready task.
     assert restored.ready_queue_length() == 1

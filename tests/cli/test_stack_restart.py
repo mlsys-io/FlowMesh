@@ -9,15 +9,15 @@ from flowmesh.models.nodes import NodeRole
 from flowmesh_cli_stack import stack as stack_module
 
 
-def _restart(**kwargs: object) -> None:
-    defaults: dict[str, object] = {
-        "services": None,
-        "env_file": Path(".env"),
-        "image_tag": None,
-        "pull": True,
-    }
-    defaults.update(kwargs)
-    stack_module.restart(**defaults)  # type: ignore[arg-type]
+def _restart(
+    services: list[str] | None = None,
+    env_file: Path = Path(".env"),
+    image_tag: str | None = None,
+    pull: bool = True,
+) -> None:
+    stack_module.restart(
+        services=services, env_file=env_file, image_tag=image_tag, pull=pull
+    )
 
 
 def test_restart_server_drains_then_recreates_only_server() -> None:
