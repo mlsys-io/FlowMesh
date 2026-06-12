@@ -8,6 +8,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 import yaml
 
+from ._constants import API_VERSION_PREFIX
 from .exceptions import FlowMeshError
 from .models.common import TaskStatus
 from .models.tasks import TaskInfo
@@ -159,9 +160,8 @@ def ssh_proxy_url(base_url: str, task_id: str) -> str:
     """Build the websocket proxy URL for an SSH task."""
     base = urlsplit(base_url)
     ws_scheme = "wss" if base.scheme == "https" else "ws"
-    return urlunsplit(
-        (ws_scheme, base.netloc, f"/api/v1/ssh/tasks/{task_id}/proxy", "", "")
-    )
+    path = f"{base.path.rstrip('/')}{API_VERSION_PREFIX}/ssh/tasks/{task_id}/proxy"
+    return urlunsplit((ws_scheme, base.netloc, path, "", ""))
 
 
 def ssh_connection_commands(
