@@ -94,58 +94,24 @@ upgrade-blocker. The currently-ignored advisories and the upgrade
 blocker that justifies each are listed below; the same list is encoded
 as `--ignore-vuln` flags in `.github/workflows/security.yml`.
 
+The worker GPU `vllm` is pinned to the `+cu129` release wheel (the PyPI
+wheel is built for CUDA 13, incompatible with the CUDA 12.9 worker). Its
+local version is not on PyPI, so pip-audit skips it — like
+`flashinfer-jit-cache` — which is why the GPU run omits `--strict`. vLLM
+CVE exposure tracks PyPI `vllm 0.22.0` regardless of the build variant.
+
 | Advisory | Package | Fix version | Why ignored |
 |----------|---------|-------------|-------------|
-| GHSA-69w3-r845-3855 | transformers | 5.0.0rc3 | held by vllm/vllm-omni 0.18 compatibility |
-| GHSA-pf3h-qjgv-vcpr | vllm | 0.19.0 | held by transformers 4.57 + adjacent inference deps |
-| GHSA-pq5c-rjhq-qp7p | vllm | 0.19.0 | same |
-| GHSA-3mwp-wvh9-7528 | vllm | 0.19.0 | same |
-| GHSA-hpv8-x276-m59f | vllm | 0.20.0 | same |
-| GHSA-x368-4g9h-fvv4 | vllm | 0.19.1 | same |
-| GHSA-83vm-p52w-f9pw | vllm | 0.20.0 | same |
-| GHSA-3ww4-5jv9-j5gm | vllm | 0.22.0 | same |
-| GHSA-cfh3-3jmp-rvhc | pillow | 12.1.1 | gradio 5.50 caps pillow<12 (transitive via vllm-omni) |
-| GHSA-whj4-6x5x-4v2j | pillow | 12.2.0 | same cap |
-| GHSA-wjx4-4jcj-g98j | pillow | 12.2.0 | same cap |
-| GHSA-5xmw-vc9v-4wf2 | pillow | 12.2.0 | same cap |
-| GHSA-r73j-pqj5-w3x7 | pillow | 12.2.0 | same cap |
-| GHSA-pwv6-vv43-88gr | pillow | 12.2.0 | same cap |
-| GHSA-vfmq-68hx-4jfw | lxml | 6.1.0 | crawl4ai 0.8.6 caps lxml<6 |
-| GHSA-39mp-8hj3-5c49 | gradio | 6.7.0 | vllm-omni 0.18 pins gradio==5.50 |
-| GHSA-h3h8-3v2v-rg7m | gradio | 6.6.0 | same pin |
-| GHSA-jmh7-g254-2cq9 | gradio | 6.6.0 | same pin |
-| GHSA-pfjf-5gxr-995x | gradio | 6.6.0 | same pin |
+| GHSA-rrmf-rvhw-rf47 | torch | (none) | no fix version published |
+| PYSEC-2026-87 | lxml | 6.1.0 | crawl4ai 0.8.6 caps lxml<6 |
 | GHSA-w8v5-vhqr-4h9v | diskcache | (none) | upstream unmaintained, no fixed version published |
-| GHSA-j7w6-vpvq-j3gm | diffusers | 0.38.0 | fix requires safetensors>=0.8.0rc0 pre-release; uv lock won't pick up pre-releases without explicit opt-in |
-| GHSA-98h9-4798-4q5v | diffusers | 0.38.0 | same blocker as GHSA-j7w6-vpvq-j3gm — both fixed in 0.38.0 |
-| GHSA-7wx4-6vff-v64p | diffusers | 0.38.0 | same blocker as GHSA-j7w6-vpvq-j3gm — fixed in 0.38.0 |
-| PYSEC-2025-189 | torch | (none) | no fix version published |
-| PYSEC-2025-190 | torch | (none) | same |
-| PYSEC-2025-191 | torch | (none) | same |
-| PYSEC-2025-192 | torch | (none) | same |
-| PYSEC-2025-193 | torch | (none) | same |
-| PYSEC-2025-194 | torch | (none) | same |
-| PYSEC-2025-195 | torch | (none) | same |
-| PYSEC-2025-196 | torch | (none) | same |
-| PYSEC-2025-197 | torch | (none) | same |
-| PYSEC-2025-210 | torch | (none) | same |
-| PYSEC-2026-139 | torch | (none) | same |
-| GHSA-rrmf-rvhw-rf47 | torch | (none) | same |
-| PYSEC-2025-211 | transformers | (none) | no fix version published; transformers also held by vllm-omni 0.18 |
-| PYSEC-2025-212 | transformers | (none) | same |
-| PYSEC-2025-213 | transformers | (none) | same |
-| PYSEC-2025-214 | transformers | (none) | same |
-| PYSEC-2025-215 | transformers | (none) | same |
-| PYSEC-2025-216 | transformers | (none) | same |
-| PYSEC-2025-217 | transformers | (none) | same |
-| PYSEC-2025-218 | transformers | (none) | same |
-| PYSEC-2026-97 | nltk | (none) | no fix version published |
-| PYSEC-2025-183 | pyjwt | (none) | no fix version published |
-| PYSEC-2024-277 | joblib | (none) | no fix version published |
-| PYSEC-2025-222 | vllm | (none) | no fix version published; held by vllm-omni 0.18 pin |
-| PYSEC-2024-274 | gradio | (none) | no fix version published; vllm-omni 0.18 pins gradio==5.50 |
-| PYSEC-2026-161 | starlette | 1.0.1 | gradio 5.50 caps starlette<1.0 (transitive via vllm-omni 0.18) |
 
-When a blocker lifts (e.g. transformers 5 ↔ vllm 0.19 line stabilizes),
-drop the corresponding `--ignore-vuln` flag from the workflow and the
-row from this table — don't extend the rationale to unrelated packages.
+The worker GPU audit ignores `GHSA-rrmf-rvhw-rf47` and
+`GHSA-w8v5-vhqr-4h9v`; the worker CPU audit ignores
+`GHSA-rrmf-rvhw-rf47` and `PYSEC-2026-87`; the server audit ignores
+nothing.
+
+When a blocker lifts (e.g. crawl4ai unpins lxml, or a fixed torch
+release ships), drop the corresponding `--ignore-vuln` flag from the
+workflow and the row from this table — don't extend the rationale to
+unrelated packages.
