@@ -7,6 +7,7 @@ DiffusersExecutor
 """
 
 import gc
+import inspect
 import logging
 import os
 from pathlib import Path
@@ -175,6 +176,13 @@ class DiffusersExecutor(DataMixin, Executor):
             if negative_prompt is not None:
                 kwargs["negative_prompt_2"] = negative_prompt
                 kwargs["negative_prompt_3"] = negative_prompt
+
+        # SD1.x/2.x/XL encoders require do_classifier_free_guidance (no default in
+        # diffusers >=0.38); request it so negative embeddings are returned. SD3
+        # has no such parameter, so only pass it when the signature accepts it.
+        encode_params = inspect.signature(self._pipe.encode_prompt).parameters
+        if "do_classifier_free_guidance" in encode_params:
+            kwargs["do_classifier_free_guidance"] = True
 
         return self._pipe.encode_prompt(**kwargs)
 

@@ -476,10 +476,7 @@ class SFTExecutor(TrainingMixin, Executor):
             )
 
             # Drop heavy references before runner-level cleanup
-            trainer = None
-            model = None  # type: ignore[assignment]
-            tokenizer = None
-            train_dataset = None
+            del trainer, model, tokenizer, train_dataset
             self._current_trainer = None
             self._current_model = None
             self._current_tokenizer = None

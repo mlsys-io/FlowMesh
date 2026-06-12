@@ -164,10 +164,13 @@ class _ExternalRewardModel(torch.nn.Module):
             response_tokens = sample[context_length:]
             if pad_token_id is not None:
                 response_tokens = response_tokens[response_tokens != pad_token_id]
-            text = self.policy_tokenizer.decode(
-                response_tokens,
-                skip_special_tokens=True,
-                clean_up_tokenization_spaces=True,
+            text = cast(
+                str,
+                self.policy_tokenizer.decode(
+                    response_tokens,
+                    skip_special_tokens=True,
+                    clean_up_tokenization_spaces=True,
+                ),
             ).strip()
             response_texts.append(text)
 
@@ -1202,7 +1205,8 @@ class PPOExecutor(TrainingMixin, Executor):
             response_length=response_length,
             save_strategy=save_strategy,
             remove_unused_columns=False,
-            save_safetensors=bool(training_config.get("save_safetensors", False)),
+            fp16=bool(training_config.get("fp16", False)),
+            bf16=bool(training_config.get("bf16", False)),
             **ppo_ctor_kwargs,
         )
 

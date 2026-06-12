@@ -18,8 +18,11 @@ def _pick_bnb_compute_dtype(torch_dtype: torch.dtype | None) -> torch.dtype:
     """Pick 4-bit compute dtype, falling back to fp16 on GPUs without bf16 support."""
     if torch_dtype is not None:
         return torch_dtype
-    if torch.cuda.is_available() and torch.cuda.is_bf16_supported():
-        return torch.bfloat16
+    try:
+        if torch.cuda.is_available() and torch.cuda.is_bf16_supported():
+            return torch.bfloat16
+    except RuntimeError:
+        return torch.float16
     return torch.float16
 
 

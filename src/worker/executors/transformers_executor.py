@@ -54,7 +54,7 @@ import os
 import time
 from collections.abc import Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from shared.schemas.artifact import ArtifactRef
 from shared.schemas.governance import SpanType
@@ -565,8 +565,9 @@ class HFTransformersExecutor(InferenceMixin, Executor):
         ):
             input_len = int(inp_ids.shape[0])
             gen_part = seq[input_len:]
-            raw_text = self._tok.decode(
-                gen_part, skip_special_tokens=skip_special_tokens
+            raw_text = cast(
+                str,
+                self._tok.decode(gen_part, skip_special_tokens=skip_special_tokens),
             )
             text = raw_text
 
