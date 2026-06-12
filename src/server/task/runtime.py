@@ -389,6 +389,50 @@ class TaskRuntime:
             self._workflow_epoch_frontier.get(workflow_id, 0),
         )
 
+    def _persist_terminal_locked(self, *task_ids: str) -> None:
+        """Persist each task's final state — its record and its done/failed/cancelled
+        set membership (by current status) — as the single last step of a transition.
+
+        Persisting only after all in-memory mutations means a failed write can't leave
+        the in-memory state half-applied; the error propagates and the at-least-once
+        replay re-persists via ``_repersist_terminal_workflow_locked``. This assumes
+        the in-memory mutations never raise, which holds while ordered tasks carry
+        ``position_in_epoch`` (so the ready-queue helpers never hit their guards).
+        """
+        for task_id in dict.fromkeys(task_ids):
+            record = self._tasks.get(task_id)
+            if record is None:
+                continue
+            workflow_id = record.workflow_id
+            match record.status:
+                case TaskStatus.DONE:
+                    self._workflow_registry.mark_task_done(workflow_id, task_id)
+                case TaskStatus.FAILED:
+                    self._workflow_registry.mark_task_failed(workflow_id, task_id)
+                case TaskStatus.CANCELLED:
+                    self._workflow_registry.mark_task_cancelled(workflow_id, task_id)
+        self._persist_locked(*task_ids)
+
+    def _repersist_terminal_workflow_locked(self, workflow_id: str) -> None:
+        """Re-persist the workflow's already-terminal tasks and schedule state.
+
+        The idempotency guard calls this on a replayed terminal event: the original
+        transition may have failed its persist after committing in memory, so
+        re-persisting makes the durable state current before the consumer's cursor
+        advances past the event (else the task re-runs after a restart). It covers the
+        whole workflow, not just the replayed task, because a cascade's other affected
+        tasks aren't identifiable here. Idempotent; only on a rare duplicate replay.
+        """
+        terminal_ids = [
+            task_id
+            for task_id, record in self._tasks.items()
+            if record.workflow_id == workflow_id
+            and record.status in TERMINAL_TASK_STATUSES
+        ]
+        if terminal_ids:
+            self._persist_terminal_locked(*terminal_ids)
+        self._persist_sched_locked(workflow_id)
+
     # ------------------------------------------------------------------ #
     # Ready queue helpers
     # ------------------------------------------------------------------ #
@@ -573,7 +617,6 @@ class TaskRuntime:
                 self._merge_key_by_task.pop(task_id, None)
                 self._merge_parent_map.pop(task_id, None)
                 self._merge_children_map.pop(task_id, None)
-                self._workflow_registry.mark_task_failed(workflow_id, task_id)
                 impacted.append((task_id, reason))
 
         return impacted
@@ -755,7 +798,6 @@ class TaskRuntime:
         self._merge_key_by_task.pop(child_id, None)
         self._remove_from_ready_locked(child_id)
         self._merge_bucket_remove(child_id)
-        self._workflow_registry.mark_task_done(child_record.workflow_id, child_id)
         dependents = list(self._dependents.pop(child_id, set()))
         for dep_id in dependents:
             pending = self._pending_deps.get(dep_id)
@@ -798,7 +840,6 @@ class TaskRuntime:
         self._merge_key_by_task.pop(child_id, None)
         self._remove_from_ready_locked(child_id)
         self._merge_bucket_remove(child_id)
-        self._workflow_registry.mark_task_failed(child_record.workflow_id, child_id)
 
         dependents = list(self._dependents.pop(child_id, set()))
         for dep_id in dependents:
@@ -815,7 +856,6 @@ class TaskRuntime:
             dep_record.finished_ts = time.time()
             self._pending_deps.pop(dep_id, None)
             self._remove_from_ready_locked(dep_id)
-            self._workflow_registry.mark_task_failed(dep_record.workflow_id, dep_id)
             impacted.append((dep_id, fail_reason))
         return impacted
 
@@ -905,7 +945,10 @@ class TaskRuntime:
                 if record.status == TaskStatus.CANCELLED:
                     return usages
                 if record.status == TaskStatus.DONE:
-                    # Idempotent: a replayed TASK_SUCCEEDED must not re-apply.
+                    # Idempotent: a replayed TASK_SUCCEEDED must not re-apply, but
+                    # re-persist in case the original completion's write failed
+                    # after its in-memory commit.
+                    self._repersist_terminal_workflow_locked(record.workflow_id)
                     return []
                 if record.status == TaskStatus.FAILED:
                     self._logger.warning(
@@ -923,7 +966,6 @@ class TaskRuntime:
                 record.merged_children = None
                 if usage is not None:
                     record.usages.append(usage)
-                self._workflow_registry.mark_task_done(record.workflow_id, task_id)
 
             self._completed.add(task_id)
             self._failed.discard(task_id)
@@ -960,7 +1002,7 @@ class TaskRuntime:
                     self._try_advance_epoch_frontier_locked(record.workflow_id)
                 )
 
-            self._persist_locked(task_id, *merged_children_ids)
+            self._persist_terminal_locked(task_id, *merged_children_ids)
             if record is not None:
                 self._persist_sched_locked(record.workflow_id)
 
@@ -1000,7 +1042,10 @@ class TaskRuntime:
                 if record.status == TaskStatus.CANCELLED:
                     return [], [], usages
                 if record.status == TaskStatus.FAILED:
-                    # Idempotent: a replayed TASK_FAILED must not re-apply.
+                    # Idempotent: a replayed TASK_FAILED must not re-apply, but
+                    # re-persist in case the original failure's write (including
+                    # its cascade) failed after the in-memory commit.
+                    self._repersist_terminal_workflow_locked(record.workflow_id)
                     return [], [], []
                 if record.status == TaskStatus.DONE:
                     self._logger.warning(
@@ -1018,7 +1063,6 @@ class TaskRuntime:
                 record.merged_children = None
                 if usage is not None:
                     record.usages.append(usage)
-                self._workflow_registry.mark_task_failed(record.workflow_id, task_id)
 
             self._failed.add(task_id)
             self._completed.discard(task_id)
@@ -1043,9 +1087,6 @@ class TaskRuntime:
                 child_record.finished_ts = time.time()
                 self._pending_deps.pop(child, None)
                 self._remove_from_ready_locked(child)
-                self._workflow_registry.mark_task_failed(
-                    child_record.workflow_id, child
-                )
                 impacted.append((child, reason))
 
             for merged_child in merged_children_ids:
@@ -1069,7 +1110,7 @@ class TaskRuntime:
                     )
                 )
 
-            self._persist_locked(
+            self._persist_terminal_locked(
                 task_id, *merged_children_ids, *(dep_id for dep_id, _ in impacted)
             )
             if record is not None:
@@ -1167,6 +1208,10 @@ class TaskRuntime:
             if record is None:
                 return usages
             if record.status == TaskStatus.CANCELLED:
+                # Idempotent: a replayed cancellation must not re-apply, but
+                # re-persist in case the original cancellation's write failed
+                # after its in-memory commit.
+                self._repersist_terminal_workflow_locked(record.workflow_id)
                 return usages
             if record.status in (TaskStatus.DONE, TaskStatus.FAILED):
                 self._logger.warning(
@@ -1190,9 +1235,8 @@ class TaskRuntime:
             self._merge_bucket_remove(task_id)
             self._merge_key_by_task.pop(task_id, None)
             self._merge_children_map.pop(task_id, None)
-            self._workflow_registry.mark_task_cancelled(record.workflow_id, task_id)
             record.assigned_worker = None
-            self._persist_locked(task_id)
+            self._persist_terminal_locked(task_id)
             return usages
 
     def get_record(self, task_id: str) -> TaskRecord | None:

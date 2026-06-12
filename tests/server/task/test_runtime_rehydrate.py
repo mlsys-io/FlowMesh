@@ -327,3 +327,164 @@ async def test_terminal_task_does_not_regress_on_replayed_dispatch_or_start() ->
     assert record is not None
     assert record.status == TaskStatus.DONE
     assert record.latest_update is None
+
+
+@pytest.mark.anyio
+async def test_mark_succeeded_applies_in_memory_atomically_when_persist_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    registry = FakeWorkflowRegistry()
+    runtime = _runtime(registry)
+    _, ids = await _register(runtime, GRAPH)
+    a, b = ids["a"], ids["b"]
+
+    def boom(workflow_id: str, *task_ids: str) -> None:
+        raise RuntimeError("redis down")
+
+    monkeypatch.setattr(registry, "mark_task_done", boom)
+    with pytest.raises(RuntimeError):
+        runtime.mark_succeeded(a, "wkr-1", {}, "2026-06-01T00:00:00Z")
+
+    # Persistence is last, so the in-memory transition is fully applied (not
+    # half-done): 'a' is DONE and its dependent 'b' is enqueued.
+    record_a = runtime.get_record(a)
+    assert record_a is not None and record_a.status == TaskStatus.DONE
+    assert b in runtime._ready_index
+
+    # The at-least-once replay re-runs and is a no-op via the idempotency guard.
+    monkeypatch.setattr(registry, "mark_task_done", lambda *args, **kwargs: None)
+    assert runtime.mark_succeeded(a, "wkr-1", {}, "2026-06-01T00:00:00Z") == []
+
+
+@pytest.mark.anyio
+async def test_mark_failed_applies_cascade_atomically_when_persist_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    registry = FakeWorkflowRegistry()
+    runtime = _runtime(registry)
+    _, ids = await _register(runtime, GRAPH)
+    a, b = ids["a"], ids["b"]
+
+    def boom(workflow_id: str, *task_ids: str) -> None:
+        raise RuntimeError("redis down")
+
+    monkeypatch.setattr(registry, "mark_task_failed", boom)
+    with pytest.raises(RuntimeError):
+        runtime.mark_failed(a, "wkr-1", {}, "2026-06-01T00:00:00Z")
+
+    # The whole cascade is applied in memory before persistence runs: both the
+    # task and its dependent are FAILED, never a partial mix.
+    record_a = runtime.get_record(a)
+    record_b = runtime.get_record(b)
+    assert record_a is not None and record_a.status == TaskStatus.FAILED
+    assert record_b is not None and record_b.status == TaskStatus.FAILED
+
+    # Replay is a no-op via the idempotency guard (task already terminal).
+    monkeypatch.setattr(registry, "mark_task_failed", lambda *args, **kwargs: None)
+    impacted, _, _ = runtime.mark_failed(a, "wkr-1", {}, "2026-06-01T00:00:00Z")
+    assert impacted == []
+
+
+@pytest.mark.anyio
+async def test_replayed_terminal_event_repersists_after_failed_write(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    registry = FakeWorkflowRegistry()
+    runtime = _runtime(registry)
+    _, ids = await _register(runtime, GRAPH)
+    a, b = ids["a"], ids["b"]
+
+    real_save = registry.save_task_states
+    calls = {"n": 0}
+
+    def flaky_save(items: Any) -> None:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("redis down")
+        real_save(items)
+
+    monkeypatch.setattr(registry, "save_task_states", flaky_save)
+
+    def persisted_status(task_id: str) -> str:
+        return PersistedTask.model_validate_json(
+            registry.task_blobs[task_id]
+        ).record.status
+
+    # Registration persisted both tasks as PENDING.
+    assert persisted_status(a) == TaskStatus.PENDING
+
+    # Attempt 1: the cascade applies in memory, but the durable write fails, so
+    # the persisted records are left at their stale PENDING state.
+    with pytest.raises(RuntimeError):
+        runtime.mark_failed(a, "wkr-1", {}, "2026-06-01T00:00:00Z")
+    assert persisted_status(a) == TaskStatus.PENDING
+    assert persisted_status(b) == TaskStatus.PENDING
+
+    # Replay of the same TASK_FAILED: the guard heals by re-persisting the
+    # workflow's terminal records (the whole cascade, not just the primary).
+    impacted, _, _ = runtime.mark_failed(a, "wkr-1", {}, "2026-06-01T00:00:00Z")
+    assert impacted == []
+    assert persisted_status(a) == TaskStatus.FAILED
+    assert persisted_status(b) == TaskStatus.FAILED
+
+
+@pytest.mark.anyio
+async def test_mark_cancelled_applies_in_memory_atomically_when_persist_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    registry = FakeWorkflowRegistry()
+    runtime = _runtime(registry)
+    _, ids = await _register(runtime, GRAPH)
+    a = ids["a"]
+
+    def boom(workflow_id: str, *task_ids: str) -> None:
+        raise RuntimeError("redis down")
+
+    monkeypatch.setattr(registry, "mark_task_cancelled", boom)
+    with pytest.raises(RuntimeError):
+        runtime.mark_cancelled(a, "wkr-1", {}, "2026-06-01T00:00:00Z")
+
+    # Persistence is last, so the cancellation is fully applied in memory.
+    record_a = runtime.get_record(a)
+    assert record_a is not None and record_a.status == TaskStatus.CANCELLED
+
+    # Replay is a no-op via the idempotency guard (task already cancelled).
+    monkeypatch.setattr(registry, "mark_task_cancelled", lambda *args, **kwargs: None)
+    runtime.mark_cancelled(a, "wkr-1", {}, "2026-06-01T00:00:00Z")
+    record_a = runtime.get_record(a)
+    assert record_a is not None and record_a.status == TaskStatus.CANCELLED
+
+
+@pytest.mark.anyio
+async def test_mark_cancelled_repersists_on_replay_after_failed_write(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    registry = FakeWorkflowRegistry()
+    runtime = _runtime(registry)
+    _, ids = await _register(runtime, GRAPH)
+    a = ids["a"]
+
+    real_save = registry.save_task_states
+    calls = {"n": 0}
+
+    def flaky_save(items: Any) -> None:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("redis down")
+        real_save(items)
+
+    monkeypatch.setattr(registry, "save_task_states", flaky_save)
+
+    def persisted_status(task_id: str) -> str:
+        return PersistedTask.model_validate_json(
+            registry.task_blobs[task_id]
+        ).record.status
+
+    # Attempt 1: cancellation applies in memory, but the durable write fails.
+    with pytest.raises(RuntimeError):
+        runtime.mark_cancelled(a, "wkr-1", {}, "2026-06-01T00:00:00Z")
+    assert persisted_status(a) == TaskStatus.PENDING
+
+    # Replay of the same cancellation: the guard heals by re-persisting.
+    runtime.mark_cancelled(a, "wkr-1", {}, "2026-06-01T00:00:00Z")
+    assert persisted_status(a) == TaskStatus.CANCELLED
