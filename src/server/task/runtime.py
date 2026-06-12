@@ -907,6 +907,12 @@ class TaskRuntime:
                 if record.status == TaskStatus.DONE:
                     # Idempotent: a replayed TASK_SUCCEEDED must not re-apply.
                     return []
+                if record.status == TaskStatus.FAILED:
+                    self._logger.warning(
+                        "Ignoring TASK_SUCCEEDED for task %s in terminal status FAILED",
+                        task_id,
+                    )
+                    return []
                 record.status = TaskStatus.DONE
                 record.error = None
                 record.finished_ts = finished_ts
@@ -995,6 +1001,12 @@ class TaskRuntime:
                     return [], [], usages
                 if record.status == TaskStatus.FAILED:
                     # Idempotent: a replayed TASK_FAILED must not re-apply.
+                    return [], [], []
+                if record.status == TaskStatus.DONE:
+                    self._logger.warning(
+                        "Ignoring TASK_FAILED for task %s in terminal status DONE",
+                        task_id,
+                    )
                     return [], [], []
                 record.status = TaskStatus.FAILED
                 record.error = message
@@ -1155,6 +1167,13 @@ class TaskRuntime:
             if record is None:
                 return usages
             if record.status == TaskStatus.CANCELLED:
+                return usages
+            if record.status in (TaskStatus.DONE, TaskStatus.FAILED):
+                self._logger.warning(
+                    "Ignoring cancellation for task %s in terminal status %s",
+                    task_id,
+                    record.status,
+                )
                 return usages
             record.status = TaskStatus.CANCELLED
             record.finished_ts = finished_ts
