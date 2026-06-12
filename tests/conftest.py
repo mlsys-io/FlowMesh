@@ -1,10 +1,17 @@
 """Pytest configuration for tests directory."""
 
 import logging
+import os
 import sys
 import types
 
 import pytest
+
+# Run the unit suite CPU-only by default. transformers eagerly initializes the
+# CUDA device when a TrainingArguments-derived config is constructed, so config
+# tests would otherwise crash on a host whose driver can't init the installed
+# torch build. Set CUDA_VISIBLE_DEVICES explicitly to run GPU-marked tests.
+os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
 
 # The ``vastai`` SDK makes a network call at import time.  A minimal stub
 # is inserted before importing any server modules so that tests never
