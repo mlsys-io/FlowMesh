@@ -3,8 +3,10 @@
 import asyncio
 import logging
 import threading
+from collections.abc import Sequence
 from typing import Any, cast
 
+from server.registries.workflow import PersistedTask, WorkflowSched
 from server.task.models import TaskStatus
 from server.task.runtime import TaskRuntime
 
@@ -13,7 +15,18 @@ class _WorkflowRegistryStub:
     async def register_workflow_async(self, workflow_id: str, tasks: list[Any]) -> None:
         return None
 
-    def commit_transition(self, workflow_id: str, **kwargs: Any) -> None:
+    def commit_transition(
+        self,
+        workflow_id: str,
+        *,
+        records: Sequence[PersistedTask] = (),
+        dispatched: Sequence[str] = (),
+        pending: Sequence[str] = (),
+        done: Sequence[str] = (),
+        failed: Sequence[str] = (),
+        cancelled: Sequence[str] = (),
+        sched: WorkflowSched | None = None,
+    ) -> None:
         return None
 
     async def save_task_states_async(self, items: Any) -> None:

@@ -2,12 +2,14 @@
 
 import logging
 import tempfile
+from collections.abc import Sequence
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest import mock
 
 from server.dispatcher import Dispatcher
+from server.registries.workflow import PersistedTask, WorkflowSched
 
 
 class CapturingDispatcher(Dispatcher):
@@ -31,7 +33,18 @@ class WorkflowRegistryStub:
     async def register_workflow_async(self, workflow_id: str, tasks: list[Any]) -> None:
         return None
 
-    def commit_transition(self, workflow_id: str, **kwargs: Any) -> None: ...
+    def commit_transition(
+        self,
+        workflow_id: str,
+        *,
+        records: Sequence[PersistedTask] = (),
+        dispatched: Sequence[str] = (),
+        pending: Sequence[str] = (),
+        done: Sequence[str] = (),
+        failed: Sequence[str] = (),
+        cancelled: Sequence[str] = (),
+        sched: WorkflowSched | None = None,
+    ) -> None: ...
     async def save_task_states_async(self, items: Any) -> None: ...
     async def save_workflow_sched_async(
         self, wid: str, in_epoch_order: bool, frontier: int
