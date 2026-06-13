@@ -325,8 +325,8 @@ class TestSSHHelpers:
 
     def test_proxy_url_preserves_base_path(self) -> None:
         assert (
-            ssh_proxy_url("https://kv.run:8000/flowmesh", "task-1")
-            == "wss://kv.run:8000/flowmesh/api/v1/ssh/tasks/task-1/proxy"
+            ssh_proxy_url("https://example.com:8000/flowmesh", "task-1")
+            == "wss://example.com:8000/flowmesh/api/v1/ssh/tasks/task-1/proxy"
         )
 
     def test_proxy_url_scheme_conversion(self) -> None:
@@ -335,17 +335,19 @@ class TestSSHHelpers:
 
     def test_proxy_url_trailing_slash(self) -> None:
         assert (
-            ssh_proxy_url("https://kv.run:8000/flowmesh/", "task-1")
-            == "wss://kv.run:8000/flowmesh/api/v1/ssh/tasks/task-1/proxy"
+            ssh_proxy_url("https://example.com:8000/flowmesh/", "task-1")
+            == "wss://example.com:8000/flowmesh/api/v1/ssh/tasks/task-1/proxy"
         )
 
     def test_connection_commands_proxy_mode_embeds_base_path(self) -> None:
         ssh_info = {"mode": "proxy", "username": "flowmesh", "host": "h", "port": 22}
         cmds = ssh_connection_commands(
-            "task-1", ssh_info, base_url="https://kv.run:8000/flowmesh"
+            "task-1", ssh_info, base_url="https://example.com:8000/flowmesh"
         )
         proxy_cmd = next(cmd for label, cmd in cmds if label == "ssh (proxy)")
-        assert "wss://kv.run:8000/flowmesh/api/v1/ssh/tasks/task-1/proxy" in proxy_cmd
+        assert (
+            "wss://example.com:8000/flowmesh/api/v1/ssh/tasks/task-1/proxy" in proxy_cmd
+        )
 
     def test_detect_public_key_prefers_standard_keys(self, tmp_path: Path) -> None:
         ssh_dir = tmp_path / ".ssh"
