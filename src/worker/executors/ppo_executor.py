@@ -164,15 +164,13 @@ class _ExternalRewardModel(torch.nn.Module):
             response_tokens = sample[context_length:]
             if pad_token_id is not None:
                 response_tokens = response_tokens[response_tokens != pad_token_id]
-            text = cast(
-                str,
-                self.policy_tokenizer.decode(
-                    response_tokens,
-                    skip_special_tokens=True,
-                    clean_up_tokenization_spaces=True,
-                ),
-            ).strip()
-            response_texts.append(text)
+            text = self.policy_tokenizer.decode(
+                response_tokens,
+                skip_special_tokens=True,
+                clean_up_tokenization_spaces=True,
+            )
+            assert isinstance(text, str)
+            response_texts.append(text.strip())
 
         reward_scores = self._score_texts(response_texts).to(device)
 
