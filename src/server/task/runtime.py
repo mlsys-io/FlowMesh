@@ -371,18 +371,18 @@ class TaskRuntime:
             epoch_index=self._task_epoch_index.get(task_id),
         )
 
-    def _sched_locked(self, workflow_id: str) -> WorkflowSched:
-        return WorkflowSched(
-            in_epoch_order=self._workflow_in_epoch_order.get(workflow_id, False),
-            epoch_frontier=self._workflow_epoch_frontier.get(workflow_id, 0),
-        )
-
     def _records_locked(self, *task_ids: str) -> list[PersistedTask]:
         return [
             persisted
             for task_id in dict.fromkeys(task_ids)
             if (persisted := self._persisted_task_locked(task_id))
         ]
+
+    def _sched_locked(self, workflow_id: str) -> WorkflowSched:
+        return WorkflowSched(
+            in_epoch_order=self._workflow_in_epoch_order.get(workflow_id, False),
+            epoch_frontier=self._workflow_epoch_frontier.get(workflow_id, 0),
+        )
 
     def _persist_locked(self, *task_ids: str) -> None:
         """Commit task records (no membership change) atomically, per workflow."""

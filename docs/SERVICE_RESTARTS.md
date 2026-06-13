@@ -54,9 +54,8 @@ restart safe:
   A transition's task records, workflow status-set membership, and schedule
   snapshot are written as a single atomic Redis transaction
   (`WorkflowRegistry.commit_transition`), so a crash mid-persist commits the whole
-  transition or none of it — never a half-applied state. Event-driven transitions
-  are additionally healed by replay; the API-driven workflow cancel, which has no
-  event to replay, relies on this atomicity alone.
+  transition or none of it. Event-driven transitions are additionally healed by replay;
+  the API-driven workflow cancel relies on this atomicity alone.
 - **Replayable task events.** Task lifecycle events flow through a durable Redis
   stream consumed from a persisted cursor. The ordering is what makes replay
   safe: a transition is written to durable scheduler state *before* its event is
