@@ -259,14 +259,6 @@ class WorkflowRegistry:
             remaining_tasks,
         )
 
-    def update_workflow(self, workflow_id: str, **kwargs: Any) -> None:
-        mapping = _workflow_update(kwargs)
-        self._rds.sync.hash_set(workflow_key(workflow_id), mapping=mapping)
-
-    async def update_workflow_async(self, workflow_id: str, **kwargs: Any) -> None:
-        mapping = _workflow_update(kwargs)
-        await self._rds.asyncio.hash_set(workflow_key(workflow_id), mapping=mapping)
-
     def mark_task_dispatched(self, workflow_id: str, *task_ids: str) -> None:
         mapping = _workflow_update()
         with self._rds.sync.control_pipeline() as pipe:
@@ -387,22 +379,6 @@ class WorkflowRegistry:
             PersistedTask.model_validate_json(blob) if blob else None for blob in blobs
         ]
 
-    def delete_task_states(self, *task_ids: str) -> None:
-        if not task_ids:
-            return
-        with self._rds.sync.control_pipeline() as pipe:
-            for task_id in task_ids:
-                pipe.delete(task_state_key(task_id))
-            pipe.execute()
-
-    async def delete_task_states_async(self, *task_ids: str) -> None:
-        if not task_ids:
-            return
-        async with self._rds.asyncio.control_pipeline() as pipe:
-            for task_id in task_ids:
-                pipe.delete(task_state_key(task_id))
-            await pipe.execute()
-
     def save_workflow_sched(
         self, workflow_id: str, in_epoch_order: bool, epoch_frontier: int
     ) -> None:
@@ -418,10 +394,6 @@ class WorkflowRegistry:
             in_epoch_order=in_epoch_order, epoch_frontier=epoch_frontier
         ).model_dump_json()
         await self._rds.asyncio.set_value(workflow_sched_key(workflow_id), payload)
-
-    def load_workflow_sched(self, workflow_id: str) -> WorkflowSched | None:
-        blob = self._rds.sync.get(workflow_sched_key(workflow_id))
-        return WorkflowSched.model_validate_json(blob) if blob else None
 
     async def load_workflow_sched_async(self, workflow_id: str) -> WorkflowSched | None:
         blob = await self._rds.asyncio.get(workflow_sched_key(workflow_id))
