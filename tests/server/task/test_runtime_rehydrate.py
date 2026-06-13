@@ -43,12 +43,17 @@ class FakeWorkflowRegistry:
     async def save_task_states_async(self, items: list[PersistedTask]) -> None:
         self.save_task_states(items)
 
-    def load_task_state(self, task_id: str) -> PersistedTask | None:
+    def _load_task_state(self, task_id: str) -> PersistedTask | None:
         blob = self.task_blobs.get(task_id)
         return PersistedTask.model_validate_json(blob) if blob else None
 
-    async def load_task_state_async(self, task_id: str) -> PersistedTask | None:
-        return self.load_task_state(task_id)
+    def load_task_states(self, *task_ids: str) -> list[PersistedTask | None]:
+        return [self._load_task_state(task_id) for task_id in task_ids]
+
+    async def load_task_states_async(
+        self, *task_ids: str
+    ) -> list[PersistedTask | None]:
+        return self.load_task_states(*task_ids)
 
     def save_workflow_sched(
         self, workflow_id: str, in_epoch_order: bool, frontier: int

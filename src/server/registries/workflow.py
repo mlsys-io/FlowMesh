@@ -367,13 +367,25 @@ class WorkflowRegistry:
                 pipe.set(task_state_key(item.record.task_id), item.model_dump_json())
             await pipe.execute()
 
-    def load_task_state(self, task_id: str) -> PersistedTask | None:
-        blob = self._rds.sync.get(task_state_key(task_id))
-        return PersistedTask.model_validate_json(blob) if blob else None
+    def load_task_states(self, *task_ids: str) -> list[PersistedTask | None]:
+        if not task_ids:
+            return []
+        blobs = self._rds.sync.mget([task_state_key(task_id) for task_id in task_ids])
+        return [
+            PersistedTask.model_validate_json(blob) if blob else None for blob in blobs
+        ]
 
-    async def load_task_state_async(self, task_id: str) -> PersistedTask | None:
-        blob = await self._rds.asyncio.get(task_state_key(task_id))
-        return PersistedTask.model_validate_json(blob) if blob else None
+    async def load_task_states_async(
+        self, *task_ids: str
+    ) -> list[PersistedTask | None]:
+        if not task_ids:
+            return []
+        blobs = await self._rds.asyncio.mget(
+            [task_state_key(task_id) for task_id in task_ids]
+        )
+        return [
+            PersistedTask.model_validate_json(blob) if blob else None for blob in blobs
+        ]
 
     def delete_task_states(self, *task_ids: str) -> None:
         if not task_ids:

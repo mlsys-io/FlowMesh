@@ -272,12 +272,10 @@ class TaskRuntime:
                 continue
             tasks: list[PersistedTask] = [
                 state
-                for task_id in wf_record.task_ids
-                if (
-                    state := await self._workflow_registry.load_task_state_async(
-                        task_id
-                    )
+                for state in await self._workflow_registry.load_task_states_async(
+                    *wf_record.task_ids
                 )
+                if state
             ]
             if not tasks:
                 continue
