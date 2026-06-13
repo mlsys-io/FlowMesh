@@ -74,11 +74,11 @@ class FakeWorkflowRegistry:
     async def load_workflow_sched_async(self, workflow_id: str) -> WorkflowSched | None:
         return self.load_workflow_sched(workflow_id)
 
-    def mark_task_dispatched(self, workflow_id: str, *task_ids: str) -> None: ...
-    def mark_task_done(self, workflow_id: str, *task_ids: str) -> None: ...
-    def mark_task_failed(self, workflow_id: str, *task_ids: str) -> None: ...
-    def mark_task_pending(self, workflow_id: str, *task_ids: str) -> None: ...
-    def mark_task_cancelled(self, workflow_id: str, *task_ids: str) -> None: ...
+    def commit_transition(self, transition: Any) -> None:
+        for item in transition.records:
+            self.task_blobs[item.record.task_id] = item.model_dump_json()
+        if transition.sched is not None:
+            self.sched[transition.workflow_id] = transition.sched.model_dump_json()
 
 
 class _WorkerRegistryStub:
@@ -343,10 +343,10 @@ async def test_mark_succeeded_applies_in_memory_atomically_when_persist_raises(
     _, ids = await _register(runtime, GRAPH)
     a, b = ids["a"], ids["b"]
 
-    def boom(workflow_id: str, *task_ids: str) -> None:
+    def boom(transition: Any) -> None:
         raise RuntimeError("redis down")
 
-    monkeypatch.setattr(registry, "mark_task_done", boom)
+    monkeypatch.setattr(registry, "commit_transition", boom)
     with pytest.raises(RuntimeError):
         runtime.mark_succeeded(a, "wkr-1", {}, "2026-06-01T00:00:00Z")
 
@@ -357,7 +357,7 @@ async def test_mark_succeeded_applies_in_memory_atomically_when_persist_raises(
     assert b in runtime._ready_index
 
     # The at-least-once replay re-runs and is a no-op via the idempotency guard.
-    monkeypatch.setattr(registry, "mark_task_done", lambda *args, **kwargs: None)
+    monkeypatch.setattr(registry, "commit_transition", lambda transition: None)
     assert runtime.mark_succeeded(a, "wkr-1", {}, "2026-06-01T00:00:00Z") == []
 
 
@@ -370,10 +370,10 @@ async def test_mark_failed_applies_cascade_atomically_when_persist_raises(
     _, ids = await _register(runtime, GRAPH)
     a, b = ids["a"], ids["b"]
 
-    def boom(workflow_id: str, *task_ids: str) -> None:
+    def boom(transition: Any) -> None:
         raise RuntimeError("redis down")
 
-    monkeypatch.setattr(registry, "mark_task_failed", boom)
+    monkeypatch.setattr(registry, "commit_transition", boom)
     with pytest.raises(RuntimeError):
         runtime.mark_failed(a, "wkr-1", {}, "2026-06-01T00:00:00Z")
 
@@ -385,7 +385,7 @@ async def test_mark_failed_applies_cascade_atomically_when_persist_raises(
     assert record_b is not None and record_b.status == TaskStatus.FAILED
 
     # Replay is a no-op via the idempotency guard (task already terminal).
-    monkeypatch.setattr(registry, "mark_task_failed", lambda *args, **kwargs: None)
+    monkeypatch.setattr(registry, "commit_transition", lambda transition: None)
     impacted, _, _ = runtime.mark_failed(a, "wkr-1", {}, "2026-06-01T00:00:00Z")
     assert impacted == []
 
@@ -399,16 +399,16 @@ async def test_replayed_terminal_event_repersists_after_failed_write(
     _, ids = await _register(runtime, GRAPH)
     a, b = ids["a"], ids["b"]
 
-    real_save = registry.save_task_states
+    real_commit = registry.commit_transition
     calls = {"n": 0}
 
-    def flaky_save(items: Any) -> None:
+    def flaky_commit(transition: Any) -> None:
         calls["n"] += 1
         if calls["n"] == 1:
             raise RuntimeError("redis down")
-        real_save(items)
+        real_commit(transition)
 
-    monkeypatch.setattr(registry, "save_task_states", flaky_save)
+    monkeypatch.setattr(registry, "commit_transition", flaky_commit)
 
     def persisted_status(task_id: str) -> str:
         return PersistedTask.model_validate_json(
@@ -442,10 +442,10 @@ async def test_mark_cancelled_applies_in_memory_atomically_when_persist_raises(
     _, ids = await _register(runtime, GRAPH)
     a = ids["a"]
 
-    def boom(workflow_id: str, *task_ids: str) -> None:
+    def boom(transition: Any) -> None:
         raise RuntimeError("redis down")
 
-    monkeypatch.setattr(registry, "mark_task_cancelled", boom)
+    monkeypatch.setattr(registry, "commit_transition", boom)
     with pytest.raises(RuntimeError):
         runtime.mark_cancelled(a, "wkr-1", {}, "2026-06-01T00:00:00Z")
 
@@ -454,7 +454,7 @@ async def test_mark_cancelled_applies_in_memory_atomically_when_persist_raises(
     assert record_a is not None and record_a.status == TaskStatus.CANCELLED
 
     # Replay is a no-op via the idempotency guard (task already cancelled).
-    monkeypatch.setattr(registry, "mark_task_cancelled", lambda *args, **kwargs: None)
+    monkeypatch.setattr(registry, "commit_transition", lambda transition: None)
     runtime.mark_cancelled(a, "wkr-1", {}, "2026-06-01T00:00:00Z")
     record_a = runtime.get_record(a)
     assert record_a is not None and record_a.status == TaskStatus.CANCELLED
@@ -469,16 +469,16 @@ async def test_mark_cancelled_repersists_on_replay_after_failed_write(
     _, ids = await _register(runtime, GRAPH)
     a = ids["a"]
 
-    real_save = registry.save_task_states
+    real_commit = registry.commit_transition
     calls = {"n": 0}
 
-    def flaky_save(items: Any) -> None:
+    def flaky_commit(transition: Any) -> None:
         calls["n"] += 1
         if calls["n"] == 1:
             raise RuntimeError("redis down")
-        real_save(items)
+        real_commit(transition)
 
-    monkeypatch.setattr(registry, "save_task_states", flaky_save)
+    monkeypatch.setattr(registry, "commit_transition", flaky_commit)
 
     def persisted_status(task_id: str) -> str:
         return PersistedTask.model_validate_json(
@@ -493,3 +493,63 @@ async def test_mark_cancelled_repersists_on_replay_after_failed_write(
     # Replay of the same cancellation: the guard heals by re-persisting.
     runtime.mark_cancelled(a, "wkr-1", {}, "2026-06-01T00:00:00Z")
     assert persisted_status(a) == TaskStatus.CANCELLED
+
+
+@pytest.mark.anyio
+async def test_cancel_workflow_commits_atomically_on_crash(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    registry = FakeWorkflowRegistry()
+    runtime = _runtime(registry)
+    workflow_id, ids = await _register(runtime, GRAPH)
+    a, b = ids["a"], ids["b"]
+
+    def boom(transition: Any) -> None:
+        raise RuntimeError("redis down")
+
+    def persisted_status(task_id: str) -> str:
+        return PersistedTask.model_validate_json(
+            registry.task_blobs[task_id]
+        ).record.status
+
+    monkeypatch.setattr(registry, "commit_transition", boom)
+    with pytest.raises(RuntimeError):
+        runtime.cancel_workflow(workflow_id)
+
+    # Persist is the single last step, so the cancellation is fully applied in
+    # memory even though the commit failed.
+    record_a = runtime.get_record(a)
+    assert record_a is not None and record_a.status == TaskStatus.CANCELLED
+
+    # The cancel has no event-replay backstop, but the atomic commit never ran,
+    # so durable state is untouched — nothing is half-cancelled. A fresh restart
+    # restores the pre-cancel workflow, which the operator can cancel again.
+    assert persisted_status(a) == TaskStatus.PENDING
+    assert persisted_status(b) == TaskStatus.PENDING
+
+    restored = _runtime(registry)
+    assert await restored.rehydrate() == 1
+    restored_a = restored.get_record(a)
+    restored_b = restored.get_record(b)
+    assert restored_a is not None and restored_a.status == TaskStatus.PENDING
+    assert restored_b is not None and restored_b.status == TaskStatus.PENDING
+
+
+@pytest.mark.anyio
+async def test_rehydrate_restores_cancelled_workflow() -> None:
+    registry = FakeWorkflowRegistry()
+    runtime = _runtime(registry)
+    workflow_id, ids = await _register(runtime, GRAPH)
+    a, b = ids["a"], ids["b"]
+
+    runtime.cancel_workflow(workflow_id)
+
+    restored = _runtime(registry)
+    await restored.rehydrate()
+
+    # Cancelled tasks rehydrate terminal and are never re-enqueued.
+    record_a = restored.get_record(a)
+    record_b = restored.get_record(b)
+    assert record_a is not None and record_a.status == TaskStatus.CANCELLED
+    assert record_b is not None and record_b.status == TaskStatus.CANCELLED
+    assert restored.ready_queue_length() == 0

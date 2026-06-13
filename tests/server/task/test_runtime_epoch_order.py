@@ -13,30 +13,10 @@ class _WorkflowRegistryStub:
     async def register_workflow_async(self, workflow_id: str, tasks: list[Any]) -> None:
         return None
 
-    def mark_task_dispatched(self, workflow_id: str, *task_ids: str) -> None:
-        return None
-
-    def mark_task_done(self, workflow_id: str, *task_ids: str) -> None:
-        return None
-
-    def mark_task_failed(self, workflow_id: str, *task_ids: str) -> None:
-        return None
-
-    def mark_task_pending(self, workflow_id: str, *task_ids: str) -> None:
-        return None
-
-    def mark_task_cancelled(self, workflow_id: str, *task_ids: str) -> None:
-        return None
-
-    def save_task_states(self, items: Any) -> None:
+    def commit_transition(self, transition: Any) -> None:
         return None
 
     async def save_task_states_async(self, items: Any) -> None:
-        return None
-
-    def save_workflow_sched(
-        self, workflow_id: str, in_epoch_order: bool, frontier: int
-    ) -> None:
         return None
 
     async def save_workflow_sched_async(

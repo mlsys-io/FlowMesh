@@ -13,7 +13,12 @@ from shared.utils import new_workflow_id
 
 from ..hooks import SUPPLIER_RESOLVERS
 from ..registries.worker import Worker, WorkerRegistry
-from ..registries.workflow import PersistedTask, WorkflowRegistry, WorkflowSched
+from ..registries.workflow import (
+    PersistedTask,
+    WorkflowRegistry,
+    WorkflowSched,
+    WorkflowTransition,
+)
 from ..utils.time import parse_iso_ts
 from .models import (
     TERMINAL_TASK_STATUSES,
@@ -371,62 +376,83 @@ class TaskRuntime:
             epoch_index=self._task_epoch_index.get(task_id),
         )
 
-    def _persist_locked(self, *task_ids: str) -> None:
-        items = [
+    def _sched_locked(self, workflow_id: str) -> WorkflowSched:
+        return WorkflowSched(
+            in_epoch_order=self._workflow_in_epoch_order.get(workflow_id, False),
+            epoch_frontier=self._workflow_epoch_frontier.get(workflow_id, 0),
+        )
+
+    def _records_locked(self, *task_ids: str) -> list[PersistedTask]:
+        return [
             persisted
             for task_id in dict.fromkeys(task_ids)
             if (persisted := self._persisted_task_locked(task_id))
         ]
-        if items:
-            self._workflow_registry.save_task_states(items)
 
-    def _persist_sched_locked(self, workflow_id: str) -> None:
-        self._workflow_registry.save_workflow_sched(
-            workflow_id,
-            self._workflow_in_epoch_order.get(workflow_id, False),
-            self._workflow_epoch_frontier.get(workflow_id, 0),
-        )
+    def _persist_locked(self, *task_ids: str) -> None:
+        """Commit task records (no membership change) atomically, per workflow."""
+        by_workflow: dict[str, list[str]] = defaultdict(list)
+        for task_id in dict.fromkeys(task_ids):
+            record = self._tasks.get(task_id)
+            if record is not None:
+                by_workflow[record.workflow_id].append(task_id)
+        for workflow_id, ids in by_workflow.items():
+            self._workflow_registry.commit_transition(
+                WorkflowTransition(
+                    workflow_id=workflow_id, records=self._records_locked(*ids)
+                )
+            )
 
-    def _persist_terminal_locked(self, *task_ids: str) -> None:
-        """Persist each task's final state — its record and its done/failed/cancelled
-        set membership (by current status) — as the single last step of a transition.
+    def _persist_terminal_locked(self, *task_ids: str, sched: bool = True) -> None:
+        """Commit each task's final state — its record and its done/failed/cancelled
+        set membership (by current status) — plus the workflow schedule, as one atomic
+        transaction per workflow and the single last step of a transition.
 
-        Persisting only after all in-memory mutations means a failed write can't leave
-        the in-memory state half-applied; the error propagates and the at-least-once
-        replay re-persists via ``_repersist_terminal_workflow_locked``. This assumes
-        the in-memory mutations never raise, which holds while ordered tasks carry
-        ``position_in_epoch`` (so the ready-queue helpers never hit their guards).
+        Committing only after all in-memory mutations means a failed or crashed write
+        can't leave durable state half-applied: the transaction commits in full or not
+        at all. Event-driven callers additionally heal via the at-least-once replay
+        (``_repersist_terminal_workflow_locked``); the API-driven cancel relies on this
+        atomicity alone. Assumes the in-memory mutations never raise, which holds while
+        ordered tasks carry ``position_in_epoch`` (so the ready-queue helpers never hit
+        their guards).
         """
-        workflow_terminal_tasks: dict[str, tuple[list[str], list[str], list[str]]] = (
-            defaultdict(lambda: ([], [], []))
+        records: dict[str, list[str]] = defaultdict(list)
+        moves: dict[str, tuple[list[str], list[str], list[str]]] = defaultdict(
+            lambda: ([], [], [])
         )
         for task_id in dict.fromkeys(task_ids):
             record = self._tasks.get(task_id)
             if record is None:
                 continue
             workflow_id = record.workflow_id
+            records[workflow_id].append(task_id)
+            done, failed, cancelled = moves[workflow_id]
             match record.status:
                 case TaskStatus.DONE:
-                    workflow_terminal_tasks[workflow_id][0].append(task_id)
+                    done.append(task_id)
                 case TaskStatus.FAILED:
-                    workflow_terminal_tasks[workflow_id][1].append(task_id)
+                    failed.append(task_id)
                 case TaskStatus.CANCELLED:
-                    workflow_terminal_tasks[workflow_id][2].append(task_id)
-        for workflow_id, (done, failed, cancelled) in workflow_terminal_tasks.items():
-            if done:
-                self._workflow_registry.mark_task_done(workflow_id, *done)
-            if failed:
-                self._workflow_registry.mark_task_failed(workflow_id, *failed)
-            if cancelled:
-                self._workflow_registry.mark_task_cancelled(workflow_id, *cancelled)
-        self._persist_locked(*task_ids)
+                    cancelled.append(task_id)
+        for workflow_id, ids in records.items():
+            done, failed, cancelled = moves[workflow_id]
+            self._workflow_registry.commit_transition(
+                WorkflowTransition(
+                    workflow_id=workflow_id,
+                    records=self._records_locked(*ids),
+                    done=done,
+                    failed=failed,
+                    cancelled=cancelled,
+                    sched=self._sched_locked(workflow_id) if sched else None,
+                )
+            )
 
     def _repersist_terminal_workflow_locked(self, workflow_id: str) -> None:
-        """Re-persist the workflow's already-terminal tasks and schedule state.
+        """Re-commit the workflow's already-terminal tasks and schedule state.
 
         The idempotency guard calls this on a replayed terminal event: the original
         transition may have failed its persist after committing in memory, so
-        re-persisting makes the durable state current before the consumer's cursor
+        re-committing makes the durable state current before the consumer's cursor
         advances past the event (else the task re-runs after a restart). It covers the
         whole workflow, not just the replayed task, because a cascade's other affected
         tasks aren't identifiable here. Idempotent; only on a rare duplicate replay.
@@ -439,7 +465,12 @@ class TaskRuntime:
         ]
         if terminal_ids:
             self._persist_terminal_locked(*terminal_ids)
-        self._persist_sched_locked(workflow_id)
+        else:
+            self._workflow_registry.commit_transition(
+                WorkflowTransition(
+                    workflow_id=workflow_id, sched=self._sched_locked(workflow_id)
+                )
+            )
 
     # ------------------------------------------------------------------ #
     # Ready queue helpers
@@ -658,7 +689,6 @@ class TaskRuntime:
             record.started_ts = None
             record.finished_ts = None
             record.error = None
-            self._workflow_registry.mark_task_pending(record.workflow_id, task_id)
             if increment_retry:
                 try:
                     if record.max_attempts is not None and record.max_attempts >= 0:
@@ -667,7 +697,13 @@ class TaskRuntime:
                         record.attempts = record.attempts + 1
                 except Exception:
                     record.attempts = (record.attempts or 0) + 1
-            self._persist_locked(task_id)
+            self._workflow_registry.commit_transition(
+                WorkflowTransition(
+                    workflow_id=record.workflow_id,
+                    records=self._records_locked(task_id),
+                    pending=[task_id],
+                )
+            )
 
     def requeue(self, task_id: str, *, front: bool = False) -> bool:
         """Reinsert a task into the ready queue."""
@@ -738,8 +774,13 @@ class TaskRuntime:
                 sibling_record.merged_parent_id = task_id
                 sibling_record.assigned_worker = None
                 sibling_record.merge_slice = None
-        self._workflow_registry.mark_task_dispatched(record.workflow_id, *siblings)
-        self._persist_locked(task_id, *siblings)
+        self._workflow_registry.commit_transition(
+            WorkflowTransition(
+                workflow_id=record.workflow_id,
+                records=self._records_locked(task_id, *siblings),
+                dispatched=siblings,
+            )
+        )
 
         return siblings
 
@@ -891,10 +932,15 @@ class TaskRuntime:
             record.dispatched_ts = time.time()
             record.next_retry_at = None
             record.supplier_id = supplier_id
-            self._workflow_registry.mark_task_dispatched(record.workflow_id, task_id)
             self._remove_from_ready_locked(task_id)
             self._merge_bucket_remove(task_id)
-            self._persist_locked(task_id)
+            self._workflow_registry.commit_transition(
+                WorkflowTransition(
+                    workflow_id=record.workflow_id,
+                    records=self._records_locked(task_id),
+                    dispatched=[task_id],
+                )
+            )
 
     def mark_started(
         self,
@@ -915,8 +961,13 @@ class TaskRuntime:
             record.started_ts = started_ts
             if worker_id:
                 record.assigned_worker = worker_id
-            self._workflow_registry.mark_task_dispatched(record.workflow_id, task_id)
-            self._persist_locked(task_id)
+            self._workflow_registry.commit_transition(
+                WorkflowTransition(
+                    workflow_id=record.workflow_id,
+                    records=self._records_locked(task_id),
+                    dispatched=[task_id],
+                )
+            )
 
     def mark_updated(self, task_id: str, payload: dict[str, Any]) -> None:
         with self._lock:
@@ -1011,8 +1062,6 @@ class TaskRuntime:
                 )
 
             self._persist_terminal_locked(task_id, *merged_children_ids)
-            if record is not None:
-                self._persist_sched_locked(record.workflow_id)
 
             if ready_children:
                 self._cv.notify_all()
@@ -1121,8 +1170,6 @@ class TaskRuntime:
             self._persist_terminal_locked(
                 task_id, *merged_children_ids, *(dep_id for dep_id, _ in impacted)
             )
-            if record is not None:
-                self._persist_sched_locked(record.workflow_id)
 
             return impacted, merged_children_ids, usages
 
@@ -1184,9 +1231,14 @@ class TaskRuntime:
             self._workflow_in_epoch_order.pop(workflow_id, None)
             for task_id, _ in workflow_tasks:
                 self._task_epoch_index.pop(task_id, None)
-            self._persist_locked(*cancelling)
-            self._persist_terminal_locked(*cancelled)
-            self._persist_sched_locked(workflow_id)
+            self._workflow_registry.commit_transition(
+                WorkflowTransition(
+                    workflow_id=workflow_id,
+                    records=self._records_locked(*touched),
+                    cancelled=cancelled,
+                    sched=self._sched_locked(workflow_id),
+                )
+            )
 
         for interrupt in interrupts:
             worker = self._worker_registry.get_worker(interrupt.worker_id)
@@ -1244,7 +1296,7 @@ class TaskRuntime:
             self._merge_key_by_task.pop(task_id, None)
             self._merge_children_map.pop(task_id, None)
             record.assigned_worker = None
-            self._persist_terminal_locked(task_id)
+            self._persist_terminal_locked(task_id, sched=False)
             return usages
 
     def get_record(self, task_id: str) -> TaskRecord | None:
