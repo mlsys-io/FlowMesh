@@ -1,6 +1,5 @@
 import json
 from collections.abc import Sequence
-from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
@@ -58,24 +57,6 @@ class WorkflowSched(BaseModel):
 
     in_epoch_order: bool = False
     epoch_frontier: int = 0
-
-
-@dataclass(frozen=True, slots=True)
-class WorkflowTransition:
-    """A durable workflow state delta committed as one atomic Redis transaction.
-
-    ``records`` are upserted; each status field moves its task ids into that
-    status's set membership; ``sched`` snapshots the schedule when present.
-    """
-
-    workflow_id: str
-    records: Sequence[PersistedTask] = ()
-    dispatched: Sequence[str] = ()
-    pending: Sequence[str] = ()
-    done: Sequence[str] = ()
-    failed: Sequence[str] = ()
-    cancelled: Sequence[str] = ()
-    sched: WorkflowSched | None = None
 
 
 class WorkflowStatus(StrEnum):
@@ -278,36 +259,47 @@ class WorkflowRegistry:
             remaining_tasks,
         )
 
-    def commit_transition(self, transition: WorkflowTransition) -> None:
+    def commit_transition(
+        self,
+        workflow_id: str,
+        *,
+        records: Sequence[PersistedTask] = (),
+        dispatched: Sequence[str] = (),
+        pending: Sequence[str] = (),
+        done: Sequence[str] = (),
+        failed: Sequence[str] = (),
+        cancelled: Sequence[str] = (),
+        sched: WorkflowSched | None = None,
+    ) -> None:
         """Apply a workflow state delta as one atomic control-Redis transaction.
 
-        Task records, status-set membership moves, the workflow's ``updated_at``,
-        and the optional schedule snapshot commit together or not at all, so a
-        crash mid-persist can never leave durable state half-applied.
+        ``records`` are upserted; ``dispatched`` / ``pending`` / ``done`` /
+        ``failed`` / ``cancelled`` move their task ids into the matching status-set
+        membership; ``sched`` snapshots the schedule when present. The records,
+        membership moves, the workflow's ``updated_at``, and the schedule snapshot
+        commit together or not at all, so a crash mid-persist can never leave
+        durable state half-applied.
         """
-        wf = transition.workflow_id
-        leaving = (*transition.done, *transition.failed, *transition.cancelled)
-        touched_membership = bool(
-            transition.dispatched or transition.pending or leaving
-        )
+        terminal = (*done, *failed, *cancelled)
+        touched_membership = bool(dispatched or pending or terminal)
         with self._rds.sync.control_pipeline() as pipe:
-            for item in transition.records:
+            for item in records:
                 pipe.set(task_state_key(item.record.task_id), item.model_dump_json())
-            if transition.dispatched:
-                pipe.sadd(workflow_dispatched_tasks_key(wf), *transition.dispatched)
-            if transition.pending:
-                pipe.srem(workflow_dispatched_tasks_key(wf), *transition.pending)
-            if leaving:
-                pipe.srem(workflow_tasks_key(wf), *leaving)
-                pipe.srem(workflow_dispatched_tasks_key(wf), *leaving)
-            if transition.failed:
-                pipe.sadd(workflow_failed_tasks_key(wf), *transition.failed)
-            if transition.cancelled:
-                pipe.sadd(workflow_cancelled_tasks_key(wf), *transition.cancelled)
-            if touched_membership or transition.sched is not None:
-                pipe.hset(workflow_key(wf), mapping=_workflow_update())
-            if transition.sched is not None:
-                pipe.set(workflow_sched_key(wf), transition.sched.model_dump_json())
+            if dispatched:
+                pipe.sadd(workflow_dispatched_tasks_key(workflow_id), *dispatched)
+            if pending:
+                pipe.srem(workflow_dispatched_tasks_key(workflow_id), *pending)
+            if terminal:
+                pipe.srem(workflow_tasks_key(workflow_id), *terminal)
+                pipe.srem(workflow_dispatched_tasks_key(workflow_id), *terminal)
+            if failed:
+                pipe.sadd(workflow_failed_tasks_key(workflow_id), *failed)
+            if cancelled:
+                pipe.sadd(workflow_cancelled_tasks_key(workflow_id), *cancelled)
+            if touched_membership or sched is not None:
+                pipe.hset(workflow_key(workflow_id), mapping=_workflow_update())
+            if sched is not None:
+                pipe.set(workflow_sched_key(workflow_id), sched.model_dump_json())
             pipe.execute()
 
     # ---- Durable task state (for restart rehydration) ----------------- #

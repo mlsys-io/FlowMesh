@@ -13,7 +13,7 @@ class _WorkflowRegistryStub:
     async def register_workflow_async(self, workflow_id: str, tasks: list[Any]) -> None:
         return None
 
-    def commit_transition(self, transition: Any) -> None:
+    def commit_transition(self, workflow_id: str, **kwargs: Any) -> None:
         return None
 
     async def save_task_states_async(self, items: Any) -> None:

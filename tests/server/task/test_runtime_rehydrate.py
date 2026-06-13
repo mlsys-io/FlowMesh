@@ -2,6 +2,7 @@
 
 import logging
 import threading
+from collections.abc import Sequence
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -74,11 +75,18 @@ class FakeWorkflowRegistry:
     async def load_workflow_sched_async(self, workflow_id: str) -> WorkflowSched | None:
         return self.load_workflow_sched(workflow_id)
 
-    def commit_transition(self, transition: Any) -> None:
-        for item in transition.records:
+    def commit_transition(
+        self,
+        workflow_id: str,
+        *,
+        records: Sequence[PersistedTask] = (),
+        sched: WorkflowSched | None = None,
+        **_: Any,
+    ) -> None:
+        for item in records:
             self.task_blobs[item.record.task_id] = item.model_dump_json()
-        if transition.sched is not None:
-            self.sched[transition.workflow_id] = transition.sched.model_dump_json()
+        if sched is not None:
+            self.sched[workflow_id] = sched.model_dump_json()
 
 
 class _WorkerRegistryStub:
@@ -343,7 +351,7 @@ async def test_mark_succeeded_applies_in_memory_atomically_when_persist_raises(
     _, ids = await _register(runtime, GRAPH)
     a, b = ids["a"], ids["b"]
 
-    def boom(transition: Any) -> None:
+    def boom(*args: Any, **kwargs: Any) -> None:
         raise RuntimeError("redis down")
 
     monkeypatch.setattr(registry, "commit_transition", boom)
@@ -357,7 +365,7 @@ async def test_mark_succeeded_applies_in_memory_atomically_when_persist_raises(
     assert b in runtime._ready_index
 
     # The at-least-once replay re-runs and is a no-op via the idempotency guard.
-    monkeypatch.setattr(registry, "commit_transition", lambda transition: None)
+    monkeypatch.setattr(registry, "commit_transition", lambda *args, **kwargs: None)
     assert runtime.mark_succeeded(a, "wkr-1", {}, "2026-06-01T00:00:00Z") == []
 
 
@@ -370,7 +378,7 @@ async def test_mark_failed_applies_cascade_atomically_when_persist_raises(
     _, ids = await _register(runtime, GRAPH)
     a, b = ids["a"], ids["b"]
 
-    def boom(transition: Any) -> None:
+    def boom(*args: Any, **kwargs: Any) -> None:
         raise RuntimeError("redis down")
 
     monkeypatch.setattr(registry, "commit_transition", boom)
@@ -385,7 +393,7 @@ async def test_mark_failed_applies_cascade_atomically_when_persist_raises(
     assert record_b is not None and record_b.status == TaskStatus.FAILED
 
     # Replay is a no-op via the idempotency guard (task already terminal).
-    monkeypatch.setattr(registry, "commit_transition", lambda transition: None)
+    monkeypatch.setattr(registry, "commit_transition", lambda *args, **kwargs: None)
     impacted, _, _ = runtime.mark_failed(a, "wkr-1", {}, "2026-06-01T00:00:00Z")
     assert impacted == []
 
@@ -402,11 +410,11 @@ async def test_replayed_terminal_event_repersists_after_failed_write(
     real_commit = registry.commit_transition
     calls = {"n": 0}
 
-    def flaky_commit(transition: Any) -> None:
+    def flaky_commit(*args: Any, **kwargs: Any) -> None:
         calls["n"] += 1
         if calls["n"] == 1:
             raise RuntimeError("redis down")
-        real_commit(transition)
+        real_commit(*args, **kwargs)
 
     monkeypatch.setattr(registry, "commit_transition", flaky_commit)
 
@@ -442,7 +450,7 @@ async def test_mark_cancelled_applies_in_memory_atomically_when_persist_raises(
     _, ids = await _register(runtime, GRAPH)
     a = ids["a"]
 
-    def boom(transition: Any) -> None:
+    def boom(*args: Any, **kwargs: Any) -> None:
         raise RuntimeError("redis down")
 
     monkeypatch.setattr(registry, "commit_transition", boom)
@@ -454,7 +462,7 @@ async def test_mark_cancelled_applies_in_memory_atomically_when_persist_raises(
     assert record_a is not None and record_a.status == TaskStatus.CANCELLED
 
     # Replay is a no-op via the idempotency guard (task already cancelled).
-    monkeypatch.setattr(registry, "commit_transition", lambda transition: None)
+    monkeypatch.setattr(registry, "commit_transition", lambda *args, **kwargs: None)
     runtime.mark_cancelled(a, "wkr-1", {}, "2026-06-01T00:00:00Z")
     record_a = runtime.get_record(a)
     assert record_a is not None and record_a.status == TaskStatus.CANCELLED
@@ -472,11 +480,11 @@ async def test_mark_cancelled_repersists_on_replay_after_failed_write(
     real_commit = registry.commit_transition
     calls = {"n": 0}
 
-    def flaky_commit(transition: Any) -> None:
+    def flaky_commit(*args: Any, **kwargs: Any) -> None:
         calls["n"] += 1
         if calls["n"] == 1:
             raise RuntimeError("redis down")
-        real_commit(transition)
+        real_commit(*args, **kwargs)
 
     monkeypatch.setattr(registry, "commit_transition", flaky_commit)
 
@@ -504,7 +512,7 @@ async def test_cancel_workflow_commits_atomically_on_crash(
     workflow_id, ids = await _register(runtime, GRAPH)
     a, b = ids["a"], ids["b"]
 
-    def boom(transition: Any) -> None:
+    def boom(*args: Any, **kwargs: Any) -> None:
         raise RuntimeError("redis down")
 
     def persisted_status(task_id: str) -> str:
