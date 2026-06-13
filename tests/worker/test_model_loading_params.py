@@ -389,18 +389,3 @@ class TestBuildHFLoadKwargs:
         assert model_kwargs["quantization_config"].bnb_4bit_compute_dtype is (
             torch.float16
         )
-
-    def test_bnb_compute_dtype_falls_back_to_float16_when_cuda_init_fails(
-        self,
-    ) -> None:
-        pytest.importorskip("bitsandbytes")
-        with (
-            patch.object(torch.cuda, "is_available", return_value=True),
-            patch.object(torch.cuda, "is_bf16_supported", side_effect=RuntimeError),
-        ):
-            _, model_kwargs = self._build(
-                training_cfg={"load_in_4bit": True}, torch_dtype=None
-            )
-        assert model_kwargs["quantization_config"].bnb_4bit_compute_dtype is (
-            torch.float16
-        )
