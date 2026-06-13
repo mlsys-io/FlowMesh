@@ -399,6 +399,9 @@ class TaskRuntime:
         the in-memory mutations never raise, which holds while ordered tasks carry
         ``position_in_epoch`` (so the ready-queue helpers never hit their guards).
         """
+        workflow_terminal_tasks: dict[str, tuple[list[str], list[str], list[str]]] = (
+            defaultdict(lambda: ([], [], []))
+        )
         for task_id in dict.fromkeys(task_ids):
             record = self._tasks.get(task_id)
             if record is None:
@@ -406,11 +409,18 @@ class TaskRuntime:
             workflow_id = record.workflow_id
             match record.status:
                 case TaskStatus.DONE:
-                    self._workflow_registry.mark_task_done(workflow_id, task_id)
+                    workflow_terminal_tasks[workflow_id][0].append(task_id)
                 case TaskStatus.FAILED:
-                    self._workflow_registry.mark_task_failed(workflow_id, task_id)
+                    workflow_terminal_tasks[workflow_id][1].append(task_id)
                 case TaskStatus.CANCELLED:
-                    self._workflow_registry.mark_task_cancelled(workflow_id, task_id)
+                    workflow_terminal_tasks[workflow_id][2].append(task_id)
+        for workflow_id, (done, failed, cancelled) in workflow_terminal_tasks.items():
+            if done:
+                self._workflow_registry.mark_task_done(workflow_id, *done)
+            if failed:
+                self._workflow_registry.mark_task_failed(workflow_id, *failed)
+            if cancelled:
+                self._workflow_registry.mark_task_cancelled(workflow_id, *cancelled)
         self._persist_locked(*task_ids)
 
     def _repersist_terminal_workflow_locked(self, workflow_id: str) -> None:
