@@ -1124,16 +1124,16 @@ class TaskRuntime:
 
     def cancel_workflow(self, workflow_id: str, reason: str = "cancelled") -> list[str]:
         cancelled: list[str] = []
+        cancelling: list[str] = []
+        touched: list[str] = []
         interrupts: list[InterruptMessage] = []
         with self._cv:
-            workflow_task_ids = [
-                task_id
-                for task_id, record in self._tasks.items()
-                if record.workflow_id == workflow_id
+            workflow_tasks = [
+                item
+                for item in self._tasks.items()
+                if item[1].workflow_id == workflow_id
             ]
-            for task_id, record in list(self._tasks.items()):
-                if record.workflow_id != workflow_id:
-                    continue
+            for task_id, record in workflow_tasks:
                 match record.status:
                     case TaskStatus.PENDING if not self._parent_is_active(task_id):
                         record.status = TaskStatus.CANCELLED
@@ -1150,6 +1150,8 @@ class TaskRuntime:
                         self._merge_key_by_task.pop(task_id, None)
                         self._merge_parent_map.pop(task_id, None)
                         self._merge_children_map.pop(task_id, None)
+                        cancelled.append(task_id)
+                        touched.append(task_id)
                     case TaskStatus.DISPATCHED if (
                         not self._parent_is_active(task_id)
                         and not record.merged_children
@@ -1164,22 +1166,20 @@ class TaskRuntime:
                                 reason=reason,
                             )
                         )
+                        cancelling.append(task_id)
+                        touched.append(task_id)
                     case _:
                         continue
-                cancelled.append(task_id)
 
             self._workflow_epoch_tasks.pop(workflow_id, None)
             self._workflow_epoch_frontier.pop(workflow_id, None)
             self._workflow_in_epoch_order.pop(workflow_id, None)
-            for task_id in workflow_task_ids:
+            for task_id, _ in workflow_tasks:
                 self._task_epoch_index.pop(task_id, None)
-            self._persist_locked(*cancelled)
+            self._persist_locked(*cancelling)
+            self._persist_terminal_locked(*cancelled)
             self._persist_sched_locked(workflow_id)
 
-        for task_id in cancelled:
-            maybe_record = self._tasks.get(task_id)
-            if maybe_record and maybe_record.status == TaskStatus.CANCELLED:
-                self._workflow_registry.mark_task_cancelled(workflow_id, task_id)
         for interrupt in interrupts:
             worker = self._worker_registry.get_worker(interrupt.worker_id)
             if worker is None:
@@ -1190,7 +1190,7 @@ class TaskRuntime:
                 )
             else:
                 self._worker_registry.publish_interrupt(worker, interrupt)
-        return cancelled
+        return touched
 
     def mark_cancelled(
         self, task_id: str, worker_id: str | None, payload: dict[str, Any], ts: str
