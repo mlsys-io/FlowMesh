@@ -1170,6 +1170,8 @@ class TaskRuntime:
                 for item in self._tasks.items()
                 if item[1].workflow_id == workflow_id
             ]
+            if not workflow_tasks:
+                return touched  # Unknown workflow: no records to move
             for task_id, record in workflow_tasks:
                 match record.status:
                     case TaskStatus.PENDING if not self._parent_is_active(task_id):
