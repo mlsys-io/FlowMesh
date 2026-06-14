@@ -80,8 +80,12 @@ class FakeWorkflowRegistry:
         workflow_id: str,
         *,
         records: Sequence[PersistedTask] = (),
+        dispatched: Sequence[str] = (),
+        pending: Sequence[str] = (),
+        done: Sequence[str] = (),
+        failed: Sequence[str] = (),
+        cancelled: Sequence[str] = (),
         sched: WorkflowSched | None = None,
-        **_: Any,
     ) -> None:
         for item in records:
             self.task_blobs[item.record.task_id] = item.model_dump_json()
