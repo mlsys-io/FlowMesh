@@ -174,11 +174,16 @@ class Dispatcher:
         if not pool:
             eligible = self.eligible_worker_ids(record)
             if not eligible:
+                no_worker_message = (
+                    "No SSH-capable worker is available for the task"
+                    if isinstance(task.spec, (SSHSpecStrict, SSHSpecTemplate))
+                    else "No worker satisfies the task hardware requirements"
+                )
                 return self._grace_then_fail(
                     task_id,
                     record,
                     reason="no_eligible_worker",
-                    message="No worker satisfies the task hardware requirements",
+                    message=no_worker_message,
                 )
             if not (eligible - failed_ids):
                 return self._grace_then_fail_exhausted(task_id, record, failed_ids)

@@ -1,7 +1,12 @@
 """Tests for worker hardware satisfaction and sorting."""
 
-from server.registries.worker import Worker, hw_satisfies
-from shared.schemas.worker import SSHLimits, WorkerStatus
+from server.registries.worker import (
+    Worker,
+    _parse_worker_from_redis,
+    capability_satisfies,
+    hw_satisfies,
+)
+from shared.schemas.worker import SSHLimits, WorkerCapabilities, WorkerStatus
 from shared.tasks import TaskEnvelopeStrict
 from shared.tasks.components.resources import (
     GPURequirements,
@@ -28,6 +33,7 @@ def _worker(
     gpu_memory_is_unified: bool = False,
     gpu_shared_memory_total_bytes: int | None = None,
     ssh_limits: SSHLimits | None = None,
+    capabilities: WorkerCapabilities | None = None,
 ) -> Worker:
     devices = [
         GpuInfo(index=i, name=gpu_name, uuid=f"GPU-{i}", memory_total_bytes=gpu_mem)
@@ -54,6 +60,7 @@ def _worker(
         status=WorkerStatus.IDLE,
         hardware=hw,
         ssh_limits=ssh_limits,
+        capabilities=capabilities or WorkerCapabilities(),
     )
 
 
@@ -227,3 +234,37 @@ class TestHwSatisfiesSSHLimits:
         w = _worker(cpu_cores=32, sys_mem=64 * 1024**3)
         t = _ssh_task(cpu=8, memory="4Gi")
         assert hw_satisfies(w, t) is True
+
+
+class TestCapabilitySatisfies:
+    def test_ssh_task_requires_ssh_capable_worker(self) -> None:
+        w = _worker(capabilities=WorkerCapabilities(ssh=False))
+        assert capability_satisfies(w, _ssh_task()) is False
+
+    def test_ssh_task_accepts_ssh_capable_worker(self) -> None:
+        w = _worker(capabilities=WorkerCapabilities(ssh=True))
+        assert capability_satisfies(w, _ssh_task()) is True
+
+    def test_default_worker_is_not_ssh_capable(self) -> None:
+        # An unreporting worker parses with the strict default.
+        assert capability_satisfies(_worker(), _ssh_task()) is False
+
+    def test_non_ssh_task_ignores_capabilities(self) -> None:
+        w = _worker(capabilities=WorkerCapabilities(ssh=False))
+        assert capability_satisfies(w, _task(cpu=2)) is True
+
+
+class TestParseCapabilities:
+    def test_capabilities_round_trip(self) -> None:
+        raw = {
+            "status": "IDLE",
+            "capabilities_json": WorkerCapabilities(ssh=True).model_dump_json(),
+        }
+        w = _parse_worker_from_redis("w-1", raw)
+        assert w is not None
+        assert w.capabilities.ssh is True
+
+    def test_missing_capabilities_defaults_strict(self) -> None:
+        w = _parse_worker_from_redis("w-1", {"status": "IDLE"})
+        assert w is not None
+        assert w.capabilities.ssh is False

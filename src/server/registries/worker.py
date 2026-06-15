@@ -9,7 +9,7 @@ from shared.schemas.command import (
     StopMessage,
     TaskMessage,
 )
-from shared.schemas.worker import SSHLimits
+from shared.schemas.worker import SSHLimits, WorkerCapabilities
 from shared.tasks import TaskEnvelope
 from shared.tasks.components.resources import GPURequirements
 from shared.tasks.specs import SSHSpecStrict, SSHSpecTemplate
@@ -57,6 +57,10 @@ class Worker(BaseModel):
     )
     ssh_limits: SSHLimits | None = Field(
         default=None, description="Configured ceiling on SSH session resources."
+    )
+    capabilities: WorkerCapabilities = Field(
+        default_factory=WorkerCapabilities,
+        description="Task capabilities the worker advertises.",
     )
     tags: list[str] = Field(default_factory=list, description="Worker tags.")
     last_seen: str | None = Field(default=None, description="Last heartbeat timestamp.")
@@ -372,18 +376,18 @@ class WorkerRegistry:
                 continue
             if self.is_worker_stale(worker.id):
                 continue
-            if hw_satisfies(worker, task):
+            if hw_satisfies(worker, task) and capability_satisfies(worker, task):
                 available.append(worker)
         return self.sort_workers(available)
 
     def satisfying_workers(self, task: TaskEnvelope) -> list[Worker]:
-        """Non-stale workers whose hardware satisfies the task, any status."""
+        """Non-stale workers whose hardware and capabilities satisfy the task."""
         available: list[Worker] = []
         for worker_id in self.get_worker_ids():
             worker = self.get_worker(worker_id)
             if not worker or self.is_worker_stale(worker.id):
                 continue
-            if hw_satisfies(worker, task):
+            if hw_satisfies(worker, task) and capability_satisfies(worker, task):
                 available.append(worker)
         return self.sort_workers(available)
 
@@ -490,6 +494,17 @@ def _merge_unique(existing: list[str], additions: Iterable[str]) -> list[str]:
         seen.add(lowered)
         merged.append(normalized)
     return merged
+
+
+def capability_satisfies(worker: Worker, task: TaskEnvelope) -> bool:
+    """Whether the worker advertises the capability the task requires.
+
+    Capability is distinct from hardware fit: an SSH task needs a worker that can
+    actually spawn session containers, regardless of CPU/GPU/memory.
+    """
+    if isinstance(task.spec, (SSHSpecStrict, SSHSpecTemplate)):
+        return worker.capabilities.ssh
+    return True
 
 
 def hw_satisfies(worker: Worker, task: TaskEnvelope) -> bool:
@@ -648,6 +663,12 @@ def _parse_worker_from_redis(
         if ssh_limits_json is None
         else SSHLimits.model_validate_json(ssh_limits_json)
     )
+    capabilities_json = value.get("capabilities_json")
+    capabilities = (
+        WorkerCapabilities()
+        if capabilities_json is None
+        else WorkerCapabilities.model_validate_json(capabilities_json)
+    )
     tags = _loads(value.get("tags_json"), [])
     cached_models = _ensure_str_list(_loads(value.get("cache_models_json"), []))
     cached_datasets = _ensure_str_list(_loads(value.get("cache_datasets_json"), []))
@@ -678,6 +699,7 @@ def _parse_worker_from_redis(
         env=env,
         hardware=hardware,
         ssh_limits=ssh_limits,
+        capabilities=capabilities,
         tags=tags,
         last_seen=value.get("last_seen"),
         cached_models=cached_models,
