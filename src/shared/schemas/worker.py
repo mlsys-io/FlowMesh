@@ -30,4 +30,19 @@ class SSHLimits(BaseModel):
     )
 
 
-__all__ = ["SSHLimits", "WorkerStatus"]
+class WorkerCapabilities(BaseModel):
+    """Task capabilities a worker advertises to the dispatcher.
+
+    Each flag reflects what the worker process can actually service, as opposed
+    to what its node was configured to allow. A capability left at its default
+    means the worker advertises that it cannot service the corresponding task
+    kind, so the dispatcher excludes it.
+    """
+
+    ssh: bool = Field(
+        default=False,
+        description="Whether the worker can run SSH session tasks (Docker reachable).",
+    )
+
+
+__all__ = ["SSHLimits", "WorkerCapabilities", "WorkerStatus"]
