@@ -42,6 +42,7 @@ from .workers import (
     SSHLimits,
     StorageInfo,
     Worker,
+    WorkerCapabilities,
     WorkerHardware,
     WorkerInfo,
 )
@@ -91,6 +92,7 @@ __all__ = [
     "TaskType",
     "TaskUsage",
     "Worker",
+    "WorkerCapabilities",
     "WorkerHardware",
     "WorkerInfo",
     "WorkerRegisterResponse",
