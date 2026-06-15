@@ -16,7 +16,7 @@ from google.protobuf.struct_pb2 import Struct
 
 from shared.grpc.supervisor.v1 import supervisor_pb2, supervisor_pb2_grpc
 from shared.schemas.event import Event, TaskEvent, WorkerEvent, serialize_event
-from shared.schemas.worker import SSHLimits
+from shared.schemas.worker import SSHLimits, WorkerCapabilities
 from shared.tasks.worker_message import (
     WorkerHardware,
     WorkerStatus,
@@ -95,6 +95,7 @@ class SupervisorClient:
         env: dict[str, Any],
         hardware: WorkerHardware,
         ssh_limits: SSHLimits | None,
+        capabilities: WorkerCapabilities,
         tags: list[str],
         cost_per_hour: float,
         power_metrics: dict[str, Any] | None = None,
@@ -118,6 +119,7 @@ class SupervisorClient:
             "tags_json": json.dumps(tags, ensure_ascii=False),
             "last_seen": started_at,
             "cost_per_hour": str(cost_per_hour),
+            "capabilities_json": capabilities.model_dump_json(),
         }
         if ssh_limits is not None:
             worker_meta["ssh_limits_json"] = ssh_limits.model_dump_json()

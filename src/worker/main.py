@@ -2,12 +2,14 @@ import argparse
 import logging
 import signal
 
+from shared.schemas.worker import WorkerCapabilities
 from shared.tasks.worker_message import WorkerHardware
 
 from .config import WorkerConfig
 from .executors import EXECUTOR_CLASS_NAMES, EXECUTOR_REGISTRY, IMPORT_ERRORS
 from .executors.base_executor import Executor
 from .executors.mp_executor import MPExecutor
+from .executors.utils.docker import docker_available
 from .hw import collect_hw
 from .lifecycle import Lifecycle
 from .power import PowerMonitor
@@ -195,15 +197,25 @@ def main() -> None:
     )
     hardware = collect_hw(bandwidth_bytes_per_sec=cfg.network_bandwidth_bytes_per_sec)
     logger.info("Collected hardware info: %s", hardware)
+    capabilities = WorkerCapabilities(ssh=docker_available())
     ssh_limits = cfg.ssh_limits
-    if ssh_limits is None:
-        logger.warning(
-            "SSH resource cap not configured; SSH sessions will be able to access "
-            "full host resources of this worker."
-        )
+    if capabilities.ssh:
+        if ssh_limits is None:
+            logger.warning(
+                "SSH resource cap not configured; SSH sessions will be able to access "
+                "full host resources of this worker."
+            )
+        else:
+            logger.info("SSH resource cap: %s", ssh_limits.model_dump())
     else:
-        logger.info("SSH resource cap: %s", ssh_limits.model_dump())
-    lifecycle.start(env={}, hardware=hardware, ssh_limits=ssh_limits, tags=cfg.tags)
+        logger.info("SSH support disabled; Docker is not reachable from this worker.")
+    lifecycle.start(
+        env={},
+        hardware=hardware,
+        ssh_limits=ssh_limits,
+        capabilities=capabilities,
+        tags=cfg.tags,
+    )
 
     executors, default_executor = initialize_executors(
         cfg,
