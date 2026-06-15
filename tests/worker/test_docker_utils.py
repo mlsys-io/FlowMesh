@@ -45,5 +45,8 @@ def test_docker_available_true_when_ping_succeeds(
         def ping(self) -> bool:
             return True
 
+        def close(self) -> None:
+            return None
+
     monkeypatch.setattr(docker_utils, "docker_client", lambda: _Client())
     assert docker_available() is True

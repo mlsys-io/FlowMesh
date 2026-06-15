@@ -45,7 +45,13 @@ def docker_client() -> "DockerClient":
 def docker_available() -> bool:
     """Return whether the host Docker daemon is reachable."""
     try:
-        docker_client().ping()
+        client = docker_client()
+    except DockerUnavailableError:
+        return False
+    try:
+        client.ping()
         return True
     except Exception:
         return False
+    finally:
+        client.close()
