@@ -176,12 +176,12 @@ class TestEnsureSshNetwork:
 
 
 class TestPrepareCreatesNetwork:
-    @patch("worker.executors.ssh_executor.docker")
+    @patch("worker.executors.ssh_executor.docker_client")
     def test_prepare_sets_ssh_network(
-        self, mock_docker: MagicMock, tmp_path: Path
+        self, mock_docker_client: MagicMock, tmp_path: Path
     ) -> None:
         executor = _make_executor(tmp_path)
-        client = mock_docker.from_env.return_value
+        client = mock_docker_client.return_value
         client.networks.list.return_value = []
 
         executor.prepare()
@@ -189,12 +189,12 @@ class TestPrepareCreatesNetwork:
         assert executor._ssh_network == _SSH_NETWORK_NAME
         client.networks.create.assert_called_once()
 
-    @patch("worker.executors.ssh_executor.docker")
+    @patch("worker.executors.ssh_executor.docker_client")
     def test_prepare_graceful_fallback(
-        self, mock_docker: MagicMock, tmp_path: Path
+        self, mock_docker_client: MagicMock, tmp_path: Path
     ) -> None:
         executor = _make_executor(tmp_path)
-        client = mock_docker.from_env.return_value
+        client = mock_docker_client.return_value
         client.networks.list.return_value = []
         client.networks.create.side_effect = RuntimeError("no perms")
 
@@ -202,12 +202,12 @@ class TestPrepareCreatesNetwork:
 
         assert executor._ssh_network is None
 
-    @patch("worker.executors.ssh_executor.docker")
+    @patch("worker.executors.ssh_executor.docker_client")
     def test_prepare_skips_network_when_not_configured(
-        self, mock_docker: MagicMock, tmp_path: Path
+        self, mock_docker_client: MagicMock, tmp_path: Path
     ) -> None:
         executor = _make_executor(tmp_path, ssh_network_name=None)
-        client = mock_docker.from_env.return_value
+        client = mock_docker_client.return_value
 
         executor.prepare()
 
@@ -280,13 +280,13 @@ class TestBuildRunKwargsNetwork:
 
 
 class TestTeardownSkipsNetwork:
-    @patch("worker.executors.ssh_executor.docker")
+    @patch("worker.executors.ssh_executor.docker_client")
     def test_teardown_does_not_touch_network(
-        self, mock_docker: MagicMock, tmp_path: Path
+        self, mock_docker_client: MagicMock, tmp_path: Path
     ) -> None:
         """Network cleanup is the supervisor's responsibility, not the worker's."""
         executor = _make_executor(tmp_path)
-        client = mock_docker.from_env.return_value
+        client = mock_docker_client.return_value
         client.containers.list.return_value = []
 
         executor._ssh_network = _SSH_NETWORK_NAME
