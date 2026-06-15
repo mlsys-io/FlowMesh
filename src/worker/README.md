@@ -119,6 +119,12 @@ The SSH session container is labelled with `flowmesh.ssh.task_id` and
 `flowmesh.ssh.worker_id` so the server can clean it up if the worker
 container is stopped externally.
 
+At startup the worker probes Docker reachability and advertises an `ssh`
+capability to the dispatcher. Only SSH-capable workers are selected for SSH
+tasks; a worker whose node has not mounted the Docker socket (e.g.
+`ENABLE_SSH_BY_DEFAULT` unset) advertises no SSH capability and is excluded
+from SSH-task selection rather than accepting the task and failing at runtime.
+
 Relevant env vars for SSH tasks:
 
 | Variable | Default | Description |

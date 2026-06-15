@@ -127,6 +127,13 @@ scripts/dev/            compile_protos, sync_requirements, check_env_examples
   `WorkerHardware`. The dispatcher's `_cached_worker_candidates` filters
   to workers whose cache covers the task's references; entries older
   than `WORKER_CACHE_TTL_SEC` are ignored.
+- **Worker capabilities.** Each worker advertises a `WorkerCapabilities`
+  (e.g. `ssh`) reflecting what it can actually service — the SSH flag is set
+  by probing Docker reachability at startup, independent of hardware fit. The
+  dispatcher gates SSH tasks to SSH-capable workers (`capability_satisfies`),
+  so a node without the Docker socket mounted (e.g. `ENABLE_SSH_BY_DEFAULT`
+  unset) is excluded from SSH selection instead of failing the task at
+  runtime. A worker that reports no capabilities is treated as incapable.
 - **Cursor pagination.** List endpoints accept `limit` and `before` /
   `after` cursors. The cursor is an opaque base64 of `(timestamp, id)`;
   do not parse client-side.
