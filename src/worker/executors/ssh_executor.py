@@ -48,6 +48,7 @@ from shared.utils.http import auth_headers
 from shared.utils.manifest import ARTIFACTS_DIR, prepare_output_dir
 from worker.config import WorkerConfig
 from worker.executors.utils.checkpoints import maybe_upload_artifacts
+from worker.executors.utils.docker import DockerUnavailableError, docker_client
 
 from .base_executor import (
     ExecutionError,
@@ -65,7 +66,6 @@ class SSHResult(BaseExecutorResult):
 
 
 try:
-    import docker
     from docker import DockerClient
     from docker.models.containers import Container
     from docker.types import DeviceRequest
@@ -74,12 +74,10 @@ try:
 except Exception:
     _HAS_DOCKER = False
     if TYPE_CHECKING:
-        import docker
         from docker import DockerClient
         from docker.models.containers import Container
         from docker.types import DeviceRequest
     else:
-        docker = None
         DockerClient = Any
         Container = Any
         DeviceRequest = Any
@@ -616,10 +614,12 @@ class SSHExecutor(Executor):
     def _get_docker_client(self) -> DockerClient:
         if self._docker is None:
             try:
-                self._docker = docker.from_env()
-            except Exception as exc:
+                self._docker = docker_client()
+            except DockerUnavailableError as exc:
                 raise ExecutionError(
-                    f"Docker is not available; cannot run SSH executor: {exc}"
+                    f"Docker is not available; cannot run SSH executor: {exc}. "
+                    "Ensure the worker node sets ENABLE_SSH_BY_DEFAULT=true so the "
+                    "Docker socket is mounted into the worker."
                 ) from exc
         return self._docker
 
