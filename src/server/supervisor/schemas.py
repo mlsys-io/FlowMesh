@@ -3,7 +3,7 @@ from typing import Annotated
 
 from pydantic import BaseModel, Field
 
-from shared.schemas.worker import SSHLimits, WorkerCapabilities
+from shared.schemas.worker import SSHLimits
 
 from .. import env
 from ..schemas.node import WorkerHardware
@@ -34,10 +34,6 @@ class WorkerInfo(BaseModel):
             description="Configured ceiling on SSH session resources.",
         ),
     ] = None
-    capabilities: WorkerCapabilities = Field(
-        default_factory=WorkerCapabilities,
-        description="Task capabilities the worker advertises.",
-    )
 
 
-__all__ = ["WorkerCapabilities", "WorkerHardware", "WorkerInfo", "WorkerStatus"]
+__all__ = ["WorkerHardware", "WorkerInfo", "WorkerStatus"]
