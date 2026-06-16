@@ -48,7 +48,11 @@ from shared.utils.http import auth_headers
 from shared.utils.manifest import ARTIFACTS_DIR, prepare_output_dir
 from worker.config import WorkerConfig
 from worker.executors.utils.checkpoints import maybe_upload_artifacts
-from worker.executors.utils.docker import DockerUnavailableError, docker_client
+from worker.executors.utils.docker import (
+    DockerUnavailableError,
+    docker_available,
+    docker_client,
+)
 
 from .base_executor import (
     ExecutionError,
@@ -384,18 +388,29 @@ class SSHExecutor(Executor):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         config = self._config
-        lifecycle = self._lifecycle
-        self._worker_name = (
-            config.container_name
-            or config.alias
-            or (lifecycle.worker_id if lifecycle else uuid.uuid4().hex[:8])
-        )
+        self._worker_name = config.container_name or config.alias or None
         self._docker: DockerClient | None = None
         self._docker_gpu_runtime: str | None = config.docker_gpu_runtime
         self._ssh_network: str | None = None
         self._cancel_event = threading.Event()
         self._finish_event = threading.Event()
         self._current_container: Container | None = None
+
+    @classmethod
+    def is_available(cls, config: WorkerConfig) -> bool:
+        return docker_available()
+
+    @property
+    def worker_name(self) -> str:
+        if name := self._worker_name:
+            return name
+        name = (
+            lifecycle.worker_id
+            if (lifecycle := self._lifecycle)
+            else uuid.uuid4().hex[:8]
+        )
+        self._worker_name = name
+        return name
 
     # ------------------------------------------------------------------ #
     # Lifecycle
@@ -413,7 +428,7 @@ class SSHExecutor(Executor):
         client = self._get_docker_client()
         try:
             containers = client.containers.list(
-                filters={"label": f"{_LABEL_WORKER}={self._worker_name}"}
+                filters={"label": f"{_LABEL_WORKER}={self.worker_name}"}
             )
         except Exception as exc:
             logger.warning(
@@ -454,7 +469,8 @@ class SSHExecutor(Executor):
             container_cmd = self._resolve_noninteractive_command(client, cfg)
 
         session_id = new_ssh_session_id()
-        container_name = f"{self._worker_name}_ssh-{task.task_id[:8]}-{session_id[:8]}"
+        worker_name = self.worker_name
+        container_name = f"{worker_name}_ssh-{task.task_id[:8]}-{session_id[:8]}"
 
         prepare_output_dir(out_dir)  # Ensure output dir exists before mounting
         resolved_inputs = self._resolve_inputs(task, cfg)
@@ -463,7 +479,7 @@ class SSHExecutor(Executor):
         )
 
         labels = {
-            _LABEL_WORKER: self._worker_name,
+            _LABEL_WORKER: worker_name,
             _LABEL_TASK: task.task_id,
             _LABEL_SESSION: session_id,
             _LABEL_MANAGED: "true",
@@ -1193,7 +1209,7 @@ class SSHExecutor(Executor):
         volume = client.volumes.create(
             name=volume_name,
             labels={
-                _LABEL_WORKER: self._worker_name,
+                _LABEL_WORKER: self.worker_name,
                 _LABEL_SESSION: session_id,
                 _LABEL_MANAGED: "true",
             },

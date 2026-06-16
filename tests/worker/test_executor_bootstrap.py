@@ -10,9 +10,13 @@ import logging
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from shared.schemas.result import BaseExecutorResult
 from tests.worker.factories import make_live_worker_config, make_worker_hardware
+from worker.executors import ssh_executor as ssh_mod
 from worker.executors.base_executor import Executor, ExecutorTask
+from worker.executors.ssh_executor import SSHExecutor
 from worker.main import initialize_executors
 
 
@@ -26,6 +30,16 @@ class _PassthroughExecutor(Executor):
 
     def run(self, task: ExecutorTask, out_dir: Path) -> BaseExecutorResult:
         return BaseExecutorResult.model_validate({"ok": True})
+
+
+class _UnavailableExecutor(_PassthroughExecutor):
+    """Executor that declares itself unavailable on this worker."""
+
+    name = "unavailable"
+
+    @classmethod
+    def is_available(cls, config: Any) -> bool:
+        return False
 
 
 class TestInitializeExecutorsHardware:
@@ -48,3 +62,32 @@ class TestInitializeExecutorsHardware:
         assert isinstance(default, _PassthroughExecutor)
         assert executors["echo"]._hardware is hw
         assert default._hardware is hw
+
+
+class TestInitializeExecutorsAvailability:
+    def test_unavailable_executor_is_skipped(self, tmp_path: Path) -> None:
+        cfg = make_live_worker_config(tmp_path)
+        executors, _ = initialize_executors(
+            config=cfg,
+            hardware=make_worker_hardware(),
+            logger=logging.getLogger("test"),
+            lifecycle=None,  # type: ignore[arg-type]
+            registry={
+                "default": _PassthroughExecutor,
+                "echo": _UnavailableExecutor,
+            },
+            import_errors={},
+            cuda_available=False,
+            enable_mp_executors=False,
+        )
+        assert "echo" not in executors
+        assert "default" in executors
+
+    def test_ssh_availability_tracks_docker(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        cfg = make_live_worker_config(tmp_path)
+        monkeypatch.setattr(ssh_mod, "docker_available", lambda: False)
+        assert SSHExecutor.is_available(cfg) is False
+        monkeypatch.setattr(ssh_mod, "docker_available", lambda: True)
+        assert SSHExecutor.is_available(cfg) is True

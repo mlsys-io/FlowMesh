@@ -9,7 +9,6 @@ from .config import WorkerConfig
 from .executors import EXECUTOR_CLASS_NAMES, EXECUTOR_REGISTRY, IMPORT_ERRORS
 from .executors.base_executor import Executor
 from .executors.mp_executor import MPExecutor
-from .executors.utils.docker import docker_available
 from .hw import collect_hw
 from .lifecycle import Lifecycle
 from .power import PowerMonitor
@@ -59,7 +58,7 @@ def initialize_executors(
     hardware: WorkerHardware,
     logger: logging.Logger,
     lifecycle: Lifecycle,
-    registry: dict[str, type | None] | None = None,
+    registry: dict[str, type[Executor] | None] | None = None,
     import_errors: dict[str, str] | None = None,
     cuda_available: bool | None = None,
     enable_mp_executors: bool = True,
@@ -95,6 +94,10 @@ def initialize_executors(
 
         if gpu_required and not check_cuda():
             logger.info("Executor %s requires a GPU; unavailable, skipping", key)
+            return None
+
+        if not cls.is_available(config):
+            logger.info("Executor %s is unavailable; skipping", key)
             return None
 
         try:
@@ -197,7 +200,16 @@ def main() -> None:
     )
     hardware = collect_hw(bandwidth_bytes_per_sec=cfg.network_bandwidth_bytes_per_sec)
     logger.info("Collected hardware info: %s", hardware)
-    capabilities = WorkerCapabilities(ssh=docker_available())
+
+    executors, default_executor = initialize_executors(
+        cfg,
+        hardware,
+        logger,
+        lifecycle,
+        enable_mp_executors=cfg.enable_mp_executors,
+    )
+
+    capabilities = WorkerCapabilities(ssh="ssh" in executors)
     ssh_limits = cfg.ssh_limits
     if capabilities.ssh:
         if ssh_limits is None:
@@ -207,22 +219,12 @@ def main() -> None:
             )
         else:
             logger.info("SSH resource cap: %s", ssh_limits.model_dump())
-    else:
-        logger.info("SSH support disabled; Docker is not reachable from this worker.")
     lifecycle.start(
         env={},
         hardware=hardware,
         capabilities=capabilities,
         ssh_limits=ssh_limits,
         tags=cfg.tags,
-    )
-
-    executors, default_executor = initialize_executors(
-        cfg,
-        hardware,
-        logger,
-        lifecycle,
-        enable_mp_executors=cfg.enable_mp_executors,
     )
 
     task_stream = supervisor_client.iter_tasks()

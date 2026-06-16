@@ -81,6 +81,16 @@ class Executor(ABC):
         self._hardware = hardware
         self._lifecycle = lifecycle
 
+    @classmethod
+    def is_available(cls, config: WorkerConfig) -> bool:
+        """Whether this executor can run on the worker.
+
+        Override to declare a runtime dependency the worker must satisfy. An unavailable
+        executor is skipped at startup, so it never registers and the worker advertises
+        no capability for it.
+        """
+        return True
+
     def emit_update(self, task_id: str, payload: dict[str, Any]) -> None:
         """Emit a mid-task TASK_UPDATE event.
 

@@ -1,55 +1,60 @@
 import importlib
 
+from .base_executor import Executor
+
 _IMPORT_ERRORS: dict[str, str] = {}
 
 
-def _safe_import(name: str, module: str) -> type | None:
+def _import_executor(name: str, module: str) -> type[Executor] | None:
     try:
         pkg = importlib.import_module(module, package=__package__)
-        return getattr(pkg, name)
+        if issubclass(cls := getattr(pkg, name), Executor):
+            return cls
+        error = f"{name} is not a subclass of Executor"
     except Exception as exc:
-        _IMPORT_ERRORS[name] = str(exc)
-        return None
+        error = str(exc)
+    _IMPORT_ERRORS[name] = error
+    return None
 
 
-VLLMExecutor = _safe_import("VLLMExecutor", ".vllm_executor")
-VLLMLoRAExecutor = _safe_import("VLLMLoRAExecutor", ".vllm_lora_executor")
-PPOExecutor = _safe_import("PPOExecutor", ".ppo_executor")
-DPOExecutor = _safe_import("DPOExecutor", ".dpo_executor")
-SFTExecutor = _safe_import("SFTExecutor", ".sft_executor")
-LoRASFTExecutor = _safe_import("LoRASFTExecutor", ".lora_sft_executor")
-ImageClassificationTrainingExecutor = _safe_import(
+VLLMExecutor = _import_executor("VLLMExecutor", ".vllm_executor")
+VLLMLoRAExecutor = _import_executor("VLLMLoRAExecutor", ".vllm_lora_executor")
+PPOExecutor = _import_executor("PPOExecutor", ".ppo_executor")
+DPOExecutor = _import_executor("DPOExecutor", ".dpo_executor")
+SFTExecutor = _import_executor("SFTExecutor", ".sft_executor")
+LoRASFTExecutor = _import_executor("LoRASFTExecutor", ".lora_sft_executor")
+ImageClassificationTrainingExecutor = _import_executor(
     "ImageClassificationTrainingExecutor", ".image_classification_executor"
 )
-HFTransformersExecutor = _safe_import(
+HFTransformersExecutor = _import_executor(
     "HFTransformersExecutor", ".transformers_executor"
 )
-RAGExecutor = _safe_import("RAGExecutor", ".rag_executor")
-AgentExecutor = _safe_import("AgentExecutor", ".agent_executor")
-EchoExecutor = _safe_import("EchoExecutor", ".echo_executor")
-DataProfilingExecutor = _safe_import(
+RAGExecutor = _import_executor("RAGExecutor", ".rag_executor")
+AgentExecutor = _import_executor("AgentExecutor", ".agent_executor")
+EchoExecutor = _import_executor("EchoExecutor", ".echo_executor")
+DataProfilingExecutor = _import_executor(
     "DataProfilingExecutor", ".data_profiling_executor"
 )
-DataRetrievalExecutor = _safe_import(
+DataRetrievalExecutor = _import_executor(
     "DataRetrievalExecutor", ".data_retrieval_executor"
 )
-DiffusersExecutor = _safe_import("DiffusersExecutor", ".diffusers_executor")
-APIExecutor = _safe_import("APIExecutor", ".api_executor")
-SSHExecutor = _safe_import("SSHExecutor", ".ssh_executor")
-OmniText2ImageExecutor = _safe_import(
+DiffusersExecutor = _import_executor("DiffusersExecutor", ".diffusers_executor")
+APIExecutor = _import_executor("APIExecutor", ".api_executor")
+SSHExecutor = _import_executor("SSHExecutor", ".ssh_executor")
+OmniText2ImageExecutor = _import_executor(
     "OmniText2ImageExecutor", ".omni_text2image_executor"
 )
-OmniText2SpeechExecutor = _safe_import(
+OmniText2SpeechExecutor = _import_executor(
     "OmniText2SpeechExecutor", ".omni_text2speech_executor"
 )
-OmniText2AudioExecutor = _safe_import(
+OmniText2AudioExecutor = _import_executor(
     "OmniText2AudioExecutor", ".omni_text2audio_executor"
 )
-OmniText2GeneralExecutor = _safe_import(
+OmniText2GeneralExecutor = _import_executor(
     "OmniText2GeneralExecutor", ".omni_text2general_executor"
 )
 
-EXECUTOR_REGISTRY: dict[str, type | None] = {
+EXECUTOR_REGISTRY: dict[str, type[Executor] | None] = {
     "vllm": VLLMExecutor,
     "vllm_lora": VLLMLoRAExecutor,
     "ppo": PPOExecutor,
