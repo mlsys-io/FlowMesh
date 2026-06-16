@@ -31,17 +31,10 @@ class SSHLimits(BaseModel):
 
 
 class WorkerCapabilities(BaseModel):
-    """Task capabilities a worker advertises to the dispatcher.
-
-    Each flag reflects what the worker process can actually service, as opposed
-    to what its node was configured to allow. A capability left at its default
-    means the worker advertises that it cannot service the corresponding task
-    kind, so the dispatcher excludes it.
-    """
+    """Task capabilities a worker advertises to the dispatcher."""
 
     ssh: bool = Field(
-        default=False,
-        description="Whether the worker can run SSH session tasks (Docker reachable).",
+        default=False, description="Whether the worker can run SSH session tasks."
     )
 
 

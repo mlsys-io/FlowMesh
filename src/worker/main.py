@@ -212,8 +212,8 @@ def main() -> None:
     lifecycle.start(
         env={},
         hardware=hardware,
-        ssh_limits=ssh_limits,
         capabilities=capabilities,
+        ssh_limits=ssh_limits,
         tags=cfg.tags,
     )
 

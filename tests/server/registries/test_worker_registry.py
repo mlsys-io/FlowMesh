@@ -32,8 +32,8 @@ def _worker(
     cpu_cores: int = 4,
     gpu_memory_is_unified: bool = False,
     gpu_shared_memory_total_bytes: int | None = None,
-    ssh_limits: SSHLimits | None = None,
     capabilities: WorkerCapabilities | None = None,
+    ssh_limits: SSHLimits | None = None,
 ) -> Worker:
     devices = [
         GpuInfo(index=i, name=gpu_name, uuid=f"GPU-{i}", memory_total_bytes=gpu_mem)
@@ -59,8 +59,8 @@ def _worker(
         node_alias="g",
         status=WorkerStatus.IDLE,
         hardware=hw,
-        ssh_limits=ssh_limits,
         capabilities=capabilities or WorkerCapabilities(),
+        ssh_limits=ssh_limits,
     )
 
 

@@ -75,8 +75,8 @@ class Lifecycle:
         self,
         env: dict[str, Any],
         hardware: WorkerHardware,
-        ssh_limits: SSHLimits | None,
         capabilities: WorkerCapabilities,
+        ssh_limits: SSHLimits | None,
         tags: list[str],
     ):
         self._started_ts = time.time()
@@ -90,8 +90,8 @@ class Lifecycle:
             pid=os.getpid(),
             env=env,
             hardware=hardware,
-            ssh_limits=ssh_limits,
             capabilities=capabilities,
+            ssh_limits=ssh_limits,
             tags=tags,
             cost_per_hour=self.cost_per_hour,
             power_metrics=initial_power,

@@ -55,12 +55,12 @@ class Worker(BaseModel):
     hardware: WorkerHardware | None = Field(
         default=None, description="Hardware metadata."
     )
-    ssh_limits: SSHLimits | None = Field(
-        default=None, description="Configured ceiling on SSH session resources."
-    )
     capabilities: WorkerCapabilities = Field(
         default_factory=WorkerCapabilities,
         description="Task capabilities the worker advertises.",
+    )
+    ssh_limits: SSHLimits | None = Field(
+        default=None, description="Configured ceiling on SSH session resources."
     )
     tags: list[str] = Field(default_factory=list, description="Worker tags.")
     last_seen: str | None = Field(default=None, description="Last heartbeat timestamp.")
@@ -496,17 +496,6 @@ def _merge_unique(existing: list[str], additions: Iterable[str]) -> list[str]:
     return merged
 
 
-def capability_satisfies(worker: Worker, task: TaskEnvelope) -> bool:
-    """Whether the worker advertises the capability the task requires.
-
-    Capability is distinct from hardware fit: an SSH task needs a worker that can
-    actually spawn session containers, regardless of CPU/GPU/memory.
-    """
-    if isinstance(task.spec, (SSHSpecStrict, SSHSpecTemplate)):
-        return worker.capabilities.ssh
-    return True
-
-
 def hw_satisfies(worker: Worker, task: TaskEnvelope) -> bool:
     resources = task.spec.resources
     if resources is None:
@@ -557,6 +546,12 @@ def hw_satisfies(worker: Worker, task: TaskEnvelope) -> bool:
         if not _gpu_meets_requirements(hw, gpu_req):
             return False
 
+    return True
+
+
+def capability_satisfies(worker: Worker, task: TaskEnvelope) -> bool:
+    if isinstance(task.spec, (SSHSpecStrict, SSHSpecTemplate)):
+        return worker.capabilities.ssh
     return True
 
 
@@ -657,17 +652,17 @@ def _parse_worker_from_redis(
         if hardware_json is None
         else WorkerHardware.model_validate_json(hardware_json)
     )
-    ssh_limits_json = value.get("ssh_limits_json")
-    ssh_limits = (
-        None
-        if ssh_limits_json is None
-        else SSHLimits.model_validate_json(ssh_limits_json)
-    )
     capabilities_json = value.get("capabilities_json")
     capabilities = (
         WorkerCapabilities()
         if capabilities_json is None
         else WorkerCapabilities.model_validate_json(capabilities_json)
+    )
+    ssh_limits_json = value.get("ssh_limits_json")
+    ssh_limits = (
+        None
+        if ssh_limits_json is None
+        else SSHLimits.model_validate_json(ssh_limits_json)
     )
     tags = _loads(value.get("tags_json"), [])
     cached_models = _ensure_str_list(_loads(value.get("cache_models_json"), []))
@@ -698,8 +693,8 @@ def _parse_worker_from_redis(
         pid=pid,
         env=env,
         hardware=hardware,
-        ssh_limits=ssh_limits,
         capabilities=capabilities,
+        ssh_limits=ssh_limits,
         tags=tags,
         last_seen=value.get("last_seen"),
         cached_models=cached_models,

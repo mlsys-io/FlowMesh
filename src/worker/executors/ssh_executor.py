@@ -617,9 +617,7 @@ class SSHExecutor(Executor):
                 self._docker = docker_client()
             except DockerUnavailableError as exc:
                 raise ExecutionError(
-                    f"Docker is not available; cannot run SSH executor: {exc}. "
-                    "Ensure the worker node sets ENABLE_SSH_BY_DEFAULT=true so the "
-                    "Docker socket is mounted into the worker."
+                    f"Docker is not available; cannot run SSH executor: {exc}"
                 ) from exc
         return self._docker
 

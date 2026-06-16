@@ -95,8 +95,8 @@ class Worker(BaseModel):
     pid: int | None = None
     env: dict[str, Any] = Field(default_factory=dict)
     hardware: WorkerHardware | None = None
-    ssh_limits: SSHLimits | None = None
     capabilities: WorkerCapabilities = Field(default_factory=WorkerCapabilities)
+    ssh_limits: SSHLimits | None = None
     tags: list[str] = Field(default_factory=list)
     last_seen: str | None = None
     cached_models: list[str] = Field(default_factory=list)
