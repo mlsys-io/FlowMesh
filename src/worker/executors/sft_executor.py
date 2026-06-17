@@ -350,39 +350,12 @@ class SFTExecutor(TrainingMixin, Executor):
                 # placement handled by backend
                 pass
 
-            # Construct the trainer while handling TRL signature variations
-            trainer = None
-            tried = []
-            for variant in ("tokenizer", "processing_class", "none"):
-                try:
-                    if variant == "tokenizer":
-                        trainer = SFTTrainer(
-                            model=model,
-                            args=sft_config,
-                            train_dataset=train_dataset,
-                            tokenizer=tokenizer,  # type: ignore[call-arg]
-                        )
-                    elif variant == "processing_class":
-                        trainer = SFTTrainer(
-                            model=model,
-                            args=sft_config,
-                            train_dataset=train_dataset,
-                            processing_class=tokenizer,
-                        )
-                    else:
-                        trainer = SFTTrainer(
-                            model=model, args=sft_config, train_dataset=train_dataset
-                        )
-                    break
-                except TypeError as e:
-                    tried.append(str(e))
-
-            if trainer is None:
-                raise TypeError(
-                    "Failed to construct SFTTrainer. Tried variants: "
-                    + " | ".join(tried)
-                )
-
+            trainer = SFTTrainer(
+                model=model,
+                args=sft_config,
+                train_dataset=train_dataset,
+                processing_class=tokenizer,
+            )
             self._current_trainer = trainer
 
             # Dry-run dataloader shapes to surface obvious padding mistakes early

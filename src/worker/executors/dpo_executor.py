@@ -417,36 +417,14 @@ class DPOExecutor(TrainingMixin, Executor):
                 logging_steps=10,
             )
 
-            try:
-                dpo_trainer = DPOTrainer(
-                    model=model,
-                    ref_model=ref_model,
-                    args=dpo_config,
-                    train_dataset=dataset,
-                    tokenizer=tokenizer,  # type: ignore[call-arg]
-                )
-                self._current_trainer = dpo_trainer
-            except TypeError as exc:
-                if "unexpected keyword argument 'tokenizer'" in str(exc):
-                    try:
-                        dpo_trainer = DPOTrainer(
-                            model=model,
-                            ref_model=ref_model,
-                            args=dpo_config,
-                            train_dataset=dataset,
-                            processing_class=tokenizer,
-                        )
-                        self._current_trainer = dpo_trainer
-                    except TypeError:
-                        dpo_trainer = DPOTrainer(
-                            model=model,
-                            ref_model=ref_model,
-                            args=dpo_config,
-                            train_dataset=dataset,
-                        )
-                        self._current_trainer = dpo_trainer
-                else:
-                    raise
+            dpo_trainer = DPOTrainer(
+                model=model,
+                ref_model=ref_model,
+                args=dpo_config,
+                train_dataset=dataset,
+                processing_class=tokenizer,
+            )
+            self._current_trainer = dpo_trainer
 
             logger.info("Starting DPO training...")
             dpo_trainer.train()

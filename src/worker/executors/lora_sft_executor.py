@@ -222,40 +222,12 @@ class LoRASFTExecutor(TrainingMixin, Executor):
                 deepspeed=deepspeed_config,
             )
 
-            trainer = None
-            tried_errors = []
-            for variant in ("tokenizer", "processing_class", "none"):
-                try:
-                    if variant == "tokenizer":
-                        trainer = SFTTrainer(
-                            model=peft_model,
-                            args=sft_config,
-                            train_dataset=train_dataset,
-                            tokenizer=tokenizer,  # type: ignore
-                        )
-                    elif variant == "processing_class":
-                        trainer = SFTTrainer(
-                            model=peft_model,
-                            args=sft_config,
-                            train_dataset=train_dataset,
-                            processing_class=tokenizer,
-                        )
-                    else:
-                        trainer = SFTTrainer(
-                            model=peft_model,
-                            args=sft_config,
-                            train_dataset=train_dataset,
-                        )
-                    break
-                except TypeError as e:
-                    tried_errors.append(str(e))
-                    trainer = None
-                    continue
-            if trainer is None:
-                raise TypeError(
-                    "Failed to construct SFTTrainer with tried variants: "
-                    + " | ".join(tried_errors)
-                )
+            trainer = SFTTrainer(
+                model=peft_model,
+                args=sft_config,
+                train_dataset=train_dataset,
+                processing_class=tokenizer,
+            )
 
             orig_compute_loss = trainer.compute_loss
             self._current_trainer = trainer

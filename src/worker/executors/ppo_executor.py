@@ -21,6 +21,7 @@ from datasets import Dataset
 from transformers import (
     AutoModelForSequenceClassification,
     AutoTokenizer,
+    DataCollatorWithPadding,
     GenerationConfig,
     PreTrainedModel,
     PreTrainedTokenizerBase,
@@ -278,6 +279,29 @@ def _patched_reward_dispatch():
         trl_utils.get_reward = original_get_reward
         if original_get_reward_ppo is not None:
             trl_ppo.get_reward = original_get_reward_ppo  # type: ignore
+
+
+class _PPOCollator(DataCollatorWithPadding):
+    """Pad tokenized rows; pass raw string fields (e.g. ``query``) through."""
+
+    def __call__(self, features: list[dict[str, Any]]) -> dict[str, Any]:
+        if not features:
+            return {}
+        f0 = features[0]
+        # If already tokenized, pad into tensors
+        if "input_ids" in f0:
+            items = []
+            for f in features:
+                item = {"input_ids": f["input_ids"]}
+                if "attention_mask" in f:
+                    item["attention_mask"] = f["attention_mask"]
+                items.append(item)
+            return dict(self.tokenizer.pad(items, padding=True, return_tensors="pt"))
+        # Otherwise, pass raw queries through
+        if "query" in f0:
+            return {"query": [f["query"] for f in features]}
+        # Fallback: return all fields as lists
+        return {k: [f[k] for f in features] for k in f0.keys()}
 
 
 class _RewardAdapter(torch.nn.Module):
@@ -555,47 +579,6 @@ class PPOExecutor(TrainingMixin, Executor):
             _ensure_grad_ckpt_flag(model)
             _ensure_grad_ckpt_flag(ref_model)
 
-            # Ensure models return ModelOutput (not tuple) so TRL can access `.logits`
-            def _ensure_return_dict(m):
-                try:
-                    if hasattr(m, "config") and hasattr(m.config, "use_return_dict"):
-                        m.config.use_return_dict = True
-                    # Also try backbone config if present
-                    if hasattr(m, "base_model_prefix") and hasattr(
-                        m, m.base_model_prefix
-                    ):
-                        backbone = getattr(m, m.base_model_prefix)
-                        if hasattr(backbone, "config") and hasattr(
-                            backbone.config, "use_return_dict"
-                        ):
-                            backbone.config.use_return_dict = True
-                except Exception:
-                    pass
-
-            _ensure_return_dict(model)
-            _ensure_return_dict(ref_model)
-
-            # Ensure hidden states are returned for reward computation in TRL 0.23
-            def _ensure_output_hidden_states(m):
-                try:
-                    if hasattr(m, "config") and hasattr(
-                        m.config, "output_hidden_states"
-                    ):
-                        m.config.output_hidden_states = True
-                    if hasattr(m, "base_model_prefix") and hasattr(
-                        m, m.base_model_prefix
-                    ):
-                        backbone = getattr(m, m.base_model_prefix)
-                        if hasattr(backbone, "config") and hasattr(
-                            backbone.config, "output_hidden_states"
-                        ):
-                            backbone.config.output_hidden_states = True
-                except Exception:
-                    pass
-
-            _ensure_output_hidden_states(model)
-            _ensure_output_hidden_states(ref_model)
-
             # As a last resort, monkey-patch forward to always expose `.logits`
             try:
 
@@ -690,30 +673,6 @@ class PPOExecutor(TrainingMixin, Executor):
             except Exception as _e:
                 logger.warning("Skipping dataset tokenization step: %s", _e)
 
-            # Provide a simple collator to avoid Transformers' padding collator
-            # attempting to pad string fields like 'query'. This lets TRL handle
-            # tokenization/length management internally during PPO.
-            def _simple_collate(features):
-                if not features:
-                    return {}
-                f0 = features[0]
-                # If already tokenized, pad into tensors
-                if "input_ids" in f0:
-                    items = []
-                    for f in features:
-                        item = {"input_ids": f["input_ids"]}
-                        if "attention_mask" in f:
-                            item["attention_mask"] = f["attention_mask"]
-                        items.append(item)
-                    batch = tokenizer.pad(items, padding=True, return_tensors="pt")
-                    return batch
-                # Otherwise, pass raw queries through
-                if "query" in f0:
-                    return {"query": [f["query"] for f in features]}
-                # Fallback: return all fields as lists
-                keys = f0.keys()
-                return {k: [f[k] for f in features] for k in keys}
-
             reward_module, reward_is_external, reward_ctx = self._prepare_reward_model(
                 spec,
                 tokenizer,
@@ -737,118 +696,20 @@ class PPOExecutor(TrainingMixin, Executor):
             )
             logger.info("PPOConfig created successfully")
 
-            # Initialize PPO trainer with correct API
             logger.info("Creating PPOTrainer...")
-            # TRL PPOTrainer signature varies widely across versions. Use
-            # introspection to build arguments positionally/with kwargs to fit.
-            import inspect
-
-            def build_trainer() -> _EarlyStopPPOTrainer:
-                sig = inspect.signature(PPOTrainer.__init__)
-                params = list(sig.parameters.values())[1:]  # drop self
-
-                mapping = {
-                    "config": ppo_config,
-                    "args": ppo_config,
-                    "ppo_config": ppo_config,
-                    "processing_class": tokenizer,
-                    "tokenizer": tokenizer,
-                    "reward_model": reward_module,
-                    "value_model": model,
-                    "model": model,
-                    "ref_model": ref_model,
-                    "train_dataset": dataset,
-                    "eval_dataset": dataset,
-                    "dataset": dataset,
-                    "output_dir": checkpoint_dir.as_posix(),
-                    "data_collator": _simple_collate,
-                    "collate_fn": _simple_collate,
-                }
-
-                positional = []
-                kwargs = {}
-                missing_required = []
-
-                for p in params:
-                    if p.kind in (
-                        inspect.Parameter.VAR_POSITIONAL,
-                        inspect.Parameter.VAR_KEYWORD,
-                    ):
-                        continue
-                    if p.default is inspect._empty:
-                        if p.name in mapping:
-                            positional.append(mapping[p.name])
-                        else:
-                            # Some older versions expect (config, processing_class,
-                            # reward_model, value_model).
-                            # Try to satisfy common required names by aliases
-                            alias = None
-                            if p.name == "processing_class" and "tokenizer" in mapping:
-                                alias = mapping["tokenizer"]
-                            elif p.name == "dataset" and "train_dataset" in mapping:
-                                alias = mapping["train_dataset"]
-                            if alias is not None:
-                                positional.append(alias)
-                            else:
-                                missing_required.append(p.name)
-                    else:
-                        # Optional: provide via kwargs if we have a value
-                        if p.name in mapping:
-                            kwargs[p.name] = mapping[p.name]
-
-                if missing_required:
-                    # As a fallback, try known positional legacy order
-                    # (config/args, processing_class, reward_model, value_model,
-                    # model, ref_model, train_dataset)
-                    legacy_seq = []
-                    for key in (
-                        "args",
-                        "processing_class",
-                        "reward_model",
-                        "value_model",
-                        "model",
-                        "ref_model",
-                        "train_dataset",
-                    ):
-                        if key in mapping:
-                            legacy_seq.append(mapping[key])
-                    try:
-                        return _EarlyStopPPOTrainer(*legacy_seq, **kwargs)
-                    except TypeError:
-                        # Raise with details for debugging
-                        raise TypeError(
-                            "PPOTrainer signature mismatch; missing required params: "
-                            f"{missing_required}"
-                        )
-
-                return _EarlyStopPPOTrainer(*positional, **kwargs)
-
-            ppo_trainer = build_trainer()
+            ppo_trainer = _EarlyStopPPOTrainer(
+                args=ppo_config,
+                processing_class=tokenizer,
+                model=model,
+                ref_model=ref_model,
+                reward_model=reward_module,
+                value_model=model,
+                train_dataset=dataset,
+                eval_dataset=dataset,
+                data_collator=_PPOCollator(tokenizer),
+            )
             self._ppo_trainer = ppo_trainer
             self._install_trainer_save_overrides(ppo_trainer)
-            # Ensure eval dataset/dataloader exist for TRL 0.23 `generate_completions`.
-            try:
-                if getattr(ppo_trainer, "eval_dataset", None) is None:
-                    setattr(ppo_trainer, "eval_dataset", dataset)
-                # Try to build eval_dataloader via trainer helper if available
-                if getattr(ppo_trainer, "eval_dataloader", None) is None:
-                    build_fn = getattr(
-                        ppo_trainer, "get_eval_dataloader", None
-                    ) or getattr(ppo_trainer, "_build_eval_dataloader", None)
-                    if callable(build_fn):
-                        try:
-                            edl = build_fn()
-                            if edl is not None:
-                                setattr(ppo_trainer, "eval_dataloader", edl)
-                        except Exception:
-                            pass
-            except Exception:
-                pass
-            try:
-                if hasattr(ppo_trainer, "reward_model"):
-                    ppo_trainer.reward_model = reward_module
-            except Exception:
-                pass
             logger.info("PPOTrainer created successfully")
 
             if reward_is_external:
@@ -1426,8 +1287,8 @@ class PPOExecutor(TrainingMixin, Executor):
     ) -> None:
         """Set ``target_kl`` on the trainer when ``training.early_stopping`` is on.
 
-        The trainer is already an ``_EarlyStopPPOTrainer`` from ``build_trainer``;
-        we just stamp the threshold so its ``log`` override starts watching KL.
+        The trainer is already an ``_EarlyStopPPOTrainer``; we just stamp the
+        threshold so its ``log`` override starts watching KL.
         Enforces that ``early_stopping=True`` is paired with a positive
         ``target_kl``; if ``early_stopping`` is off, ``target_kl`` is ignored
         but logged so users notice the gap.
