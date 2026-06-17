@@ -30,6 +30,7 @@ from shared.schemas.artifact import ArtifactRef
 from shared.schemas.governance import SpanType
 from shared.tasks.specs import TaskSpecStrictBase
 from shared.tasks.specs.omni import OmniText2GeneralSpecStrict
+from shared.tasks.task_type import TaskType
 from shared.utils.parsing import as_list, to_bool, to_float, to_int, to_int_list
 
 from .base_executor import ExecutionError, ExecutorTask
@@ -62,6 +63,7 @@ class OmniText2GeneralExecutor(OmniExecutorBase):
     """Generate narration/speech audio using Qwen3-Omni through vllm_omni.Omni."""
 
     name = EXECUTOR_NAME
+    supported_task_types = frozenset({TaskType.OMNI_TEXT2GENERAL})
     _TASK_SPEC_TYPE = OmniText2GeneralSpecStrict
 
     def prepare(self) -> None:

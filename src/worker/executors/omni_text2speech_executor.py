@@ -20,6 +20,7 @@ from shared.schemas.artifact import ArtifactRef
 from shared.schemas.governance import SpanType
 from shared.tasks.specs import TaskSpecStrictBase
 from shared.tasks.specs.omni import OmniText2SpeechSpecStrict
+from shared.tasks.task_type import TaskType
 from shared.utils.parsing import as_list, to_int
 
 from .base_executor import ExecutionError, ExecutorTask
@@ -47,6 +48,7 @@ class OmniText2SpeechExecutor(OmniExecutorBase):
     """Generate speech audio using vllm_omni.Omni."""
 
     name = EXECUTOR_NAME
+    supported_task_types = frozenset({TaskType.OMNI_TEXT2SPEECH})
     _TASK_SPEC_TYPE = OmniText2SpeechSpecStrict
 
     def prepare(self) -> None:

@@ -18,6 +18,7 @@ from PIL import Image
 from shared.schemas.artifact import ArtifactRef
 from shared.schemas.result import BaseExecutorResult
 from shared.tasks.specs import DiffusionSpecStrict
+from shared.tasks.task_type import TaskType
 
 from ..utils.logging import configure_hf_library_logging
 from .base_executor import ExecutionError, Executor, ExecutorTask
@@ -54,6 +55,7 @@ class DiffusersExecutor(DataMixin, Executor):
     """Executor that runs text-to-image generation via Hugging Face Diffusers."""
 
     name = "diffusers"
+    supported_task_types = frozenset({TaskType.DIFFUSION})
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)

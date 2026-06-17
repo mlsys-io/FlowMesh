@@ -4,6 +4,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 
+from .common import TaskType
+
 
 class CPUInfo(BaseModel):
     logical_cores: int | None = None
@@ -80,7 +82,7 @@ class SSHLimits(BaseModel):
 
 
 class WorkerCapabilities(BaseModel):
-    ssh: bool = False
+    supported_task_types: frozenset[TaskType] = Field(default_factory=frozenset)
 
 
 class Worker(BaseModel):

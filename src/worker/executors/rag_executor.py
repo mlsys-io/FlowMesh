@@ -18,6 +18,7 @@ from qdrant_client import QdrantClient, models
 
 from shared.schemas.result import BaseExecutorResult
 from shared.tasks.specs import RagSpecStrict
+from shared.tasks.task_type import TaskType
 
 from .base_executor import ExecutionError, Executor, ExecutorTask
 from .utils.graph_templates import Message, build_prompts_from_graph_template
@@ -37,6 +38,7 @@ class RAGResult(BaseExecutorResult):
 
 class RAGExecutor(Executor):
     name = EXECUTOR_NAME
+    supported_task_types = frozenset({TaskType.RAG})
 
     def run(self, task: ExecutorTask, out_dir: Path) -> RAGResult:
         start_ts = time.time()

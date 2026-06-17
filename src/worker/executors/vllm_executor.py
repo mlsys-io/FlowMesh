@@ -69,6 +69,7 @@ except Exception:
 from shared.schemas.governance import SpanType
 from shared.schemas.result import BaseExecutorResult
 from shared.tasks.specs import InferenceSpecStrict
+from shared.tasks.task_type import TaskType
 
 from .base_executor import ExecutionError, Executor, ExecutorTask
 from .mixins.data import InferenceEntry
@@ -119,6 +120,7 @@ class VLLMExecutor(InferenceMixin, Executor):
     """Executor that runs text generation using vLLM based on a YAML spec."""
 
     name = "vllm"
+    supported_task_types = frozenset({TaskType.INFERENCE})
 
     summarization_template = """Summarize the following document concisely in 2-3 \
 sentences. Focus on the main topic and key information.

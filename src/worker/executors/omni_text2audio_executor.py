@@ -54,6 +54,7 @@ from shared.schemas.artifact import ArtifactRef
 from shared.schemas.governance import SpanType
 from shared.tasks.specs import TaskSpecStrictBase
 from shared.tasks.specs.omni import OmniText2AudioSpecStrict
+from shared.tasks.task_type import TaskType
 from shared.utils.parsing import to_float, to_int
 
 from .base_executor import ExecutionError, ExecutorTask
@@ -77,6 +78,7 @@ class OmniText2AudioExecutor(OmniExecutorBase):
     """Generate background music with Omni diffusion sampling."""
 
     name = EXECUTOR_NAME
+    supported_task_types = frozenset({TaskType.OMNI_TEXT2AUDIO})
     _TASK_SPEC_TYPE = OmniText2AudioSpecStrict
 
     def prepare(self) -> None:

@@ -4,6 +4,7 @@ from typing import Any
 
 from shared.schemas.result import BaseExecutorResult
 from shared.tasks.specs import EchoSpecStrict
+from shared.tasks.task_type import TaskType
 
 from .base_executor import ExecutionError, Executor, ExecutorTask
 from .mixins.data import DataMixin
@@ -22,6 +23,7 @@ class EchoResult(BaseExecutorResult):
 
 class EchoExecutor(DataMixin, Executor):
     name = "echo"
+    supported_task_types = frozenset({TaskType.ECHO})
 
     def _append_outputs(self, out_items: list[dict[str, Any]], value: Any) -> None:
         if isinstance(value, list):

@@ -9,6 +9,7 @@ from pydantic import Field
 
 from shared.schemas.result import BaseExecutorResult
 from shared.tasks.specs import ApiSpecStrict
+from shared.tasks.task_type import TaskType
 
 from .base_executor import ExecutionError, Executor, ExecutorTask
 
@@ -40,6 +41,7 @@ class APIExecutor(Executor):
     """
 
     name = "api"
+    supported_task_types = frozenset({TaskType.API})
 
     # ---- Class-level connection pool (shared across all instances) ----
     _clients: ClassVar[dict[_ClientKey, httpx.Client]] = {}

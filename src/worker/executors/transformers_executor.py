@@ -63,6 +63,7 @@ from shared.tasks.specs import (
     EmbeddingSpecStrict,
     InferenceSpecStrict,
 )
+from shared.tasks.task_type import TaskType
 
 from ..utils.logging import configure_hf_library_logging
 from .base_executor import ExecutionError, Executor, ExecutorTask
@@ -127,6 +128,7 @@ class HFTransformersExecutor(InferenceMixin, Executor):
     """Executor that runs text generation via Hugging Face Transformers."""
 
     name = "transformers"
+    supported_task_types = frozenset({TaskType.INFERENCE, TaskType.EMBEDDING})
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)

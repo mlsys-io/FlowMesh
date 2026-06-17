@@ -21,6 +21,7 @@ from trl.trainer.sft_trainer import SFTTrainer
 from shared.schemas.artifact import ArtifactRef
 from shared.schemas.result import BaseExecutorResult
 from shared.tasks.specs import LoRASFTSpecStrict
+from shared.tasks.task_type import TaskType
 
 from ..utils.logging import configure_hf_library_logging
 from .base_executor import ExecutionError, Executor, ExecutorTask
@@ -35,13 +36,17 @@ from .utils.checkpoints import (
 from .utils.huggingface import build_hf_load_kwargs, pick_torch_dtype
 
 try:
-    from peft import LoraConfig, PeftModel, TaskType, get_peft_model
+    from peft import LoraConfig, PeftModel
+    from peft import TaskType as PeftTaskType
+    from peft import get_peft_model
 except ImportError:
     if TYPE_CHECKING:
-        from peft import LoraConfig, PeftModel, TaskType, get_peft_model
+        from peft import LoraConfig, PeftModel
+        from peft import TaskType as PeftTaskType
+        from peft import get_peft_model
     else:
         LoraConfig = None
-        TaskType = None
+        PeftTaskType = None
         get_peft_model = None
         PeftModel = None
 
@@ -64,6 +69,7 @@ class LoRASFTExecutor(TrainingMixin, Executor):
     """Execute LoRA-based supervised fine-tuning using TRL's SFTTrainer."""
 
     name = "lora_sft_executor"
+    supported_task_types = frozenset({TaskType.LORA_SFT})
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
@@ -80,7 +86,7 @@ class LoRASFTExecutor(TrainingMixin, Executor):
 
         if (
             LoraConfig is None
-            or TaskType is None
+            or PeftTaskType is None
             or get_peft_model is None
             or PeftModel is None
         ):
@@ -174,7 +180,7 @@ class LoRASFTExecutor(TrainingMixin, Executor):
 
                 task_type_raw = str(lora_cfg.get("task_type", "CAUSAL_LM")).upper()
                 try:
-                    task_type = TaskType[task_type_raw]
+                    task_type = PeftTaskType[task_type_raw]
                 except KeyError as exc:
                     raise ValueError(
                         f"Unsupported LoRA task_type '{task_type_raw}'"

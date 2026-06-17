@@ -31,6 +31,7 @@ from transformers import (
 from shared.schemas.artifact import ArtifactRef
 from shared.schemas.result import BaseExecutorResult
 from shared.tasks.specs import ImageClassificationTrainingSpecStrict
+from shared.tasks.task_type import TaskType
 
 from ..utils.logging import configure_hf_library_logging
 from .base_executor import ExecutionError, Executor, ExecutorTask
@@ -64,6 +65,7 @@ class ImageClassificationTrainingResult(BaseExecutorResult):
 
 class ImageClassificationTrainingExecutor(TrainingMixin, Executor):
     name = "image_classification_training_executor"
+    supported_task_types = frozenset({TaskType.IMAGE_CLASSIFICATION_TRAINING})
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)

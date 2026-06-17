@@ -2,6 +2,8 @@ from enum import StrEnum
 
 from pydantic import BaseModel, Field
 
+from shared.tasks.task_type import TaskType
+
 
 class WorkerStatus(StrEnum):
     UNKNOWN = "UNKNOWN"
@@ -33,8 +35,9 @@ class SSHLimits(BaseModel):
 class WorkerCapabilities(BaseModel):
     """Task capabilities a worker advertises to the dispatcher."""
 
-    ssh: bool = Field(
-        default=False, description="Whether the worker can run SSH session tasks."
+    supported_task_types: frozenset[TaskType] = Field(
+        default_factory=frozenset,
+        description="Types of tasks this worker can service.",
     )
 
 

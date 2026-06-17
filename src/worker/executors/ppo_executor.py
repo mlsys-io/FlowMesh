@@ -36,6 +36,7 @@ from trl.experimental.ppo.ppo_trainer import PPOTrainer
 from shared.schemas.artifact import ArtifactRef
 from shared.schemas.result import BaseExecutorResult
 from shared.tasks.specs import PPOSpecStrict
+from shared.tasks.task_type import TaskType
 from shared.utils.manifest import scratch_dir
 from shared.utils.parsing import safe_float, safe_int, to_bool
 
@@ -418,6 +419,7 @@ class PPOExecutor(TrainingMixin, Executor):
     """PPO training executor using TRL library."""
 
     name = "ppo_executor"
+    supported_task_types = frozenset({TaskType.PPO})
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)

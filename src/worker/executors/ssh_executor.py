@@ -37,6 +37,7 @@ from shared.tasks.specs.ssh import (
     SSHOutputSpec,
     SSHSpecStrict,
 )
+from shared.tasks.task_type import TaskType
 from shared.tasks.worker_message import WorkerHardware
 from shared.utils import new_ssh_session_id, parse_float_env, parse_mem_to_bytes
 from shared.utils.hardware import (
@@ -384,6 +385,7 @@ class SSHExecutor(Executor):
     """Executor for SSH tasks (interactive sessions and non-interactive jobs)."""
 
     name = "ssh"
+    supported_task_types = frozenset({TaskType.SSH})
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)

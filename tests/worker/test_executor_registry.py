@@ -1,11 +1,17 @@
 """Tests for the executor registry and safe import mechanism."""
 
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 import worker.executors as executors_pkg
+from shared.schemas.result import BaseExecutorResult
+from shared.tasks.task_type import TaskType
+from tests.worker.factories import make_worker_config
 from worker.executors import EXECUTOR_CLASS_NAMES, EXECUTOR_REGISTRY, IMPORT_ERRORS
+from worker.executors.base_executor import Executor, ExecutorTask
+from worker.main import build_capabilities
 
 
 class TestExecutorRegistry:
@@ -79,3 +85,69 @@ class TestExecutorRegistry:
             "not a subclass of Executor"
             in executors_pkg._IMPORT_ERRORS["NotAnExecutor"]
         )
+
+
+class _StubExecutor(Executor):
+    def run(self, task: ExecutorTask, out_dir: Path) -> BaseExecutorResult:
+        raise NotImplementedError
+
+
+class _StubEcho(_StubExecutor):
+    supported_task_types = frozenset({TaskType.ECHO})
+
+
+class _StubInference(_StubExecutor):
+    supported_task_types = frozenset({TaskType.INFERENCE, TaskType.EMBEDDING})
+
+
+class TestSupportedTaskTypes:
+    def test_every_available_executor_declares_task_types(self) -> None:
+        for key, cls in EXECUTOR_REGISTRY.items():
+            if cls is not None:
+                assert cls.supported_task_types, f"{key} declares no task types"
+
+    def test_default_executor_serves_inference_and_embedding(self) -> None:
+        cls = EXECUTOR_REGISTRY["default"]
+        assert cls is not None
+        assert {TaskType.INFERENCE, TaskType.EMBEDDING} <= cls.supported_task_types
+
+
+class _EmptyCaps(Executor):
+    """Stand-in for a live MPExecutor wrapper: reports no task types of its own."""
+
+    def run(self, task: ExecutorTask, out_dir: Path) -> BaseExecutorResult:
+        raise NotImplementedError
+
+
+class TestBuildCapabilities:
+    @staticmethod
+    def _executors(*keys: str) -> dict[str, Executor]:
+        # Values report empty supported_task_types, mirroring MPExecutor wrappers
+        # which do not forward it; build_capabilities must read the registry class
+        # by key instead, or wrapped executors would advertise nothing (the
+        # inference/training regression).
+        inst = _EmptyCaps(make_worker_config())
+        return {key: inst for key in keys}
+
+    def test_unions_from_registry_class_not_instance(self) -> None:
+        registry: dict[str, type[Executor] | None] = {
+            "echo": _StubEcho,
+            "inference": _StubInference,
+        }
+        caps = build_capabilities(self._executors("echo", "inference"), registry)
+        assert caps.supported_task_types == {
+            TaskType.ECHO,
+            TaskType.INFERENCE,
+            TaskType.EMBEDDING,
+        }
+
+    def test_skips_unknown_and_unavailable_keys(self) -> None:
+        registry: dict[str, type[Executor] | None] = {
+            "echo": _StubEcho,
+            "missing": None,
+        }
+        caps = build_capabilities(self._executors("echo", "missing", "ghost"), registry)
+        assert caps.supported_task_types == frozenset({TaskType.ECHO})
+
+    def test_empty_is_safe(self) -> None:
+        assert build_capabilities({}, {}).supported_task_types == frozenset()

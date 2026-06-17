@@ -29,11 +29,12 @@ Contract:
 import json
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import Any, ClassVar, TypeVar
 
 from shared.schemas.result import BaseExecutorResult
 from shared.tasks import MergedChildTaskStrict
 from shared.tasks.specs import TaskSpecStrictBase
+from shared.tasks.task_type import TaskType
 from shared.tasks.worker_message import WorkerHardware, WorkerTaskMessage
 from worker.config import WorkerConfig
 from worker.lifecycle import Lifecycle
@@ -67,8 +68,10 @@ class Executor(ABC):
     Subclasses must implement `run` and may override `prepare` and `teardown`.
     """
 
-    #: Human-readable identifier for logging/telemetry
     name: str = "executor"
+    """Human-readable identifier for logging/telemetry"""
+    supported_task_types: ClassVar[frozenset[TaskType]] = frozenset()
+    """Types of tasks this executor can service"""
 
     def __init__(
         self,
@@ -172,6 +175,7 @@ class EchoResult(BaseExecutorResult):
 
 class EchoExecutor(Executor):
     name = "echo"
+    supported_task_types = frozenset({TaskType.ECHO})
 
     def run(self, task: ExecutorTask, out_dir: Path) -> EchoResult:
         return EchoResult(

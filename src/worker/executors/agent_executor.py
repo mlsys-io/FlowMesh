@@ -19,6 +19,7 @@ from datasets import load_dataset
 from shared.schemas.artifact import ArtifactRef
 from shared.schemas.result import BaseExecutorResult
 from shared.tasks.specs import AgentSpecStrict
+from shared.tasks.task_type import TaskType
 
 from .base_executor import ExecutionError, Executor, ExecutorTask
 from .utils.checkpoints import maybe_upload_artifacts, write_executor_result
@@ -66,6 +67,7 @@ class AgentExecutor(Executor):
     """Agent executor using youtu-agent (utu) framework"""
 
     name = "agent"
+    supported_task_types = frozenset({TaskType.AGENT})
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)

@@ -13,6 +13,7 @@ from shared.tasks.components.resources import (
     HardwareRequirements,
     ResourcesSpec,
 )
+from shared.tasks.task_type import TaskType
 from shared.tasks.worker_message import (
     CPUInfo,
     GpuInfo,
@@ -237,34 +238,50 @@ class TestHwSatisfiesSSHLimits:
 
 
 class TestCapabilitySatisfies:
-    def test_ssh_task_requires_ssh_capable_worker(self) -> None:
-        w = _worker(capabilities=WorkerCapabilities(ssh=False))
+    def test_task_requires_advertised_task_type(self) -> None:
+        w = _worker(
+            capabilities=WorkerCapabilities(
+                supported_task_types=frozenset({TaskType.ECHO})
+            )
+        )
         assert capability_satisfies(w, _ssh_task()) is False
 
-    def test_ssh_task_accepts_ssh_capable_worker(self) -> None:
-        w = _worker(capabilities=WorkerCapabilities(ssh=True))
+    def test_task_accepts_worker_advertising_task_type(self) -> None:
+        w = _worker(
+            capabilities=WorkerCapabilities(
+                supported_task_types=frozenset({TaskType.SSH})
+            )
+        )
         assert capability_satisfies(w, _ssh_task()) is True
 
-    def test_default_worker_is_not_ssh_capable(self) -> None:
-        # An unreporting worker parses with the strict default.
+    def test_default_worker_supports_nothing(self) -> None:
+        # An unreporting worker parses with the strict (empty) default.
         assert capability_satisfies(_worker(), _ssh_task()) is False
+        assert capability_satisfies(_worker(), _task(cpu=2)) is False
 
-    def test_non_ssh_task_ignores_capabilities(self) -> None:
-        w = _worker(capabilities=WorkerCapabilities(ssh=False))
+    def test_gate_covers_all_task_types(self) -> None:
+        w = _worker(
+            capabilities=WorkerCapabilities(
+                supported_task_types=frozenset({TaskType.ECHO})
+            )
+        )
         assert capability_satisfies(w, _task(cpu=2)) is True
+        assert capability_satisfies(w, _ssh_task()) is False
 
 
 class TestParseCapabilities:
     def test_capabilities_round_trip(self) -> None:
         raw = {
             "status": "IDLE",
-            "capabilities_json": WorkerCapabilities(ssh=True).model_dump_json(),
+            "capabilities_json": WorkerCapabilities(
+                supported_task_types=frozenset({TaskType.SSH, TaskType.ECHO})
+            ).model_dump_json(),
         }
         w = _parse_worker_from_redis("w-1", raw)
         assert w is not None
-        assert w.capabilities.ssh is True
+        assert w.capabilities.supported_task_types == {TaskType.SSH, TaskType.ECHO}
 
     def test_missing_capabilities_defaults_strict(self) -> None:
         w = _parse_worker_from_redis("w-1", {"status": "IDLE"})
         assert w is not None
-        assert w.capabilities.ssh is False
+        assert w.capabilities.supported_task_types == frozenset()

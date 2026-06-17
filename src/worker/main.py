@@ -3,6 +3,7 @@ import logging
 import signal
 
 from shared.schemas.worker import WorkerCapabilities
+from shared.tasks.task_type import TaskType
 from shared.tasks.worker_message import WorkerHardware
 
 from .config import WorkerConfig
@@ -164,6 +165,17 @@ def initialize_executors(
     return executors, default_executor
 
 
+def build_capabilities(
+    executors: dict[str, Executor],
+    registry: dict[str, type[Executor] | None] | None = None,
+) -> WorkerCapabilities:
+    registry = registry or EXECUTOR_REGISTRY
+    supported_task_types = frozenset[TaskType]().union(
+        *(cls.supported_task_types for key in executors if (cls := registry.get(key)))
+    )
+    return WorkerCapabilities(supported_task_types=supported_task_types)
+
+
 def main() -> None:
     args = _parse_args()
     if args.collect_hw:
@@ -209,9 +221,9 @@ def main() -> None:
         enable_mp_executors=cfg.enable_mp_executors,
     )
 
-    capabilities = WorkerCapabilities(ssh="ssh" in executors)
+    capabilities = build_capabilities(executors)
     ssh_limits = cfg.ssh_limits
-    if capabilities.ssh:
+    if TaskType.SSH in capabilities.supported_task_types:
         if ssh_limits is None:
             logger.warning(
                 "SSH resource cap not configured; SSH sessions will be able to access "

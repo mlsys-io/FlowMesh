@@ -10,6 +10,7 @@ from typing import Any
 
 from shared.schemas.result import BaseExecutorResult
 from shared.tasks.specs import DataProfilingSpecStrict
+from shared.tasks.task_type import TaskType
 from shared.utils.json import to_json_serializable, validate_keys
 
 from ..connectors import get_connector_from_spec
@@ -31,6 +32,7 @@ class DataProfilingExecutor(DataMixin, Executor):
     """Executor that estimates SQL query costs by sampling SQL template params."""
 
     name = "data_profiling"
+    supported_task_types = frozenset({TaskType.DATA_PROFILING})
 
     def run(self, task: ExecutorTask, out_dir: Path) -> DataProfilingResult:
         spec = self.require_spec(task, DataProfilingSpecStrict)

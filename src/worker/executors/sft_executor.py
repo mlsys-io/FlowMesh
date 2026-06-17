@@ -25,6 +25,7 @@ from trl.trainer.sft_trainer import SFTTrainer
 from shared.schemas.artifact import ArtifactRef
 from shared.schemas.result import BaseExecutorResult
 from shared.tasks.specs import SFTSpecStrict, TaskSpecStrictBase
+from shared.tasks.task_type import TaskType
 from shared.utils.manifest import scratch_dir
 
 from ..utils.logging import configure_hf_library_logging
@@ -59,6 +60,7 @@ class SFTResult(BaseExecutorResult):
 
 class SFTExecutor(TrainingMixin, Executor):
     name = "sft_executor"
+    supported_task_types = frozenset({TaskType.SFT})
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)

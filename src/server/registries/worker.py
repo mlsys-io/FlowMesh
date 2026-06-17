@@ -550,9 +550,7 @@ def hw_satisfies(worker: Worker, task: TaskEnvelope) -> bool:
 
 
 def capability_satisfies(worker: Worker, task: TaskEnvelope) -> bool:
-    if isinstance(task.spec, (SSHSpecStrict, SSHSpecTemplate)):
-        return worker.capabilities.ssh
-    return True
+    return task.spec.taskType in worker.capabilities.supported_task_types
 
 
 def _gpu_meets_requirements(hw: WorkerHardware, gpu_req: GPURequirements) -> bool:

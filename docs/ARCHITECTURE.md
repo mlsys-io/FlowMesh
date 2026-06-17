@@ -127,12 +127,12 @@ scripts/dev/            compile_protos, sync_requirements, check_env_examples
   `WorkerHardware`. The dispatcher's `_cached_worker_candidates` filters
   to workers whose cache covers the task's references; entries older
   than `WORKER_CACHE_TTL_SEC` are ignored.
-- **Worker capabilities.** Beyond hardware fit, each worker advertises a
-  `WorkerCapabilities` describing the task kinds it can service. The dispatcher
-  routes a task that requires a capability only to workers advertising it, and
-  excludes a worker that advertises none from those tasks rather than failing
-  them on it. SSH is one such capability — a worker advertises it when it can
-  launch session containers.
+- **Worker capabilities.** Beyond hardware fit, each worker advertises the set
+  of task types it can service, and the dispatcher routes a task only to workers
+  that advertise its type. A worker advertises a type only when its executor came
+  up — e.g. SSH requires a reachable Docker daemon, and training or omni types
+  require their (often GPU-only) dependencies — so a worker missing that executor
+  isn't a candidate, rather than being handed a task it would fail.
 - **Cursor pagination.** List endpoints accept `limit` and `before` /
   `after` cursors. The cursor is an opaque base64 of `(timestamp, id)`;
   do not parse client-side.

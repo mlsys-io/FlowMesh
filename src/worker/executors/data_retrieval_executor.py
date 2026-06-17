@@ -19,6 +19,7 @@ from PIL import Image
 from shared.schemas.artifact import ArtifactRef
 from shared.schemas.result import BaseExecutorResult
 from shared.tasks.specs import DataRetrievalSpecStrict
+from shared.tasks.task_type import TaskType
 from shared.utils.json import validate_keys
 
 from ..connectors import LumidDataConnector, PostgreSQLConnector, S3Connector
@@ -40,6 +41,7 @@ class DataRetrievalResult(BaseExecutorResult):
 
 class DataRetrievalExecutor(DataMixin, Executor):
     name = "data_retrieval"
+    supported_task_types = frozenset({TaskType.DATA_RETRIEVAL})
 
     def run(self, task: ExecutorTask, out_dir: Path) -> DataRetrievalResult:
         spec = self.require_spec(task, DataRetrievalSpecStrict)
