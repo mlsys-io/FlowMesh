@@ -92,6 +92,7 @@ class Worker(BaseModel):
     cluster: str
     node_id: str
     node_alias: str
+    version: str | None = None
     status: str
     started_at: str | None = None
     pid: int | None = None

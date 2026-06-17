@@ -38,6 +38,7 @@ class Node(BaseModel):
     namespace: str
     cluster: str
     alias: str
+    version: str | None = None
     started_at: str | None = None
     tags: list[str] = Field(default_factory=list)
     last_seen: str | None = None
@@ -51,6 +52,7 @@ class Node(BaseModel):
             namespace=info.namespace,
             cluster=info.cluster,
             alias=info.alias,
+            version=info.version,
             started_at=info.started_at,
             tags=info.tags,
             last_seen=info.last_seen,
@@ -148,16 +150,18 @@ class NodeRegistry:
 
     def upsert_node(self, node_id: str, node_info: NodeInfo) -> None:
         node = self._node_from_info(node_id, node_info)
+        mapping = {k: v for k, v in node.model_dump().items() if v is not None}
         with self._rds.sync.control_pipeline() as pipe:
             pipe.sadd(NODES_SET_KEY, node_id)
-            pipe.hset(node_key(node_id), mapping=node.model_dump())
+            pipe.hset(node_key(node_id), mapping=mapping)
             pipe.execute()
 
     async def upsert_node_async(self, node_id: str, node_info: NodeInfo) -> None:
         node = self._node_from_info(node_id, node_info)
+        mapping = {k: v for k, v in node.model_dump().items() if v is not None}
         async with self._rds.asyncio.control_pipeline() as pipe:
             pipe.sadd(NODES_SET_KEY, node_id)
-            pipe.hset(node_key(node_id), mapping=node.model_dump())
+            pipe.hset(node_key(node_id), mapping=mapping)
             await pipe.execute()
 
     def update_node_hb(

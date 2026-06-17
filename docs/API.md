@@ -90,6 +90,7 @@ Server policy toggles: `ENABLE_SERVER_SSH_PROXY`,
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/healthz` | Top-level health check. |
+| GET | `/api/v1/system/version` | Server version. |
 | GET | `/api/v1/system/metrics` | System metrics snapshot. |
 
 ## Cursor pagination

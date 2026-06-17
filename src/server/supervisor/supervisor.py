@@ -176,6 +176,7 @@ def _run_supervisor(
     """Target function executed inside the child process."""
     from pathlib import Path
 
+    from shared._version import FLOWMESH_RELEASE_VERSION
     from shared.schemas.node import NodeInfo
     from shared.utils.time import now_iso
 
@@ -230,6 +231,7 @@ def _run_supervisor(
         namespace=identity.namespace,
         cluster=identity.cluster,
         alias=identity.alias,
+        version=FLOWMESH_RELEASE_VERSION,
         started_at=node_started_at,
         tags=identity.tags,
         last_seen=node_started_at,

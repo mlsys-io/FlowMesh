@@ -10,6 +10,10 @@ class OkResponse(BaseModel):
     ok: bool
 
 
+class VersionResponse(BaseModel):
+    version: str
+
+
 class WorkflowStatus(StrEnum):
     PENDING = "PENDING"
     DISPATCHED = "DISPATCHED"

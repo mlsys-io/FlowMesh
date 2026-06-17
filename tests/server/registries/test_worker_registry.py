@@ -285,3 +285,15 @@ class TestParseCapabilities:
         w = _parse_worker_from_redis("w-1", {"status": "IDLE"})
         assert w is not None
         assert w.capabilities.supported_task_types == frozenset()
+
+
+class TestParseVersion:
+    def test_version_round_trip(self) -> None:
+        w = _parse_worker_from_redis("w-1", {"status": "IDLE", "version": "0.1.0"})
+        assert w is not None
+        assert w.version == "0.1.0"
+
+    def test_missing_version_defaults_none(self) -> None:
+        w = _parse_worker_from_redis("w-1", {"status": "IDLE"})
+        assert w is not None
+        assert w.version is None

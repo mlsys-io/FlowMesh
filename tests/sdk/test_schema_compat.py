@@ -33,6 +33,7 @@ from flowmesh.models import (
     TaskInfo,
     TaskType,
     TaskUsage,
+    VersionResponse,
     Worker,
     WorkerHardware,
     WorkerInfo,
@@ -54,6 +55,7 @@ from server.registries.worker import WorkerInfo as SrvWorkerInfo
 from server.registries.workflow import Workflow as SrvWorkflow
 from server.registries.workflow import WorkflowStatus as SrvWorkflowStatus
 from server.schemas.common import OkResponse as SrvOkResponse
+from server.schemas.common import VersionResponse as SrvVersionResponse
 from server.schemas.logs import LogEntry as SrvLogEntry
 from server.schemas.logs import LogEvent as SrvLogEvent
 from server.schemas.logs import LogLevel as SrvLogLevel
@@ -128,6 +130,7 @@ MODEL_PAIRS = [
     (SrvLogQueryResponse, LogQueryResponse),
     # Common
     (SrvOkResponse, OkResponse),
+    (SrvVersionResponse, VersionResponse),
     # Results
     (SrvBaseExecutorResult, BaseExecutorResult),
     (SrvResultEnvelope, ResultEnvelope),

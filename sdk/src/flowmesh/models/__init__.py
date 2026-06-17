@@ -10,6 +10,7 @@ from .common import (
     OkResponse,
     TaskStatus,
     TaskType,
+    VersionResponse,
     WorkerStatus,
     WorkflowStatus,
 )
@@ -91,6 +92,7 @@ __all__ = [
     "TaskTiming",
     "TaskType",
     "TaskUsage",
+    "VersionResponse",
     "Worker",
     "WorkerCapabilities",
     "WorkerHardware",

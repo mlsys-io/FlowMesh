@@ -46,6 +46,7 @@ class Worker(BaseModel):
     cluster: str = Field(description="Worker cluster.")
     node_id: str = Field(description="Owning node identifier.")
     node_alias: str = Field(description="Owning node alias.")
+    version: str | None = Field(default=None, description="Worker version.")
     status: WorkerStatus = Field(
         default=WorkerStatus.UNKNOWN, description="Worker status."
     )
@@ -686,6 +687,7 @@ def _parse_worker_from_redis(
         cluster=value.get("cluster", ""),
         node_id=value.get("node_id", ""),
         node_alias=value.get("node_alias", ""),
+        version=value.get("version"),
         status=WorkerStatus(value.get("status", "UNKNOWN")),
         started_at=value.get("started_at"),
         pid=pid,

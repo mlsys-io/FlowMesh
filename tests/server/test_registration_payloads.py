@@ -12,6 +12,7 @@ class TestNodeInfo:
             namespace="prod",
             cluster="us-west",
             alias="node-01",
+            version="0.1.0",
             started_at="2025-01-15T09:00:00Z",
             tags=["gpu", "a100"],
             last_seen="2025-01-15T10:30:00Z",
@@ -20,6 +21,7 @@ class TestNodeInfo:
         assert info.namespace == "prod"
         assert info.cluster == "us-west"
         assert info.alias == "node-01"
+        assert info.version == "0.1.0"
         assert info.tags == ["gpu", "a100"]
         assert info.max_gpu_count == 8
 
@@ -28,6 +30,7 @@ class TestNodeInfo:
             namespace="ns",
             cluster="cl",
             alias="grd",
+            version="0.1.0",
             started_at="2025-01-01T00:00:00Z",
             tags=["gpu"],
             last_seen="2025-01-01T00:00:00Z",
@@ -41,12 +44,25 @@ class TestNodeInfo:
             namespace="ns",
             cluster="cl",
             alias="grd",
+            version="0.1.0",
             started_at="2025-01-01T00:00:00Z",
             tags=[],
             last_seen="2025-01-01T00:00:00Z",
             max_gpu_count=0,
         )
         assert info.tags == []
+
+    def test_version_optional(self) -> None:
+        info = NodeInfo(
+            namespace="ns",
+            cluster="cl",
+            alias="grd",
+            started_at="2025-01-01T00:00:00Z",
+            tags=[],
+            last_seen="2025-01-01T00:00:00Z",
+            max_gpu_count=0,
+        )
+        assert info.version is None
 
     def test_missing_required_field_raises(self) -> None:
         with pytest.raises(ValidationError):
