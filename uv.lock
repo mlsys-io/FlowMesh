@@ -1047,7 +1047,7 @@ wheels = [
 
 [[package]]
 name = "crawl4ai"
-version = "0.8.6"
+version = "0.8.9"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiofiles" },
@@ -1085,9 +1085,9 @@ dependencies = [
     { name = "unclecode-litellm" },
     { name = "xxhash" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/07/96/7525bd2e1f8f2f2924f350b0432481d673c3fb43e4d60f7d151e4137b8a6/crawl4ai-0.8.6.tar.gz", hash = "sha256:2a2afab05ae021435fe025cfc5732f5dcebcefd7ff9a529e41050642ee954316", size = 578962, upload-time = "2026-03-24T15:07:51.706Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/90/2b/9e2b376ec8d4b803cc7b47b428a0ac762c59ce1215d0ab5a4aa9e7afc4a3/crawl4ai-0.8.9.tar.gz", hash = "sha256:00a3c97b9492a694f24fa66bc80b9f1533e5637745dc0e30914c88aac52763e3", size = 608119, upload-time = "2026-06-04T06:19:16.08Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/76/e2/aa851e2f0248f0b19c63b0fe11f6bdc2ca64900924d399af368dc28f2a20/crawl4ai-0.8.6-py3-none-any.whl", hash = "sha256:57e127e8113640d8358705b231111d3cd9cc4ab05d44705e724cebc4a383e09c", size = 501931, upload-time = "2026-03-24T15:07:50.121Z" },
+    { url = "https://files.pythonhosted.org/packages/c3/97/6443bf99add1c16b16d992b8d0816a3ce7adecde37323d368bed36dd0aff/crawl4ai-0.8.9-py3-none-any.whl", hash = "sha256:7836cfc9d81ed7fc646d614e984402c336e5a682462f3d92ff37de121a4244d6", size = 516731, upload-time = "2026-06-04T06:19:14.348Z" },
 ]
 
 [[package]]
@@ -2178,7 +2178,7 @@ ci = [
     { name = "codespell", specifier = ">=2.4.1" },
     { name = "colorama", specifier = ">=0.4.6" },
     { name = "colorlog", specifier = ">=6.9.0" },
-    { name = "crawl4ai", specifier = ">=0.8.0" },
+    { name = "crawl4ai", specifier = ">=0.8.9" },
     { name = "cryptography", specifier = ">=48.0.1" },
     { name = "datasets", specifier = ">=4.3.0" },
     { name = "ddgs", specifier = ">=9.10.0" },
@@ -2296,7 +2296,7 @@ runtime-agent = [
     { name = "arxiv", specifier = ">=2.2.0" },
     { name = "beautifulsoup4", specifier = ">=4.14.3" },
     { name = "chunkr-ai", specifier = ">=0.3.7" },
-    { name = "crawl4ai", specifier = ">=0.8.0" },
+    { name = "crawl4ai", specifier = ">=0.8.9" },
     { name = "ddgs", specifier = ">=9.10.0" },
     { name = "google-genai", specifier = ">=1.47.0" },
     { name = "hydra-core", specifier = ">=1.3.2" },
@@ -2400,7 +2400,7 @@ runtime-worker-cpu = [
     { name = "chunkr-ai", specifier = ">=0.3.7" },
     { name = "colorama", specifier = ">=0.4.6" },
     { name = "colorlog", specifier = ">=6.9.0" },
-    { name = "crawl4ai", specifier = ">=0.8.0" },
+    { name = "crawl4ai", specifier = ">=0.8.9" },
     { name = "datasets", specifier = ">=4.3.0" },
     { name = "ddgs", specifier = ">=9.10.0" },
     { name = "diffusers", specifier = ">=0.38.0" },
