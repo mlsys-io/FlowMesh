@@ -48,6 +48,7 @@ class Nodes(SyncResource):
         cluster: str,
         alias: str,
         started_at: str,
+        version: str | None = None,
         tags: builtins.list[str] | None = None,
         last_seen: str | None = None,
     ) -> NodeRegisterResponse:
@@ -57,6 +58,7 @@ class Nodes(SyncResource):
             "cluster": cluster,
             "alias": alias,
             "started_at": started_at,
+            "version": version,
             "tags": tags or [],
             "last_seen": last_seen or started_at,
         }
@@ -149,6 +151,7 @@ class AsyncNodes(AsyncResource):
         cluster: str,
         alias: str,
         started_at: str,
+        version: str | None = None,
         tags: builtins.list[str] | None = None,
         last_seen: str | None = None,
     ) -> NodeRegisterResponse:
@@ -158,6 +161,7 @@ class AsyncNodes(AsyncResource):
             "cluster": cluster,
             "alias": alias,
             "started_at": started_at,
+            "version": version,
             "tags": tags or [],
             "last_seen": last_seen or started_at,
         }
