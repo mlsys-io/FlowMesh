@@ -35,16 +35,15 @@ from .utils.checkpoints import (
 from .utils.huggingface import build_hf_load_kwargs, pick_torch_dtype
 
 try:
-    from peft import LoraConfig, PeftMixedModel, PeftModel, TaskType, get_peft_model
+    from peft import LoraConfig, PeftModel, TaskType, get_peft_model
 except ImportError:
     if TYPE_CHECKING:
-        from peft import LoraConfig, PeftMixedModel, PeftModel, TaskType, get_peft_model
+        from peft import LoraConfig, PeftModel, TaskType, get_peft_model
     else:
         LoraConfig = None
         TaskType = None
         get_peft_model = None
         PeftModel = None
-        PeftMixedModel = None
 
 logger = logging.getLogger("worker.sft.lora")
 
@@ -148,7 +147,7 @@ class LoRASFTExecutor(TrainingMixin, Executor):
                 training_cfg, logger
             )
 
-            peft_model: PeftModel | PeftMixedModel
+            peft_model: PeftModel
             if resume_path:
                 logger.info(
                     "Resuming LoRA training from local checkpoint %s", resume_path
@@ -191,7 +190,13 @@ class LoRASFTExecutor(TrainingMixin, Executor):
                     use_rslora=bool(lora_cfg.get("use_rslora", False)),
                 )
 
-                peft_model = get_peft_model(model, peft_config)
+                created_model = get_peft_model(model, peft_config)
+                if not isinstance(created_model, PeftModel):
+                    raise ExecutionError(
+                        "LoRA SFT requires PeftModel; "
+                        f"got {type(created_model).__name__} instead"
+                    )
+                peft_model = created_model
                 logger.info("Initialized new LoRA adapters: %s", lora_target_modules)
 
             sft_config = SFTConfig(

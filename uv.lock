@@ -1292,7 +1292,7 @@ wheels = [
 
 [[package]]
 name = "datasets"
-version = "4.3.0"
+version = "5.0.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "dill" },
@@ -1311,9 +1311,9 @@ dependencies = [
     { name = "tqdm" },
     { name = "xxhash" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/2a/47/325206ac160f7699ed9f1798afa8f8f8d5189b03bf3815654859ac1d5cba/datasets-4.3.0.tar.gz", hash = "sha256:bc9118ed9afd92346c5be7ed3aaa00177eb907c25467f9d072a0d22777efbd2b", size = 582801, upload-time = "2025-10-23T16:31:51.547Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/d9/85/ce4f780c32f7e36d71257f1c27e8ba898ebe379cb54f211f5f2013f2c219/datasets-5.0.0.tar.gz", hash = "sha256:83dbbbdb07a33b82192b8c419deb18739b138ee2ce1a322d55ce6b100954ec1a", size = 631708, upload-time = "2026-06-05T13:18:26.124Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ca/51/409a8184ed35453d9cbb3d6b20d524b1115c2c2d117b85d5e9b06cd70b45/datasets-4.3.0-py3-none-any.whl", hash = "sha256:0ea157e72138b3ca6c7d2415f19a164ecf7d4c4fa72da2a570da286882e96903", size = 506846, upload-time = "2025-10-23T16:31:49.965Z" },
+    { url = "https://files.pythonhosted.org/packages/05/66/73034ad30b59f13439b75e620989dacba4c047256e358ba7c2e9ec98ea22/datasets-5.0.0-py3-none-any.whl", hash = "sha256:7dd34927a0fd7046e98aad5cb9430e699c373238a15befa7b9bf22b991a7fee6", size = 555084, upload-time = "2026-06-05T13:18:24.435Z" },
 ]
 
 [[package]]
@@ -2180,7 +2180,7 @@ ci = [
     { name = "colorlog", specifier = ">=6.9.0" },
     { name = "crawl4ai", specifier = ">=0.8.9" },
     { name = "cryptography", specifier = ">=48.0.1" },
-    { name = "datasets", specifier = ">=4.3.0" },
+    { name = "datasets", specifier = ">=4.7.0" },
     { name = "ddgs", specifier = ">=9.10.0" },
     { name = "deepspeed", specifier = ">=0.19.1" },
     { name = "diffusers", specifier = ">=0.38.0" },
@@ -2244,7 +2244,7 @@ ci = [
     { name = "toml", specifier = ">=0.10.2" },
     { name = "torch", specifier = ">=2.11.0" },
     { name = "transformers", specifier = ">=5.5.1,<5.9.0" },
-    { name = "trl", specifier = ">=0.23.0" },
+    { name = "trl", specifier = ">=1.6.0" },
     { name = "types-colorama", specifier = ">=0.4.15.20250801" },
     { name = "types-docker", specifier = ">=7.1.0.20251202" },
     { name = "types-grpcio", specifier = ">=1.0.0.20251009" },
@@ -2325,7 +2325,7 @@ runtime-analytics = [
 ]
 runtime-inference = [
     { name = "accelerate", specifier = ">=1.12.0" },
-    { name = "datasets", specifier = ">=4.3.0" },
+    { name = "datasets", specifier = ">=4.7.0" },
     { name = "diffusers", specifier = ">=0.38.0" },
     { name = "pillow", specifier = ">=12.2.0" },
     { name = "torch", specifier = ">=2.11.0" },
@@ -2373,7 +2373,7 @@ runtime-server = [
 ]
 runtime-training = [
     { name = "peft", specifier = ">=0.18.0" },
-    { name = "trl", specifier = ">=0.23.0" },
+    { name = "trl", specifier = ">=1.6.0" },
 ]
 runtime-training-gpu = [{ name = "deepspeed", specifier = ">=0.19.1" }]
 runtime-worker-core = [
@@ -2401,7 +2401,7 @@ runtime-worker-cpu = [
     { name = "colorama", specifier = ">=0.4.6" },
     { name = "colorlog", specifier = ">=6.9.0" },
     { name = "crawl4ai", specifier = ">=0.8.9" },
-    { name = "datasets", specifier = ">=4.3.0" },
+    { name = "datasets", specifier = ">=4.7.0" },
     { name = "ddgs", specifier = ">=9.10.0" },
     { name = "diffusers", specifier = ">=0.38.0" },
     { name = "docker", specifier = ">=7.1.0" },
@@ -2442,7 +2442,7 @@ runtime-worker-cpu = [
     { name = "toml", specifier = ">=0.10.2" },
     { name = "torch", specifier = ">=2.11.0" },
     { name = "transformers", specifier = ">=5.5.1,<5.9.0" },
-    { name = "trl", specifier = ">=0.23.0" },
+    { name = "trl", specifier = ">=1.6.0" },
     { name = "websocket-client", specifier = ">=1.9.0" },
     { name = "wikipedia-api", specifier = ">=0.8.1" },
 ]
@@ -7796,16 +7796,18 @@ wheels = [
 
 [[package]]
 name = "trl"
-version = "0.23.0"
+version = "1.6.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "accelerate" },
     { name = "datasets" },
+    { name = "jinja2" },
+    { name = "packaging" },
     { name = "transformers" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/45/18/c18e27f6156cf961791ca7abcd4ee5fc8c5ae0fbb936c59827852ee118f5/trl-0.23.0.tar.gz", hash = "sha256:abfe0ecfa6b7e46022552b9dd0cc288bf2c4ef19364ce7765d10218b62b618f1", size = 515765, upload-time = "2025-09-10T04:16:42.377Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/15/71/053cfddac9ec13a444b48167180e8c6c7dbd9d7b02dcfc6ad400b11e8274/trl-1.6.0.tar.gz", hash = "sha256:c24692f6436eb0ee8666965f37513b198b828eb76690cd330446bce67182a029", size = 673487, upload-time = "2026-06-11T21:45:34.256Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/0f/81/035cace9b8853df794db0499299273abef30de889602587efa2a95c7dccb/trl-0.23.0-py3-none-any.whl", hash = "sha256:bb8f35a6a1531bad2d52032add29380413bd9b032d133ab6df16d2191f14f9e6", size = 564734, upload-time = "2025-09-10T04:16:40.34Z" },
+    { url = "https://files.pythonhosted.org/packages/ae/55/9779cb8a5fd066afa719531f740018078a4ca4c83406f2d68bda2b4b26e6/trl-1.6.0-py3-none-any.whl", hash = "sha256:78023ee1e8ba11e9b7eaa9077c8d37b3581ff7c7ddf32fbe1f19a22fe2c76360", size = 825130, upload-time = "2026-06-11T21:45:32.526Z" },
 ]
 
 [[package]]

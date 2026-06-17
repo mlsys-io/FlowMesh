@@ -26,9 +26,11 @@ from transformers import (
     PreTrainedTokenizerBase,
     Trainer,
 )
-from trl.models.modeling_value_head import AutoModelForCausalLMWithValueHead
-from trl.trainer.ppo_config import PPOConfig
-from trl.trainer.ppo_trainer import PPOTrainer
+from trl.experimental.ppo.modeling_value_head import (
+    AutoModelForCausalLMWithValueHead,
+)
+from trl.experimental.ppo.ppo_config import PPOConfig
+from trl.experimental.ppo.ppo_trainer import PPOTrainer
 
 from shared.schemas.artifact import ArtifactRef
 from shared.schemas.result import BaseExecutorResult
@@ -254,8 +256,8 @@ class _ExternalRewardModel(torch.nn.Module):
 
 @contextmanager
 def _patched_reward_dispatch():
-    from trl.trainer import ppo_trainer as trl_ppo
-    from trl.trainer import utils as trl_utils
+    from trl.experimental import utils as trl_utils
+    from trl.experimental.ppo import ppo_trainer as trl_ppo
 
     original_get_reward = trl_utils.get_reward
     original_get_reward_ppo = getattr(trl_ppo, "get_reward", None)

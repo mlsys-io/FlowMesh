@@ -26,32 +26,32 @@ def _make_trainer(target_kl: float | None) -> _EarlyStopPPOTrainer:
     return trainer
 
 
-@patch("trl.trainer.ppo_trainer.PPOTrainer.log", autospec=True)
+@patch("trl.experimental.ppo.ppo_trainer.PPOTrainer.log", autospec=True)
 def test_kl_above_target_raises(_super_log) -> None:
     trainer = _make_trainer(target_kl=0.1)
     with pytest.raises(_EarlyStopSignal):
         trainer.log({"objective/kl": 0.2})
 
 
-@patch("trl.trainer.ppo_trainer.PPOTrainer.log", autospec=True)
+@patch("trl.experimental.ppo.ppo_trainer.PPOTrainer.log", autospec=True)
 def test_kl_below_target_does_not_raise(_super_log) -> None:
     trainer = _make_trainer(target_kl=0.1)
     trainer.log({"objective/kl": 0.05})
 
 
-@patch("trl.trainer.ppo_trainer.PPOTrainer.log", autospec=True)
+@patch("trl.experimental.ppo.ppo_trainer.PPOTrainer.log", autospec=True)
 def test_kl_equal_to_target_does_not_raise(_super_log) -> None:
     trainer = _make_trainer(target_kl=0.1)
     trainer.log({"objective/kl": 0.1})
 
 
-@patch("trl.trainer.ppo_trainer.PPOTrainer.log", autospec=True)
+@patch("trl.experimental.ppo.ppo_trainer.PPOTrainer.log", autospec=True)
 def test_missing_kl_key_is_ignored(_super_log) -> None:
     trainer = _make_trainer(target_kl=0.1)
     trainer.log({"loss": 1.0})
 
 
-@patch("trl.trainer.ppo_trainer.PPOTrainer.log", autospec=True)
+@patch("trl.experimental.ppo.ppo_trainer.PPOTrainer.log", autospec=True)
 def test_threshold_unset_is_no_op(_super_log) -> None:
     """When ``target_kl is None`` the override is a pure pass-through."""
     trainer = _make_trainer(target_kl=None)
