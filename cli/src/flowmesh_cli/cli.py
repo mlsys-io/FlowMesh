@@ -5,7 +5,21 @@ from importlib.util import find_spec
 
 import typer
 
+from ._version import resolve_cli_version
 from .core.typer import get_typer
+
+
+def _root(
+    version: bool = typer.Option(
+        False,
+        "--version",
+        "-V",
+        help="Show the FlowMesh CLI version and exit.",
+    ),
+) -> None:
+    if version:
+        typer.echo(f"flowmesh {resolve_cli_version()}")
+        raise typer.Exit()
 
 
 def _register_optional(
@@ -30,7 +44,12 @@ def _register_optional(
 
 def build_cli_app() -> typer.Typer:
     """Construct the CLI app by attaching available command groups."""
-    app = get_typer(help="FlowMesh command line interface.")
+    app = get_typer(
+        help="FlowMesh command line interface.",
+        invoke_without_command=True,
+        no_args_is_help=True,
+    )
+    app.callback()(_root)
 
     _register_optional(".commands", app)
     _register_optional("flowmesh_cli_stack", app)

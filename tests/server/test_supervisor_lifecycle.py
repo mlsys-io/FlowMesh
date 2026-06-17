@@ -19,6 +19,7 @@ def _build_lifecycle(base_url: str = "http://root:8000") -> Lifecycle:
         namespace="ns",
         cluster="cl",
         alias="worker-1",
+        version="0.1.0",
         started_at="2026-05-13T00:00:00Z",
         tags=[],
         last_seen="2026-05-13T00:00:00Z",

@@ -6,7 +6,7 @@ import httpx
 
 from .._base_client import _raise_for_status
 from ..exceptions import FlowMeshConnectionError
-from ..models.common import OkResponse
+from ..models.common import OkResponse, VersionResponse
 from ._base import AsyncResource, SyncResource
 
 
@@ -16,6 +16,12 @@ class System(SyncResource):
     def metrics(self) -> dict[str, Any]:
         """Get system metrics snapshot (admin only)."""
         return self._client._request("GET", "/system/metrics")
+
+    def version(self) -> VersionResponse:
+        """Get the server version."""
+        return VersionResponse.model_validate(
+            self._client._request("GET", "/system/version")
+        )
 
     def health(self) -> OkResponse:
         """Check server health.
@@ -38,6 +44,12 @@ class AsyncSystem(AsyncResource):
     async def metrics(self) -> dict[str, Any]:
         """Get system metrics snapshot (admin only)."""
         return await self._client._request("GET", "/system/metrics")
+
+    async def version(self) -> VersionResponse:
+        """Get the server version."""
+        return VersionResponse.model_validate(
+            await self._client._request("GET", "/system/version")
+        )
 
     async def health(self) -> OkResponse:
         """Check server health."""

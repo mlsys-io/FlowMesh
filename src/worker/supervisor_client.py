@@ -14,6 +14,7 @@ from google.protobuf.empty_pb2 import Empty
 from google.protobuf.json_format import MessageToDict
 from google.protobuf.struct_pb2 import Struct
 
+from shared._version import FLOWMESH_RELEASE_VERSION
 from shared.grpc.supervisor.v1 import supervisor_pb2, supervisor_pb2_grpc
 from shared.schemas.event import Event, TaskEvent, WorkerEvent, serialize_event
 from shared.schemas.worker import SSHLimits, WorkerCapabilities
@@ -111,6 +112,7 @@ class SupervisorClient:
             "namespace": self.worker_namespace,
             "cluster": self.worker_cluster,
             "alias": self.worker_alias,
+            "version": FLOWMESH_RELEASE_VERSION,
             "status": status.value,
             "started_at": started_at,
             "pid": str(pid),

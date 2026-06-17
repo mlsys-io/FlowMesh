@@ -18,6 +18,7 @@ class Node(BaseModel):
     namespace: str
     cluster: str
     alias: str
+    version: str | None = None
     started_at: str | None = None
     tags: list[str] = Field(default_factory=list)
     last_seen: str | None = None

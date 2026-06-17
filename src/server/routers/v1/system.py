@@ -3,6 +3,8 @@ from typing import Any
 
 from fastapi import APIRouter, Depends
 
+from shared._version import FLOWMESH_RELEASE_VERSION
+
 from ...app_state import get_logger, get_metrics
 from ...auth.security import (
     PrincipalContext,
@@ -10,9 +12,21 @@ from ...auth.security import (
     require_permission,
 )
 from ...hooks import ResourceAction, ResourceKind
+from ...schemas.common import VersionResponse
 from ...services.metrics import MetricsRecorder
 
 router = APIRouter(prefix="/system", tags=["System"])
+
+
+@router.get(
+    "/version",
+    summary="Get version",
+    description="Server version.",
+    response_description="Server version",
+    tags=["Caller: anyone"],
+)
+async def get_version() -> VersionResponse:
+    return VersionResponse(version=FLOWMESH_RELEASE_VERSION)
 
 
 @router.get(

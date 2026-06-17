@@ -118,6 +118,25 @@ class TestTaskInfo:
         client.tasks.retrieve.assert_called_once_with("t-123")
 
 
+class TestVersion:
+    def test_version_flag(self) -> None:
+        result = runner.invoke(_app(), ["--version"])
+        assert result.exit_code == 0
+        assert result.stdout.startswith("flowmesh ")
+
+    @patch("flowmesh_cli.commands.base.FlowMesh")
+    def test_info_reports_versions(self, mock_hc: MagicMock) -> None:
+        client = _mock_client()
+        client.system.health.return_value = MagicMock(ok=True)
+        client.system.version.return_value = MagicMock(version="9.9.9")
+        mock_hc.return_value = client
+
+        result = runner.invoke(_app(), ["info"])
+        assert result.exit_code == 0
+        assert '"server_version": "9.9.9"' in result.stdout
+        assert '"client_version"' in result.stdout
+
+
 # ------------------------------------------------------------------ #
 # Config
 # ------------------------------------------------------------------ #

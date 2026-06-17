@@ -18,6 +18,7 @@ from flowmesh.models import (
     TaskInfo,
     TaskTiming,
     TaskUsage,
+    VersionResponse,
     WorkerHardware,
     WorkerInfo,
     Workflow,
@@ -41,6 +42,7 @@ from server.registries.worker import WorkerInfo as SrvWorkerInfo
 from server.registries.workflow import Workflow as SrvWorkflow
 from server.registries.workflow import WorkflowStatus as SrvWorkflowStatus
 from server.schemas.common import OkResponse as SrvOkResponse
+from server.schemas.common import VersionResponse as SrvVersionResponse
 from server.schemas.logs import LogEntry as SrvLogEntry
 from server.schemas.logs import LogEvent as SrvLogEvent
 from server.schemas.logs import LogQueryResponse as SrvLogQueryResponse
@@ -374,6 +376,11 @@ class TestMiscModels:
         server = SrvOkResponse(ok=True)
         r = OkResponse.model_validate(_dump(server))
         assert r.ok is True
+
+    def test_version_response(self) -> None:
+        server = SrvVersionResponse(version="0.1.0")
+        r = VersionResponse.model_validate(_dump(server))
+        assert r.version == "0.1.0"
 
     def test_log_query_response(self) -> None:
         server = SrvLogQueryResponse(

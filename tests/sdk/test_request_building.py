@@ -18,6 +18,7 @@ from server.registries.node import Node as SrvNode
 from server.registries.workflow import Workflow as SrvWorkflow
 from server.registries.workflow import WorkflowStatus as SrvWorkflowStatus
 from server.schemas.common import OkResponse as SrvOkResponse
+from server.schemas.common import VersionResponse as SrvVersionResponse
 from server.schemas.workflow import WorkflowSubmitResponse as SrvWorkflowSubmitResponse
 from server.schemas.workflow import (
     WorkflowSubmitTaskEntry as SrvWorkflowSubmitTaskEntry,
@@ -56,6 +57,8 @@ _SUBMIT_RESPONSE = SrvWorkflowSubmitResponse(
 )
 
 _OK_RESPONSE = SrvOkResponse(ok=True)
+
+_VERSION_RESPONSE = SrvVersionResponse(version="0.1.0")
 
 _NODE_RESPONSE = SrvNode(
     id="gdn-1",
@@ -98,6 +101,15 @@ class TestURLConstruction:
         route = respx.get(route_url("healthz")).respond(json=_json(_OK_RESPONSE))
         mock_client.system.health()
         assert route.called
+
+    @respx.mock
+    def test_version_url(self, mock_client: FlowMesh) -> None:
+        route = respx.get(route_url("get_version")).respond(
+            json=_json(_VERSION_RESPONSE)
+        )
+        result = mock_client.system.version()
+        assert route.called
+        assert result.version == "0.1.0"
 
 
 class TestAuthHeaders:
