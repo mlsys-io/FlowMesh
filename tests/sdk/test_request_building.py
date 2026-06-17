@@ -219,3 +219,36 @@ class TestQueryParams:
         url = str(request.url)
         assert "tags=gpu" in url
         assert "tags=a100" in url
+
+
+class TestNodeRegister:
+    @respx.mock
+    def test_register_includes_version_when_given(self, mock_client: FlowMesh) -> None:
+        route = respx.post(route_url("register_node")).respond(
+            json={"node_id": "nde-1"}
+        )
+        mock_client.nodes.register(
+            namespace="ns",
+            cluster="cl",
+            alias="n1",
+            started_at="2025-01-01T00:00:00Z",
+            version="0.1.0",
+        )
+        body = json.loads(route.calls[0].request.content)
+        assert body["version"] == "0.1.0"
+
+    @respx.mock
+    def test_register_sends_null_version_when_absent(
+        self, mock_client: FlowMesh
+    ) -> None:
+        route = respx.post(route_url("register_node")).respond(
+            json={"node_id": "nde-1"}
+        )
+        mock_client.nodes.register(
+            namespace="ns",
+            cluster="cl",
+            alias="n1",
+            started_at="2025-01-01T00:00:00Z",
+        )
+        body = json.loads(route.calls[0].request.content)
+        assert body["version"] is None
