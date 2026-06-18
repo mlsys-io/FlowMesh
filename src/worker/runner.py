@@ -12,20 +12,13 @@ import requests
 
 from shared.schemas.result import BaseExecutorResult
 from shared.tasks import MergedChildTaskStrict
-from shared.tasks.specs import InferenceSpecStrict, TaskSpecStrictBase
-from shared.tasks.worker_message import (
-    HardwareUsage,
-    WorkerHardware,
-    WorkerTaskMessage,
-)
+from shared.tasks.specs import InferenceBackend, InferenceSpecStrict, TaskSpecStrictBase
+from shared.tasks.worker_message import HardwareUsage, WorkerHardware, WorkerTaskMessage
 from shared.utils.manifest import prepare_output_dir, sync_manifest
 from shared.utils.time import now_iso
 
 from .executors.base_executor import ExecutionError, Executor, TaskCancelledError
-from .executors.utils.checkpoints import (
-    get_http_destination,
-    write_executor_result,
-)
+from .executors.utils.checkpoints import get_http_destination, write_executor_result
 from .lifecycle import Lifecycle
 from .utils.logging import TaskLogEmitter
 
@@ -236,18 +229,10 @@ class Runner:
         )
 
     def _select_inference_executor_key(self, spec: InferenceSpecStrict) -> str:
-        enforce_cpu = spec.enforce_cpu
-        if enforce_cpu:
+        if spec.backend() is InferenceBackend.TRANSFORMERS:
             return "default"
-
-        model_cfg = spec.model
-        if model_cfg is not None and model_cfg.has_lora_adapter():
+        if (model_cfg := spec.model) and model_cfg.adapters:
             return "vllm_lora"
-        adapters = model_cfg.adapters if model_cfg else None
-        if adapters:
-            return "vllm_lora"
-        if model_cfg is not None and model_cfg.transformers and not model_cfg.vllm:
-            return "default"
         return "vllm"
 
     def _maybe_expire_active_executor(self) -> None:

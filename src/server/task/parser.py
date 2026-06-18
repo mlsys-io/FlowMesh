@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 
 from shared.tasks import TaskEnvelopeTemplate, TaskType
 from shared.tasks.components import TaskAnnotations
+from shared.tasks.specs import InferenceBackend, InferenceSpecTemplate
 from shared.utils import new_task_id, parse_bool_env
 from shared.utils.json import safe_get
 
@@ -161,7 +162,48 @@ def _build_task_template(
             ) from exc
         raise ValueError(f"Invalid task payload{context}: {exc}") from exc
     _validate_ssh_access_mode(task, context)
+    _validate_inference_spec(task, context)
     return task
+
+
+def _validate_inference_spec(task: TaskEnvelopeTemplate, context: str) -> None:
+    """Validate inference-task invariants."""
+    spec = task.spec
+    if not isinstance(spec, InferenceSpecTemplate):
+        return
+
+    model = spec.model
+    if model and model.adapters:
+        for adapter in model.adapters:
+            if not adapter.path and not adapter.url:
+                raise ValueError(
+                    f"Invalid task payload{context}: adapter "
+                    f"{adapter.name or adapter.type!r} specifies neither path nor url "
+                    "and cannot be loaded."
+                )
+
+    hardware = spec.resources.hardware if spec.resources else None
+    gpu = hardware.gpu if hardware else None
+
+    if spec.enforce_cpu is True:
+        if model and model.vllm:
+            raise ValueError(
+                f"Invalid task payload{context}: enforce_cpu is set but the model "
+                "configures a vLLM backend."
+            )
+        return
+
+    if isinstance(spec.enforce_cpu, str):  # Unresolved template placeholder
+        return
+    if spec.backend() is not InferenceBackend.VLLM:
+        return
+    if gpu and gpu.count is not None and gpu.count >= 1:
+        return
+    raise ValueError(
+        f"Invalid task payload{context}: inference task resolves to the vLLM "
+        "backend but requests no GPU. Set spec.resources.hardware.gpu.count >= 1, "
+        "or use enforce_cpu / a transformers-only model for CPU inference."
+    )
 
 
 def _task_context_label(local_name: str | None, graph_node_name: str | None) -> str:

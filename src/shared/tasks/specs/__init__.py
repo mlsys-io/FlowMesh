@@ -5,7 +5,7 @@ from .common import (
     TaskSpecTemplateBase,
 )
 from .diffusion import DiffusionSpecStrict, DiffusionSpecTemplate
-from .inference import InferenceSpecStrict, InferenceSpecTemplate
+from .inference import InferenceBackend, InferenceSpecStrict, InferenceSpecTemplate
 from .misc import (
     AgentSpecStrict,
     AgentSpecTemplate,
@@ -56,6 +56,7 @@ __all__ = [
     "DiffusionSpecTemplate",
     "ImageClassificationTrainingSpecStrict",
     "ImageClassificationTrainingSpecTemplate",
+    "InferenceBackend",
     "InferenceSpecStrict",
     "InferenceSpecTemplate",
     "LoRASFTSpecStrict",

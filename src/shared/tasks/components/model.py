@@ -76,13 +76,6 @@ class ModelConfig(StrictBaseModel):
     diffusers: dict[str, Any] | None = None
     adapters: list[AdapterConfig] | None = None
 
-    def has_lora_adapter(self) -> bool:
-        adapters = self.adapters or []
-        for adapter in adapters:
-            if (adapter.type or "").strip().lower() == "lora":
-                return True
-        return False
-
 
 class ModelConfigTemplate(TemplateBaseModel):
     source: ModelSourceTemplate | None = None
@@ -91,10 +84,3 @@ class ModelConfigTemplate(TemplateBaseModel):
     transformers: dict[str, Any] | None = None
     diffusers: dict[str, Any] | None = None
     adapters: list[AdapterConfigTemplate] | None = None
-
-    def has_lora_adapter(self) -> bool:
-        adapters = self.adapters or []
-        for adapter in adapters:
-            if (adapter.type or "").strip().lower() == "lora":
-                return True
-        return False

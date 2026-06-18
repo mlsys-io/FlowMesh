@@ -5,6 +5,7 @@ import textwrap
 import pytest
 
 from server.task.parser import _deep_merge, parse_workflow
+from shared.tasks.specs import TaskSpecTemplateBase
 
 
 class TestParseWorkflowNative:
@@ -168,3 +169,72 @@ class TestDeepMerge:
         dst = {"a": 1}
         result = _deep_merge(dst, {})
         assert result == {"a": 1}
+
+
+class TestInferenceSpecValidation:
+    def _parse_inference(self, body: str) -> TaskSpecTemplateBase:
+        doc = textwrap.dedent("""\
+            apiVersion: flowmesh/v1
+            kind: Task
+            metadata:
+              name: infer
+            spec:
+              taskType: inference
+            """) + textwrap.indent(textwrap.dedent(body), "  ")
+        return parse_workflow(doc, format="native").tasks[0].task.spec
+
+    def _gpu_count(self, spec: TaskSpecTemplateBase) -> int | None:
+        hardware = spec.resources.hardware if spec.resources else None
+        gpu = hardware.gpu if hardware else None
+        return gpu.count if gpu else None
+
+    def test_vllm_without_gpu_is_rejected(self) -> None:
+        with pytest.raises(ValueError, match="vLLM backend but requests no GPU"):
+            self._parse_inference("model:\n  vllm:\n    gpu_memory_utilization: 0.9\n")
+
+    def test_vllm_with_gpu_parses(self) -> None:
+        spec = self._parse_inference(
+            "model:\n  vllm:\n    gpu_memory_utilization: 0.9\n"
+            "resources:\n  hardware:\n    gpu:\n      count: 1\n"
+        )
+        assert self._gpu_count(spec) == 1
+
+    def test_non_vllm_backend_parses_without_gpu(self) -> None:
+        spec = self._parse_inference("data:\n  items: ['x']\n")
+        assert self._gpu_count(spec) is None
+
+    def test_placeholder_enforce_cpu_defers(self) -> None:
+        spec = self._parse_inference(
+            "enforce_cpu: ${inputs.cpu}\n"
+            "model:\n  vllm:\n    gpu_memory_utilization: 0.9\n"
+        )
+        assert self._gpu_count(spec) is None
+
+    def test_enforce_cpu_with_vllm_is_rejected(self) -> None:
+        with pytest.raises(ValueError, match="enforce_cpu is set but the model"):
+            self._parse_inference(
+                "enforce_cpu: true\nmodel:\n  vllm:\n    gpu_memory_utilization: 0.9\n"
+            )
+
+    def test_enforce_cpu_with_gpu_parses(self) -> None:
+        # enforce_cpu selects the HF transformers executor (not vLLM), which still
+        # runs on a GPU when one is available, so a GPU request is valid here.
+        spec = self._parse_inference(
+            "enforce_cpu: true\nresources:\n  hardware:\n    gpu:\n      count: 1\n"
+        )
+        assert self._gpu_count(spec) == 1
+
+    def test_enforce_cpu_alone_parses(self) -> None:
+        spec = self._parse_inference("enforce_cpu: true\n")
+        assert self._gpu_count(spec) is None
+
+    def test_adapter_without_source_is_rejected(self) -> None:
+        with pytest.raises(ValueError, match="specifies neither path nor url"):
+            self._parse_inference("model:\n  adapters:\n    - type: lora\n")
+
+    def test_adapter_with_path_parses(self) -> None:
+        spec = self._parse_inference(
+            "model:\n  adapters:\n    - type: lora\n      path: /models/adapter\n"
+            "resources:\n  hardware:\n    gpu:\n      count: 1\n"
+        )
+        assert self._gpu_count(spec) == 1
