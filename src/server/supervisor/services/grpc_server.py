@@ -74,6 +74,7 @@ class SupervisorServicer(supervisor_pb2_grpc.SupervisorServicer):
         registry: WorkerRegistry,
         redis: SyncRedisClient,
         node_id: str,
+        node_alias: str,
         task_listener: TaskListener,
         relay_service: RelayService,
         logger: logging.Logger,
@@ -83,6 +84,7 @@ class SupervisorServicer(supervisor_pb2_grpc.SupervisorServicer):
         self._relay_service = relay_service
         self._redis = redis
         self._node_id = node_id
+        self._node_alias = node_alias
         self._logger = logger
 
     async def RegisterWorker(
@@ -97,6 +99,7 @@ class SupervisorServicer(supervisor_pb2_grpc.SupervisorServicer):
         worker_id = new_worker_id(self._redis.incr(WORKER_ID_SEQ_KEY))
         worker_meta["id"] = worker_id
         worker_meta["node_id"] = self._node_id
+        worker_meta["node_alias"] = self._node_alias
         self._redis.sadd(WORKERS_SET_KEY, worker_id)
         self._redis.hash_set(worker_key(worker_id), worker_meta)
         self._registry.set_worker_id(worker.token, worker_id)
@@ -224,6 +227,7 @@ class GrpcServer:
         registry: WorkerRegistry,
         redis: SyncRedisClient,
         node_id: str,
+        node_alias: str,
         task_listener: TaskListener,
         relay_service: RelayService,
         logger: logging.Logger,
@@ -231,7 +235,7 @@ class GrpcServer:
         self._logger = logger
         self._server: grpc.aio.Server | None = None
         self._servicer = SupervisorServicer(
-            registry, redis, node_id, task_listener, relay_service, logger
+            registry, redis, node_id, node_alias, task_listener, relay_service, logger
         )
         self._listen_addr = f"{host}:{port}"
 

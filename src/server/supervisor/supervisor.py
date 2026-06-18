@@ -292,6 +292,7 @@ def _run_supervisor(
         worker_adapter_registry,
         redis=redis_client.sync,
         node_id=node_id,
+        node_alias=identity.alias,
         task_listener=task_listener,
         relay_service=relay_service,
         logger=logger,
