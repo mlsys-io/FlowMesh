@@ -58,10 +58,11 @@ class Nodes(SyncResource):
             "cluster": cluster,
             "alias": alias,
             "started_at": started_at,
-            "version": version,
             "tags": tags or [],
             "last_seen": last_seen or started_at,
         }
+        if version is not None:
+            payload["version"] = version
         data = self._client._request("POST", "/nodes/register", json_body=payload)
         return NodeRegisterResponse.model_validate(data)
 
@@ -161,10 +162,11 @@ class AsyncNodes(AsyncResource):
             "cluster": cluster,
             "alias": alias,
             "started_at": started_at,
-            "version": version,
             "tags": tags or [],
             "last_seen": last_seen or started_at,
         }
+        if version is not None:
+            payload["version"] = version
         data = await self._client._request("POST", "/nodes/register", json_body=payload)
         return NodeRegisterResponse.model_validate(data)
 

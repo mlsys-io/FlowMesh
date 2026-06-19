@@ -238,9 +238,7 @@ class TestNodeRegister:
         assert body["version"] == "0.1.0"
 
     @respx.mock
-    def test_register_sends_null_version_when_absent(
-        self, mock_client: FlowMesh
-    ) -> None:
+    def test_register_omits_version_when_absent(self, mock_client: FlowMesh) -> None:
         route = respx.post(route_url("register_node")).respond(
             json={"node_id": "nde-1"}
         )
@@ -251,4 +249,4 @@ class TestNodeRegister:
             started_at="2025-01-01T00:00:00Z",
         )
         body = json.loads(route.calls[0].request.content)
-        assert body["version"] is None
+        assert "version" not in body
