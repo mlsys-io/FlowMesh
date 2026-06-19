@@ -331,6 +331,7 @@ async def _fetch_node_workers(
         if record is None:
             new_status = NodeWorkerStatus.STARTING  # Worker is not registered yet
         else:
+            worker["version"] = record.version
             match record.status:
                 case WorkerStatus.STARTING | WorkerStatus.UNKNOWN:
                     new_status = NodeWorkerStatus.STARTING

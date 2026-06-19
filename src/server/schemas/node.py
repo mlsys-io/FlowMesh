@@ -133,6 +133,7 @@ class NodeWorkerInfo(BaseModel):
     node_id: str = Field(..., description="Associated node ID")
     node_alias: str = Field(..., description="Associated node alias")
     provider: str = Field(..., description="Worker provider")
+    version: str | None = Field(default=None, description="Worker version.")
     status: NodeWorkerStatus = Field(..., description="Current worker status")
     hardware: WorkerHardware | None = Field(
         default=None, description="Hardware metadata"

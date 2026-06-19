@@ -51,5 +51,6 @@ class NodeWorkerInfo(BaseModel):
     node_id: str
     node_alias: str
     provider: str
+    version: str | None = None
     status: str
     hardware: WorkerHardware | None = None
