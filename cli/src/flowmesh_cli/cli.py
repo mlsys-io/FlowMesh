@@ -5,7 +5,7 @@ from importlib.util import find_spec
 
 import typer
 
-from ._version import resolve_cli_version
+from ._version import __version__
 from .core.typer import get_typer
 
 
@@ -18,7 +18,7 @@ def _root(
     ),
 ) -> None:
     if version:
-        typer.echo(f"flowmesh {resolve_cli_version()}")
+        typer.echo(f"flowmesh {__version__}")
         raise typer.Exit()
 
 

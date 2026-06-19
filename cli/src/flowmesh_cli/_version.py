@@ -2,10 +2,15 @@
 
 from importlib.metadata import PackageNotFoundError, version
 
+_PACKAGE_NAME = "flowmesh-cli"
+_STATIC_VERSION = "0.1.3"
 
-def resolve_cli_version() -> str:
-    """Return the installed flowmesh-cli version, or ``"unknown"`` if unreadable."""
+
+def _resolve_version() -> str:
     try:
-        return version("flowmesh-cli")
+        return version(_PACKAGE_NAME)
     except PackageNotFoundError:
-        return "unknown"
+        return _STATIC_VERSION
+
+
+__version__ = _resolve_version()

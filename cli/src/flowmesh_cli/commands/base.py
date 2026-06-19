@@ -4,9 +4,9 @@ from pathlib import Path
 import typer
 from flowmesh.client import FlowMesh, resolve_config
 from flowmesh.config import DEFAULT_CONFIG_PATH, FlowMeshConfig
-from flowmesh.exceptions import FlowMeshError
+from flowmesh.exceptions import FlowMeshError, NotFoundError
 
-from .._version import resolve_cli_version
+from .._version import __version__
 from ..core import logging
 from ..core.typer import get_typer
 
@@ -128,12 +128,15 @@ def info() -> None:
     client = FlowMesh()
     try:
         health = client.system.health()
-        server_version = client.system.version().version
+        try:
+            server_version = client.system.version().version
+        except NotFoundError:
+            server_version = "unknown"
     except FlowMeshError as exc:
         logging.error(str(exc))
         raise typer.Exit(code=1)
     payload = {
-        "client_version": resolve_cli_version(),
+        "client_version": __version__,
         "server_version": server_version,
         "server_healthy": health.ok,
     }

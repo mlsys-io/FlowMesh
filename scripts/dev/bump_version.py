@@ -16,6 +16,7 @@ PACKAGE_PYPROJECTS: tuple[Path, ...] = (
     REPO_ROOT / "sdk" / "stack" / "pyproject.toml",
 )
 SDK_VERSION_MODULE = REPO_ROOT / "sdk" / "src" / "flowmesh" / "_version.py"
+CLI_VERSION_MODULE = REPO_ROOT / "cli" / "src" / "flowmesh_cli" / "_version.py"
 SHARED_VERSION_MODULE = REPO_ROOT / "src" / "shared" / "_version.py"
 FIRST_PARTY_DISTRIBUTIONS: tuple[str, ...] = (
     "flowmesh-cli-stack",
@@ -27,7 +28,7 @@ FIRST_PARTY_DISTRIBUTIONS: tuple[str, ...] = (
 )
 
 _VERSION_RE = re.compile(r'(?m)^version = "[^"]+"$')
-_SDK_STATIC_VERSION_RE = re.compile(r'(?m)^_STATIC_VERSION = "[^"]+"$')
+_STATIC_VERSION_RE = re.compile(r'(?m)^_STATIC_VERSION = "[^"]+"$')
 _SHARED_RUNTIME_VERSION_RE = re.compile(r'(?m)^FLOWMESH_RELEASE_VERSION = "[^"]+"$')
 _PIN_RE = re.compile(
     r"(?P<name>\b(?:"
@@ -68,12 +69,12 @@ def _render_literal_assignment(
     return rendered
 
 
-def _render_sdk_version_module(text: str, version: str) -> str:
+def _render_static_version_module(text: str, version: str, path: Path) -> str:
     return _render_literal_assignment(
         text,
         version,
-        SDK_VERSION_MODULE,
-        _SDK_STATIC_VERSION_RE,
+        path,
+        _STATIC_VERSION_RE,
         "_STATIC_VERSION",
     )
 
@@ -103,14 +104,15 @@ def main() -> int:
     for path in PACKAGE_PYPROJECTS:
         current = path.read_text()
         rendered.append((path, current, _render(current, version, path)))
-    sdk_version_current = SDK_VERSION_MODULE.read_text()
-    rendered.append(
-        (
-            SDK_VERSION_MODULE,
-            sdk_version_current,
-            _render_sdk_version_module(sdk_version_current, version),
+    for static_module in (SDK_VERSION_MODULE, CLI_VERSION_MODULE):
+        current = static_module.read_text()
+        rendered.append(
+            (
+                static_module,
+                current,
+                _render_static_version_module(current, version, static_module),
+            )
         )
-    )
     shared_version_current = SHARED_VERSION_MODULE.read_text()
     rendered.append(
         (
