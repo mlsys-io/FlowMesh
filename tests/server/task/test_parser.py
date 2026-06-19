@@ -229,12 +229,19 @@ class TestInferenceSpecValidation:
         assert self._gpu_count(spec) is None
 
     def test_adapter_without_source_is_rejected(self) -> None:
-        with pytest.raises(ValueError, match="specifies neither path nor url"):
+        with pytest.raises(ValueError, match="no path, url, or task_id"):
             self._parse_inference("model:\n  adapters:\n    - type: lora\n")
 
     def test_adapter_with_path_parses(self) -> None:
         spec = self._parse_inference(
             "model:\n  adapters:\n    - type: lora\n      path: /models/adapter\n"
+            "resources:\n  hardware:\n    gpu:\n      count: 1\n"
+        )
+        assert self._gpu_count(spec) == 1
+
+    def test_adapter_with_task_id_parses(self) -> None:
+        spec = self._parse_inference(
+            "model:\n  adapters:\n    - type: lora\n      task_id: tsk-abc\n"
             "resources:\n  hardware:\n    gpu:\n      count: 1\n"
         )
         assert self._gpu_count(spec) == 1

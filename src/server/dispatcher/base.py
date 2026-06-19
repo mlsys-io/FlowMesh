@@ -303,7 +303,7 @@ class Dispatcher:
             self._requeue_task(task_id, reason="no_selection")
             return False
 
-        # 5.5. Plan task merge: coalesce sibling merge candidates onto this worker
+        # Plan task merge: coalesce sibling merge candidates onto this worker
         merged_children: list[str] = []
         if self._task_merge_enabled and self._task_merge_max_batch_size > 1:
             merged_children = self._runtime.plan_merge(
@@ -341,11 +341,21 @@ class Dispatcher:
             self._fail_task(task_id, str(exc), payload={"error": str(exc)})
             return True
 
-        # 6.5. Conditional execution: skip dispatch if condition not met
+        # Re-validate resolved task spec
+        try:
+            rendered_task.spec.validate_dispatchable()
+        except ValueError as exc:
+            self._runtime.release_merge(task_id)
+            self._fail_task(
+                task_id, "spec_validation_failed", payload={"error": str(exc)}
+            )
+            return True
+
+        # Conditional execution: skip dispatch if condition not met
         if self._evaluate_condition_skip(task_id, rendered_task, record):
             return True
 
-        # 6.6. Resolve merged-child rendered payloads
+        # Resolve merged-child rendered payloads
         rendered_children: list[MergedChildTaskStrict] | None = None
         if record.merged_children:
             rendered_children = []

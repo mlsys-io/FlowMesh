@@ -91,6 +91,14 @@ class TaskSpecStrictBase(StrictBaseModel):
             return []
         return artifacts.copy()
 
+    def validate_dispatchable(self) -> None:
+        """Validate spec-internal invariants for a runnable task.
+
+        Called at submit and again before dispatch. Overrides must raise ``ValueError``
+        for misconfigurations.
+        """
+        return None
+
 
 class TaskSpecTemplateBase(TemplateBaseModel):
     resources: ResourcesSpec | None = None
@@ -116,6 +124,15 @@ class TaskSpecTemplateBase(TemplateBaseModel):
         if artifacts is None:
             return []
         return artifacts.copy()
+
+    def validate_dispatchable(self) -> None:
+        """Validate spec-internal invariants for a runnable task.
+
+        Called at submit and again before dispatch. Overrides must defer
+        placeholder-dependent checks and raise ``ValueError`` for genuine
+        misconfigurations.
+        """
+        return None
 
 
 type TaskSpecBase = TaskSpecStrictBase | TaskSpecTemplateBase
