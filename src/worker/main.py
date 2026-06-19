@@ -1,6 +1,7 @@
 import argparse
 import logging
 import signal
+from collections.abc import Mapping
 
 from shared.schemas.worker import WorkerCapabilities
 from shared.tasks.task_type import TaskType
@@ -59,7 +60,7 @@ def initialize_executors(
     hardware: WorkerHardware,
     logger: logging.Logger,
     lifecycle: Lifecycle,
-    registry: dict[str, type[Executor] | None] | None = None,
+    registry: Mapping[str, type[Executor] | None] | None = None,
     import_errors: dict[str, str] | None = None,
     cuda_available: bool | None = None,
     enable_mp_executors: bool = True,
@@ -167,7 +168,7 @@ def initialize_executors(
 
 def build_capabilities(
     executors: dict[str, Executor],
-    registry: dict[str, type[Executor] | None] | None = None,
+    registry: Mapping[str, type[Executor] | None] | None = None,
 ) -> WorkerCapabilities:
     registry = registry or EXECUTOR_REGISTRY
     supported_task_types = frozenset[TaskType]().union(

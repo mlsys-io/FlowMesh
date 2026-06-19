@@ -1,5 +1,6 @@
 """Tests for the executor registry and safe import mechanism."""
 
+from collections.abc import Mapping
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -65,7 +66,7 @@ class TestExecutorRegistry:
     def test_import_executor_does_not_crash(self) -> None:
         """The registry should load without raising, even when deps are missing."""
         # If we got here, the import at module level already succeeded
-        assert isinstance(EXECUTOR_REGISTRY, dict)
+        assert isinstance(EXECUTOR_REGISTRY, Mapping)
         assert isinstance(IMPORT_ERRORS, dict)
 
     def test_import_executor_rejects_non_executor(

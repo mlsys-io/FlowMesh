@@ -11,6 +11,7 @@ import atexit
 import copy
 import datetime
 import gc
+import importlib.metadata
 import json
 import logging
 import os
@@ -156,6 +157,20 @@ Summary:"""
         except Exception:
             pass
         return 1
+
+    @staticmethod
+    def _vllm_plugins_allowlist_excluding_omni() -> str:
+        """Every `vllm.general_plugins` entry point except vllm-omni's, comma-joined.
+
+        Omni's plugin rebinds vllm.v1.request.Request and crashes plain LLM init.
+        """
+        names: list[str] = []
+        for ep in importlib.metadata.entry_points(group="vllm.general_plugins"):
+            module = ep.value.split(":", 1)[0].strip()
+            if module == "vllm_omni" or module.startswith("vllm_omni."):
+                continue
+            names.append(ep.name)
+        return ",".join(names)
 
     @staticmethod
     def _compute_safe_utilization(requested: float) -> tuple[float, float | None]:
@@ -370,6 +385,20 @@ Summary:"""
         if len(vllm_cfg) > 0:
             logger.info(
                 "Ignored unrecognized vLLM config fields: %s", list(vllm_cfg.keys())
+            )
+
+        # Required workaround: vLLM's load_general_plugins() auto-loads the
+        # vllm_omni_register_models entry point, which imports vllm_omni and
+        # rebinds vllm.v1.request.Request → OmniRequest, crashing plain-model
+        # warmup.  The lazy __init__.py fix only prevents the direct-import path;
+        # this allowlist stops the entry-point path.  Revert once vllm_omni ships
+        # an OmniRequest that is a drop-in for vllm.v1.request.Request.
+        if "VLLM_PLUGINS" not in os.environ:
+            os.environ["VLLM_PLUGINS"] = self._vllm_plugins_allowlist_excluding_omni()
+        else:
+            logger.debug(
+                "VLLM_PLUGINS already set (%r); skipping omni exclusion",
+                os.environ["VLLM_PLUGINS"],
             )
 
         tp_candidates: list[int] = []
@@ -731,7 +760,7 @@ Summary:"""
     ) -> torch.Tensor:
         if not embedding_chunks:
             raise ExecutionError(
-                "Loaded image embedding list must be non-empty " f"(task={task_id})."
+                f"Loaded image embedding list must be non-empty (task={task_id})."
             )
         if group_sizes is not None:
             if len(embedding_chunks) != len(group_sizes):

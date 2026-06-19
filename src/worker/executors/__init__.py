@@ -1,4 +1,5 @@
 import importlib
+from collections.abc import Iterator, Mapping
 
 from .base_executor import Executor
 
@@ -41,41 +42,70 @@ DataRetrievalExecutor = _import_executor(
 DiffusersExecutor = _import_executor("DiffusersExecutor", ".diffusers_executor")
 APIExecutor = _import_executor("APIExecutor", ".api_executor")
 SSHExecutor = _import_executor("SSHExecutor", ".ssh_executor")
-OmniText2ImageExecutor = _import_executor(
-    "OmniText2ImageExecutor", ".omni_text2image_executor"
-)
-OmniText2SpeechExecutor = _import_executor(
-    "OmniText2SpeechExecutor", ".omni_text2speech_executor"
-)
-OmniText2AudioExecutor = _import_executor(
-    "OmniText2AudioExecutor", ".omni_text2audio_executor"
-)
-OmniText2GeneralExecutor = _import_executor(
-    "OmniText2GeneralExecutor", ".omni_text2general_executor"
-)
-
-EXECUTOR_REGISTRY: dict[str, type[Executor] | None] = {
-    "vllm": VLLMExecutor,
-    "vllm_lora": VLLMLoRAExecutor,
-    "ppo": PPOExecutor,
-    "dpo": DPOExecutor,
-    "sft": SFTExecutor,
-    "lora_sft": LoRASFTExecutor,
-    "image_classification_training": ImageClassificationTrainingExecutor,
-    "default": HFTransformersExecutor,
-    "rag": RAGExecutor,
-    "agent": AgentExecutor,
-    "echo": EchoExecutor,
-    "data_profiling": DataProfilingExecutor,
-    "data_retrieval": DataRetrievalExecutor,
-    "diffusers": DiffusersExecutor,
-    "api": APIExecutor,
-    "ssh": SSHExecutor,
-    "omni_text2image": OmniText2ImageExecutor,
-    "omni_text2speech": OmniText2SpeechExecutor,
-    "omni_text2audio": OmniText2AudioExecutor,
-    "omni_text2general": OmniText2GeneralExecutor,
+_OMNI_SPECS: dict[str, tuple[str, str]] = {
+    "omni_text2image": ("OmniText2ImageExecutor", ".omni_text2image_executor"),
+    "omni_text2speech": ("OmniText2SpeechExecutor", ".omni_text2speech_executor"),
+    "omni_text2audio": ("OmniText2AudioExecutor", ".omni_text2audio_executor"),
+    "omni_text2general": ("OmniText2GeneralExecutor", ".omni_text2general_executor"),
 }
+
+
+class _LazyRegistry(Mapping[str, type[Executor] | None]):
+    """Mapping that defers omni executor imports to first key lookup.
+
+    Backed by a plain dict; omni entries are resolved (their module imported)
+    on the first __getitem__ / get() access via the Mapping mixin.
+    """
+
+    def __init__(
+        self,
+        eager: dict[str, type[Executor] | None],
+        lazy: dict[str, tuple[str, str]],
+    ) -> None:
+        self._data: dict[str, type[Executor] | None] = dict(eager)
+        self._lazy: dict[str, tuple[str, str]] = dict(lazy)
+        for key in lazy:
+            self._data[key] = None
+
+    def _resolve(self, key: str) -> type[Executor] | None:
+        cls_name, module = self._lazy.pop(key)
+        cls = _import_executor(cls_name, module)
+        self._data[key] = cls
+        return cls
+
+    def __getitem__(self, key: str) -> type[Executor] | None:
+        if key in self._lazy:
+            return self._resolve(key)
+        return self._data[key]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._data)
+
+    def __len__(self) -> int:
+        return len(self._data)
+
+
+EXECUTOR_REGISTRY: Mapping[str, type[Executor] | None] = _LazyRegistry(
+    {
+        "vllm": VLLMExecutor,
+        "vllm_lora": VLLMLoRAExecutor,
+        "ppo": PPOExecutor,
+        "dpo": DPOExecutor,
+        "sft": SFTExecutor,
+        "lora_sft": LoRASFTExecutor,
+        "image_classification_training": ImageClassificationTrainingExecutor,
+        "default": HFTransformersExecutor,
+        "rag": RAGExecutor,
+        "agent": AgentExecutor,
+        "echo": EchoExecutor,
+        "data_profiling": DataProfilingExecutor,
+        "data_retrieval": DataRetrievalExecutor,
+        "diffusers": DiffusersExecutor,
+        "api": APIExecutor,
+        "ssh": SSHExecutor,
+    },
+    _OMNI_SPECS,
+)
 
 EXECUTOR_CLASS_NAMES: dict[str, str] = {
     "vllm": "VLLMExecutor",
@@ -100,7 +130,8 @@ EXECUTOR_CLASS_NAMES: dict[str, str] = {
     "omni_text2general": "OmniText2GeneralExecutor",
 }
 
-IMPORT_ERRORS: dict[str, str] = dict(_IMPORT_ERRORS)
+# Live reference so errors from lazy imports appear immediately
+IMPORT_ERRORS: dict[str, str] = _IMPORT_ERRORS
 
 __all__ = [
     name
@@ -121,10 +152,6 @@ __all__ = [
         "DiffusersExecutor": DiffusersExecutor,
         "APIExecutor": APIExecutor,
         "SSHExecutor": SSHExecutor,
-        "OmniText2ImageExecutor": OmniText2ImageExecutor,
-        "OmniText2SpeechExecutor": OmniText2SpeechExecutor,
-        "OmniText2AudioExecutor": OmniText2AudioExecutor,
-        "OmniText2GeneralExecutor": OmniText2GeneralExecutor,
     }.items()
     if cls is not None
 ] + ["EXECUTOR_REGISTRY", "IMPORT_ERRORS", "EXECUTOR_CLASS_NAMES"]

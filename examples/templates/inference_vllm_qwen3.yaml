@@ -1,0 +1,42 @@
+apiVersion: flowmesh/v1
+kind: InferenceTask
+metadata:
+  name: inference-vllm-qwen3
+  owner: timzsu
+  annotations:
+    description: >
+      Text-generation inference with Qwen3-8B. 
+
+spec:
+  taskType: inference
+  resources:
+    hardware:
+      cpu: 8
+      memory: 16Gi
+      gpu:
+        type: any
+        count: 1
+        memory: 24Gi          # Qwen3-8B BF16 weights + KV; 8Gi is too small
+  model:
+    source:
+      type: huggingface
+      identifier: Qwen/Qwen3-8B
+      revision: main
+    vllm:
+      tensor_parallel_size: 1
+      gpu_memory_utilization: 0.9
+      trust_remote_code: true
+  data:
+    type: list
+    items:
+      - "Say hi in three words."
+      - "Name a primary color."
+  inference:
+    max_tokens: 16
+    temperature: 0.0
+  output:
+    destination:
+      type: local
+    artifacts:
+      - results.json
+      - logs
