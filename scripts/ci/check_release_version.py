@@ -18,6 +18,7 @@ PACKAGE_PYPROJECTS: tuple[Path, ...] = (
     REPO_ROOT / "sdk" / "stack" / "pyproject.toml",
 )
 SDK_VERSION_MODULE = REPO_ROOT / "sdk" / "src" / "flowmesh" / "_version.py"
+CLI_VERSION_MODULE = REPO_ROOT / "cli" / "src" / "flowmesh_cli" / "_version.py"
 SHARED_VERSION_MODULE = REPO_ROOT / "src" / "shared" / "_version.py"
 FIRST_PARTY_DISTRIBUTIONS = {
     "flowmesh",
@@ -31,7 +32,7 @@ FIRST_PARTY_DISTRIBUTIONS = {
 _EXACT_PIN_RE = re.compile(
     r"^(?P<name>[A-Za-z0-9_.-]+)(?:\[[^\]]+\])?==(?P<version>[^;,\s]+)"
 )
-_SDK_STATIC_VERSION_RE = re.compile(r'(?m)^_STATIC_VERSION = "(?P<version>[^"]+)"$')
+_STATIC_VERSION_RE = re.compile(r'(?m)^_STATIC_VERSION = "(?P<version>[^"]+)"$')
 _SHARED_RUNTIME_VERSION_RE = re.compile(
     r'(?m)^FLOWMESH_RELEASE_VERSION = "(?P<version>[^"]+)"$'
 )
@@ -145,12 +146,13 @@ def _check_internal_pins(expected: Version) -> None:
 
 
 def _check_runtime_versions(expected: Version) -> None:
-    _read_literal_version(
-        SDK_VERSION_MODULE,
-        _SDK_STATIC_VERSION_RE,
-        "_STATIC_VERSION",
-        expected,
-    )
+    for module in (SDK_VERSION_MODULE, CLI_VERSION_MODULE):
+        _read_literal_version(
+            module,
+            _STATIC_VERSION_RE,
+            "_STATIC_VERSION",
+            expected,
+        )
     _read_literal_version(
         SHARED_VERSION_MODULE,
         _SHARED_RUNTIME_VERSION_RE,
