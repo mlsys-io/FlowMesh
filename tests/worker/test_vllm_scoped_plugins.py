@@ -10,6 +10,7 @@ import pytest
 
 pytest.importorskip("vllm", reason="vllm not installed (needs --extra inference-gpu)")
 
+from worker.executors import EXECUTOR_REGISTRY
 from worker.executors.vllm_executor import VLLMExecutor  # noqa: E402
 
 _OMNI_EP_NAME = "vllm_omni_register_models"
@@ -133,8 +134,6 @@ class TestLazyOmniRegistry:
     )
 
     def test_executor_registry_has_omni_keys(self) -> None:
-        from worker.executors import EXECUTOR_REGISTRY
-
         for key in self._OMNI_KEYS:
             assert key in EXECUTOR_REGISTRY
 
