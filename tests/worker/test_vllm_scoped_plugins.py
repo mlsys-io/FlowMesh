@@ -2,6 +2,7 @@
 
 import importlib.metadata
 import os
+import pathlib
 import subprocess
 import sys
 
@@ -85,9 +86,7 @@ class TestPluginScopingPreventsRebind:
 
         eps = importlib.metadata.entry_points(group="vllm.general_plugins")
         if not any(_is_omni_ep(ep) for ep in eps):
-            pytest.skip(
-                "vllm_omni not a registered vllm.general_plugins entry"
-            )  # noqa: E501
+            pytest.skip("vllm_omni not a registered vllm.general_plugins entry")
 
         allowlist = VLLMExecutor._vllm_plugins_allowlist_excluding_omni()
         script = "\n".join(
@@ -117,10 +116,7 @@ class TestPluginScopingPreventsRebind:
 
 def _subprocess_env() -> dict[str, str]:
     """Build an env with src/ on PYTHONPATH so subprocess can import worker.*."""
-    import os
-    import pathlib
-
-    src_dir = str(pathlib.Path(__file__).parents[2] / "src")
+    src_dir = (pathlib.Path(__file__).parents[2] / "src").as_posix()
     existing = os.environ.get("PYTHONPATH", "")
     pythonpath = f"{src_dir}:{existing}" if existing else src_dir
     return {**os.environ, "PYTHONPATH": pythonpath}

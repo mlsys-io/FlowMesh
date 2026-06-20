@@ -7,6 +7,7 @@ focused on its generation logic.
 """
 
 import gc
+import importlib.util
 import json
 import logging
 import os
@@ -22,6 +23,7 @@ import yaml
 from shared.schemas.result import BaseExecutorResult
 from shared.tasks.specs import TaskSpecStrictBase
 from shared.utils.parsing import to_bool, to_int
+from worker.config import WorkerConfig
 
 from .base_executor import ExecutionError, Executor, ExecutorTask
 from .mixins.inference import InferenceMixin
@@ -39,6 +41,10 @@ except Exception:
         torch = None
 
 logger = logging.getLogger(__name__)
+
+# find_spec, not import: importing vllm_omni rebinds vllm.v1.request.Request
+# and breaks plain-model warmup.
+_HAS_OMNI: bool = importlib.util.find_spec("vllm_omni") is not None
 
 
 class OmniResult(BaseExecutorResult):
@@ -65,6 +71,10 @@ class OmniExecutorBase(InferenceMixin, Executor):
         self._model_name: str | None = None
         self._omni_spec: tuple[Any, ...] | None = None
         self._stage_configs_tmp: Path | None = None
+
+    @classmethod
+    def is_available(cls, config: WorkerConfig) -> bool:
+        return _HAS_OMNI
 
     def run(self, task: ExecutorTask, out_dir: Path) -> OmniResult:
         spec = self.require_spec(task, self._TASK_SPEC_TYPE)

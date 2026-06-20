@@ -390,9 +390,8 @@ Summary:"""
         # Required workaround: vLLM's load_general_plugins() auto-loads the
         # vllm_omni_register_models entry point, which imports vllm_omni and
         # rebinds vllm.v1.request.Request → OmniRequest, crashing plain-model
-        # warmup.  The lazy __init__.py fix only prevents the direct-import path;
-        # this allowlist stops the entry-point path.  Revert once vllm_omni ships
-        # an OmniRequest that is a drop-in for vllm.v1.request.Request.
+        # warmup.  Revert once vllm_omni ships an OmniRequest that is a drop-in
+        # for vllm.v1.request.Request.
         if "VLLM_PLUGINS" not in os.environ:
             os.environ["VLLM_PLUGINS"] = self._vllm_plugins_allowlist_excluding_omni()
         else:

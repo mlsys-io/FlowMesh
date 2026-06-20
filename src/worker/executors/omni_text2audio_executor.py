@@ -16,40 +16,6 @@ except Exception:
         np = None
         torch = None
 
-try:
-    from vllm_omni.entrypoints.omni import Omni
-
-    _HAS_OMNI = True
-except Exception:
-    if TYPE_CHECKING:
-        from vllm_omni.entrypoints.omni import Omni
-    else:
-        Omni = None
-    _HAS_OMNI = False
-
-try:
-    from vllm_omni.inputs.data import OmniDiffusionSamplingParams, OmniTextPrompt
-
-    _HAS_OMNI_DIFFUSION = True
-except Exception:
-    if TYPE_CHECKING:
-        from vllm_omni.inputs.data import OmniDiffusionSamplingParams, OmniTextPrompt
-    else:
-        OmniDiffusionSamplingParams = None
-        OmniTextPrompt = None
-    _HAS_OMNI_DIFFUSION = False
-
-try:
-    from vllm_omni.platforms import current_omni_platform
-
-    _HAS_OMNI_PLATFORM = True
-except Exception:
-    if TYPE_CHECKING:
-        from vllm_omni.platforms import current_omni_platform
-    else:
-        current_omni_platform = None
-    _HAS_OMNI_PLATFORM = False
-
 from shared.schemas.artifact import ArtifactRef
 from shared.schemas.governance import SpanType
 from shared.tasks.specs import TaskSpecStrictBase
@@ -58,7 +24,12 @@ from shared.tasks.task_type import TaskType
 from shared.utils.parsing import to_float, to_int
 
 from .base_executor import ExecutionError, ExecutorTask
-from .omni_executor_base import OmniExecutorBase, OmniResult, extract_multimodal_output
+from .omni_executor_base import (
+    _HAS_OMNI,
+    OmniExecutorBase,
+    OmniResult,
+    extract_multimodal_output,
+)
 
 logger = logging.getLogger(__name__)
 EXECUTOR_NAME = "omni_text2audio"
@@ -86,7 +57,7 @@ class OmniText2AudioExecutor(OmniExecutorBase):
             raise ExecutionError("omni_text2audio requires torch.")
         if np is None:
             raise ExecutionError("omni_text2audio requires numpy.")
-        if not (_HAS_OMNI and _HAS_OMNI_DIFFUSION):
+        if not _HAS_OMNI:
             raise ExecutionError(
                 "vllm_omni is not installed; cannot use omni_text2audio executor."
             )
@@ -99,6 +70,8 @@ class OmniText2AudioExecutor(OmniExecutorBase):
         out_dir: Path,
     ) -> OmniText2AudioResult:
         assert isinstance(spec, OmniText2AudioSpecStrict)
+        from vllm_omni.inputs.data import OmniDiffusionSamplingParams, OmniTextPrompt
+
         prompts = self._collect_text_inputs(spec, task.task_id)
 
         cfg = _bgm_cfg(spec_dict)
@@ -229,6 +202,8 @@ class OmniText2AudioExecutor(OmniExecutorBase):
     # ── model ────────────────────────────────────────────────────────────
 
     def _ensure_omni(self, spec_dict: dict[str, Any]) -> None:
+        from vllm_omni.entrypoints.omni import Omni
+
         model_name = self.resolve_model_identifier(
             spec_dict,
             _bgm_cfg(spec_dict),
@@ -261,12 +236,15 @@ def _bgm_cfg(spec_dict: dict[str, Any]) -> dict[str, Any]:
 
 
 def _resolve_generator_device() -> str:
-    if _HAS_OMNI_PLATFORM and current_omni_platform is not None:
-        device_type = (
-            str(getattr(current_omni_platform, "device_type", "")).strip().lower()
-        )
-        if device_type in {"cuda", "cpu", "mps", "xpu", "hpu", "npu"}:
-            return device_type
+    if _HAS_OMNI:
+        from vllm_omni.platforms import current_omni_platform
+
+        if current_omni_platform is not None:
+            device_type = (
+                str(getattr(current_omni_platform, "device_type", "")).strip().lower()
+            )
+            if device_type in {"cuda", "cpu", "mps", "xpu", "hpu", "npu"}:
+                return device_type
     if torch is not None and torch.cuda.is_available():
         return "cuda"
     return "cpu"

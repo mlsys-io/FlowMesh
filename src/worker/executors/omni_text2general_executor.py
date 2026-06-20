@@ -15,26 +15,17 @@ except Exception:
         SamplingParams = None
     _HAS_VLLM = False
 
-try:
-    from vllm_omni.entrypoints.omni import Omni
-
-    _HAS_OMNI = True
-except Exception:
-    if TYPE_CHECKING:
-        from vllm_omni.entrypoints.omni import Omni
-    else:
-        Omni = None
-    _HAS_OMNI = False
-
 from shared.schemas.artifact import ArtifactRef
 from shared.schemas.governance import SpanType
 from shared.tasks.specs import TaskSpecStrictBase
 from shared.tasks.specs.omni import OmniText2GeneralSpecStrict
 from shared.tasks.task_type import TaskType
 from shared.utils.parsing import as_list, to_bool, to_float, to_int, to_int_list
+from worker.config import WorkerConfig
 
 from .base_executor import ExecutionError, ExecutorTask
 from .omni_executor_base import (
+    _HAS_OMNI,
     OmniExecutorBase,
     OmniResult,
     extract_audio_from_mm,
@@ -65,6 +56,10 @@ class OmniText2GeneralExecutor(OmniExecutorBase):
     name = EXECUTOR_NAME
     supported_task_types = frozenset({TaskType.OMNI_TEXT2GENERAL})
     _TASK_SPEC_TYPE = OmniText2GeneralSpecStrict
+
+    @classmethod
+    def is_available(cls, config: WorkerConfig) -> bool:
+        return _HAS_OMNI and _HAS_VLLM
 
     def prepare(self) -> None:
         if not _HAS_OMNI:
@@ -207,6 +202,8 @@ class OmniText2GeneralExecutor(OmniExecutorBase):
     # ── model ────────────────────────────────────────────────────────────
 
     def _ensure_omni(self, spec_dict: dict[str, Any]) -> None:
+        from vllm_omni.entrypoints.omni import Omni
+
         cfg = _narration_cfg(spec_dict)
         model_name = self.resolve_model_identifier(
             spec_dict,

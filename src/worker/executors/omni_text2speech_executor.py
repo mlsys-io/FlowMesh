@@ -3,18 +3,7 @@
 import logging
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
-
-try:
-    from vllm_omni.entrypoints.omni import Omni
-
-    _HAS_OMNI = True
-except Exception:
-    if TYPE_CHECKING:
-        from vllm_omni.entrypoints.omni import Omni
-    else:
-        Omni = None
-    _HAS_OMNI = False
+from typing import Any
 
 from shared.schemas.artifact import ArtifactRef
 from shared.schemas.governance import SpanType
@@ -25,6 +14,7 @@ from shared.utils.parsing import as_list, to_int
 
 from .base_executor import ExecutionError, ExecutorTask
 from .omni_executor_base import (
+    _HAS_OMNI,
     OmniExecutorBase,
     OmniResult,
     extract_audio_from_mm,
@@ -124,6 +114,8 @@ class OmniText2SpeechExecutor(OmniExecutorBase):
     # ── model ────────────────────────────────────────────────────────────
 
     def _ensure_omni(self, spec_dict: dict[str, Any]) -> None:
+        from vllm_omni.entrypoints.omni import Omni
+
         cfg = self.omni_cfg(spec_dict, "omni:tts", "omni_text2speech")
         model_name = self.resolve_model_identifier(
             spec_dict,

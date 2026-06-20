@@ -2,10 +2,8 @@ apiVersion: flowmesh/v1
 kind: InferenceTask
 metadata:
   name: inference-vllm-qwen3
-  owner: timzsu
   annotations:
-    description: >
-      Text-generation inference with Qwen3-8B. 
+    description: Text-generation inference with Qwen3-8B.
 
 spec:
   taskType: inference
@@ -16,7 +14,7 @@ spec:
       gpu:
         type: any
         count: 1
-        memory: 24Gi          # Qwen3-8B BF16 weights + KV; 8Gi is too small
+        memory: 24Gi
   model:
     source:
       type: huggingface
