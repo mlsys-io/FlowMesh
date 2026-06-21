@@ -10,6 +10,7 @@ forward the result/exception back to the parent.
 import logging
 import multiprocessing as mp
 import os
+import queue
 import sys
 import threading
 import time
@@ -28,6 +29,8 @@ from worker.config import WorkerConfig
 from .base_executor import ExecutionError, Executor, ExecutorTask
 
 logger = logging.getLogger(__name__)
+
+_RESULT_POLL_INTERVAL_SEC = 2.0
 
 
 class MPLogHandler:
@@ -455,80 +458,117 @@ class MPExecutor(Executor):
             self._next_req_id += 1
             try:
                 cmd_q.put(("run", task, out_dir.as_posix(), req_id))
-                got_id, payload = res_q.get()
+                got_id, payload = self._await_result(res_q)
                 if got_id != req_id:
                     raise RuntimeError(
                         "Mismatched response ID from worker process "
                         f"(expected {req_id}, got {got_id})"
                     )
+            except ExecutionError:
+                raise
             except Exception as exc:
                 raise RuntimeError(
                     f"Failed to execute task to worker process: {exc}"
                 ) from exc
 
-        if payload is None:
-            raise ExecutionError(f"{self.name} finished without returning a result")
-        if payload.get("ok"):
-            return payload["result"]
+            if payload is None:
+                raise ExecutionError(f"{self.name} finished without returning a result")
+            if payload.get("ok"):
+                return payload["result"]
 
-        error_info: dict = payload["error"]
-        message = error_info.get("message", "unknown error")
-        tb = error_info.get("traceback", "")
-        if error_info.get("is_execution_error"):
-            raise ExecutionError(message)
-        raise RuntimeError(f"{self.name} failed: {message}\n{tb}")
+            error_info: dict = payload["error"]
+            message = error_info.get("message", "unknown error")
+            tb = error_info.get("traceback", "")
+            if error_info.get("is_execution_error"):
+                # Controlled failure. Keep the subprocess warm for the next task.
+                raise ExecutionError(message)
+            # An unexpected exception may have left the inner executor's engine or
+            # GPU context corrupted. Restart the subprocess so the next task gets a
+            # clean one.
+            self._teardown_process_locked()
+            raise RuntimeError(f"{self.name} failed: {message}\n{tb}")
+
+    def _await_result(self, res_q: Queue) -> tuple[int, dict | None]:
+        """Wait for a result, surfacing a dead subprocess as an error."""
+        proc = self._proc
+        assert proc is not None
+        while True:
+            try:
+                return res_q.get(timeout=_RESULT_POLL_INTERVAL_SEC)
+            except queue.Empty:
+                if not proc.is_alive():
+                    exitcode = proc.exitcode
+                    self._teardown_process_locked()
+                    raise ExecutionError(
+                        f"{self.name} subprocess exited (code {exitcode})",
+                        retryable=True,
+                    ) from None
 
     def cleanup_after_run(self) -> None:
         """Shutdown the child process and wait for it to exit."""
         with self._lock:
             if self._shutdown:
                 return  # Already cleaned up, make this idempotent
-            self._shutdown = True
 
             cmd_q = self._cmd_q
             res_q = self._res_q
-            if cmd_q is None or res_q is None:
-                raise RuntimeError(f"{self.name} subprocess is not initialized")
+            proc = self._proc
 
-            # Check if process is still alive before trying to send shutdown
-            if self._proc and self._proc.is_alive():
+            # Attempt a graceful shutdown handshake while the child is responsive;
+            # _teardown_process_locked force-stops whatever remains.
+            if proc and proc.is_alive() and cmd_q is not None:
                 req_id = self._next_req_id
                 self._next_req_id += 1
-                cmd_q.put(("shutdown", req_id), timeout=1.0)
-                logger.info("Sent shutdown command to worker process")
                 try:
-                    res_q.get(timeout=10.0)
-                    logger.debug("Received shutdown acknowledgment from worker process")
+                    cmd_q.put(("shutdown", req_id), timeout=1.0)
+                    logger.info("Sent shutdown command to worker process")
+                    if res_q is not None:
+                        res_q.get(timeout=10.0)
+                        logger.debug("Received shutdown acknowledgment from worker")
                 except Exception:
                     logger.warning(
                         "Failed to receive shutdown acknowledgment, proceed to force "
                         "shutdown"
                     )
+                proc.join(timeout=10.0)
 
-                # Wait for graceful exit first
-                self._proc.join(timeout=10.0)
+            self._teardown_process_locked()
 
-                # Terminate if still alive
-                if self._proc.is_alive():
-                    logger.debug("Worker process still alive after 10s, terminating...")
-                    self._proc.terminate()
-                    self._proc.join(timeout=5.0)
+    def _teardown_process_locked(self) -> None:
+        """Force-stop the subprocess and log forwarder. Caller holds ``self._lock``.
 
-                # Kill if still alive
-                if self._proc.is_alive():
-                    logger.debug(
-                        "Worker process still alive after terminate, killing..."
-                    )
-                    self._proc.kill()
-                    self._proc.join()  # Wait forever for kill to complete
+        Idempotent and safe to call on an already-dead child. Clears process and
+        queue references.
+        """
+        self._shutdown = True
 
-                logger.debug("Worker process exited with code %s", self._proc.exitcode)
-        if self._log_thread is not None:
+        if proc := self._proc:
+            if proc.is_alive():
+                proc.terminate()
+                proc.join(timeout=5.0)
+            if proc.is_alive():
+                proc.kill()
+                proc.join()
+            logger.debug("Worker process exited with code %s", proc.exitcode)
+
+        # A killed child can't post the sentinel that stops the log forwarder, so
+        # post it here before joining the thread.
+        if (log_q := self._log_q) is not None:
             try:
-                self._log_thread.join(timeout=2.0)
+                log_q.put(None)
             except Exception:
                 pass
-            self._log_thread = None
+        if log_thread := self._log_thread:
+            try:
+                log_thread.join(timeout=2.0)
+            except Exception:
+                pass
+
+        self._proc = None
+        self._cmd_q = None
+        self._res_q = None
+        self._log_q = None
+        self._log_thread = None
 
 
 def _maybe_handle_vllm_logging(executor_cls: type[Executor]) -> None:
