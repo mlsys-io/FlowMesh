@@ -31,6 +31,7 @@ from .omni import (
     OmniText2SpeechSpecTemplate,
 )
 from .rag import RagSpecStrict, RagSpecTemplate
+from .serve import ServeSpecStrict, ServeSpecTemplate
 from .ssh import SSHSpecStrict, SSHSpecTemplate
 from .training import (
     DPOSpecStrict,
@@ -79,6 +80,8 @@ __all__ = [
     "EchoSpecTemplate",
     "EmbeddingSpecStrict",
     "EmbeddingSpecTemplate",
+    "ServeSpecStrict",
+    "ServeSpecTemplate",
     "SSHSpecStrict",
     "SSHSpecTemplate",
     "OmniText2ImageSpecStrict",

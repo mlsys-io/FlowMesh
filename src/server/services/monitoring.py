@@ -421,6 +421,9 @@ class EventMonitor:
                 payload = self._handle_ssh_task_update(
                     event.task_id, event.worker_id, payload
                 )
+                payload = self._handle_serve_task_update(
+                    event.task_id, event.worker_id, payload
+                )
                 self._runtime.mark_updated(event.task_id, payload)
             case "TASK_SUCCEEDED":
                 self._unregister_forward_task(event.task_id)
@@ -787,6 +790,83 @@ class EventMonitor:
 
         payload["ssh"] = ssh_payload
         return payload
+
+    def _handle_serve_task_update(
+        self, task_id: str, worker_id: str | None, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        serve_payload = payload.get("serve")
+        if not isinstance(serve_payload, dict):
+            return payload
+        payload = payload.copy()
+
+        mode = str(serve_payload.get("mode") or "direct")
+        normalized_mode = self._normalize_serve_mode(mode, worker_id)
+        if normalized_mode is None:
+            payload.pop("serve", None)
+            return payload
+        if normalized_mode != mode:
+            serve_payload = serve_payload.copy()
+            serve_payload["mode"] = normalized_mode
+            if normalized_mode == "direct":
+                serve_payload.pop("_relay_target", None)
+            payload["serve"] = serve_payload
+
+        if normalized_mode != "forward":
+            return payload
+
+        assert self._ssh_forward is not None
+        assert worker_id is not None
+        record = self._runtime.get_record(task_id)
+        try:
+            # register_forward_task requires session_id (used only for logging in the
+            # relay); serve payloads don't have one, so use task_id as a surrogate.
+            forward_input = dict(serve_payload)
+            forward_input.setdefault("session_id", task_id)
+            serve_payload = self._ssh_forward.register_forward_task(
+                task_id,
+                record.workflow_id if record is not None else None,
+                worker_id,
+                forward_input,
+            )
+            serve_payload.pop("session_id", None)
+            serve_payload.pop("_relay_target", None)
+        except Exception as exc:
+            self._logger.warning(
+                "Failed to register serve forward target for task %s: %s; "
+                "dropping serve endpoint to prevent unusable address from being stored",
+                task_id,
+                exc,
+            )
+            payload.pop("serve", None)
+            return payload
+
+        payload["serve"] = serve_payload
+        return payload
+
+    def _normalize_serve_mode(self, mode: str, worker_id: str | None) -> str | None:
+        """Normalize the serve access mode.
+
+        Returns None when the endpoint cannot be served (e.g. no forward service).
+        """
+        if mode == "direct":
+            return "direct"
+        if mode == "forward":
+            if not worker_id:
+                self._logger.warning(
+                    "Serve task with forward mode has no worker_id; dropping endpoint"
+                )
+                return None
+            if self._ssh_forward is None:
+                self._logger.error(
+                    "Serve task requested forward mode but no forward service is "
+                    "configured (serve has no proxy fallback); dropping endpoint"
+                )
+                return None
+            return "forward"
+        self._logger.warning(
+            "Unsupported serve access mode %r; dropping endpoint", mode
+        )
+        return None
 
     def _track_pending(self, fut: Future[Any]) -> None:
         fut.add_done_callback(self._untrack_pending)

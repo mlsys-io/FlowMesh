@@ -1,0 +1,46 @@
+apiVersion: flowmesh/v1
+kind: ServeTask
+metadata:
+  name: serve-vllm-qwen
+  annotations:
+    description: >-
+      Persistent vLLM OpenAI-compatible serving endpoint. Submit as a normal
+      task via POST /api/v1/workflows, poll GET /api/v1/tasks/{id} until
+      latest_update.serve contains host, port, and api_key, then connect.
+      The executor tears down the endpoint on TTL expiry or a generic task
+      stop request.
+
+spec:
+  taskType: serve
+
+  # Model to serve (HuggingFace identifier).
+  model: Qwen/Qwen3-0.6B
+
+  # Passed through to `vllm serve` (vllm.entrypoints.openai.api_server).
+  # Keys are normalized to CLI flags (underscores -> hyphens); a value of `true`
+  # becomes a bare flag (e.g. trust_remote_code -> --trust-remote-code).
+  vllmArgs:
+    max_model_len: 4096
+    gpu_memory_utilization: 0.9
+    trust_remote_code: true
+
+  # Worker-side port the vLLM OpenAI server binds to.
+  port: 8000
+
+  # How the endpoint is exposed to an external client:
+  #   forward — TCP relay through the FlowMesh server (recommended; reach it at
+  #             server_host:<allocated_port>)
+  #   direct  — connect straight to the worker (must be network-reachable)
+  accessMode: forward
+
+  # Task TTL (seconds): the executor tears down the endpoint on expiry.
+  ttlSeconds: 3600
+
+  # GPU is required; one serve task pins one worker for the duration.
+  resources:
+    hardware:
+      cpu: 8
+      memory: 32Gi
+      gpu:
+        type: any
+        count: 1
