@@ -21,3 +21,4 @@ class TaskType(StrEnum):
     OMNI_TEXT2SPEECH = "omni_text2speech"
     OMNI_TEXT2AUDIO = "omni_text2audio"
     OMNI_TEXT2GENERAL = "omni_text2general"
+    SERVE = "serve"

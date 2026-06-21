@@ -35,6 +35,7 @@ class TestExecutorRegistry:
             "diffusers",
             "api",
             "ssh",
+            "vllm_serve",
             "omni_text2image",
             "omni_text2speech",
             "omni_text2audio",

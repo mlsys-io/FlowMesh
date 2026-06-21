@@ -46,6 +46,9 @@ def _sanitize_latest_update(info: TaskInfo) -> None:
     ssh_info = latest_update.get("ssh")
     if isinstance(ssh_info, dict):
         latest_update["ssh"] = _strip_private_fields(ssh_info)
+    serve_info = latest_update.get("serve")
+    if isinstance(serve_info, dict):
+        latest_update["serve"] = _strip_private_fields(serve_info)
     info.latest_update = latest_update
 
 
@@ -120,11 +123,10 @@ async def stop_task(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Task not found"
         )
-    if record.task.spec.taskType != TaskType.SSH:
-        # TODO: Support stopping other task types.
+    if record.task.spec.taskType not in (TaskType.SSH, TaskType.SERVE):
         raise HTTPException(
             status_code=status.HTTP_501_NOT_IMPLEMENTED,
-            detail="Stopping is only supported for SSH tasks currently",
+            detail="Stopping is only supported for SSH and SERVE tasks currently",
         )
     if record.status != "DISPATCHED":
         raise HTTPException(

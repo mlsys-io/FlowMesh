@@ -453,7 +453,6 @@ class Runner:
                             f"Task {task_id} was cancelled before execution"
                         )
                     self._current_task_id = task_id
-                    desired_key: str
                     if task_type == "inference":
                         assert isinstance(spec, InferenceSpecStrict)
                         desired_key = self._select_inference_executor_key(spec)
@@ -462,6 +461,8 @@ class Runner:
                     elif task_type == "embedding":
                         assert isinstance(spec, EmbeddingSpecStrict)
                         desired_key = self._select_embedding_executor_key(spec)
+                    elif task_type == "serve":
+                        desired_key = "vllm_serve"
                     else:
                         desired_key = "default" if task_type is None else task_type
                     # Acquire lock before accessing/modifying active executor
