@@ -1,4 +1,6 @@
 import importlib
+from collections.abc import Iterator, Mapping
+from typing import overload
 
 from .base_executor import Executor
 
@@ -17,114 +19,66 @@ def _import_executor(name: str, module: str) -> type[Executor] | None:
     return None
 
 
-VLLMExecutor = _import_executor("VLLMExecutor", ".vllm_executor")
-VLLMLoRAExecutor = _import_executor("VLLMLoRAExecutor", ".vllm_lora_executor")
-PPOExecutor = _import_executor("PPOExecutor", ".ppo_executor")
-DPOExecutor = _import_executor("DPOExecutor", ".dpo_executor")
-SFTExecutor = _import_executor("SFTExecutor", ".sft_executor")
-LoRASFTExecutor = _import_executor("LoRASFTExecutor", ".lora_sft_executor")
-ImageClassificationTrainingExecutor = _import_executor(
-    "ImageClassificationTrainingExecutor", ".image_classification_executor"
-)
-HFTransformersExecutor = _import_executor(
-    "HFTransformersExecutor", ".transformers_executor"
-)
-RAGExecutor = _import_executor("RAGExecutor", ".rag_executor")
-AgentExecutor = _import_executor("AgentExecutor", ".agent_executor")
-EchoExecutor = _import_executor("EchoExecutor", ".echo_executor")
-DataProfilingExecutor = _import_executor(
-    "DataProfilingExecutor", ".data_profiling_executor"
-)
-DataRetrievalExecutor = _import_executor(
-    "DataRetrievalExecutor", ".data_retrieval_executor"
-)
-DiffusersExecutor = _import_executor("DiffusersExecutor", ".diffusers_executor")
-APIExecutor = _import_executor("APIExecutor", ".api_executor")
-SSHExecutor = _import_executor("SSHExecutor", ".ssh_executor")
-OmniText2ImageExecutor = _import_executor(
-    "OmniText2ImageExecutor", ".omni_text2image_executor"
-)
-OmniText2SpeechExecutor = _import_executor(
-    "OmniText2SpeechExecutor", ".omni_text2speech_executor"
-)
-OmniText2AudioExecutor = _import_executor(
-    "OmniText2AudioExecutor", ".omni_text2audio_executor"
-)
-OmniText2GeneralExecutor = _import_executor(
-    "OmniText2GeneralExecutor", ".omni_text2general_executor"
-)
-
-EXECUTOR_REGISTRY: dict[str, type[Executor] | None] = {
-    "vllm": VLLMExecutor,
-    "vllm_lora": VLLMLoRAExecutor,
-    "ppo": PPOExecutor,
-    "dpo": DPOExecutor,
-    "sft": SFTExecutor,
-    "lora_sft": LoRASFTExecutor,
-    "image_classification_training": ImageClassificationTrainingExecutor,
-    "default": HFTransformersExecutor,
-    "rag": RAGExecutor,
-    "agent": AgentExecutor,
-    "echo": EchoExecutor,
-    "data_profiling": DataProfilingExecutor,
-    "data_retrieval": DataRetrievalExecutor,
-    "diffusers": DiffusersExecutor,
-    "api": APIExecutor,
-    "ssh": SSHExecutor,
-    "omni_text2image": OmniText2ImageExecutor,
-    "omni_text2speech": OmniText2SpeechExecutor,
-    "omni_text2audio": OmniText2AudioExecutor,
-    "omni_text2general": OmniText2GeneralExecutor,
+EXECUTOR_MODULES: dict[str, tuple[str, str]] = {
+    "vllm": ("VLLMExecutor", ".vllm_executor"),
+    "vllm_lora": ("VLLMLoRAExecutor", ".vllm_lora_executor"),
+    "ppo": ("PPOExecutor", ".ppo_executor"),
+    "dpo": ("DPOExecutor", ".dpo_executor"),
+    "sft": ("SFTExecutor", ".sft_executor"),
+    "lora_sft": ("LoRASFTExecutor", ".lora_sft_executor"),
+    "image_classification_training": (
+        "ImageClassificationTrainingExecutor",
+        ".image_classification_executor",
+    ),
+    "default": ("HFTransformersExecutor", ".transformers_executor"),
+    "rag": ("RAGExecutor", ".rag_executor"),
+    "agent": ("AgentExecutor", ".agent_executor"),
+    "echo": ("EchoExecutor", ".echo_executor"),
+    "data_profiling": ("DataProfilingExecutor", ".data_profiling_executor"),
+    "data_retrieval": ("DataRetrievalExecutor", ".data_retrieval_executor"),
+    "diffusers": ("DiffusersExecutor", ".diffusers_executor"),
+    "api": ("APIExecutor", ".api_executor"),
+    "ssh": ("SSHExecutor", ".ssh_executor"),
+    "omni_text2image": ("OmniText2ImageExecutor", ".omni_text2image_executor"),
+    "omni_text2speech": ("OmniText2SpeechExecutor", ".omni_text2speech_executor"),
+    "omni_text2audio": ("OmniText2AudioExecutor", ".omni_text2audio_executor"),
+    "omni_text2general": (
+        "OmniText2GeneralExecutor",
+        ".omni_text2general_executor",
+    ),
 }
 
-EXECUTOR_CLASS_NAMES: dict[str, str] = {
-    "vllm": "VLLMExecutor",
-    "vllm_lora": "VLLMLoRAExecutor",
-    "ppo": "PPOExecutor",
-    "dpo": "DPOExecutor",
-    "sft": "SFTExecutor",
-    "lora_sft": "LoRASFTExecutor",
-    "image_classification_training": "ImageClassificationTrainingExecutor",
-    "default": "HFTransformersExecutor",
-    "rag": "RAGExecutor",
-    "agent": "AgentExecutor",
-    "echo": "EchoExecutor",
-    "data_profiling": "DataProfilingExecutor",
-    "data_retrieval": "DataRetrievalExecutor",
-    "diffusers": "DiffusersExecutor",
-    "api": "APIExecutor",
-    "ssh": "SSHExecutor",
-    "omni_text2image": "OmniText2ImageExecutor",
-    "omni_text2speech": "OmniText2SpeechExecutor",
-    "omni_text2audio": "OmniText2AudioExecutor",
-    "omni_text2general": "OmniText2GeneralExecutor",
-}
+
+class ExecutorRegistry(Mapping[str, type[Executor] | None]):
+    def __init__(self) -> None:
+        self._executors: dict[str, type[Executor] | None] = {}
+
+    def __getitem__(self, key: str) -> type[Executor] | None:
+        if key in self._executors:
+            return self._executors[key]
+        if key not in EXECUTOR_MODULES:
+            raise KeyError(f"Executor {key!r} not found in registry")
+        name, module = EXECUTOR_MODULES[key]
+        executor = _import_executor(name, module)
+        self._executors[key] = executor
+        return executor
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(EXECUTOR_MODULES)
+
+    def __len__(self) -> int:
+        return len(EXECUTOR_MODULES)
+
+
+EXECUTOR_REGISTRY = ExecutorRegistry()
+
+
+@overload
+def get_executor_class_name[T](key: str, default: T) -> str | T: ...
+@overload
+def get_executor_class_name(key: str, default: None = None) -> str | None: ...
+def get_executor_class_name[T](key: str, default: T | None = None) -> str | T | None:
+    return mod[0] if (mod := EXECUTOR_MODULES.get(key)) else default
+
 
 IMPORT_ERRORS: dict[str, str] = _IMPORT_ERRORS
-
-__all__ = [
-    name
-    for name, cls in {
-        "VLLMExecutor": VLLMExecutor,
-        "VLLMLoRAExecutor": VLLMLoRAExecutor,
-        "PPOExecutor": PPOExecutor,
-        "DPOExecutor": DPOExecutor,
-        "SFTExecutor": SFTExecutor,
-        "LoRASFTExecutor": LoRASFTExecutor,
-        "ImageClassificationTrainingExecutor": ImageClassificationTrainingExecutor,
-        "HFTransformersExecutor": HFTransformersExecutor,
-        "RAGExecutor": RAGExecutor,
-        "AgentExecutor": AgentExecutor,
-        "EchoExecutor": EchoExecutor,
-        "DataProfilingExecutor": DataProfilingExecutor,
-        "DataRetrievalExecutor": DataRetrievalExecutor,
-        "DiffusersExecutor": DiffusersExecutor,
-        "APIExecutor": APIExecutor,
-        "SSHExecutor": SSHExecutor,
-        "OmniText2ImageExecutor": OmniText2ImageExecutor,
-        "OmniText2SpeechExecutor": OmniText2SpeechExecutor,
-        "OmniText2AudioExecutor": OmniText2AudioExecutor,
-        "OmniText2GeneralExecutor": OmniText2GeneralExecutor,
-    }.items()
-    if cls is not None
-] + ["EXECUTOR_REGISTRY", "IMPORT_ERRORS", "EXECUTOR_CLASS_NAMES"]

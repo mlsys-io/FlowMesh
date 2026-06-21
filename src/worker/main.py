@@ -8,7 +8,7 @@ from shared.tasks.task_type import TaskType
 from shared.tasks.worker_message import WorkerHardware
 
 from .config import WorkerConfig
-from .executors import EXECUTOR_CLASS_NAMES, EXECUTOR_REGISTRY, IMPORT_ERRORS
+from .executors import EXECUTOR_REGISTRY, IMPORT_ERRORS, get_executor_class_name
 from .executors.base_executor import Executor
 from .executors.mp_executor import MPExecutor
 from .hw import collect_hw
@@ -89,7 +89,7 @@ def initialize_executors(
         cls = registry.get(key)
         if cls is None:
             reason = import_errors.get(
-                EXECUTOR_CLASS_NAMES.get(key, key), "dependency missing"
+                get_executor_class_name(key, key), "dependency missing"
             )
             logger.info("Skipping executor %s: %s", key, reason)
             return None
