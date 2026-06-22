@@ -158,7 +158,7 @@ def test_parse_noninteractive_ssh_skips_access_mode_validation(
 ) -> None:
     """Non-interactive tasks don't fail when proxy/forward is disabled."""
     monkeypatch.setattr("server.task.parser._ENABLE_SERVER_SSH_PROXY", False)
-    monkeypatch.setattr("server.task.parser._ENABLE_SERVER_SSH_FORWARD", False)
+    monkeypatch.setattr("server.task.parser._ENABLE_SERVER_FORWARD", False)
 
     payload = textwrap.dedent("""
         apiVersion: flowmesh/v1

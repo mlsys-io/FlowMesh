@@ -101,6 +101,10 @@ class VLLMServeExecutor(Executor):
     def run(self, task: ExecutorTask, out_dir: Path) -> ServeResult:
         spec = self.require_spec(task, ServeSpecStrict)
 
+        model_id = spec.model_name
+        if model_id is None:
+            raise ExecutionError("Serve spec is missing model.source.identifier")
+
         ttl_sec = min(
             spec.ttlSeconds
             or parse_float_env("SERVE_DEFAULT_TTL_SEC", _DEFAULT_TTL_SEC),
@@ -118,19 +122,30 @@ class VLLMServeExecutor(Executor):
             "-m",
             "vllm.entrypoints.openai.api_server",
             "--model",
-            spec.model,
+            model_id,
             "--port",
             str(port),
             "--api-key",
             api_key,
         ]
-        for k, v in (spec.vllmArgs or {}).items():
+        revision = spec.model_revision
+        if revision:
+            cmd.extend(["--revision", revision])
+
+        vllm_kwargs = spec.model.vllm if spec.model is not None else None
+        rendered_flags: set[str] = set()
+        for k, v in (vllm_kwargs or {}).items():
             flag = f"--{k.replace('_', '-')}"
             if isinstance(v, bool):
                 if v:
                     cmd.append(flag)
+                    rendered_flags.add(flag)
             else:
                 cmd.extend([flag, str(v)])
+                rendered_flags.add(flag)
+
+        if spec.model_trust_remote_code and "--trust-remote-code" not in rendered_flags:
+            cmd.append("--trust-remote-code")
 
         env = dict(os.environ)
         env["VLLM_PLUGINS"] = self._vllm_plugins_excluding_omni()
@@ -140,7 +155,7 @@ class VLLMServeExecutor(Executor):
         logger.info(
             "Starting vLLM server for model %s on port %d "
             "(task=%s ttl=%.0fs readiness_timeout=%.0fs)",
-            spec.model,
+            model_id,
             port,
             task.task_id,
             ttl_sec,
@@ -188,7 +203,7 @@ class VLLMServeExecutor(Executor):
                     "host": "127.0.0.1",
                     "port": port,
                     "api_key": api_key,
-                    "model": spec.model,
+                    "model": model_id,
                 }
             }
             self.emit_update(task.task_id, update_payload)
@@ -201,7 +216,7 @@ class VLLMServeExecutor(Executor):
             self._terminate_process_group(proc)
             drain_thread.join(timeout=5.0)
 
-        return ServeResult(model=spec.model, port=port, api_key=api_key)
+        return ServeResult(model=model_id, port=port, api_key=api_key)
 
     def _poll_health(
         self,

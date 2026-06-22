@@ -2,7 +2,7 @@
 
 Regression coverage for the gap where a serve task with accessMode=forward
 would never get a server-allocated client-facing port because
-SshForwardService.register_forward_task requires a session_id that serve
+ForwardService.register_forward_task requires a session_id that serve
 payloads don't have.
 """
 
@@ -12,7 +12,7 @@ from unittest.mock import MagicMock
 from server.services.monitoring import EventMonitor
 
 
-def _make_monitor(ssh_forward: MagicMock | None = None) -> EventMonitor:
+def _make_monitor(forward: MagicMock | None = None) -> EventMonitor:
     return EventMonitor(
         redis_client=MagicMock(),
         logger=logging.getLogger("test.monitoring.serve_forward"),
@@ -23,7 +23,7 @@ def _make_monitor(ssh_forward: MagicMock | None = None) -> EventMonitor:
         metrics_recorder=MagicMock(),
         watchdog=MagicMock(),
         ssh_proxy_enabled=False,
-        ssh_forward=ssh_forward,
+        forward=forward,
     )
 
 
@@ -53,7 +53,7 @@ class TestServeForwardRegistration:
             "_relay_target": {"host": "127.0.0.1", "port": 8000},
         }
 
-        monitor = _make_monitor(ssh_forward=ssh_forward)
+        monitor = _make_monitor(forward=ssh_forward)
         monitor._runtime.get_record.return_value = None  # type: ignore[attr-defined]
 
         monitor._handle_serve_task_update("tsk-abc", "wrk-1", _serve_forward_payload())
@@ -72,7 +72,7 @@ class TestServeForwardRegistration:
             "_relay_target": {"host": "127.0.0.1", "port": 8000},
         }
 
-        monitor = _make_monitor(ssh_forward=ssh_forward)
+        monitor = _make_monitor(forward=ssh_forward)
         monitor._runtime.get_record.return_value = None  # type: ignore[attr-defined]
 
         monitor._handle_serve_task_update("tsk-abc", "wrk-1", _serve_forward_payload())
@@ -94,7 +94,7 @@ class TestServeForwardRegistration:
             "_relay_target": {"host": "127.0.0.1", "port": 8000},
         }
 
-        monitor = _make_monitor(ssh_forward=ssh_forward)
+        monitor = _make_monitor(forward=ssh_forward)
         monitor._runtime.get_record.return_value = None  # type: ignore[attr-defined]
 
         result = monitor._handle_serve_task_update(
@@ -118,7 +118,7 @@ class TestServeForwardRegistration:
             "_relay_target": {"host": "127.0.0.1", "port": 8000},
         }
 
-        monitor = _make_monitor(ssh_forward=ssh_forward)
+        monitor = _make_monitor(forward=ssh_forward)
         monitor._runtime.get_record.return_value = None  # type: ignore[attr-defined]
 
         result = monitor._handle_serve_task_update(
@@ -139,7 +139,7 @@ class TestServeForwardRegistration:
             "_relay_target": {"host": "127.0.0.1", "port": 8000},
         }
 
-        monitor = _make_monitor(ssh_forward=ssh_forward)
+        monitor = _make_monitor(forward=ssh_forward)
         monitor._runtime.get_record.return_value = None  # type: ignore[attr-defined]
 
         result = monitor._handle_serve_task_update(
@@ -151,7 +151,7 @@ class TestServeForwardRegistration:
     def test_direct_mode_does_not_call_register(self) -> None:
         """A serve update with mode=direct leaves the payload unchanged."""
         ssh_forward = MagicMock()
-        monitor = _make_monitor(ssh_forward=ssh_forward)
+        monitor = _make_monitor(forward=ssh_forward)
 
         payload = {
             "serve": {
@@ -167,10 +167,10 @@ class TestServeForwardRegistration:
         assert result["serve"]["host"] == "127.0.0.1"
         assert result["serve"]["port"] == 8000
 
-    def test_no_ssh_forward_service_drops_serve_endpoint(self) -> None:
-        """When ssh_forward is None, forward mode is rejected and the serve endpoint
+    def test_no_forward_service_drops_serve_endpoint(self) -> None:
+        """When forward is None, forward mode is rejected and the serve endpoint
         is dropped rather than degraded to direct (serve has no proxy fallback)."""
-        monitor = _make_monitor(ssh_forward=None)
+        monitor = _make_monitor(forward=None)
 
         result = monitor._handle_serve_task_update(
             "tsk-abc", "wrk-1", _serve_forward_payload()
@@ -184,7 +184,7 @@ class TestServeForwardRegistration:
         ssh_forward = MagicMock()
         ssh_forward.register_forward_task.side_effect = RuntimeError("port exhausted")
 
-        monitor = _make_monitor(ssh_forward=ssh_forward)
+        monitor = _make_monitor(forward=ssh_forward)
         monitor._runtime.get_record.return_value = None  # type: ignore[attr-defined]
 
         result = monitor._handle_serve_task_update(

@@ -1,25 +1,21 @@
-from typing import Annotated, Any, Literal
+from typing import Annotated, Literal
 
 from pydantic import Field
 
 from ..task_type import TaskType
-from .common import TaskSpecStrictBase, TaskSpecTemplateBase
+from .common import ModelSpecStrict, ModelSpecTemplate
 
 
-class ServeSpecStrict(TaskSpecStrictBase):
+class ServeSpecStrict(ModelSpecStrict):
     taskType: Literal[TaskType.SERVE]
-    model: str
-    vllmArgs: dict[str, Any] = Field(default_factory=dict)
     ttlSeconds: Annotated[float, Field(gt=0)] | None = None
     readinessTimeoutSeconds: Annotated[float, Field(gt=0)] | None = None
     accessMode: Literal["direct", "forward"] | None = None
     port: Annotated[int, Field(ge=1, le=65535)] | None = None
 
 
-class ServeSpecTemplate(TaskSpecTemplateBase):
+class ServeSpecTemplate(ModelSpecTemplate):
     taskType: Literal[TaskType.SERVE]
-    model: str
-    vllmArgs: dict[str, Any] = Field(default_factory=dict)
     ttlSeconds: Annotated[float, Field(gt=0)] | None = None
     readinessTimeoutSeconds: Annotated[float, Field(gt=0)] | None = None
     accessMode: Literal["direct", "forward"] | None = None
