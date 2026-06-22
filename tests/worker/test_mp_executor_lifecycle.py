@@ -72,6 +72,18 @@ class _ControlledErrorExecutor(Executor):
         return None
 
 
+class _RetryableErrorExecutor(Executor):
+    """Raises a controlled ``ExecutionError`` flagged retryable."""
+
+    name = "retryable_error"
+
+    def run(self, task, out_dir: Path) -> _SimpleMPResult:
+        raise ExecutionError("transient", retryable=True)
+
+    def cleanup_after_run(self) -> None:
+        return None
+
+
 def _simple_task_message() -> WorkerTaskMessage:
     return make_worker_task_message(
         EchoSpecStrict(taskType=TaskType.ECHO, data={"items": ["test"]}),
@@ -172,6 +184,23 @@ def test_mp_executor_keeps_subprocess_after_controlled_error(tmp_path: Path) -> 
     assert mp._shutdown is False
     assert mp._proc is not None
     assert mp._proc.is_alive()
+
+    mp.cleanup_after_run()
+
+
+def test_mp_executor_propagates_retryable_flag(tmp_path: Path) -> None:
+    mp = MPExecutor(
+        _RetryableErrorExecutor,
+        config=make_live_worker_config(tmp_path),
+        hardware=make_worker_hardware(),
+    )
+
+    with tempfile.TemporaryDirectory() as out_dir:
+        with pytest.raises(ExecutionError) as exc_info:
+            mp.run(_simple_task_message(), Path(out_dir))
+
+    # The inner executor's retryable flag survives the subprocess boundary.
+    assert exc_info.value.retryable is True
 
     mp.cleanup_after_run()
 

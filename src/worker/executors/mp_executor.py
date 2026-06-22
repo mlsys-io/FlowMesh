@@ -326,6 +326,11 @@ def _executor_worker(
                             "message": str(exc),
                             "traceback": traceback.format_exc(),
                             "is_execution_error": isinstance(exc, ExecutionError),
+                            "retryable": (
+                                exc.retryable
+                                if isinstance(exc, ExecutionError)
+                                else False
+                            ),
                         },
                     }
                 result_queue.put((req_id, payload))
@@ -481,7 +486,9 @@ class MPExecutor(Executor):
             tb = error_info.get("traceback", "")
             if error_info.get("is_execution_error"):
                 # Controlled failure. Keep the subprocess warm for the next task.
-                raise ExecutionError(message)
+                raise ExecutionError(
+                    message, retryable=error_info.get("retryable", False)
+                )
             # An unexpected exception may have left the inner executor's engine or
             # GPU context corrupted. Restart the subprocess so the next task gets a
             # clean one.
