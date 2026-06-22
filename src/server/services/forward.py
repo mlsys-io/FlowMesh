@@ -38,7 +38,7 @@ class ForwardSession:
     server: asyncio.AbstractServer
 
 
-class SshForwardService:
+class ForwardService:
     def __init__(
         self,
         redis_client: RedisClient,

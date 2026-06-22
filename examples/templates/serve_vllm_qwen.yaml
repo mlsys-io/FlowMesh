@@ -13,16 +13,19 @@ metadata:
 spec:
   taskType: serve
 
-  # Model to serve (HuggingFace identifier).
-  model: Qwen/Qwen3-0.6B
-
-  # Passed through to `vllm serve` (vllm.entrypoints.openai.api_server).
-  # Keys are normalized to CLI flags (underscores -> hyphens); a value of `true`
-  # becomes a bare flag (e.g. trust_remote_code -> --trust-remote-code).
-  vllmArgs:
-    max_model_len: 4096
-    gpu_memory_utilization: 0.9
-    trust_remote_code: true
+  # Model to load. Uses the same structured block as inference tasks.
+  # model.vllm keys are passed as `vllm serve` CLI flags (underscores to
+  # hyphens; a value of true becomes a bare flag, e.g. trust_remote_code
+  # -> --trust-remote-code).
+  model:
+    source:
+      type: huggingface
+      identifier: Qwen/Qwen3-0.6B
+      revision: main
+    vllm:
+      gpu_memory_utilization: 0.9
+      trust_remote_code: true
+      max_model_len: 4096
 
   # Worker-side port the vLLM OpenAI server binds to.
   port: 8000

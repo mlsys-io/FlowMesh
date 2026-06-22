@@ -4,7 +4,7 @@ import logging
 import shutil
 import threading
 import time
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from concurrent.futures import Future
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
@@ -55,8 +55,8 @@ from ..task.models import TaskRecord, TaskStatus, TaskUsage
 from ..task.runtime import TaskRuntime
 from ..utils.logging import log_node_event, log_worker_event
 from ..utils.time import now_iso
+from .forward import ForwardService
 from .metrics import MetricsRecorder
-from .ssh_forward import SshForwardService
 from .watchdog import WorkerWatchdog
 
 TASK_EVENT_HANDLER_MAX_ATTEMPTS = 5
@@ -98,7 +98,7 @@ class EventMonitor:
         metrics_recorder: MetricsRecorder,
         watchdog: WorkerWatchdog,
         ssh_proxy_enabled: bool = False,
-        ssh_forward: SshForwardService | None = None,
+        forward: ForwardService | None = None,
         results_dir: Path | str = ".",
         log_stream_ttl_sec: int = 0,
     ) -> None:
@@ -112,7 +112,7 @@ class EventMonitor:
         self._metrics = metrics_recorder
         self._watchdog = watchdog
         self._ssh_proxy_enabled = ssh_proxy_enabled
-        self._ssh_forward = ssh_forward
+        self._forward = forward
         self._results_dir = Path(results_dir)
         self._log_stream_ttl_sec = max(0, int(log_stream_ttl_sec))
 
@@ -744,104 +744,102 @@ class EventMonitor:
                 )
 
     # ------------------------------------------------------------------ #
-    # SSH task handling
+    # SSH / serve forward task handling
     # ------------------------------------------------------------------ #
 
-    def _handle_ssh_task_update(
-        self, task_id: str, worker_id: str | None, payload: dict[str, Any]
+    def _handle_forward_task_update(
+        self,
+        task_id: str,
+        worker_id: str | None,
+        payload: dict[str, Any],
+        *,
+        key: str,
+        normalize_mode: Callable[[str, str | None], str | None],
+        direct_pop_keys: list[str],
+        inject_session_id: bool,
+        strip_relay_target_after: bool,
     ) -> dict[str, Any]:
-        """Handle SSH forward registration for task updates."""
-        ssh_payload = payload.get("ssh")
-        if not isinstance(ssh_payload, dict):
+        """Register a forward relay for a task update payload."""
+        inner = payload.get(key)
+        if not isinstance(inner, dict):
             return payload
         payload = payload.copy()
 
-        mode = str(ssh_payload.get("mode") or "direct")
-        normalized_mode = self._normalize_ssh_mode(mode, worker_id)
-        if normalized_mode != mode:
-            ssh_payload = ssh_payload.copy()
-            ssh_payload["mode"] = normalized_mode
-            if normalized_mode == "direct":
-                ssh_payload.pop("directHost", None)
-                ssh_payload.pop("directPort", None)
-                ssh_payload.pop("_relay_target", None)
-            payload["ssh"] = ssh_payload
-
-        if normalized_mode != "forward":
-            return payload
-        assert self._ssh_forward is not None
-        assert worker_id is not None
-        record = self._runtime.get_record(task_id)
-
-        try:
-            ssh_payload = self._ssh_forward.register_forward_task(
-                task_id,
-                record.workflow_id if record is not None else None,
-                worker_id,
-                ssh_payload,
-            )
-        except Exception as exc:
-            self._logger.warning(
-                "Failed to register SSH forward target for task %s: %s",
-                task_id,
-                exc,
-            )
-            return payload
-
-        payload["ssh"] = ssh_payload
-        return payload
-
-    def _handle_serve_task_update(
-        self, task_id: str, worker_id: str | None, payload: dict[str, Any]
-    ) -> dict[str, Any]:
-        serve_payload = payload.get("serve")
-        if not isinstance(serve_payload, dict):
-            return payload
-        payload = payload.copy()
-
-        mode = str(serve_payload.get("mode") or "direct")
-        normalized_mode = self._normalize_serve_mode(mode, worker_id)
+        mode = str(inner.get("mode") or "direct")
+        normalized_mode = normalize_mode(mode, worker_id)
         if normalized_mode is None:
-            payload.pop("serve", None)
+            payload.pop(key, None)
             return payload
         if normalized_mode != mode:
-            serve_payload = serve_payload.copy()
-            serve_payload["mode"] = normalized_mode
+            inner = inner.copy()
+            inner["mode"] = normalized_mode
             if normalized_mode == "direct":
-                serve_payload.pop("_relay_target", None)
-            payload["serve"] = serve_payload
+                for k in direct_pop_keys:
+                    inner.pop(k, None)
+            payload[key] = inner
 
         if normalized_mode != "forward":
             return payload
 
-        assert self._ssh_forward is not None
+        assert self._forward is not None
         assert worker_id is not None
         record = self._runtime.get_record(task_id)
         try:
-            # register_forward_task requires session_id (used only for logging in the
-            # relay); serve payloads don't have one, so use task_id as a surrogate.
-            forward_input = dict(serve_payload)
-            forward_input.setdefault("session_id", task_id)
-            serve_payload = self._ssh_forward.register_forward_task(
+            forward_input = dict(inner)
+            if inject_session_id:
+                forward_input.setdefault("session_id", task_id)
+            inner = self._forward.register_forward_task(
                 task_id,
                 record.workflow_id if record is not None else None,
                 worker_id,
                 forward_input,
             )
-            serve_payload.pop("session_id", None)
-            serve_payload.pop("_relay_target", None)
+            if inject_session_id:
+                inner.pop("session_id", None)
+            if strip_relay_target_after:
+                inner.pop("_relay_target", None)
         except Exception as exc:
             self._logger.warning(
-                "Failed to register serve forward target for task %s: %s; "
-                "dropping serve endpoint to prevent unusable address from being stored",
+                "Failed to register forward target for task %s (%s): %s",
                 task_id,
+                key,
                 exc,
             )
-            payload.pop("serve", None)
+            payload.pop(key, None)
             return payload
 
-        payload["serve"] = serve_payload
+        payload[key] = inner
         return payload
+
+    def _handle_ssh_task_update(
+        self, task_id: str, worker_id: str | None, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Handle SSH forward registration for task updates."""
+        return self._handle_forward_task_update(
+            task_id,
+            worker_id,
+            payload,
+            key="ssh",
+            normalize_mode=self._normalize_ssh_mode,
+            direct_pop_keys=["directHost", "directPort", "_relay_target"],
+            inject_session_id=False,
+            strip_relay_target_after=False,
+        )
+
+    def _handle_serve_task_update(
+        self, task_id: str, worker_id: str | None, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Handle serve forward registration for task updates."""
+        return self._handle_forward_task_update(
+            task_id,
+            worker_id,
+            payload,
+            key="serve",
+            normalize_mode=self._normalize_serve_mode,
+            direct_pop_keys=["_relay_target"],
+            inject_session_id=True,
+            strip_relay_target_after=True,
+        )
 
     def _normalize_serve_mode(self, mode: str, worker_id: str | None) -> str | None:
         """Normalize the serve access mode.
@@ -856,7 +854,7 @@ class EventMonitor:
                     "Serve task with forward mode has no worker_id; dropping endpoint"
                 )
                 return None
-            if self._ssh_forward is None:
+            if self._forward is None:
                 self._logger.error(
                     "Serve task requested forward mode but no forward service is "
                     "configured (serve has no proxy fallback); dropping endpoint"
@@ -1019,13 +1017,13 @@ class EventMonitor:
                 self._logger.warning("Usage sink %s failed: %s", sink.name, exc)
 
     def _unregister_forward_task(self, task_id: str) -> None:
-        if self._ssh_forward is None:
+        if self._forward is None:
             return
         try:
-            self._ssh_forward.unregister_task(task_id)
+            self._forward.unregister_task(task_id)
         except Exception as exc:
             self._logger.debug(
-                "Failed to unregister SSH forward target for task %s: %s", task_id, exc
+                "Failed to unregister forward target for task %s: %s", task_id, exc
             )
 
     def _normalize_ssh_mode(self, mode: str, worker_id: str | None) -> str:
@@ -1039,7 +1037,7 @@ class EventMonitor:
                     "degrading access mode"
                 )
                 return "proxy" if self._ssh_proxy_enabled else "direct"
-            if self._ssh_forward is not None:
+            if self._forward is not None:
                 return "forward"
             if self._ssh_proxy_enabled:
                 return "proxy"

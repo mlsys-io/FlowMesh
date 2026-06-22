@@ -6,16 +6,19 @@ import io
 import logging
 import threading
 import time
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 import requests
 
+from shared.tasks.components.model import ModelConfig, ModelSource
 from shared.tasks.specs.serve import ServeSpecStrict
 from shared.tasks.task_type import TaskType
 from tests.worker.factories import (
     make_worker_config,
     make_worker_hardware,
+    make_worker_task_message,
 )
 from worker.executors.vllm_serve_executor import VLLMServeExecutor, _drain_to_log
 
@@ -93,9 +96,9 @@ class TestPluginFiltering:
 
 class TestServeSpecStrict:
     def test_minimal_spec(self) -> None:
-        spec = ServeSpecStrict(taskType=TaskType.SERVE, model="Qwen/Qwen3-1.7B")
-        assert spec.model == "Qwen/Qwen3-1.7B"
-        assert spec.vllmArgs == {}
+        spec = ServeSpecStrict(taskType=TaskType.SERVE)
+        assert spec.model is None
+        assert spec.model_name is None
         assert spec.ttlSeconds is None
         assert spec.readinessTimeoutSeconds is None
         assert spec.accessMode is None
@@ -104,50 +107,179 @@ class TestServeSpecStrict:
     def test_spec_with_all_fields(self) -> None:
         spec = ServeSpecStrict(
             taskType=TaskType.SERVE,
-            model="meta-llama/Llama-3-8B",
-            vllmArgs={"tensor-parallel-size": 2},
+            model=ModelConfig(
+                source=ModelSource(identifier="meta-llama/Llama-3-8B"),
+                vllm={"tensor_parallel_size": 2},
+            ),
             ttlSeconds=7200.0,
             readinessTimeoutSeconds=300.0,
             accessMode="forward",
             port=8001,
         )
-        assert spec.vllmArgs == {"tensor-parallel-size": 2}
+        assert spec.model_name == "meta-llama/Llama-3-8B"
+        assert spec.model is not None
+        assert spec.model.vllm == {"tensor_parallel_size": 2}
         assert spec.ttlSeconds == 7200.0
         assert spec.readinessTimeoutSeconds == 300.0
         assert spec.accessMode == "forward"
         assert spec.port == 8001
 
-    def test_readiness_timeout_accepted(self) -> None:
+    def test_parses_inference_style_model_block(self) -> None:
+        """ServeSpecStrict accepts the same model block as InferenceSpecStrict."""
         spec = ServeSpecStrict(
-            taskType=TaskType.SERVE, model="m", readinessTimeoutSeconds=900.0
+            taskType=TaskType.SERVE,
+            model=ModelConfig(
+                source=ModelSource(
+                    type="huggingface",
+                    identifier="Qwen/Qwen3-0.6B",
+                    revision="main",
+                    trust_remote_code=True,
+                ),
+                vllm={
+                    "gpu_memory_utilization": 0.9,
+                    "trust_remote_code": True,
+                    "max_model_len": 4096,
+                },
+            ),
         )
+        assert spec.model_name == "Qwen/Qwen3-0.6B"
+        assert spec.model_revision == "main"
+        assert spec.model_trust_remote_code is True
+        assert spec.model is not None
+        assert spec.model.vllm == {
+            "gpu_memory_utilization": 0.9,
+            "trust_remote_code": True,
+            "max_model_len": 4096,
+        }
+
+    def test_readiness_timeout_accepted(self) -> None:
+        spec = ServeSpecStrict(taskType=TaskType.SERVE, readinessTimeoutSeconds=900.0)
         assert spec.readinessTimeoutSeconds == 900.0
 
     def test_task_type_is_serve(self) -> None:
-        spec = ServeSpecStrict(taskType=TaskType.SERVE, model="m")
+        spec = ServeSpecStrict(taskType=TaskType.SERVE)
         assert spec.taskType == TaskType.SERVE
 
     def test_invalid_access_mode(self) -> None:
         with pytest.raises(Exception):
-            ServeSpecStrict(taskType=TaskType.SERVE, model="m", accessMode="invalid")  # type: ignore[arg-type]
+            ServeSpecStrict(taskType=TaskType.SERVE, accessMode="invalid")  # type: ignore[arg-type]
 
     def test_ttl_must_be_positive(self) -> None:
         with pytest.raises(Exception):
-            ServeSpecStrict(taskType=TaskType.SERVE, model="m", ttlSeconds=0.0)
+            ServeSpecStrict(taskType=TaskType.SERVE, ttlSeconds=0.0)
         with pytest.raises(Exception):
-            ServeSpecStrict(taskType=TaskType.SERVE, model="m", ttlSeconds=-1.0)
+            ServeSpecStrict(taskType=TaskType.SERVE, ttlSeconds=-1.0)
 
     def test_readiness_timeout_must_be_positive(self) -> None:
         with pytest.raises(Exception):
-            ServeSpecStrict(
-                taskType=TaskType.SERVE, model="m", readinessTimeoutSeconds=0.0
-            )
+            ServeSpecStrict(taskType=TaskType.SERVE, readinessTimeoutSeconds=0.0)
 
     def test_port_must_be_in_range(self) -> None:
         with pytest.raises(Exception):
-            ServeSpecStrict(taskType=TaskType.SERVE, model="m", port=0)
+            ServeSpecStrict(taskType=TaskType.SERVE, port=0)
         with pytest.raises(Exception):
-            ServeSpecStrict(taskType=TaskType.SERVE, model="m", port=65536)
+            ServeSpecStrict(taskType=TaskType.SERVE, port=65536)
+
+
+class TestServeExecutorCmdBuilding:
+    """Executor maps model.vllm + model_name + revision to vllm api_server flags."""
+
+    def _make_executor(self) -> VLLMServeExecutor:
+        return VLLMServeExecutor(make_worker_config(), make_worker_hardware())
+
+    def _run_capture_cmd(self, spec: ServeSpecStrict, tmp_path: Path) -> list[str]:
+        task = make_worker_task_message(spec=spec, task_type=TaskType.SERVE)
+        ex = self._make_executor()
+        captured: list[list[str]] = []
+
+        def fake_popen(cmd: list[str], **_: object) -> MagicMock:
+            captured.append(list(cmd))
+            m = MagicMock()
+            m.stdout = io.StringIO("")
+            m.poll.return_value = 0
+            m.returncode = 0
+            m.pid = 12345
+            return m
+
+        with (
+            patch("subprocess.Popen", side_effect=fake_popen),
+            patch.object(ex, "_poll_health"),
+            patch.object(ex, "_wait_for_serve"),
+            patch.object(ex, "emit_update"),
+            patch.object(ex, "_terminate_process_group"),
+        ):
+            ex.run(task, tmp_path)
+
+        return captured[0]
+
+    def test_model_name_and_revision_in_cmd(self, tmp_path: Path) -> None:
+        spec = ServeSpecStrict(
+            taskType=TaskType.SERVE,
+            model=ModelConfig(
+                source=ModelSource(identifier="Qwen/Qwen3-0.6B", revision="main"),
+            ),
+        )
+        cmd = self._run_capture_cmd(spec, tmp_path)
+        assert cmd[cmd.index("--model") + 1] == "Qwen/Qwen3-0.6B"
+        assert "--revision" in cmd
+        assert cmd[cmd.index("--revision") + 1] == "main"
+
+    def test_vllm_dict_keys_become_flags(self, tmp_path: Path) -> None:
+        spec = ServeSpecStrict(
+            taskType=TaskType.SERVE,
+            model=ModelConfig(
+                source=ModelSource(identifier="m"),
+                vllm={"tensor_parallel_size": 2, "gpu_memory_utilization": 0.9},
+            ),
+        )
+        cmd = self._run_capture_cmd(spec, tmp_path)
+        assert "--tensor-parallel-size" in cmd
+        assert cmd[cmd.index("--tensor-parallel-size") + 1] == "2"
+        assert "--gpu-memory-utilization" in cmd
+        assert cmd[cmd.index("--gpu-memory-utilization") + 1] == "0.9"
+
+    def test_trust_remote_code_from_vllm_dict(self, tmp_path: Path) -> None:
+        """trust_remote_code: true in model.vllm renders as a bare flag."""
+        spec = ServeSpecStrict(
+            taskType=TaskType.SERVE,
+            model=ModelConfig(
+                source=ModelSource(identifier="m"),
+                vllm={"trust_remote_code": True},
+            ),
+        )
+        cmd = self._run_capture_cmd(spec, tmp_path)
+        assert "--trust-remote-code" in cmd
+        assert cmd.count("--trust-remote-code") == 1
+
+    def test_trust_remote_code_from_source_not_duplicated(self, tmp_path: Path) -> None:
+        """trust_remote_code in source but not model.vllm still renders once."""
+        spec = ServeSpecStrict(
+            taskType=TaskType.SERVE,
+            model=ModelConfig(
+                source=ModelSource(identifier="m", trust_remote_code=True),
+                vllm={},
+            ),
+        )
+        cmd = self._run_capture_cmd(spec, tmp_path)
+        assert "--trust-remote-code" in cmd
+        assert cmd.count("--trust-remote-code") == 1
+
+    def test_revision_omitted_when_not_set(self, tmp_path: Path) -> None:
+        spec = ServeSpecStrict(
+            taskType=TaskType.SERVE,
+            model=ModelConfig(source=ModelSource(identifier="m")),
+        )
+        cmd = self._run_capture_cmd(spec, tmp_path)
+        assert "--revision" not in cmd
+
+    def test_missing_model_identifier_raises(self, tmp_path: Path) -> None:
+        from worker.executors.base_executor import ExecutionError
+
+        spec = ServeSpecStrict(taskType=TaskType.SERVE)
+        task = make_worker_task_message(spec=spec, task_type=TaskType.SERVE)
+        ex = self._make_executor()
+        with pytest.raises(ExecutionError, match="model.source.identifier"):
+            ex.run(task, tmp_path)
 
 
 class TestDefaultReadinessTimeout:

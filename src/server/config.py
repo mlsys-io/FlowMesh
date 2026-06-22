@@ -95,7 +95,7 @@ class GrpcConfig:
 
 
 @dataclass
-class SshForwardConfig:
+class ForwardConfig:
     enabled: bool = True
     proxy_enabled: bool = True
     audit_enabled: bool = True
@@ -105,17 +105,15 @@ class SshForwardConfig:
     port_end: int = 32100
 
     @classmethod
-    def from_env(cls) -> "SshForwardConfig":
+    def from_env(cls) -> "ForwardConfig":
         return cls(
-            enabled=parse_bool_env("ENABLE_SERVER_SSH_FORWARD", True),
+            enabled=parse_bool_env("ENABLE_SERVER_FORWARD", True),
             proxy_enabled=parse_bool_env("ENABLE_SERVER_SSH_PROXY", True),
             audit_enabled=parse_bool_env("ENABLE_SERVER_SSH_CONNECTION_AUDIT", True),
-            bind_host=os.getenv("SERVER_SSH_FORWARD_BIND_HOST", "0.0.0.0").strip(),
-            public_host=os.getenv(
-                "SERVER_SSH_FORWARD_PUBLIC_HOST", "localhost"
-            ).strip(),
-            port_start=parse_int_env("SERVER_SSH_FORWARD_PORT_START", 32000),
-            port_end=parse_int_env("SERVER_SSH_FORWARD_PORT_END", 32100),
+            bind_host=os.getenv("SERVER_FORWARD_BIND_HOST", "0.0.0.0").strip(),
+            public_host=os.getenv("SERVER_FORWARD_PUBLIC_HOST", "localhost").strip(),
+            port_start=parse_int_env("SERVER_FORWARD_PORT_START", 32000),
+            port_end=parse_int_env("SERVER_FORWARD_PORT_END", 32100),
         )
 
 
@@ -272,7 +270,7 @@ class ServerConfig:
     redis: RedisConfig
     http: HttpConfig
     grpc: GrpcConfig
-    ssh_forward: SshForwardConfig
+    forward: ForwardConfig
     identity: IdentityConfig
     dispatch: DispatchConfig
     watchdog: WatchdogConfig
@@ -299,7 +297,7 @@ class ServerConfig:
             redis=RedisConfig.from_env(),
             http=HttpConfig.from_env(),
             grpc=GrpcConfig.from_env(),
-            ssh_forward=SshForwardConfig.from_env(),
+            forward=ForwardConfig.from_env(),
             identity=IdentityConfig.from_env(),
             dispatch=DispatchConfig.from_env(),
             watchdog=WatchdogConfig.from_env(),

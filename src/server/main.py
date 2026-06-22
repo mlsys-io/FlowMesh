@@ -28,11 +28,11 @@ from .hooks import register
 from .registries import WorkerRegistry, WorkflowRegistry
 from .registries.node import NodeRegistry
 from .routers import docs, health, v1
+from .services.forward import ForwardService
 from .services.log_archiver import TaskLogArchiver
 from .services.metrics import MetricsRecorder
 from .services.monitoring import EventMonitor
 from .services.ssh_audit import SshAuditService
-from .services.ssh_forward import SshForwardService
 from .services.watchdog import WorkerWatchdog
 from .supervisor import WorkerSupervisor
 from .task.runtime import TaskRuntime
@@ -108,7 +108,7 @@ WORKER_REGISTRY = None
 RUNTIME = None
 DISPATCHER = None
 SSH_AUDIT_SERVICE = None
-SSH_FORWARD_SERVICE = None
+FORWARD_SERVICE = None
 WATCHDOG = None
 EVENT_MONITOR = None
 LOG_ARCHIVER = None
@@ -127,12 +127,12 @@ if IS_ROOT_NODE:
         metrics_recorder=METRICS_RECORDER,
     )
 
-    _ssh_cfg = config.ssh_forward
+    _ssh_cfg = config.forward
     if _ssh_cfg.audit_enabled:
         SSH_AUDIT_SERVICE = SshAuditService(REDIS_CLIENT)
 
     if _ssh_cfg.enabled:
-        SSH_FORWARD_SERVICE = SshForwardService(
+        FORWARD_SERVICE = ForwardService(
             redis_client=REDIS_CLIENT,
             node_registry=NODE_REGISTRY,
             worker_registry=WORKER_REGISTRY,
@@ -165,8 +165,8 @@ if IS_ROOT_NODE:
         node_registry=NODE_REGISTRY,
         metrics_recorder=METRICS_RECORDER,
         watchdog=WATCHDOG,
-        ssh_proxy_enabled=config.ssh_forward.proxy_enabled,
-        ssh_forward=SSH_FORWARD_SERVICE,
+        ssh_proxy_enabled=config.forward.proxy_enabled,
+        forward=FORWARD_SERVICE,
         results_dir=RESULTS_DIR,
         log_stream_ttl_sec=config.log_stream.ttl_sec,
     )
@@ -346,8 +346,8 @@ async def _lifespan(_: FastAPI):
         if IS_ROOT_NODE:
             if RUNTIME is not None:
                 await RUNTIME.rehydrate()
-            if SSH_FORWARD_SERVICE is not None:
-                await SSH_FORWARD_SERVICE.start()
+            if FORWARD_SERVICE is not None:
+                await FORWARD_SERVICE.start()
             _start_root_threads()
             if EVENT_MONITOR is not None:
                 EVENT_MONITOR.start()
@@ -387,8 +387,8 @@ async def _lifespan(_: FastAPI):
 
             # --- Root-only shutdown ---
             _stop_background()
-            if SSH_FORWARD_SERVICE is not None:
-                await SSH_FORWARD_SERVICE.stop()
+            if FORWARD_SERVICE is not None:
+                await FORWARD_SERVICE.stop()
 
 
 app.router.lifespan_context = _lifespan
@@ -416,9 +416,9 @@ app.state.workflow_registry = WORKFLOW_REGISTRY
 app.state.worker_registry = WORKER_REGISTRY
 app.state.watchdog = WATCHDOG
 app.state.event_monitor = EVENT_MONITOR
-app.state.ssh_forward = SSH_FORWARD_SERVICE
+app.state.forward = FORWARD_SERVICE
 app.state.ssh_audit = SSH_AUDIT_SERVICE
-app.state.ssh_proxy_enabled = config.ssh_forward.proxy_enabled and IS_ROOT_NODE
+app.state.ssh_proxy_enabled = config.forward.proxy_enabled and IS_ROOT_NODE
 
 # Routers — shared
 app.include_router(health.router)

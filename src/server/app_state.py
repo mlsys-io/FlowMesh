@@ -7,10 +7,10 @@ from .clients import RedisClient
 from .dispatcher import Dispatcher
 from .hooks import PrincipalContext
 from .registries import NodeRegistry, WorkerRegistry, WorkflowRegistry
+from .services.forward import ForwardService
 from .services.metrics import MetricsRecorder
 from .services.monitoring import EventMonitor
 from .services.ssh_audit import SshAuditService
-from .services.ssh_forward import SshForwardService
 from .services.watchdog import WorkerWatchdog
 from .supervisor.supervisor import WorkerSupervisor
 from .task.runtime import TaskRuntime
@@ -80,8 +80,8 @@ def get_system_principal(conn: HTTPConnection) -> PrincipalContext:
     return conn.app.state.system_principal
 
 
-def get_ssh_forward(conn: HTTPConnection) -> SshForwardService | None:
-    return conn.app.state.ssh_forward
+def get_forward(conn: HTTPConnection) -> ForwardService | None:
+    return conn.app.state.forward
 
 
 def get_ssh_audit(conn: HTTPConnection) -> SshAuditService | None:
