@@ -311,6 +311,7 @@ def _executor_worker(
                             "process",
                             "traceback": "",
                             "is_execution_error": True,
+                            "retryable": False,
                         },
                     }
                     result_queue.put((req_id, payload))

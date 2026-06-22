@@ -177,8 +177,10 @@ def test_mp_executor_keeps_subprocess_after_controlled_error(tmp_path: Path) -> 
     )
 
     with tempfile.TemporaryDirectory() as out_dir:
-        with pytest.raises(ExecutionError):
+        with pytest.raises(ExecutionError) as exc_info:
             mp.run(_simple_task_message(), Path(out_dir))
+
+    assert exc_info.value.retryable is False
 
     # A controlled error leaves the warm subprocess in place for reuse.
     assert mp._shutdown is False
