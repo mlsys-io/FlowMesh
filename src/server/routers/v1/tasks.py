@@ -124,6 +124,7 @@ async def stop_task(
             status_code=status.HTTP_404_NOT_FOUND, detail="Task not found"
         )
     if record.task.spec.taskType not in (TaskType.SSH, TaskType.SERVE):
+        # TODO: Support stopping other task types.
         raise HTTPException(
             status_code=status.HTTP_501_NOT_IMPLEMENTED,
             detail="Stopping is only supported for SSH and SERVE tasks currently",
