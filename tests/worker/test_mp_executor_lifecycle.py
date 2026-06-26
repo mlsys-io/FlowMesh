@@ -1,10 +1,14 @@
 """MP executor lifecycle tests."""
 
 import os
+import subprocess
+import sys
 import tempfile
+import time
 import uuid
 from pathlib import Path
 
+import psutil
 import pytest
 
 from shared.schemas.result import BaseExecutorResult
@@ -60,6 +64,46 @@ class _SoftCrashExecutor(Executor):
         return None
 
 
+class _SoftCrashCleanupExecutor(Executor):
+    """Raises an unexpected exception but records that cleanup ran."""
+
+    name = "soft_crash_cleanup"
+    _marker: Path | None = None
+
+    def run(self, task, out_dir: Path) -> _SimpleMPResult:
+        self._marker = Path(out_dir) / "cleanup_ran"
+        raise RuntimeError("boom")
+
+    def cleanup_after_run(self) -> None:
+        if self._marker is not None:
+            self._marker.write_text("ok")
+
+
+class _OrphanSpawningCrashExecutor(Executor):
+    """Spawns a long-lived grandchild, records its PID, then hard-crashes.
+
+    Mimics vLLM, whose engine-core process holds the GPU and outlives a killed
+    worker subprocess unless the whole process group is signalled.
+    """
+
+    name = "orphan_spawn_crash"
+
+    def run(self, task, out_dir: Path) -> _SimpleMPResult:
+        pid_file = Path(out_dir) / "grandchild.pid"
+        code = (
+            "import os, sys, time\n"
+            "open(sys.argv[1], 'w').write(str(os.getpid()))\n"
+            "time.sleep(300)\n"
+        )
+        subprocess.Popen([sys.executable, "-c", code, str(pid_file)])
+        while not pid_file.exists() or not pid_file.read_text():
+            time.sleep(0.01)
+        os._exit(137)
+
+    def cleanup_after_run(self) -> None:
+        return None
+
+
 class _ControlledErrorExecutor(Executor):
     """Raises a controlled ``ExecutionError`` (e.g. bad spec)."""
 
@@ -95,6 +139,14 @@ def _simple_task_message() -> WorkerTaskMessage:
         assigned_worker="test-worker",
         dispatched_at="2026-03-01T00:00:00Z",
     )
+
+
+def _pid_running(pid: int) -> bool:
+    """True while ``pid`` is a live (non-zombie) process."""
+    try:
+        return psutil.Process(pid).status() != psutil.STATUS_ZOMBIE
+    except psutil.NoSuchProcess:
+        return False
 
 
 def test_mp_executor_does_not_start_subprocess_until_first_run(tmp_path: Path) -> None:
@@ -167,6 +219,51 @@ def test_mp_executor_restarts_subprocess_after_unexpected_failure(
     assert mp._proc is None
     assert mp._cmd_q is None
     assert mp._res_q is None
+
+
+def test_mp_executor_runs_inner_cleanup_on_unexpected_failure(tmp_path: Path) -> None:
+    mp = MPExecutor(
+        _SoftCrashCleanupExecutor,
+        config=make_live_worker_config(tmp_path),
+        hardware=make_worker_hardware(),
+    )
+
+    with tempfile.TemporaryDirectory() as out_dir:
+        marker = Path(out_dir) / "cleanup_ran"
+        with pytest.raises(RuntimeError):
+            mp.run(_simple_task_message(), Path(out_dir))
+
+        # The still-responsive subprocess is shut down gracefully, so the inner
+        # executor's cleanup runs (releasing e.g. the GPU) instead of being
+        # hard-killed.
+        assert marker.exists()
+
+    assert mp._shutdown is True
+    assert mp._proc is None
+
+
+def test_mp_executor_reaps_orphaned_descendants_on_teardown(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(mp_executor_module, "_RESULT_POLL_INTERVAL_SEC", 0.2)
+    mp = MPExecutor(
+        _OrphanSpawningCrashExecutor,
+        config=make_live_worker_config(tmp_path),
+        hardware=make_worker_hardware(),
+    )
+
+    with tempfile.TemporaryDirectory() as out_dir:
+        pid_file = Path(out_dir) / "grandchild.pid"
+        with pytest.raises(ExecutionError):
+            mp.run(_simple_task_message(), Path(out_dir))
+        grandchild_pid = int(pid_file.read_text())
+
+    # Tearing down the dead subprocess signals its whole process group, so the
+    # orphaned grandchild does not survive to hold the GPU.
+    deadline = time.time() + 5.0
+    while time.time() < deadline and _pid_running(grandchild_pid):
+        time.sleep(0.05)
+    assert not _pid_running(grandchild_pid)
 
 
 def test_mp_executor_keeps_subprocess_after_controlled_error(tmp_path: Path) -> None:

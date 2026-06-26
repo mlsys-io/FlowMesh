@@ -11,6 +11,7 @@ import logging
 import multiprocessing as mp
 import os
 import queue
+import signal
 import sys
 import threading
 import time
@@ -258,6 +259,13 @@ def _executor_worker(
 
     Health check: Periodically verifies parent process is alive; exits if orphaned.
     """
+    # Lead a new session/process group so the parent can reap this process
+    # together with any children it spawns.
+    try:
+        os.setsid()
+    except OSError:
+        pass
+
     _configure_worker_logging(log_queue)
     with MPLogHandler(enabled=log_queue is not None):
         executor: Executor | None = None
@@ -491,9 +499,9 @@ class MPExecutor(Executor):
                     message, retryable=error_info.get("retryable", False)
                 )
             # An unexpected exception may have left the inner executor's engine or
-            # GPU context corrupted. Restart the subprocess so the next task gets a
-            # clean one.
-            self._teardown_process_locked()
+            # GPU context corrupted. Shut the subprocess down so the next task gets
+            # a clean one.
+            self._graceful_shutdown_locked()
             raise RuntimeError(f"{self.name} failed: {message}\n{tb}")
 
     def _await_result(self, res_q: Queue) -> tuple[int, dict | None]:
@@ -515,32 +523,41 @@ class MPExecutor(Executor):
     def cleanup_after_run(self) -> None:
         """Shutdown the child process and wait for it to exit."""
         with self._lock:
-            if self._shutdown:
-                return  # Already cleaned up, make this idempotent
+            self._graceful_shutdown_locked()
 
-            cmd_q = self._cmd_q
-            res_q = self._res_q
-            proc = self._proc
+    def _graceful_shutdown_locked(self) -> None:
+        """Graceful shutdown handshake, then force-stop. Caller holds ``self._lock``.
 
-            # Attempt a graceful shutdown handshake while the child is responsive;
-            # _teardown_process_locked force-stops whatever remains.
-            if proc and proc.is_alive() and cmd_q is not None:
-                req_id = self._next_req_id
-                self._next_req_id += 1
-                try:
-                    cmd_q.put(("shutdown", req_id), timeout=1.0)
-                    logger.info("Sent shutdown command to worker process")
-                    if res_q is not None:
-                        res_q.get(timeout=10.0)
-                        logger.debug("Received shutdown acknowledgment from worker")
-                except Exception:
-                    logger.warning(
-                        "Failed to receive shutdown acknowledgment, proceed to force "
-                        "shutdown"
-                    )
-                proc.join(timeout=10.0)
+        Idempotent. While the child is still responsive, ask it to run the inner
+        executor's ``cleanup_after_run`` (so e.g. vLLM releases the GPU cleanly),
+        then ``_teardown_process_locked`` force-stops whatever remains.
+        """
+        if self._shutdown:
+            return  # Already cleaned up, make this idempotent
 
-            self._teardown_process_locked()
+        cmd_q = self._cmd_q
+        res_q = self._res_q
+        proc = self._proc
+
+        # Attempt a graceful shutdown handshake while the child is responsive;
+        # _teardown_process_locked force-stops whatever remains.
+        if proc and proc.is_alive() and cmd_q is not None:
+            req_id = self._next_req_id
+            self._next_req_id += 1
+            try:
+                cmd_q.put(("shutdown", req_id), timeout=1.0)
+                logger.info("Sent shutdown command to worker process")
+                if res_q is not None:
+                    res_q.get(timeout=10.0)
+                    logger.debug("Received shutdown acknowledgment from worker")
+            except Exception:
+                logger.warning(
+                    "Failed to receive shutdown acknowledgment, proceed to force "
+                    "shutdown"
+                )
+            proc.join(timeout=10.0)
+
+        self._teardown_process_locked()
 
     def _teardown_process_locked(self) -> None:
         """Force-stop the subprocess and log forwarder. Caller holds ``self._lock``.
@@ -551,12 +568,18 @@ class MPExecutor(Executor):
         self._shutdown = True
 
         if proc := self._proc:
+            pid = proc.pid
             if proc.is_alive():
+                self._maybe_signal_process_group(pid, signal.SIGTERM)
                 proc.terminate()
                 proc.join(timeout=5.0)
             if proc.is_alive():
+                self._maybe_signal_process_group(pid, signal.SIGKILL)
                 proc.kill()
                 proc.join()
+            # Descendants can outlive the leader (e.g. an orphaned engine after an
+            # OOM-killed subprocess); signal the group once more to reap them.
+            self._maybe_signal_process_group(pid, signal.SIGKILL)
             logger.debug("Worker process exited with code %s", proc.exitcode)
 
         # A killed child can't post the sentinel that stops the log forwarder, so
@@ -577,6 +600,16 @@ class MPExecutor(Executor):
         self._res_q = None
         self._log_q = None
         self._log_thread = None
+
+    @staticmethod
+    def _maybe_signal_process_group(pid: int | None, sig: int) -> None:
+        """Send ``sig`` to the process group led by ``pid`` (best-effort)."""
+        if pid is None:
+            return
+        try:
+            os.killpg(pid, sig)
+        except (ProcessLookupError, PermissionError):
+            pass
 
 
 def _maybe_handle_vllm_logging(executor_cls: type[Executor]) -> None:
