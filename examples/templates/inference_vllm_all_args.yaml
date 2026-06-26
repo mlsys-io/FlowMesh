@@ -26,7 +26,7 @@ spec:
       dtype: auto                     # model precision (auto, float16, bfloat16)
       tokenizer_revision: main        # tokenizer revision (override if differs from model)
       rope_scaling:                   # RoPE scaling config (via hf_overrides)
-        type: dynamic
+        rope_type: dynamic
         factor: 1.0
       rope_theta: 10000.0            # RoPE base frequency (via hf_overrides)
   resources:
@@ -63,6 +63,7 @@ spec:
     skip_special_tokens: true         # strip <|endoftext|> etc from output
     logprobs: 3                       # return top-3 log probabilities per token
     # Structured output — named fields
+    disable_any_whitespace: true      # force compact JSON (default true); set false to allow inter-token whitespace
     templates:
       - name: rating
         type: int

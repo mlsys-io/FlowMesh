@@ -655,13 +655,16 @@ Summary:"""
         schema: dict[str, Any] | _RawJsonSchema | None = None,
     ) -> SamplingParams:
         optional_sampling_fields: dict[str, Any] = {}
+        disable_ws = bool(inference_cfg.get("disable_any_whitespace", True))
         if isinstance(schema, _RawJsonSchema):
             optional_sampling_fields["structured_outputs"] = StructuredOutputsParams(
-                json=schema.schema
+                json=schema.schema,
+                disable_any_whitespace=disable_ws,
             )
         elif schema:
             optional_sampling_fields["structured_outputs"] = StructuredOutputsParams(
-                json=create_model("Template", **schema).model_json_schema()
+                json=create_model("Template", **schema).model_json_schema(),
+                disable_any_whitespace=disable_ws,
             )
         if "logprobs" in inference_cfg:
             optional_sampling_fields["logprobs"] = int(inference_cfg["logprobs"])
