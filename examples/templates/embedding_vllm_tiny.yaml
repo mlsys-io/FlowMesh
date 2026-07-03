@@ -1,0 +1,42 @@
+apiVersion: flowmesh/v1
+kind: EmbeddingTask
+metadata:
+  name: embedding-vllm-tiny
+  owner: alice
+  annotations:
+    description: Compute text embeddings with vLLM over a tiny inline list of inputs.
+
+spec:
+  taskType: embedding
+
+  resources:
+    hardware:
+      cpu: 4
+      memory: 8Gi
+      gpu:
+        type: any
+        count: 1
+
+  model:
+    source:
+      type: huggingface
+      identifier: BAAI/bge-small-en-v1.5
+      revision: main
+    vllm:
+      convert: embed
+      gpu_memory_utilization: 0.9
+
+  data:
+    type: list
+    items:
+      - "FlowMesh runs LLM agentic workflows on distributed GPU workers."
+      - "vLLM serves embedding models in pooling mode."
+      - "The quick brown fox jumps over the lazy dog."
+
+  output:
+    destination:
+      type: local
+    artifacts:
+      - results.json
+      - embeddings.safetensors
+      - logs

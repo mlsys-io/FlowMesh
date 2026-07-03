@@ -22,6 +22,7 @@ def _import_executor(name: str, module: str) -> type[Executor] | None:
 EXECUTOR_MODULES: dict[str, tuple[str, str]] = {
     "vllm": ("VLLMExecutor", ".vllm_executor"),
     "vllm_lora": ("VLLMLoRAExecutor", ".vllm_lora_executor"),
+    "vllm_embedding": ("VLLMEmbeddingExecutor", ".vllm_embedding_executor"),
     "ppo": ("PPOExecutor", ".ppo_executor"),
     "dpo": ("DPOExecutor", ".dpo_executor"),
     "sft": ("SFTExecutor", ".sft_executor"),

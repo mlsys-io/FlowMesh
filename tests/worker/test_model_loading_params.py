@@ -5,6 +5,7 @@ Instantiates real executor objects and calls their model-loading methods with
 mocked ``from_pretrained`` to verify the correct kwargs are forwarded.
 """
 
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -23,6 +24,7 @@ from shared.tasks.task_type import TaskType
 from tests.worker.factories import DEFAULT_WORKER_CONFIG
 from worker.executors.diffusers_executor import DiffusersExecutor
 from worker.executors.transformers_executor import HFTransformersExecutor
+from worker.executors.vllm_executor import VLLMExecutor
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -202,6 +204,51 @@ class TestDiffusersExecutor:
         call_kwargs = mock_pipe_cls.from_pretrained.call_args.kwargs
         assert "revision" not in call_kwargs
         assert "trust_remote_code" not in call_kwargs
+
+
+# ---------------------------------------------------------------------------
+# vLLM engine reuse
+# ---------------------------------------------------------------------------
+
+
+class TestVLLMEngineReuse:
+    """The engine-reuse key must include the model identifier/revision so a
+    different model forces a reload rather than silently reusing the wrong one.
+    """
+
+    def test_inference_reloads_engine_on_model_change(self) -> None:
+        pytest.importorskip("vllm")
+        executor = VLLMExecutor(DEFAULT_WORKER_CONFIG)
+        built: list[str] = []
+        shutdowns: list[int] = []
+
+        def fake_llm(**kwargs: Any) -> Any:
+            built.append(kwargs["model"])
+            return SimpleNamespace()
+
+        def fake_shutdown() -> None:
+            shutdowns.append(1)
+            executor._llm = None
+
+        def _spec(identifier: str) -> InferenceSpecStrict:
+            return InferenceSpecStrict(
+                taskType=TaskType.INFERENCE,
+                model=ModelConfig(source=ModelSource(identifier=identifier), vllm={}),
+            )
+
+        with (
+            patch("worker.executors.vllm_executor.LLM", side_effect=fake_llm),
+            patch.object(executor, "_shutdown_llm", side_effect=fake_shutdown),
+        ):
+            executor._ensure_llm(_spec("org/gen-a"), ["t1"])
+            # Same identifier + config: the loaded engine is reused, no reload.
+            executor._ensure_llm(_spec("org/gen-a"), ["t2"])
+            assert built == ["org/gen-a"]
+            assert shutdowns == []
+            # Different identifier (same vllm/checkpoint): reuse key differs → reload.
+            executor._ensure_llm(_spec("org/gen-b"), ["t3"])
+            assert shutdowns == [1]
+            assert built == ["org/gen-a", "org/gen-b"]
 
 
 # ---------------------------------------------------------------------------

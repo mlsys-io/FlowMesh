@@ -17,7 +17,7 @@ import logging
 import os
 import tempfile
 import time
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from concurrent.futures import as_completed
 from enum import Enum
 from pathlib import Path
@@ -70,6 +70,7 @@ except Exception:
 from shared.schemas.governance import SpanType
 from shared.schemas.result import BaseExecutorResult
 from shared.tasks.specs import InferenceSpecStrict
+from shared.tasks.specs.common import ModelSpecStrict
 from shared.tasks.task_type import TaskType
 
 from .base_executor import ExecutionError, Executor, ExecutorTask
@@ -213,7 +214,7 @@ Summary:"""
         return adjusted, free_ratio
 
     @staticmethod
-    def _requested_gpu_count(spec: InferenceSpecStrict) -> int | None:
+    def _requested_gpu_count(spec: ModelSpecStrict) -> int | None:
         gpu_count = cast(
             int | None,
             (resources := spec.resources)
@@ -232,6 +233,31 @@ Summary:"""
         if not _HAS_VLLM:
             raise ExecutionError("vLLM is not installed (`pip install vllm`).")
 
+    @staticmethod
+    def _resolve_model_ident(spec: ModelSpecStrict) -> str:
+        ident = spec.model_name or os.getenv("VLLM_MODEL")
+        if not ident:
+            raise ExecutionError(
+                "spec.model.source.identifier (or VLLM_MODEL) is required."
+            )
+        return ident
+
+    @staticmethod
+    def _vllm_cfg(spec: ModelSpecStrict) -> dict[str, Any]:
+        model_cfg = spec.model
+        return dict(model_cfg.vllm) if model_cfg and model_cfg.vllm else {}
+
+    def _base_reuse_key(self, spec: ModelSpecStrict) -> dict[str, Any]:
+        """Model-coordinate part of the engine-reuse key: ident/revision must be
+        in the key so a different model forces a reload instead of reuse."""
+        vllm_cfg = self._vllm_cfg(spec)
+        vllm_cfg.pop("convert", None)
+        return {
+            "ident": self._resolve_model_ident(spec),
+            "revision": spec.model_revision,
+            "model": copy.deepcopy(vllm_cfg),
+        }
+
     def _build_inference_spec(
         self,
         vllm_cfg: dict[str, Any],
@@ -239,7 +265,7 @@ Summary:"""
         spec: InferenceSpecStrict,
     ) -> dict[str, Any]:
         return {
-            "model": copy.deepcopy(vllm_cfg),
+            **self._base_reuse_key(spec),
             "checkpoint": copy.deepcopy(checkpoint_cfg),
         }
 
@@ -255,18 +281,41 @@ Summary:"""
         return {}
 
     def _ensure_llm(
-        self, spec: InferenceSpecStrict, task_ids: Iterable[str] | None = None
+        self,
+        spec: InferenceSpecStrict,
+        task_ids: Iterable[str] | None = None,
     ) -> None:
-        ident = spec.model_name or os.getenv("VLLM_MODEL")
-        if not ident:
-            raise ExecutionError(
-                "spec.model.source.identifier (or VLLM_MODEL) is required."
-            )
-
-        vllm_cfg = ((model_cfg := spec.model) and model_cfg.vllm) or {}
+        ident = self._resolve_model_ident(spec)
+        vllm_cfg = self._vllm_cfg(spec)
         checkpoint_cfg = (spec.checkpoint or {}).get("load") or {}
         new_inference_spec = self._build_inference_spec(vllm_cfg, checkpoint_cfg, spec)
+        extra_llm_kwargs = self._extra_llm_kwargs(spec)
 
+        self._init_vllm_engine(
+            ident=ident,
+            vllm_cfg=vllm_cfg,
+            checkpoint_cfg=checkpoint_cfg,
+            new_inference_spec=new_inference_spec,
+            requested_gpu_count=self._requested_gpu_count(spec),
+            revision=spec.model_revision,
+            extra_llm_kwargs=extra_llm_kwargs,
+            adjust_tp=lambda size: self._adjust_tensor_parallel_size(spec, size),
+            task_ids=task_ids,
+        )
+
+    def _init_vllm_engine(
+        self,
+        *,
+        ident: str,
+        vllm_cfg: dict[str, Any],
+        checkpoint_cfg: dict[str, Any],
+        new_inference_spec: dict[str, Any],
+        requested_gpu_count: int | None,
+        revision: str | None,
+        extra_llm_kwargs: dict[str, Any],
+        adjust_tp: Callable[[int], int],
+        task_ids: Iterable[str] | None,
+    ) -> None:
         if self._llm:
             if self._inference_spec == new_inference_spec:
                 logger.info("Reusing existing vLLM instance for model %s", ident)
@@ -280,7 +329,6 @@ Summary:"""
         vllm_cfg = copy.deepcopy(vllm_cfg)
 
         requested_tp = vllm_cfg.pop("tensor_parallel_size", None)
-        requested_gpu_count = self._requested_gpu_count(spec)
         try:
             tensor_parallel_size = int(requested_tp) if requested_tp is not None else 0
         except Exception:
@@ -296,9 +344,7 @@ Summary:"""
                 tensor_parallel_size = max(
                     1, min(tensor_parallel_size, requested_gpu_count)
                 )
-        tensor_parallel_size = self._adjust_tensor_parallel_size(
-            spec, tensor_parallel_size
-        )
+        tensor_parallel_size = adjust_tp(tensor_parallel_size)
 
         local_checkpoint_dir: Path | None = None
         if checkpoint_cfg:
@@ -365,12 +411,12 @@ Summary:"""
             trust_remote_code=bool(vllm_cfg.pop("trust_remote_code", False)),
             seed=vllm_cfg.pop("seed", 42),
         )
-        kwargs_base.update(self._extra_llm_kwargs(spec))
+        kwargs_base.update(extra_llm_kwargs)
         for arg, arg_type in accepted_engine_args.items():
             if arg in vllm_cfg:
                 kwargs_base[arg] = arg_type(vllm_cfg.pop(arg))
-        if spec.model_revision:
-            kwargs_base["revision"] = spec.model_revision
+        if revision:
+            kwargs_base["revision"] = revision
         hf_overrides: dict[str, Any] = {}
         if "rope_scaling" in vllm_cfg:
             hf_overrides["rope_scaling"] = vllm_cfg.pop("rope_scaling")
@@ -889,16 +935,15 @@ Summary:"""
     # --------------------------------------------------------------------- #
     # Execution
     # --------------------------------------------------------------------- #
-    def run(self, task: ExecutorTask, out_dir: Path) -> VLLMResult:
-        spec = self.require_spec(task, InferenceSpecStrict)
+    def run(self, task: ExecutorTask, out_dir: Path) -> BaseExecutorResult:
         task_id = task.task_id.strip()
         if not task_id:
-            raise ExecutionError("task_id is required for inference execution")
+            raise ExecutionError("task_id is required for vLLM execution")
 
         with self._task_span(
             task_id, task.workflow_id, out_dir, owner_id=task.owner_id
         ):
-            result = self._run_inner(task, spec, out_dir)
+            result = self._run_inner(task, out_dir)
         maybe_upload_artifacts(task, out_dir, logger=logger)
         maybe_upload_traces(task, out_dir, logger=logger)
         return result
@@ -906,10 +951,10 @@ Summary:"""
     def _run_inner(
         self,
         task: ExecutorTask,
-        spec: InferenceSpecStrict,
         out_dir: Path,
-    ) -> VLLMResult:
+    ) -> BaseExecutorResult:
         task_id = task.task_id.strip()
+        spec = self.require_spec(task, InferenceSpecStrict)
         merge_children = task.merged_children or []
         entries: list[PreparedInferenceEntry] = []
         collection_jobs: list[dict[str, Any]] = [

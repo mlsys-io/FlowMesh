@@ -22,6 +22,7 @@ _EXECUTORS_TO_WRAP = {
     "default",
     "vllm",
     "vllm_lora",
+    "vllm_embedding",
     "sft",
     "lora_sft",
     "image_classification_training",
@@ -135,6 +136,7 @@ def initialize_executors(
     for key in [
         "vllm",
         "vllm_lora",
+        "vllm_embedding",
         "ppo",
         "dpo",
         "omni_text2image",

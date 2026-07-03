@@ -20,6 +20,7 @@ class TestExecutorRegistry:
         expected = {
             "vllm",
             "vllm_lora",
+            "vllm_embedding",
             "ppo",
             "dpo",
             "sft",

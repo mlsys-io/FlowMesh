@@ -624,8 +624,10 @@ def _maybe_handle_vllm_logging(executor_cls: type[Executor]) -> None:
         for token in (
             "worker.executors.vllm_executor",
             "worker.executors.vllm_lora_executor",
+            "worker.executors.vllm_embedding_executor",
             "src.worker.executors.vllm_executor",
             "src.worker.executors.vllm_lora_executor",
+            "src.worker.executors.vllm_embedding_executor",
         )
     ):
         if os.environ.get("VLLM_CONFIGURE_LOGGING") != "1":

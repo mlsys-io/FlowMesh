@@ -12,7 +12,12 @@ import requests
 
 from shared.schemas.result import BaseExecutorResult
 from shared.tasks import MergedChildTaskStrict
-from shared.tasks.specs import InferenceBackend, InferenceSpecStrict, TaskSpecStrictBase
+from shared.tasks.specs import (
+    EmbeddingSpecStrict,
+    InferenceBackend,
+    InferenceSpecStrict,
+    TaskSpecStrictBase,
+)
 from shared.tasks.worker_message import HardwareUsage, WorkerHardware, WorkerTaskMessage
 from shared.utils.manifest import prepare_output_dir, sync_manifest
 from shared.utils.time import now_iso
@@ -235,6 +240,11 @@ class Runner:
             return "vllm_lora"
         return "vllm"
 
+    def _select_embedding_executor_key(self, spec: EmbeddingSpecStrict) -> str:
+        if (model_cfg := spec.model) and model_cfg.vllm is not None:
+            return "vllm_embedding"
+        return "default"
+
     def _maybe_expire_active_executor(self) -> None:
         """Expire the active executor if it has been idle past the configured
         timeout.
@@ -450,7 +460,8 @@ class Runner:
                     elif task_type == "diffusion":
                         desired_key = "diffusers"
                     elif task_type == "embedding":
-                        desired_key = "default"
+                        assert isinstance(spec, EmbeddingSpecStrict)
+                        desired_key = self._select_embedding_executor_key(spec)
                     else:
                         desired_key = "default" if task_type is None else task_type
                     # Acquire lock before accessing/modifying active executor
