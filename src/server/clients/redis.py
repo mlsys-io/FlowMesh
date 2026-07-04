@@ -1,5 +1,6 @@
 import json
 import logging
+import socket
 import ssl
 from collections.abc import Awaitable, Iterable
 from typing import Any
@@ -12,6 +13,34 @@ from redis.asyncio.connection import SSLConnection as AsyncSSLConnection
 from redis.client import Pipeline, PubSub
 from redis.connection import SSLConnection as SyncSSLConnection
 from redis.typing import EncodableT
+
+
+def _keepalive_kwargs() -> dict[str, Any]:
+    """Connection kwargs that keep an idle Redis socket alive.
+
+    A pub/sub SUBSCRIBE that receives no messages is an idle TCP connection.
+    Intermediaries (load balancers, NAT gateways) cull idle server-side
+    connections on their own timeout, silently dropping a node's dispatch
+    subscription so the publisher sees zero receivers. TCP keepalive probes
+    keep the connection observably alive well below such timeouts, and
+    ``health_check_interval`` makes the client re-establish a connection it
+    finds dead rather than blocking on a stale socket.
+    """
+    options: dict[int, int] = {}
+    for name, value in (
+        ("TCP_KEEPIDLE", 60),
+        ("TCP_KEEPINTVL", 15),
+        ("TCP_KEEPCNT", 4),
+    ):
+        opt = getattr(socket, name, None)
+        if opt is not None:
+            options[opt] = value
+    return {
+        "socket_keepalive": True,
+        "socket_keepalive_options": options,
+        "health_check_interval": 30,
+    }
+
 
 TASK_EVENT_STREAM_KEY = "tasks:events:stream"
 TASK_EVENT_CURSOR_KEY = "tasks:events:cursor"
@@ -214,7 +243,9 @@ class SyncRedisClient:
     def _connect(self, url: str, label: str, tls_ca_file: str | None) -> redis.Redis:
         ssl_kwargs = self._redis_ssl_kwargs(tls_ca_file)
         try:
-            client = redis.from_url(url, decode_responses=True, **ssl_kwargs)
+            client = redis.from_url(
+                url, decode_responses=True, **_keepalive_kwargs(), **ssl_kwargs
+            )
             client.ping()
         except Exception as exc:
             self.logger.exception(
@@ -416,7 +447,9 @@ class AsyncRedisClient:
     ) -> async_redis.Redis:
         ssl_kwargs = self._redis_ssl_kwargs(tls_ca_file)
         try:
-            client = async_redis.from_url(url, decode_responses=True, **ssl_kwargs)
+            client = async_redis.from_url(
+                url, decode_responses=True, **_keepalive_kwargs(), **ssl_kwargs
+            )
         except Exception as exc:
             self.logger.exception(
                 "Failed to connect to %s Redis (%s): %s", label, url, exc
