@@ -31,6 +31,7 @@ class Lifecycle:
         logger: logging.Logger,
         system_principal: PrincipalContext,
         current_gpu_count_getter: Callable[[], int] | None = None,
+        on_reregister: Callable[[str], None] | None = None,
     ) -> None:
         self._redis = redis
         self._node_registry = node_registry
@@ -42,6 +43,7 @@ class Lifecycle:
         self.logger = logger
         self._system_principal = system_principal
         self._current_gpu_count_getter = current_gpu_count_getter
+        self._on_reregister = on_reregister
 
         self._node_id: str | None = None
         self._stop_event = threading.Event()
@@ -56,6 +58,15 @@ class Lifecycle:
         if self._node_id is None:
             raise RuntimeError("Lifecycle not started; node_id not yet assigned")
         return self._node_id
+
+    def set_reregister_callback(self, callback: Callable[[str], None]) -> None:
+        """Register a hook invoked with the new node id after a re-register.
+
+        Lets components that captured the original node id (dispatch/command
+        subscriptions, worker homing) rebind once the node re-registers under a
+        new id, so dispatch is restored — not just registration.
+        """
+        self._on_reregister = callback
 
     # ------------------------------------------------------------------ #
     # Registration
@@ -172,6 +183,15 @@ class Lifecycle:
         self._unregister_published = False
         self._publish_event("SV_REGISTER")
         self.logger.info("Node re-registered as %s", self._node_id)
+        if self._on_reregister is not None:
+            try:
+                self._on_reregister(self._node_id)
+            except Exception as exc:
+                self.logger.warning(
+                    "Re-register callback failed for node %s: %s",
+                    self._node_id,
+                    exc,
+                )
 
     def _hb_loop(self) -> None:
         while not self._stop_event.is_set():

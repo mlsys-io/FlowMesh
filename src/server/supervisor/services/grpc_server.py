@@ -87,6 +87,31 @@ class SupervisorServicer(supervisor_pb2_grpc.SupervisorServicer):
         self._node_alias = node_alias
         self._logger = logger
 
+    def rebind_node(self, node_id: str) -> None:
+        """Re-home this node's workers under a new node id.
+
+        Future registrations stamp the new id, and every already-registered
+        worker's ``node_id`` field is rewritten in Redis so the dispatcher
+        routes tasks to them on the node's new dispatch channel.
+        """
+        if node_id == self._node_id:
+            return
+        old_node_id = self._node_id
+        self._node_id = node_id
+        rehomed = 0
+        for worker in self._registry.all_workers():
+            worker_id = self._registry.get_worker_id(worker.token)
+            if worker_id is None:
+                continue
+            self._redis.hash_set(worker_key(worker_id), {"node_id": node_id})
+            rehomed += 1
+        self._logger.info(
+            "Re-homed %d worker(s) from node %s to %s",
+            rehomed,
+            old_node_id,
+            node_id,
+        )
+
     async def RegisterWorker(
         self,
         request: supervisor_pb2.RegisterRequest,
@@ -238,6 +263,10 @@ class GrpcServer:
             registry, redis, node_id, node_alias, task_listener, relay_service, logger
         )
         self._listen_addr = f"{host}:{port}"
+
+    def rebind_node(self, node_id: str) -> None:
+        """Re-home registered workers under a new node id."""
+        self._servicer.rebind_node(node_id)
 
     async def start(self) -> None:
         if self._server is not None:

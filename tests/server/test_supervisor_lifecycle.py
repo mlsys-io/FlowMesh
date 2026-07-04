@@ -26,6 +26,7 @@ def _build_lifecycle(base_url: str = "http://root:8000") -> Lifecycle:
         max_gpu_count=0,
     )
     instance.logger = logging.getLogger("test.lifecycle")
+    instance._on_reregister = None
     return instance
 
 

@@ -89,11 +89,27 @@ class _CommandStream:
         self._cmd_queue: (
             queue.Queue[tuple[CommandMessage, ResponseHandler] | Sentinel] | None
         ) = None
+        self._pubsub: PubSub | None = None
 
     def close(self) -> None:
         if self._cmd_queue is not None:
             self._cmd_queue.put(self._SENTINEL)
             self._cmd_queue = None
+
+    def rebind(self, node_id: str) -> None:
+        """Move the command subscription to a new node id on the live pubsub."""
+        if node_id == self.node_id:
+            return
+        old_node_id = self.node_id
+        self.node_id = node_id
+        pubsub = self._pubsub
+        if pubsub is None:
+            return
+        pubsub.subscribe(node_cmd_channel(node_id))
+        pubsub.unsubscribe(node_cmd_channel(old_node_id))
+        self.logger.info(
+            "Command stream rebound from node %s to %s", old_node_id, node_id
+        )
 
     def iter_stream(self) -> Iterable[tuple[CommandMessage, ResponseHandler]]:
         if self._cmd_queue is not None:
@@ -111,6 +127,7 @@ class _CommandStream:
             task_thread.start()
 
         pubsub = self.redis.subscribe_control(node_cmd_channel(self.node_id))
+        self._pubsub = pubsub
         pubsub_thread = Thread(
             target=_pubsub_loop,
             args=(self.redis, pubsub, cmd_queue, self.logger),
@@ -127,6 +144,7 @@ class _CommandStream:
                     break
                 yield item
         finally:
+            self._pubsub = None
             pubsub.close()
 
 
@@ -198,6 +216,13 @@ class CommandListener:
         self.logger.info(
             "Command listener started (max_inflight=%d)", self._max_inflight
         )
+
+    def rebind(self, node_id: str) -> None:
+        """Move the command subscription to a new node id without a restart."""
+        self._node_id = node_id
+        stream = self._cmd_stream
+        if stream is not None:
+            stream.rebind(node_id)
 
     async def stop(self) -> None:
         if self._thread is None or self._cmd_stream is None:

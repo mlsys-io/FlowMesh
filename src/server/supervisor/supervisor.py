@@ -298,6 +298,13 @@ def _run_supervisor(
         logger=logger,
     )
 
+    def _on_reregister(new_node_id: str) -> None:
+        grpc_server.rebind_node(new_node_id)
+        task_listener.rebind(new_node_id)
+        command_listener.rebind(new_node_id)
+
+    lifecycle.set_reregister_callback(_on_reregister)
+
     # --- Event loop with signal handling ---
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)

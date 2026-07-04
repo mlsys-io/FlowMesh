@@ -74,6 +74,26 @@ class TaskListener:
         self._loop = None
         self.logger.info("Task listener stopped")
 
+    def rebind(self, node_id: str) -> None:
+        """Move the dispatch subscription to a new node id.
+
+        Subscribes the new node's dispatch channel and drops the old one on the
+        live pubsub connection so an already-running listener keeps receiving
+        without a restart. Registered worker queues are preserved.
+        """
+        if node_id == self._node_id:
+            return
+        old_node_id = self._node_id
+        self._node_id = node_id
+        pubsub = self._pubsub
+        if pubsub is None:
+            return
+        pubsub.subscribe(node_dispatch_channel(node_id))
+        pubsub.unsubscribe(node_dispatch_channel(old_node_id))
+        self.logger.info(
+            "Task listener rebound from node %s to %s", old_node_id, node_id
+        )
+
     def add_worker(self, worker_id: str) -> None:
         if worker_id not in self._qs:
             self._qs[worker_id] = TSQueue()
