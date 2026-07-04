@@ -153,9 +153,30 @@ class Lifecycle:
         self._hb_thread.start()
         return self._node_id
 
+    def _reregister_if_lost(self) -> None:
+        """Re-register when the root registry no longer holds this node.
+
+        The node record lives in the shared control-plane Redis. When the root
+        is redeployed its registry is rebuilt from scratch, dropping records for
+        nodes that registered before the restart. Those nodes keep heartbeating,
+        but ``update_node_hb`` early-returns for an unknown node, so they never
+        reappear and are orphaned. Detect the missing record and re-register so
+        the fleet self-heals within one heartbeat interval, without a restart.
+        """
+        if self._node_registry.node_exists(self.node_id):
+            return
+        self.logger.warning(
+            "Node %s missing from root registry; re-registering", self._node_id
+        )
+        self._node_id = self._register()
+        self._unregister_published = False
+        self._publish_event("SV_REGISTER")
+        self.logger.info("Node re-registered as %s", self._node_id)
+
     def _hb_loop(self) -> None:
         while not self._stop_event.is_set():
             try:
+                self._reregister_if_lost()
                 self.heartbeat_now()
             except Exception as exc:
                 self.logger.warning(

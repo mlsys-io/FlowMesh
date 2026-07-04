@@ -74,3 +74,44 @@ def test_register_http_omits_header_when_api_key_unset(
     _build_lifecycle()._register_http()
 
     assert captured["headers"] == {}
+
+
+class _StubRegistry:
+    def __init__(self, exists: bool) -> None:
+        self._exists = exists
+        self.exists_calls: list[str] = []
+
+    def node_exists(self, node_id: str) -> bool:
+        self.exists_calls.append(node_id)
+        return self._exists
+
+
+def test_reregister_if_lost_noops_when_present() -> None:
+    instance = _build_lifecycle()
+    registry = _StubRegistry(exists=True)
+    instance._node_registry = registry  # type: ignore[assignment]
+    instance._node_id = "nde-1"
+    instance._register = lambda: pytest.fail("must not re-register")  # type: ignore[method-assign]
+
+    instance._reregister_if_lost()
+
+    assert registry.exists_calls == ["nde-1"]
+    assert instance._node_id == "nde-1"
+
+
+def test_reregister_if_lost_reregisters_when_missing() -> None:
+    events: list[str] = []
+    instance = _build_lifecycle()
+    registry = _StubRegistry(exists=False)
+    instance._node_registry = registry  # type: ignore[assignment]
+    instance._node_id = "nde-1"
+    instance._unregister_published = True
+    instance._register = lambda: "nde-2"  # type: ignore[method-assign]
+    instance._publish_event = lambda event_type, **extra: events.append(event_type)  # type: ignore[method-assign]
+
+    instance._reregister_if_lost()
+
+    assert registry.exists_calls == ["nde-1"]
+    assert instance._node_id == "nde-2"
+    assert instance._unregister_published is False
+    assert events == ["SV_REGISTER"]
