@@ -30,14 +30,10 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39  # v8.2.0
         with:
-          version: "0.11.8"
+          version: "0.11.26"
       - name: Run zizmor
-        # Persona is ``pedantic`` — strictest level whose findings are
-        # actually addressable. ``auditor`` adds the
-        # ``self-hosted-runner`` audit, which flags every job using
-        # self-hosted infra; that's an unfixable architectural choice
-        # for this project, not a bug.
-        run: uvx --from zizmor==1.24.1 zizmor --persona pedantic --format github .github/workflows
+        # Persona is ``auditor`` — the strictest level.
+        run: uvx --from zizmor==1.26.1 zizmor --persona auditor --format github .github/workflows
 
   gitleaks:
     name: Gitleaks (secrets scan)
@@ -68,7 +64,7 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39  # v8.2.0
         with:
-          version: "0.11.8"
+          version: "0.11.26"
       - name: Run bandit
         run: uvx bandit==1.9.4 -c pyproject.toml -r src/
 
@@ -83,25 +79,25 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39  # v8.2.0
         with:
-          version: "0.11.8"
+          version: "0.11.26"
       - name: Run pip-audit (server)
         # Drop ``@ git+`` deps before auditing — not on PyPI, no CVE feed.
         run: |
           grep -v '@ git+' src/server/requirements.txt > /tmp/requirements-server-audit.txt
-          uvx pip-audit==2.9.0 --strict \
+          uvx pip-audit==2.10.1 --strict \
             -r /tmp/requirements-server-audit.txt
       - name: Run pip-audit (worker CPU)
         # Drop ``@ git+`` deps before auditing — not on PyPI, no CVE feed.
         run: |
           grep -v '@ git+' src/worker/requirements/requirements.txt > /tmp/requirements-worker-cpu-audit.txt
-          uvx pip-audit==2.9.0 --strict \
+          uvx pip-audit==2.10.1 --strict \
             --ignore-vuln GHSA-rrmf-rvhw-rf47 \
             --ignore-vuln PYSEC-2026-87 \
             --ignore-vuln PYSEC-2026-597 \
             -r /tmp/requirements-worker-cpu-audit.txt
       - name: Run pip-audit (worker GPU delta)  # no --strict: flashinfer-jit-cache and the vllm +cu129 wheel are unauditable on PyPI
         run: |
-          uvx pip-audit==2.9.0 \
+          uvx pip-audit==2.10.1 \
             --ignore-vuln GHSA-rrmf-rvhw-rf47 \
             --ignore-vuln GHSA-w8v5-vhqr-4h9v \
             -r src/worker/requirements/requirements.gpu.txt

@@ -52,7 +52,8 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39  # v8.2.0
         with:
-          version: "0.11.8"
+          version: "0.11.26"
+          enable-cache: false
 
       - name: Install verification environment
         run: uv sync --all-packages --group dev --frozen
@@ -96,7 +97,8 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39  # v8.2.0
         with:
-          version: "0.11.8"
+          version: "0.11.26"
+          enable-cache: false
 
       - name: Install retag environment
         run: uv sync --all-packages --group dev --frozen
