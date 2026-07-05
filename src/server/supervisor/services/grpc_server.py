@@ -2,6 +2,7 @@ import asyncio
 import logging
 from collections.abc import AsyncIterator, Iterable
 from pathlib import Path
+from threading import Lock
 
 import grpc
 import grpc.aio
@@ -86,31 +87,54 @@ class SupervisorServicer(supervisor_pb2_grpc.SupervisorServicer):
         self._node_id = node_id
         self._node_alias = node_alias
         self._logger = logger
+        # Guards _node_id and the registry-vs-rehome window against concurrent
+        # RegisterWorker (grpc loop thread) and rebind_node (heartbeat thread).
+        self._lock = Lock()
 
     def rebind_node(self, node_id: str) -> None:
         """Re-home this node's workers under a new node id.
 
         Future registrations stamp the new id, and every already-registered
         worker's ``node_id`` field is rewritten in Redis so the dispatcher
-        routes tasks to them on the node's new dispatch channel.
+        routes tasks to them on the node's new dispatch channel. A worker whose
+        record no longer exists (e.g. Redis was wiped) is skipped rather than
+        resurrected as a partial record.
         """
-        if node_id == self._node_id:
-            return
-        old_node_id = self._node_id
-        self._node_id = node_id
-        rehomed = 0
-        for worker in self._registry.all_workers():
-            worker_id = self._registry.get_worker_id(worker.token)
-            if worker_id is None:
-                continue
-            self._redis.hash_set(worker_key(worker_id), {"node_id": node_id})
-            rehomed += 1
-        self._logger.info(
-            "Re-homed %d worker(s) from node %s to %s",
-            rehomed,
-            old_node_id,
-            node_id,
-        )
+        with self._lock:
+            if node_id == self._node_id:
+                return
+            old_node_id = self._node_id
+            self._node_id = node_id
+            worker_ids = [
+                worker_id
+                for worker in self._registry.all_workers()
+                if (worker_id := self._registry.get_worker_id(worker.token)) is not None
+            ]
+            rehomed, skipped = self._rehome_workers(worker_ids, node_id)
+            self._logger.info(
+                "Re-homed %d worker(s) (%d skipped: no record) from node %s to %s",
+                rehomed,
+                skipped,
+                old_node_id,
+                node_id,
+            )
+
+    def _rehome_workers(self, worker_ids: list[str], node_id: str) -> tuple[int, int]:
+        """Rewrite node_id for workers that still have a record. Two round trips
+        (existence check, then update) regardless of worker count."""
+        if not worker_ids:
+            return 0, 0
+        with self._redis.control_pipeline() as pipe:
+            for worker_id in worker_ids:
+                pipe.exists(worker_key(worker_id))
+            present: list[int] = pipe.execute()
+        existing = [wid for wid, ok in zip(worker_ids, present) if ok]
+        if existing:
+            with self._redis.control_pipeline() as pipe:
+                for worker_id in existing:
+                    pipe.hset(worker_key(worker_id), mapping={"node_id": node_id})
+                pipe.execute()
+        return len(existing), len(worker_ids) - len(existing)
 
     async def RegisterWorker(
         self,
@@ -123,11 +147,16 @@ class SupervisorServicer(supervisor_pb2_grpc.SupervisorServicer):
         worker_meta = _payload_from_struct(request.meta)
         worker_id = new_worker_id(self._redis.incr(WORKER_ID_SEQ_KEY))
         worker_meta["id"] = worker_id
-        worker_meta["node_id"] = self._node_id
         worker_meta["node_alias"] = self._node_alias
-        self._redis.sadd(WORKERS_SET_KEY, worker_id)
-        self._redis.hash_set(worker_key(worker_id), worker_meta)
-        self._registry.set_worker_id(worker.token, worker_id)
+        # Stamp node_id, persist the record, and insert into the registry as one
+        # unit so a concurrent rebind_node either sees this worker in its
+        # snapshot or stamps it with the new id — never leaves it homed on a
+        # stale node.
+        with self._lock:
+            worker_meta["node_id"] = self._node_id
+            self._redis.sadd(WORKERS_SET_KEY, worker_id)
+            self._redis.hash_set(worker_key(worker_id), worker_meta)
+            self._registry.set_worker_id(worker.token, worker_id)
         self._task_listener.add_worker(worker_id)
         try:
             worker.set_worker_id(worker_id)
