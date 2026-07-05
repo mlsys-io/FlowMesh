@@ -148,6 +148,28 @@ def ssh_connection_key(connection_id: str) -> str:
 SSH_CONNECTION_IDS_KEY = "ssh:connections:active"
 
 
+def parse_pubsub_message(msg: dict[str, Any] | None) -> Any | None:
+    """Decode a redis-py pub/sub frame into its JSON payload.
+
+    Returns ``None`` for control frames (subscribe/unsubscribe confirmations,
+    the ``None`` a ``get_message`` timeout yields), empty payloads, and
+    malformed JSON, so both the blocking and polling readers can skip them
+    uniformly. Payloads are always JSON objects, so a ``None`` return
+    unambiguously means "nothing to deliver".
+    """
+    if msg is None or msg.get("type") != "message":
+        return None
+    raw = msg.get("data")
+    if raw is None:
+        return None
+    if isinstance(raw, bytes):
+        raw = raw.decode("utf-8", errors="ignore")
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+
+
 def iter_pubsub_messages(pubsub: PubSub) -> Iterable[Any]:
     """Iterate over messages from a Redis PubSub instance.
 
@@ -157,17 +179,10 @@ def iter_pubsub_messages(pubsub: PubSub) -> Iterable[Any]:
     """
     try:
         for msg in pubsub.listen():
-            if msg.get("type") != "message":
+            parsed = parse_pubsub_message(msg)
+            if parsed is None:
                 continue
-            raw = msg.get("data")
-            if raw is None:
-                continue
-            if isinstance(raw, bytes):
-                raw = raw.decode("utf-8", errors="ignore")
-            try:
-                yield json.loads(raw)
-            except json.JSONDecodeError:
-                continue
+            yield parsed
     except (ConnectionError, OSError):
         return
 
