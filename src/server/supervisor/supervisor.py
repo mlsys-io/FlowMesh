@@ -4,9 +4,12 @@ import asyncio
 import logging
 import os
 import signal
+from collections.abc import Callable
 from multiprocessing.process import BaseProcess
 from multiprocessing.queues import Queue as MPQueue
 from queue import Empty as QueueEmpty
+from queue import Full as QueueFull
+from threading import Thread
 
 from shared.schemas.command import CommandMessage, CommandResponse
 
@@ -27,6 +30,8 @@ from ..utils.concurrent import (
 
 _CMD_TIMEOUT = 120.0
 _NODE_ID_HANDSHAKE_TIMEOUT = 30.0
+_NODE_ID_WATCH_POLL_SEC = 0.5
+_REBIND_APPLY_TIMEOUT_SEC = 2.0
 
 
 class WorkerSupervisor:
@@ -50,15 +55,40 @@ class WorkerSupervisor:
         self._process: BaseProcess | None = None
         self._cmd_sender: TaskSender[CommandMessage, CommandResponse] | None = None
         self._cmd_receiver: TaskReceiver[CommandMessage, CommandResponse] | None = None
-        self._node_id_queue: MPQueue[str] = MP_CTX.Queue(maxsize=1)
+        self._node_id_queue: MPQueue[str] = MP_CTX.Queue(maxsize=8)
         self._node_id: str | None = None
+        self._node_id_listeners: list[Callable[[str], None]] = []
+        self._node_id_watcher: Thread | None = None
+        self._node_id_stop = False
 
     @property
     def node_id(self) -> str:
-        """Return the node_id assigned by the child after `start()`."""
+        """Return the current node_id. Reflects re-registrations after `start()`."""
         if self._node_id is None:
             raise RuntimeError("Supervisor not started; node_id not yet assigned")
         return self._node_id
+
+    def add_node_id_listener(self, listener: Callable[[str], None]) -> None:
+        """Register a hook invoked with the new node_id whenever the child
+        re-registers under a fresh id. Lets the parent refresh its cached copies
+        (request auth scope, own-node self-identification)."""
+        self._node_id_listeners.append(listener)
+
+    def _watch_node_id(self) -> None:
+        """Drain the node_id queue for re-registrations after the initial
+        handshake, updating the cached id and notifying listeners."""
+        while not self._node_id_stop:
+            try:
+                new_id = self._node_id_queue.get(timeout=_NODE_ID_WATCH_POLL_SEC)
+            except QueueEmpty:
+                continue
+            self._node_id = new_id
+            self._logger.info("Supervisor node re-registered as %s", new_id)
+            for listener in self._node_id_listeners:
+                try:
+                    listener(new_id)
+                except Exception as exc:
+                    self._logger.warning("node_id listener failed: %s", exc)
 
     # ------------------------------------------------------------------ #
     # Lifecycle
@@ -112,8 +142,21 @@ class WorkerSupervisor:
         self._node_id = node_id
         self._logger.info("Supervisor handshake complete: node_id=%s", node_id)
 
+        self._node_id_stop = False
+        self._node_id_watcher = Thread(
+            target=self._watch_node_id,
+            name="SupervisorNodeIdWatcher",
+            daemon=True,
+        )
+        self._node_id_watcher.start()
+
     async def stop(self, timeout: float = 3.0) -> None:
         """Gracefully stop the supervisor child process."""
+        self._node_id_stop = True
+        if self._node_id_watcher is not None:
+            await asyncio.to_thread(self._node_id_watcher.join)
+            self._node_id_watcher = None
+
         proc = self._process
         if (
             proc is None
@@ -299,9 +342,22 @@ def _run_supervisor(
     )
 
     def _on_reregister(new_node_id: str) -> None:
-        grpc_server.rebind_node(new_node_id)
+        # Rebind the subscriptions first and wait for the reader threads to
+        # switch channels, THEN re-home workers, so the dispatcher never
+        # publishes to a dispatch channel nobody is listening on yet.
         task_listener.rebind(new_node_id)
         command_listener.rebind(new_node_id)
+        task_listener.wait_rebound(_REBIND_APPLY_TIMEOUT_SEC)
+        command_listener.wait_rebound(_REBIND_APPLY_TIMEOUT_SEC)
+        grpc_server.rebind_node(new_node_id)
+        # Propagate the new id to the parent process (non-blocking: this runs on
+        # the heartbeat thread, which must not stall on a full queue).
+        try:
+            node_id_queue.put_nowait(new_node_id)
+        except QueueFull:
+            logger.warning(
+                "node_id queue full; parent will sync on the next re-register"
+            )
 
     lifecycle.set_reregister_callback(_on_reregister)
 
