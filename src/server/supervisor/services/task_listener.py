@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from threading import Thread
+from threading import Event, Lock, Thread
 from typing import Any
 
 from redis.client import PubSub
@@ -13,10 +13,12 @@ from shared.schemas.command import (
 
 from ...clients.redis import (
     SyncRedisClient,
-    iter_pubsub_messages,
     node_dispatch_channel,
+    parse_pubsub_message,
 )
 from ...utils.helpers import TSQueue
+
+_POLL_TIMEOUT_SEC = 0.25
 
 
 class TaskListener:
@@ -25,6 +27,8 @@ class TaskListener:
     ) -> None:
         self.logger = logger
         self._redis = redis
+        # Mutated only by the reader thread once running (via _apply_pending_rebind);
+        # the heartbeat thread requests changes through _pending_node_id.
         self._node_id = node_id
 
         # TODO(kaiitunnz): Consider cleaning up old queues
@@ -33,6 +37,10 @@ class TaskListener:
         self._thread: Thread | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._running: bool = False
+
+        self._rebind_lock = Lock()
+        self._pending_node_id: str | None = None
+        self._rebind_applied = Event()
 
     def start(self) -> None:
         if self._thread is not None:
@@ -67,32 +75,48 @@ class TaskListener:
             return
         assert self._running
         self._running = False
-        self._pubsub.close()
         self._thread.join()
+        self._pubsub.close()
         self._thread = None
         self._pubsub = None
         self._loop = None
         self.logger.info("Task listener stopped")
 
     def rebind(self, node_id: str) -> None:
-        """Move the dispatch subscription to a new node id.
+        """Request moving the dispatch subscription to a new node id.
 
-        Subscribes the new node's dispatch channel and drops the old one on the
-        live pubsub connection so an already-running listener keeps receiving
-        without a restart. Registered worker queues are preserved.
+        Records the target under a lock; the actual ``subscribe``/``unsubscribe``
+        is applied by the reader thread between polls, because a redis-py
+        ``PubSub`` is not safe to mutate from a second thread while its owner is
+        reading. ``wait_rebound`` blocks until the switch has taken effect.
+        Registered worker queues are preserved across the rebind.
         """
         if node_id == self._node_id:
+            self._rebind_applied.set()
             return
-        old_node_id = self._node_id
-        self._node_id = node_id
-        pubsub = self._pubsub
-        if pubsub is None:
-            return
-        pubsub.subscribe(node_dispatch_channel(node_id))
-        pubsub.unsubscribe(node_dispatch_channel(old_node_id))
+        self._rebind_applied.clear()
+        with self._rebind_lock:
+            self._pending_node_id = node_id
+
+    def wait_rebound(self, timeout: float) -> bool:
+        """Block until a requested rebind has been applied by the reader."""
+        return self._rebind_applied.wait(timeout)
+
+    def _apply_pending_rebind(self, pubsub: PubSub, current_id: str) -> str:
+        """Apply a pending rebind on the reader thread. Returns the live id."""
+        with self._rebind_lock:
+            pending = self._pending_node_id
+            self._pending_node_id = None
+        if pending is None or pending == current_id:
+            return current_id
+        pubsub.subscribe(node_dispatch_channel(pending))
+        pubsub.unsubscribe(node_dispatch_channel(current_id))
+        self._node_id = pending
+        self._rebind_applied.set()
         self.logger.info(
-            "Task listener rebound from node %s to %s", old_node_id, node_id
+            "Task listener rebound from node %s to %s", current_id, pending
         )
+        return pending
 
     def add_worker(self, worker_id: str) -> None:
         if worker_id not in self._qs:
@@ -113,8 +137,14 @@ class TaskListener:
         if pubsub is None or loop is None:
             self.logger.error("Task listener not properly initialized")
             return
+        current_id = self._node_id
         try:
-            for data in iter_pubsub_messages(pubsub):
+            while self._running:
+                current_id = self._apply_pending_rebind(pubsub, current_id)
+                msg = pubsub.get_message(timeout=_POLL_TIMEOUT_SEC)
+                data = parse_pubsub_message(msg)
+                if data is None:
+                    continue
                 if "kind" not in data:
                     self.logger.warning(
                         "Received dispatch message without kind: %s", data
@@ -153,6 +183,8 @@ class TaskListener:
                     continue
                 queue = self._qs[worker_id]
                 asyncio.run_coroutine_threadsafe(queue.put(payload), loop)
+        except (ConnectionError, OSError):
+            return
         except Exception as exc:
             if self._running:
                 self.logger.exception("Task listener loop error: %s", exc)
