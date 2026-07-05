@@ -172,41 +172,22 @@ class _FakeWorkerRegistry:
         return self._token_to_id.get(token)
 
 
-class _FakePipe:
-    def __init__(self, redis: "_FakeRedis") -> None:
-        self._redis = redis
-        self._ops: list[tuple[str, str, dict[str, Any] | None]] = []
-
-    def exists(self, key: str) -> None:
-        self._ops.append(("exists", key, None))
-
-    def hset(self, key: str, mapping: dict[str, Any] | None = None) -> None:
-        self._ops.append(("hset", key, mapping))
-
-    def execute(self) -> list[int]:
-        results: list[int] = []
-        for kind, key, mapping in self._ops:
-            if kind == "exists":
-                results.append(1 if key in self._redis.existing else 0)
-            else:
-                self._redis.hash_writes.append((key, mapping or {}))
-                results.append(1)
-        return results
-
-    def __enter__(self) -> "_FakePipe":
-        return self
-
-    def __exit__(self, *exc: object) -> None:
-        return None
-
-
 class _FakeRedis:
+    """Simulates the re-home Lua: HSET node_id only for keys that exist."""
+
     def __init__(self, existing: set[str] | None = None) -> None:
         self.existing = existing if existing is not None else set()
         self.hash_writes: list[tuple[str, dict[str, Any]]] = []
 
-    def control_pipeline(self) -> _FakePipe:
-        return _FakePipe(self)
+    def eval(self, script: str, numkeys: int, *args: str) -> int:
+        keys = args[:numkeys]
+        node_id = args[numkeys]
+        rehomed = 0
+        for key in keys:
+            if key in self.existing:
+                self.hash_writes.append((key, {"node_id": node_id}))
+                rehomed += 1
+        return rehomed
 
 
 def _build_servicer(

@@ -29,6 +29,19 @@ from ..schemas import WorkerStatus
 from ..services.relay_service import RelayService
 from ..services.task_listener import TaskListener
 
+# Rewrite node_id for each worker key that still exists, atomically. KEYS are
+# worker keys; ARGV[1] is the new node id. Returns the count actually rewritten.
+_REHOME_LUA = """
+local rehomed = 0
+for _, key in ipairs(KEYS) do
+  if redis.call('EXISTS', key) == 1 then
+    redis.call('HSET', key, 'node_id', ARGV[1])
+    rehomed = rehomed + 1
+  end
+end
+return rehomed
+"""
+
 
 def _token_from_metadata(metadata: Iterable[tuple[str, str]]) -> WorkerTokenType | None:
     for key, value in metadata:
@@ -120,21 +133,14 @@ class SupervisorServicer(supervisor_pb2_grpc.SupervisorServicer):
             )
 
     def _rehome_workers(self, worker_ids: list[str], node_id: str) -> tuple[int, int]:
-        """Rewrite node_id for workers that still have a record. Two round trips
-        (existence check, then update) regardless of worker count."""
+        """Rewrite node_id only for workers whose record still exists, atomically
+        so a worker deleted mid-rebind is skipped rather than resurrected as a
+        partial record. Returns (rehomed, skipped)."""
         if not worker_ids:
             return 0, 0
-        with self._redis.control_pipeline() as pipe:
-            for worker_id in worker_ids:
-                pipe.exists(worker_key(worker_id))
-            present: list[int] = pipe.execute()
-        existing = [wid for wid, ok in zip(worker_ids, present) if ok]
-        if existing:
-            with self._redis.control_pipeline() as pipe:
-                for worker_id in existing:
-                    pipe.hset(worker_key(worker_id), mapping={"node_id": node_id})
-                pipe.execute()
-        return len(existing), len(worker_ids) - len(existing)
+        keys = [worker_key(worker_id) for worker_id in worker_ids]
+        rehomed = int(self._redis.eval(_REHOME_LUA, len(keys), *keys, node_id))
+        return rehomed, len(worker_ids) - rehomed
 
     async def RegisterWorker(
         self,

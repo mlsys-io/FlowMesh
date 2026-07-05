@@ -295,6 +295,9 @@ class SyncRedisClient:
     def incr(self, key: str) -> int:
         return int(_sync(self._control.incr(key)))
 
+    def eval(self, script: str, numkeys: int, *keys_and_args: str) -> Any:
+        return _sync(self._control.eval(script, numkeys, *keys_and_args))
+
     def set_value(self, key: str, value: str) -> None:
         self._control.set(key, value)
 
