@@ -359,8 +359,6 @@ def _run_supervisor(
                 "node_id queue full; parent will sync on the next re-register"
             )
 
-    lifecycle.set_reregister_callback(_on_reregister)
-
     # --- Event loop with signal handling ---
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
@@ -380,6 +378,10 @@ def _run_supervisor(
         await worker_manager.start()
         command_listener.start()
         await grpc_server.start()
+        # Wire the re-register callback only once the reader threads are up, so a
+        # re-register can never block on wait_rebound waiting for a reader that
+        # has not started.
+        lifecycle.set_reregister_callback(_on_reregister)
         logger.info("Supervisor ready for node %s", node_id)
 
         # Wait for termination signal
