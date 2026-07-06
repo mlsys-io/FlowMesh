@@ -126,6 +126,12 @@ class TaskRecord(BaseModel):
         description="Epoch seconds when no eligible worker was first observed.",
         exclude=True,
     )
+    no_dispatch_since: float | None = Field(
+        default=None,
+        description="Epoch seconds when a selected worker was first found "
+        "undeliverable (no live dispatch subscriber / publish failure).",
+        exclude=True,
+    )
     local_name: str | None = Field(default=None, description="Workflow stage name.")
     graph_node_name: str | None = Field(default=None, description="Graph node name.")
     load: int = Field(default=0, description="Load score.")
