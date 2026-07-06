@@ -13,21 +13,25 @@ assert ``rebind`` touches nothing and the reader-side apply does the switch.
 """
 
 import logging
-from threading import Event, Lock
-from typing import Any
+from threading import Lock
+from typing import Any, cast
+
+from redis.client import PubSub
 
 from server.clients.redis import (
+    SyncRedisClient,
     node_cmd_channel,
     node_dispatch_channel,
     worker_key,
 )
+from server.supervisor.registry import WorkerRegistry
 from server.supervisor.services.command_listener import CommandListener, _CommandStream
 from server.supervisor.services.grpc_server import SupervisorServicer
-from server.supervisor.services.lifecycle import Lifecycle
 from server.supervisor.services.task_listener import TaskListener
-from shared.schemas.node import NodeInfo
+from tests.server.supervisor_helpers import StubLifecycle, StubRegistry
 
 _LOGGER = logging.getLogger("test.reregister")
+_ANY_OBJECT: Any = None
 
 
 class _FakePubSub:
@@ -47,25 +51,19 @@ class _FakePubSub:
         self.unsubscribe_log.append(channel)
 
 
+def _as_pubsub(fake: _FakePubSub) -> PubSub:
+    return cast(PubSub, fake)
+
+
 # --------------------------------------------------------------------------- #
 # TaskListener.rebind (heartbeat thread) + _apply_pending_rebind (reader thread)
 # --------------------------------------------------------------------------- #
 
 
 def _build_task_listener(node_id: str) -> tuple[TaskListener, _FakePubSub]:
-    listener = TaskListener.__new__(TaskListener)
-    listener.logger = _LOGGER
-    listener._node_id = node_id
-    listener._qs = {}
+    listener = TaskListener(_ANY_OBJECT, node_id, _LOGGER)
     pubsub = _FakePubSub()
     pubsub.subscribe(node_dispatch_channel(node_id))
-    listener._pubsub = pubsub  # type: ignore[assignment]
-    listener._thread = object()  # type: ignore[assignment]
-    listener._loop = None
-    listener._running = True
-    listener._rebind_lock = Lock()
-    listener._pending_node_id = None
-    listener._rebind_applied = Event()
     return listener, pubsub
 
 
@@ -87,7 +85,7 @@ def test_task_listener_apply_pending_moves_subscription() -> None:
     listener.add_worker("wkr-1")
     listener.rebind("nde-2")
 
-    live = listener._apply_pending_rebind(pubsub, "nde-1")  # type: ignore[arg-type]
+    live = listener._apply_pending_rebind(_as_pubsub(pubsub), "nde-1")
 
     assert live == "nde-2"
     assert listener._node_id == "nde-2"
@@ -103,7 +101,7 @@ def test_task_listener_rebind_same_id_is_noop() -> None:
     listener.rebind("nde-1")
     # same id resolves immediately, nothing pending, no pubsub mutation on apply
     assert listener._rebind_applied.is_set()
-    assert listener._apply_pending_rebind(pubsub, "nde-1") == "nde-1"  # type: ignore[arg-type]
+    assert listener._apply_pending_rebind(_as_pubsub(pubsub), "nde-1") == "nde-1"
     assert pubsub.unsubscribe_log == []
 
 
@@ -113,12 +111,7 @@ def test_task_listener_rebind_same_id_is_noop() -> None:
 
 
 def _build_command_stream(node_id: str) -> tuple[_CommandStream, _FakePubSub]:
-    stream = _CommandStream.__new__(_CommandStream)
-    stream.node_id = node_id
-    stream.logger = _LOGGER
-    stream._rebind_lock = Lock()
-    stream._pending_node_id = None
-    stream._rebind_applied = Event()
+    stream = _CommandStream(node_id, _ANY_OBJECT, None, _LOGGER)
     pubsub = _FakePubSub()
     pubsub.subscribe(node_cmd_channel(node_id))
     return stream, pubsub
@@ -126,9 +119,7 @@ def _build_command_stream(node_id: str) -> tuple[_CommandStream, _FakePubSub]:
 
 def test_command_listener_rebind_records_target_without_touching_pubsub() -> None:
     stream, pubsub = _build_command_stream("nde-1")
-    listener = CommandListener.__new__(CommandListener)
-    listener.logger = _LOGGER
-    listener._node_id = "nde-1"
+    listener = CommandListener(_ANY_OBJECT, "nde-1", _ANY_OBJECT, _LOGGER)
     listener._cmd_stream = stream
 
     listener.rebind("nde-2")
@@ -142,7 +133,7 @@ def test_command_stream_apply_pending_moves_subscription() -> None:
     stream, pubsub = _build_command_stream("nde-1")
     stream.rebind("nde-2")
 
-    live = stream._apply_pending_rebind(pubsub, "nde-1")  # type: ignore[arg-type]
+    live = stream._apply_pending_rebind(_as_pubsub(pubsub), "nde-1")
 
     assert live == "nde-2"
     assert stream.node_id == "nde-2"
@@ -195,12 +186,12 @@ def _build_servicer(
     token_to_id: dict[str, str | None],
     existing: set[str] | None = None,
 ) -> tuple[SupervisorServicer, _FakeRedis]:
-    servicer = SupervisorServicer.__new__(SupervisorServicer)
-    servicer._registry = _FakeWorkerRegistry(token_to_id)  # type: ignore[assignment]
     if existing is None:
         existing = {worker_key(w) for w in token_to_id.values() if w is not None}
     redis = _FakeRedis(existing)
-    servicer._redis = redis  # type: ignore[assignment]
+    servicer = SupervisorServicer.__new__(SupervisorServicer)
+    servicer._registry = cast(WorkerRegistry, _FakeWorkerRegistry(token_to_id))
+    servicer._redis = cast(SyncRedisClient, redis)
     servicer._node_id = node_id
     servicer._node_alias = "worker-box"
     servicer._logger = _LOGGER
@@ -248,83 +239,6 @@ def test_rebind_node_same_id_is_noop() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Lifecycle wiring — callback fires on re-register, restoring dispatch
-# --------------------------------------------------------------------------- #
-
-
-def _build_lifecycle() -> Lifecycle:
-    instance = Lifecycle.__new__(Lifecycle)
-    instance._base_url = "http://root:8000"
-    instance._node_info = NodeInfo(
-        namespace="ns",
-        cluster="cl",
-        alias="worker-1",
-        version="0.1.0",
-        started_at="2026-05-13T00:00:00Z",
-        tags=[],
-        last_seen="2026-05-13T00:00:00Z",
-        max_gpu_count=0,
-    )
-    instance.logger = _LOGGER
-    instance._on_reregister = None
-    return instance
-
-
-class _StubRegistry:
-    def __init__(self, exists: bool) -> None:
-        self._exists = exists
-
-    def node_exists(self, node_id: str) -> bool:
-        return self._exists
-
-
-def test_reregister_invokes_callback_with_new_id() -> None:
-    seen: list[str] = []
-    instance = _build_lifecycle()
-    instance._node_registry = _StubRegistry(exists=False)  # type: ignore[assignment]
-    instance._node_id = "nde-1"
-    instance._unregister_published = True
-    instance._register = lambda: "nde-2"  # type: ignore[method-assign]
-    instance._publish_event = lambda *a, **k: None  # type: ignore[method-assign]
-    instance.set_reregister_callback(seen.append)
-
-    instance._reregister_if_lost()
-
-    assert instance._node_id == "nde-2"
-    assert seen == ["nde-2"]
-
-
-def test_reregister_present_does_not_invoke_callback() -> None:
-    seen: list[str] = []
-    instance = _build_lifecycle()
-    instance._node_registry = _StubRegistry(exists=True)  # type: ignore[assignment]
-    instance._node_id = "nde-1"
-    instance.set_reregister_callback(seen.append)
-
-    instance._reregister_if_lost()
-
-    assert seen == []
-
-
-def test_reregister_callback_error_does_not_break_heartbeat() -> None:
-    instance = _build_lifecycle()
-    instance._node_registry = _StubRegistry(exists=False)  # type: ignore[assignment]
-    instance._node_id = "nde-1"
-    instance._unregister_published = True
-    instance._register = lambda: "nde-2"  # type: ignore[method-assign]
-    instance._publish_event = lambda *a, **k: None  # type: ignore[method-assign]
-
-    def _boom(_new_id: str) -> None:
-        raise RuntimeError("rebind failed")
-
-    instance.set_reregister_callback(_boom)
-
-    # must not raise — a failed rebind should be logged, not crash the hb loop
-    instance._reregister_if_lost()
-    assert instance._node_id == "nde-2"
-
-
-# --------------------------------------------------------------------------- #
 # End-to-end: registry loss -> re-register-under-new-id -> dispatchable again
 # --------------------------------------------------------------------------- #
 
@@ -338,9 +252,7 @@ def test_full_reregister_rebinds_and_rehomes() -> None:
     task_listener.add_worker("wkr-1")
 
     cmd_stream, cmd_pubsub = _build_command_stream("nde-1")
-    cmd_listener = CommandListener.__new__(CommandListener)
-    cmd_listener.logger = _LOGGER
-    cmd_listener._node_id = "nde-1"
+    cmd_listener = CommandListener(_ANY_OBJECT, "nde-1", _ANY_OBJECT, _LOGGER)
     cmd_listener._cmd_stream = cmd_stream
 
     servicer, redis = _build_servicer("nde-1", {"tok-a": "wkr-1"})
@@ -349,18 +261,13 @@ def test_full_reregister_rebinds_and_rehomes() -> None:
         task_listener.rebind(new_node_id)
         cmd_listener.rebind(new_node_id)
         # stand in for the reader threads applying the pending rebind
-        task_listener._apply_pending_rebind(task_pubsub, "nde-1")  # type: ignore[arg-type]
-        cmd_stream._apply_pending_rebind(cmd_pubsub, "nde-1")  # type: ignore[arg-type]
+        task_listener._apply_pending_rebind(_as_pubsub(task_pubsub), "nde-1")
+        cmd_stream._apply_pending_rebind(_as_pubsub(cmd_pubsub), "nde-1")
         assert task_listener.wait_rebound(1.0)
         assert cmd_listener.wait_rebound(1.0)
         servicer.rebind_node(new_node_id)
 
-    lifecycle = _build_lifecycle()
-    lifecycle._node_registry = _StubRegistry(exists=False)  # type: ignore[assignment]
-    lifecycle._node_id = "nde-1"
-    lifecycle._unregister_published = True
-    lifecycle._register = lambda: "nde-2"  # type: ignore[method-assign]
-    lifecycle._publish_event = lambda *a, **k: None  # type: ignore[method-assign]
+    lifecycle = StubLifecycle(StubRegistry(exists=False), "nde-1")
     lifecycle.set_reregister_callback(_on_reregister)
 
     lifecycle._reregister_if_lost()

@@ -6,7 +6,7 @@ picks it up, updates the cached id, and notifies listeners (which refresh
 """
 
 import logging
-import queue
+from multiprocessing import Queue
 from threading import Event, Thread
 
 from server.supervisor.supervisor import WorkerSupervisor
@@ -18,7 +18,7 @@ def _build_supervisor() -> WorkerSupervisor:
     sup = WorkerSupervisor.__new__(WorkerSupervisor)
     sup._logger = _LOGGER
     sup._node_id = "nde-1"
-    sup._node_id_queue = queue.Queue()  # type: ignore[assignment]
+    sup._node_id_queue = Queue()
     sup._node_id_listeners = []
     sup._node_id_stop = False
     sup._node_id_watcher = None

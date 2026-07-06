@@ -8,6 +8,7 @@ import pytest
 from server.supervisor.services import lifecycle as lifecycle_module
 from server.supervisor.services.lifecycle import Lifecycle
 from shared.schemas.node import NodeInfo
+from tests.server.supervisor_helpers import StubLifecycle, StubRegistry
 
 
 def _build_lifecycle(base_url: str = "http://root:8000") -> Lifecycle:
@@ -77,42 +78,43 @@ def test_register_http_omits_header_when_api_key_unset(
     assert captured["headers"] == {}
 
 
-class _StubRegistry:
-    def __init__(self, exists: bool) -> None:
-        self._exists = exists
-        self.exists_calls: list[str] = []
-
-    def node_exists(self, node_id: str) -> bool:
-        self.exists_calls.append(node_id)
-        return self._exists
-
-
 def test_reregister_if_lost_noops_when_present() -> None:
-    instance = _build_lifecycle()
-    registry = _StubRegistry(exists=True)
-    instance._node_registry = registry  # type: ignore[assignment]
-    instance._node_id = "nde-1"
-    instance._register = lambda: pytest.fail("must not re-register")  # type: ignore[method-assign]
+    registry = StubRegistry(exists=True)
+    instance = StubLifecycle(registry, "nde-1")
+    calls: list[str] = []
+    instance.set_reregister_callback(calls.append)
 
     instance._reregister_if_lost()
 
     assert registry.exists_calls == ["nde-1"]
     assert instance._node_id == "nde-1"
+    assert instance.published_events == []
+    assert calls == []  # callback not fired when the record is present
 
 
 def test_reregister_if_lost_reregisters_when_missing() -> None:
-    events: list[str] = []
-    instance = _build_lifecycle()
-    registry = _StubRegistry(exists=False)
-    instance._node_registry = registry  # type: ignore[assignment]
-    instance._node_id = "nde-1"
-    instance._unregister_published = True
-    instance._register = lambda: "nde-2"  # type: ignore[method-assign]
-    instance._publish_event = lambda event_type, **extra: events.append(event_type)  # type: ignore[method-assign]
+    registry = StubRegistry(exists=False)
+    instance = StubLifecycle(registry, "nde-1")
+    calls: list[str] = []
+    instance.set_reregister_callback(calls.append)
 
     instance._reregister_if_lost()
 
     assert registry.exists_calls == ["nde-1"]
     assert instance._node_id == "nde-2"
     assert instance._unregister_published is False
-    assert events == ["SV_REGISTER"]
+    assert instance.published_events == ["SV_REGISTER"]
+    assert calls == ["nde-2"]  # callback fired with the new id
+
+
+def test_reregister_if_lost_swallows_callback_error() -> None:
+    instance = StubLifecycle(StubRegistry(exists=False), "nde-1")
+
+    def _boom(_new_id: str) -> None:
+        raise RuntimeError("rebind failed")
+
+    instance.set_reregister_callback(_boom)
+
+    # a failing callback must be logged, not crash the heartbeat loop
+    instance._reregister_if_lost()
+    assert instance._node_id == "nde-2"
