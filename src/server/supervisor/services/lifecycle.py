@@ -60,12 +60,7 @@ class Lifecycle:
         return self._node_id
 
     def set_reregister_callback(self, callback: Callable[[str], None]) -> None:
-        """Register a hook invoked with the new node id after a re-register.
-
-        Lets components that captured the original node id (dispatch/command
-        subscriptions, worker homing) rebind once the node re-registers under a
-        new id, so dispatch is restored — not just registration.
-        """
+        """Register a hook invoked with the new node id after a re-register."""
         self._on_reregister = callback
 
     # ------------------------------------------------------------------ #
@@ -167,12 +162,9 @@ class Lifecycle:
     def _reregister_if_lost(self) -> None:
         """Re-register when the root registry no longer holds this node.
 
-        The node record lives in the shared control-plane Redis. When the root
-        is redeployed its registry is rebuilt from scratch, dropping records for
-        nodes that registered before the restart. Those nodes keep heartbeating,
-        but ``update_node_hb`` early-returns for an unknown node, so they never
-        reappear and are orphaned. Detect the missing record and re-register so
-        the fleet self-heals within one heartbeat interval, without a restart.
+        In case the node registry is reachable but the current node_id is no longer
+        present in the root registry (e.g., when the control-plane Redis is cleared on
+        root redeploy), the node must re-register to obtain a new node_id.
         """
         if self._node_registry.node_exists(self.node_id):
             return
@@ -188,9 +180,7 @@ class Lifecycle:
                 self._on_reregister(self._node_id)
             except Exception as exc:
                 self.logger.warning(
-                    "Re-register callback failed for node %s: %s",
-                    self._node_id,
-                    exc,
+                    "Re-register callback failed for node %s: %s", self._node_id, exc
                 )
 
     def _hb_loop(self) -> None:

@@ -18,15 +18,13 @@ from redis.typing import EncodableT
 def _keepalive_kwargs() -> dict[str, Any]:
     """Connection kwargs that keep an idle Redis socket alive.
 
-    A pub/sub SUBSCRIBE that receives no messages is an idle TCP connection.
-    Intermediaries (load balancers, NAT gateways) cull idle server-side
-    connections on their own timeout, silently dropping a node's dispatch
-    subscription so the publisher sees zero receivers. TCP keepalive probes
-    keep the connection observably alive well below such timeouts, and
-    ``health_check_interval`` makes the client re-establish a connection it
-    finds dead rather than blocking on a stale socket.
+    An idle pub/sub SUBSCRIBE gets culled by intermediaries (load balancers, NAT
+    gateways), dropping a node's dispatch subscription. Keepalive probes hold it open
+    and ``health_check_interval`` reconnects a dead socket instead of blocking on it.
     """
     options: dict[int, int] = {}
+    # These constants are Linux-only; skip any the running platform lacks (e.g.
+    # macOS/Windows dev hosts) so importing this module there doesn't fail.
     for name, value in (
         ("TCP_KEEPIDLE", 60),
         ("TCP_KEEPINTVL", 15),
@@ -151,11 +149,8 @@ SSH_CONNECTION_IDS_KEY = "ssh:connections:active"
 def parse_pubsub_message(msg: dict[str, Any] | None) -> Any | None:
     """Decode a redis-py pub/sub frame into its JSON payload.
 
-    Returns ``None`` for control frames (subscribe/unsubscribe confirmations,
-    the ``None`` a ``get_message`` timeout yields), empty payloads, and
-    malformed JSON, so both the blocking and polling readers can skip them
-    uniformly. Payloads are always JSON objects, so a ``None`` return
-    unambiguously means "nothing to deliver".
+    Returns ``None`` for control frames, empty payloads, and malformed JSON. Payloads
+    are always JSON objects, so a ``None`` return means "nothing to deliver".
     """
     if msg is None or msg.get("type") != "message":
         return None
@@ -295,7 +290,7 @@ class SyncRedisClient:
     def incr(self, key: str) -> int:
         return int(_sync(self._control.incr(key)))
 
-    def eval(self, script: str, numkeys: int, *keys_and_args: str) -> Any:
+    def eval(self, script: str, numkeys: int, *keys_and_args: str) -> str:
         return _sync(self._control.eval(script, numkeys, *keys_and_args))
 
     def set_value(self, key: str, value: str) -> None:
@@ -500,6 +495,9 @@ class AsyncRedisClient:
 
     async def incr(self, key: str) -> int:
         return int(await _awaitable(self._control.incr(key)))
+
+    async def eval(self, script: str, numkeys: int, *keys_and_args: str) -> str:
+        return await _awaitable(self._control.eval(script, numkeys, *keys_and_args))
 
     async def set_value(self, key: str, value: str) -> None:
         await _awaitable(self._control.set(key, value))

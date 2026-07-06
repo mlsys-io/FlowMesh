@@ -87,9 +87,8 @@ class _CommandStream:
         """Request moving the command subscription to a new node id.
 
         Records the target under a lock; the reader thread applies the actual
-        ``subscribe``/``unsubscribe`` between polls (a redis-py ``PubSub`` is not
-        safe to mutate from another thread while its owner reads). ``wait_rebound``
-        blocks until the switch has taken effect.
+        ``subscribe``/``unsubscribe`` between polls (mutating redis-py ``PubSub`` is not
+        thread-safe). ``wait_rebound`` blocks until the switch has taken effect.
         """
         if node_id == self.node_id:
             self._rebind_applied.set()
@@ -254,17 +253,15 @@ class CommandListener:
     def rebind(self, node_id: str) -> None:
         """Request moving the command subscription to a new node id.
 
-        The reader thread applies the switch; ``wait_rebound`` blocks until it
-        has taken effect.
+        The reader thread applies the switch; ``wait_rebound`` blocks until it has taken
+        effect.
         """
         self._node_id = node_id
-        stream = self._cmd_stream
-        if stream is not None:
+        if stream := self._cmd_stream:
             stream.rebind(node_id)
 
     def wait_rebound(self, timeout: float) -> bool:
-        stream = self._cmd_stream
-        return stream.wait_rebound(timeout) if stream is not None else True
+        return stream.wait_rebound(timeout) if (stream := self._cmd_stream) else True
 
     async def stop(self) -> None:
         if self._thread is None or self._cmd_stream is None:

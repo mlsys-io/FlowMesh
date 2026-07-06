@@ -68,28 +68,6 @@ class WorkerSupervisor:
             raise RuntimeError("Supervisor not started; node_id not yet assigned")
         return self._node_id
 
-    def add_node_id_listener(self, listener: Callable[[str], None]) -> None:
-        """Register a hook invoked with the new node_id whenever the child
-        re-registers under a fresh id. Lets the parent refresh its cached copies
-        (request auth scope, own-node self-identification)."""
-        self._node_id_listeners.append(listener)
-
-    def _watch_node_id(self) -> None:
-        """Drain the node_id queue for re-registrations after the initial
-        handshake, updating the cached id and notifying listeners."""
-        while not self._node_id_stop:
-            try:
-                new_id = self._node_id_queue.get(timeout=_NODE_ID_WATCH_POLL_SEC)
-            except QueueEmpty:
-                continue
-            self._node_id = new_id
-            self._logger.info("Supervisor node re-registered as %s", new_id)
-            for listener in self._node_id_listeners:
-                try:
-                    listener(new_id)
-                except Exception as exc:
-                    self._logger.warning("node_id listener failed: %s", exc)
-
     # ------------------------------------------------------------------ #
     # Lifecycle
     # ------------------------------------------------------------------ #
@@ -144,9 +122,7 @@ class WorkerSupervisor:
 
         self._node_id_stop = False
         self._node_id_watcher = Thread(
-            target=self._watch_node_id,
-            name="SupervisorNodeIdWatcher",
-            daemon=True,
+            target=self._watch_node_id, name="SupervisorNodeIdWatcher", daemon=True
         )
         self._node_id_watcher.start()
 
@@ -199,6 +175,31 @@ class WorkerSupervisor:
         if sender is None:
             raise RuntimeError("Supervisor command channel not initialized")
         return await sender.send(cmd.command_id, cmd, timeout=timeout)
+
+    # ------------------------------------------------------------------ #
+    # Node ID watching
+    # ------------------------------------------------------------------ #
+
+    def add_node_id_listener(self, listener: Callable[[str], None]) -> None:
+        """Register a hook invoked with the new node_id whenever the child re-registers
+        under a fresh id. Lets the parent refresh its cached copies."""
+        self._node_id_listeners.append(listener)
+
+    def _watch_node_id(self) -> None:
+        """Drain the node_id queue for re-registrations after the initial handshake,
+        updating the cached id and notifying listeners."""
+        while not self._node_id_stop:
+            try:
+                new_id = self._node_id_queue.get(timeout=_NODE_ID_WATCH_POLL_SEC)
+            except QueueEmpty:
+                continue
+            self._node_id = new_id
+            self._logger.info("Supervisor node re-registered as %s", new_id)
+            for listener in self._node_id_listeners:
+                try:
+                    listener(new_id)
+                except Exception as exc:
+                    self._logger.warning("node_id listener failed: %s", exc)
 
 
 # ------------------------------------------------------------------ #
@@ -378,9 +379,7 @@ def _run_supervisor(
         await worker_manager.start()
         command_listener.start()
         await grpc_server.start()
-        # Wire the re-register callback only once the reader threads are up, so a
-        # re-register can never block on wait_rebound waiting for a reader that
-        # has not started.
+        # Wire the re-register callback only once the reader threads are up
         lifecycle.set_reregister_callback(_on_reregister)
         logger.info("Supervisor ready for node %s", node_id)
 

@@ -358,11 +358,13 @@ async def _lifespan(_: FastAPI):
 
             def _on_node_id_change(new_node_id: str) -> None:
                 app.state.node_id = new_node_id
+                # Tell EventMonitor which node this server belongs to so that it can
+                # wait for the supervisor's SV_UNREGISTER event on shutdown.
                 if EVENT_MONITOR is not None:
                     EVENT_MONITOR.set_own_node(new_node_id)
 
-            # Seed the caches, then keep them current if the node re-registers
-            # under a fresh id (request auth scope + shutdown self-identification).
+            # Keep the node_id updated for request auth scope + shutdown
+            # self-identification.
             _on_node_id_change(SUPERVISOR.node_id)
             SUPERVISOR.add_node_id_listener(_on_node_id_change)
 

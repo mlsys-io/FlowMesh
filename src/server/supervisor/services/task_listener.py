@@ -27,8 +27,7 @@ class TaskListener:
     ) -> None:
         self.logger = logger
         self._redis = redis
-        # Mutated only by the reader thread once running (via _apply_pending_rebind);
-        # the heartbeat thread requests changes through _pending_node_id.
+        # node_id is mutated only by the pubsub reader thread once running.
         self._node_id = node_id
 
         # TODO(kaiitunnz): Consider cleaning up old queues
@@ -85,10 +84,9 @@ class TaskListener:
     def rebind(self, node_id: str) -> None:
         """Request moving the dispatch subscription to a new node id.
 
-        Records the target under a lock; the actual ``subscribe``/``unsubscribe``
-        is applied by the reader thread between polls, because a redis-py
-        ``PubSub`` is not safe to mutate from a second thread while its owner is
-        reading. ``wait_rebound`` blocks until the switch has taken effect.
+        Records the target under a lock; the reader thread applies the actual
+        ``subscribe``/``unsubscribe`` between polls (mutating redis-py ``PubSub`` is not
+        thread-safe). ``wait_rebound`` blocks until the switch has taken effect.
         Registered worker queues are preserved across the rebind.
         """
         if node_id == self._node_id:
@@ -99,11 +97,9 @@ class TaskListener:
             self._pending_node_id = node_id
 
     def wait_rebound(self, timeout: float) -> bool:
-        """Block until a requested rebind has been applied by the reader."""
         return self._rebind_applied.wait(timeout)
 
     def _apply_pending_rebind(self, pubsub: PubSub, current_id: str) -> str:
-        """Apply a pending rebind on the reader thread. Returns the live id."""
         with self._rebind_lock:
             pending = self._pending_node_id
             self._pending_node_id = None

@@ -154,10 +154,9 @@ class SupervisorServicer(supervisor_pb2_grpc.SupervisorServicer):
         worker_id = new_worker_id(self._redis.incr(WORKER_ID_SEQ_KEY))
         worker_meta["id"] = worker_id
         worker_meta["node_alias"] = self._node_alias
-        # Stamp node_id, persist the record, and insert into the registry as one
-        # unit so a concurrent rebind_node either sees this worker in its
-        # snapshot or stamps it with the new id — never leaves it homed on a
-        # stale node.
+        # Stamp node_id, persist the record, and insert into the registry as one unit so
+        # a concurrent rebind_node either sees this worker in its snapshot or stamps it
+        # with the new id.
         with self._lock:
             worker_meta["node_id"] = self._node_id
             self._redis.sadd(WORKERS_SET_KEY, worker_id)
@@ -299,10 +298,6 @@ class GrpcServer:
         )
         self._listen_addr = f"{host}:{port}"
 
-    def rebind_node(self, node_id: str) -> None:
-        """Re-home registered workers under a new node id."""
-        self._servicer.rebind_node(node_id)
-
     async def start(self) -> None:
         if self._server is not None:
             self._logger.warning("Server gRPC server already started")
@@ -349,3 +344,7 @@ class GrpcServer:
         await self._server.stop(grace)
         self._server = None
         self._logger.info("Server gRPC server stopped")
+
+    def rebind_node(self, node_id: str) -> None:
+        """Re-home registered workers under a new node id."""
+        self._servicer.rebind_node(node_id)
