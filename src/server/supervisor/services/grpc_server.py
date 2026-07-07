@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from collections.abc import AsyncIterator, Iterable
+from collections.abc import AsyncIterator
 from pathlib import Path
 from threading import Lock
 
@@ -43,13 +43,18 @@ return rehomed
 """
 
 
-def _token_from_metadata(metadata: Iterable[tuple[str, str]]) -> WorkerTokenType | None:
-    for key, value in metadata:
-        key_l = key.lower()
-        if key_l == "authorization" and value.startswith("Bearer "):
-            return value[7:]  # type: ignore
-        if key_l == "x-worker-token":
-            return value  # type: ignore
+def _token_from_context(context: grpc.aio.ServicerContext) -> WorkerTokenType | None:
+    if metadata := context.invocation_metadata():
+        for key, value in metadata:
+            key_l = key.lower()
+            if isinstance(value, (bytes, bytearray)):
+                value = value.decode("utf-8", errors="ignore")
+            elif isinstance(value, memoryview):
+                value = value.tobytes().decode("utf-8", errors="ignore")
+            if key_l == "authorization" and value.startswith("Bearer "):
+                return WorkerTokenType(value[7:])
+            if key_l == "x-worker-token":
+                return WorkerTokenType(value)
     return None
 
 
@@ -261,18 +266,16 @@ class SupervisorServicer(supervisor_pb2_grpc.SupervisorServicer):
     def _get_worker_from_context(
         self, context: grpc.aio.ServicerContext
     ) -> WorkerAdapter | None:
-        token = _token_from_metadata(context.invocation_metadata())  # type: ignore
-        if token is None:
-            return None
-        return self._registry.try_get(token)
+        if token := _token_from_context(context):
+            return self._registry.try_get(token)
+        return None
 
     def _get_worker_id_from_context(
         self, context: grpc.aio.ServicerContext
     ) -> str | None:
-        token = _token_from_metadata(context.invocation_metadata())  # type: ignore
-        if token is None:
-            return None
-        return self._registry.get_worker_id(token)
+        if token := _token_from_context(context):
+            return self._registry.get_worker_id(token)
+        return None
 
 
 _GRPC_MAX_MSG_BYTES = 1024 * 1024 * 1024  # 1 GB
