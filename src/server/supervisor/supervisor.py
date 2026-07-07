@@ -207,6 +207,26 @@ class WorkerSupervisor:
 # ------------------------------------------------------------------ #
 
 
+def _enqueue_latest_node_id(
+    queue: MPQueue[str], node_id: str, logger: logging.Logger
+) -> None:
+    """Put node_id on the handshake queue, dropping the stale head when it is
+    full so the parent always learns the latest id."""
+    try:
+        queue.put_nowait(node_id)
+    except QueueFull:
+        try:
+            queue.get_nowait()
+        except QueueEmpty:
+            pass
+        try:
+            queue.put_nowait(node_id)
+        except QueueFull:
+            logger.warning(
+                "node_id queue full; parent will sync on the next re-register"
+            )
+
+
 def _run_supervisor(
     identity: IdentityConfig,
     redis_cfg: RedisConfig,
@@ -348,17 +368,26 @@ def _run_supervisor(
         # publishes to a dispatch channel nobody is listening on yet.
         task_listener.rebind(new_node_id)
         command_listener.rebind(new_node_id)
-        task_listener.wait_rebound(_REBIND_APPLY_TIMEOUT_SEC)
-        command_listener.wait_rebound(_REBIND_APPLY_TIMEOUT_SEC)
+        # The rebind is reader-owned and idempotent; a timeout means the reader
+        # is unresponsive, not that the switch was lost. Surface it and proceed
+        # rather than stall the heartbeat thread — the reader applies the pending
+        # id once it recovers, and leaving the node half-migrated is worse.
+        if not task_listener.wait_rebound(_REBIND_APPLY_TIMEOUT_SEC):
+            logger.error(
+                "Task dispatch did not rebind to %s within %ss",
+                new_node_id,
+                _REBIND_APPLY_TIMEOUT_SEC,
+            )
+        if not command_listener.wait_rebound(_REBIND_APPLY_TIMEOUT_SEC):
+            logger.error(
+                "Command channel did not rebind to %s within %ss",
+                new_node_id,
+                _REBIND_APPLY_TIMEOUT_SEC,
+            )
         grpc_server.rebind_node(new_node_id)
         # Propagate the new id to the parent process (non-blocking: this runs on
         # the heartbeat thread, which must not stall on a full queue).
-        try:
-            node_id_queue.put_nowait(new_node_id)
-        except QueueFull:
-            logger.warning(
-                "node_id queue full; parent will sync on the next re-register"
-            )
+        _enqueue_latest_node_id(node_id_queue, new_node_id, logger)
 
     # --- Event loop with signal handling ---
     loop = asyncio.new_event_loop()

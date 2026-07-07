@@ -7,11 +7,21 @@ picks it up, updates the cached id, and notifies listeners (which refresh
 
 import logging
 from multiprocessing import Queue
+from multiprocessing.queues import Queue as MPQueue
+from queue import Queue as ThreadQueue
 from threading import Event, Thread
+from typing import cast
 
-from server.supervisor.supervisor import WorkerSupervisor
+from server.supervisor.supervisor import WorkerSupervisor, _enqueue_latest_node_id
 
 _LOGGER = logging.getLogger("test.node_id_watch")
+
+
+def _bounded(maxsize: int) -> MPQueue[str]:
+    # A synchronous thread queue stands in for the mp queue: same put_nowait /
+    # get_nowait contract, without the feeder-thread flush race that makes an
+    # mp queue's get_nowait unreliable immediately after a put.
+    return cast(MPQueue[str], ThreadQueue(maxsize=maxsize))
 
 
 def _build_supervisor() -> WorkerSupervisor:
@@ -76,3 +86,18 @@ def test_watcher_survives_a_failing_listener() -> None:
     # a raising listener must not stop later listeners or the watcher
     assert good_seen == ["nde-2"]
     assert sup.node_id == "nde-2"
+
+
+def test_enqueue_puts_when_not_full() -> None:
+    queue = _bounded(8)
+    _enqueue_latest_node_id(queue, "nde-2", _LOGGER)
+    assert queue.get_nowait() == "nde-2"
+
+
+def test_enqueue_drops_oldest_when_full() -> None:
+    queue = _bounded(1)
+    _enqueue_latest_node_id(queue, "nde-1", _LOGGER)
+    # queue is full; the stale id is dropped so the newest still lands
+    _enqueue_latest_node_id(queue, "nde-2", _LOGGER)
+    assert queue.get_nowait() == "nde-2"
+    assert queue.empty()
