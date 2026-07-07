@@ -2302,7 +2302,7 @@ ci = [
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.32.1" },
     { name = "vastai-sdk", specifier = ">=0.2.5" },
     { name = "vllm", specifier = "==0.24.0" },
-    { name = "vllm-omni", specifier = "==0.22.0" },
+    { name = "vllm-omni", specifier = "==0.24.0" },
     { name = "websocket-client", specifier = ">=1.9.0" },
     { name = "websockets", specifier = ">=15.0.1" },
     { name = "wikipedia-api", specifier = ">=0.8.1" },
@@ -2380,7 +2380,7 @@ runtime-inference-gpu = [
     { name = "bitsandbytes", specifier = ">=0.49.2" },
     { name = "flashinfer-python", specifier = "==0.6.12" },
     { name = "vllm", specifier = "==0.24.0" },
-    { name = "vllm-omni", specifier = "==0.22.0" },
+    { name = "vllm-omni", specifier = "==0.24.0" },
 ]
 runtime-observability = [
     { name = "arize-phoenix-client", specifier = ">=1.21.0" },
@@ -2495,7 +2495,7 @@ runtime-worker-gpu = [
     { name = "deepspeed", specifier = ">=0.19.1" },
     { name = "flashinfer-python", specifier = "==0.6.12" },
     { name = "vllm", specifier = "==0.24.0" },
-    { name = "vllm-omni", specifier = "==0.22.0" },
+    { name = "vllm-omni", specifier = "==0.24.0" },
 ]
 
 [[package]]
@@ -2747,6 +2747,22 @@ wheels = [
 [package.optional-dependencies]
 http = [
     { name = "aiohttp" },
+]
+
+[[package]]
+name = "gguf"
+version = "0.19.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.14'" },
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.14'" },
+    { name = "pyyaml" },
+    { name = "requests" },
+    { name = "tqdm" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/48/ae/17f1308ae45cd7b08ebb521747d5b23f4efc4d172038a4e228dd5106c3ff/gguf-0.19.0.tar.gz", hash = "sha256:dbadcd6cc7ccd44256f2229fe7c2dff5e8aa5cf0612ab987fd2b1a57e428923f", size = 111220, upload-time = "2026-05-06T13:04:03.667Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b3/bb/d71d6da82763528c2c2ed6b59a9d6142c6595545a4c448e2085d155e88c2/gguf-0.19.0-py3-none-any.whl", hash = "sha256:70bcd10edfe697fb2dad6e40af2234b9d8ece9a41a99761405121ebda1c3c1cd", size = 118475, upload-time = "2026-05-06T13:04:02.588Z" },
 ]
 
 [[package]]
@@ -6304,15 +6320,6 @@ wheels = [
 ]
 
 [[package]]
-name = "pydub"
-version = "0.25.1"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/fe/9a/e6bca0eed82db26562c73b5076539a4a08d3cffd19c3cc5913a3e61145fd/pydub-0.25.1.tar.gz", hash = "sha256:980a33ce9949cab2a569606b65674d748ecbca4f0796887fd6f46173a7b0d30f", size = 38326, upload-time = "2021-03-10T02:09:54.659Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/a6/53/d78dc063216e62fc55f6b2eebb447f6a4b0a59f55c8406376f76bf959b08/pydub-0.25.1-py2.py3-none-any.whl", hash = "sha256:65617e33033874b59d87db603aa1ed450633288aefead953b30bded59cb599a6", size = 32327, upload-time = "2021-03-10T02:09:53.503Z" },
-]
-
-[[package]]
 name = "pyee"
 version = "13.0.0"
 source = { registry = "https://pypi.org/simple" }
@@ -8236,7 +8243,7 @@ wheels = [
 
 [[package]]
 name = "vllm-omni"
-version = "0.22.0"
+version = "0.24.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "accelerate" },
@@ -8246,14 +8253,17 @@ dependencies = [
     { name = "diffusers" },
     { name = "einops" },
     { name = "fa3-fwd" },
+    { name = "gguf" },
     { name = "imageio", extra = ["ffmpeg"] },
     { name = "janus" },
+    { name = "msgpack" },
     { name = "omegaconf" },
     { name = "onnxruntime", version = "1.23.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.14'" },
     { name = "onnxruntime", version = "1.26.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.14'" },
     { name = "openai-whisper" },
     { name = "prettytable" },
-    { name = "pydub" },
+    { name = "pydantic" },
+    { name = "pydantic-settings" },
     { name = "pyzmq" },
     { name = "safetensors" },
     { name = "soundfile" },
@@ -8263,7 +8273,7 @@ dependencies = [
     { name = "x-transformers" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/14/14/c8a98aa4395ada474a0a1808d26cbfe5c640f814f056e65bd3331332fd8f/vllm_omni-0.22.0-py3-none-any.whl", hash = "sha256:df3c95a5834ce99f6d532a07883e34874bd8044d2f4ee890b4a5c512810d4ace", size = 3323049, upload-time = "2026-06-08T01:14:23.266Z" },
+    { url = "https://files.pythonhosted.org/packages/fb/0d/98a30c48fd53deeaaa584ac71cdf443ee57ed2b36f04ff083a87223c1e6e/vllm_omni-0.24.0-py3-none-any.whl", hash = "sha256:aeeb4e881754ebc5748cd1b17dfe925edda3c552c40e6da4764b147d3fd8525f", size = 5261295, upload-time = "2026-07-07T04:31:05.424Z" },
 ]
 
 [[package]]

@@ -6,5 +6,5 @@ deepspeed==0.19.1
 flashinfer-cubin==0.6.12
 flashinfer-jit-cache==0.6.12
 flashinfer-python==0.6.12
-vllm-omni==0.22.0
+vllm-omni==0.24.0
 vllm==0.24.0
