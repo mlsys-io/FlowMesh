@@ -240,6 +240,10 @@ flowmesh-cli-stack = { workspace = true }
 flowmesh-hook = { workspace = true }
 flowmesh-sdk = { workspace = true }
 flowmesh-sdk-stack = { workspace = true }
+# vLLM's PyPI wheel is built for CUDA 13 (libcudart.so.13); the GPU worker runs
+# CUDA 12.9. Pin the cu129 release wheel for linux/x86_64 so it matches torch
+# (UV_TORCH_BACKEND=cu129) and flashinfer; other platforms fall back to PyPI.
+vllm = { url = "https://github.com/vllm-project/vllm/releases/download/v0.24.0/vllm-0.24.0+cu129-cp38-abi3-manylinux_2_28_x86_64.whl", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" }
 
 [tool.uv.workspace]
 members = ["cli", "cli/stack", "hook", "sdk", "sdk/stack"]
