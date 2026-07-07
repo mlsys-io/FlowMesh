@@ -265,8 +265,8 @@ def _run_supervisor(
     current_gpu_count_getter = None
     try:
         rm = ResourceManager.get_instance()
-        max_gpu_count = rm.total_gpu_count
-        current_gpu_count_getter = lambda: rm.available_gpu_count  # noqa: E731
+        max_gpu_count = rm.total_gpu_count()
+        current_gpu_count_getter = rm.available_gpu_count
     except Exception as exc:
         logger.warning("Failed to detect node GPU capacity: %s", exc)
 

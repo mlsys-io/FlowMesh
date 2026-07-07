@@ -49,11 +49,9 @@ class ResourceManager:
             cls._instance = cls()
         return cls._instance
 
-    @property
     def total_gpu_count(self) -> int:
         return self._env.gpu_count
 
-    @property
     def available_gpu_count(self) -> int:
         return len(self._env.available_gpus)
 

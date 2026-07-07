@@ -54,7 +54,7 @@ class TestReserveGpusByCount:
         rm = _resource_manager({0, 1, 2, 3})
         devices, _ = rm.reserve_gpus(n=1)
         assert devices == [0]
-        assert rm.available_gpu_count == 3
+        assert rm.available_gpu_count() == 3
         assert 0 not in rm._env.available_gpus
 
     def test_single_gpu_picks_minimum_when_indices_nonzero(self) -> None:
@@ -66,7 +66,7 @@ class TestReserveGpusByCount:
         rm = _resource_manager({0, 1, 2, 3})
         devices, _ = rm.reserve_gpus(n=2)
         assert devices == [0, 1]
-        assert rm.available_gpu_count == 2
+        assert rm.available_gpu_count() == 2
 
     def test_two_gpus_sparse_indices(self) -> None:
         rm = _resource_manager({1, 3})
@@ -77,13 +77,13 @@ class TestReserveGpusByCount:
         rm = _resource_manager({0, 1, 2, 3})
         devices, _ = rm.reserve_gpus(n=4)
         assert devices == [0, 1, 2, 3]
-        assert rm.available_gpu_count == 0
+        assert rm.available_gpu_count() == 0
 
     def test_requesting_more_than_available_raises(self) -> None:
         rm = _resource_manager({0, 1})
         with pytest.raises(ValueError, match="Not enough available GPUs"):
             rm.reserve_gpus(n=3)
-        assert rm.available_gpu_count == 2
+        assert rm.available_gpu_count() == 2
 
     def test_zero_raises(self) -> None:
         rm = _resource_manager({0, 1})
@@ -107,7 +107,7 @@ class TestReserveGpusByDevices:
         rm = _resource_manager({0, 1})
         with pytest.raises(ValueError, match="Requested GPUs are not available"):
             rm.reserve_gpus(devices=[5])
-        assert rm.available_gpu_count == 2
+        assert rm.available_gpu_count() == 2
 
     def test_partially_unavailable_raises_without_partial_reserve(self) -> None:
         rm = _resource_manager({0, 1})
@@ -140,7 +140,7 @@ class TestReserveGpusAtomicity:
         d2, _ = rm.reserve_gpus(n=2)
         assert set(d1).isdisjoint(d2)
         assert sorted(d1 + d2) == [0, 1, 2, 3]
-        assert rm.available_gpu_count == 0
+        assert rm.available_gpu_count() == 0
 
     def test_mixed_arch_raises(self) -> None:
         rm = object.__new__(ResourceManager)
@@ -157,13 +157,13 @@ class TestReserveGpusAtomicity:
 
 class TestAvailableGpuCount:
     def test_four_gpus(self) -> None:
-        assert _resource_manager({0, 1, 2, 3}).available_gpu_count == 4
+        assert _resource_manager({0, 1, 2, 3}).available_gpu_count() == 4
 
     def test_two_gpus(self) -> None:
-        assert _resource_manager({0, 1}).available_gpu_count == 2
+        assert _resource_manager({0, 1}).available_gpu_count() == 2
 
     def test_no_gpus(self) -> None:
-        assert _resource_manager(set()).available_gpu_count == 0
+        assert _resource_manager(set()).available_gpu_count() == 0
 
 
 class TestMachineEnvDetection:
