@@ -95,7 +95,7 @@ jobs:
             --ignore-vuln PYSEC-2026-87 \
             --ignore-vuln PYSEC-2026-597 \
             -r /tmp/requirements-worker-cpu-audit.txt
-      - name: Run pip-audit (worker GPU delta)  # no --strict: flashinfer-jit-cache and the vllm +cu129 wheel are unauditable on PyPI
+      - name: Run pip-audit (worker GPU delta)  # no --strict: flashinfer-jit-cache is unauditable on PyPI
         run: |
           uvx pip-audit==2.10.1 \
             --ignore-vuln GHSA-rrmf-rvhw-rf47 \

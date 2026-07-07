@@ -94,11 +94,8 @@ upgrade-blocker. The currently-ignored advisories and the upgrade
 blocker that justifies each are listed below; the same list is encoded
 as `--ignore-vuln` flags in `.github/workflows/security.yml`.
 
-The worker GPU `vllm` is pinned to the `+cu129` release wheel (the PyPI
-wheel is built for CUDA 13, incompatible with the CUDA 12.9 worker). Its
-local version is not on PyPI, so pip-audit skips it — like
-`flashinfer-jit-cache` — which is why the GPU run omits `--strict`. vLLM
-CVE exposure tracks PyPI `vllm 0.24.0` regardless of the build variant.
+The worker GPU audit omits `--strict` because `flashinfer-jit-cache` is not
+published on PyPI and cannot be matched against the advisory feed.
 
 | Advisory | Package | Fix version | Why ignored |
 |----------|---------|-------------|-------------|
