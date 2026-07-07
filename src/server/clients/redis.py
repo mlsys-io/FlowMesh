@@ -168,16 +168,25 @@ def parse_pubsub_message(msg: dict[str, Any] | None) -> Any | None:
         return None
 
 
-def iter_pubsub_messages(pubsub: PubSub) -> Iterable[Any]:
+def iter_pubsub_messages(pubsub: PubSub, poll_timeout: float = 1.0) -> Iterable[Any]:
     """Iterate over messages from a Redis PubSub instance.
+
+    Consumes with ``get_message(timeout=...)`` rather than ``listen()``. A
+    blocking ``listen()`` parks inside a single ``parse_response`` for the whole
+    idle life of the subscription, so redis-py drives ``check_health`` at most
+    once; with no traffic on a quiet channel an idle proxy then culls the
+    SUBSCRIBE connection (TCP keepalive ACKs don't reset an L7 inactivity timer).
+    Polling re-enters ``get_message`` every ``poll_timeout`` seconds, and each
+    call runs ``check_health``, emitting the periodic PING that keeps the
+    connection warm and the subscription registered.
 
     Stops cleanly on a dropped Redis connection (``REDIS_CONN_ERRORS``); skips
     individual malformed JSON payloads without ending iteration so a single
     bad message can't kill the listener.
     """
     try:
-        for msg in pubsub.listen():
-            parsed = parse_pubsub_message(msg)
+        while True:
+            parsed = parse_pubsub_message(pubsub.get_message(timeout=poll_timeout))
             if parsed is None:
                 continue
             yield parsed
