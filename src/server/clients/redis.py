@@ -3,7 +3,7 @@ import logging
 import socket
 import ssl
 from collections.abc import Awaitable, Iterable
-from typing import Any
+from typing import Any, cast
 from urllib.parse import urlparse, urlunparse
 
 import redis
@@ -22,20 +22,13 @@ def _keepalive_kwargs() -> dict[str, Any]:
     gateways), dropping a node's dispatch subscription. Keepalive probes hold it open
     and ``health_check_interval`` reconnects a dead socket instead of blocking on it.
     """
-    options: dict[int, int] = {}
-    # These constants are Linux-only; skip any the running platform lacks (e.g.
-    # macOS/Windows dev hosts) so importing this module there doesn't fail.
-    for name, value in (
-        ("TCP_KEEPIDLE", 60),
-        ("TCP_KEEPINTVL", 15),
-        ("TCP_KEEPCNT", 4),
-    ):
-        opt = getattr(socket, name, None)
-        if opt is not None:
-            options[opt] = value
     return {
         "socket_keepalive": True,
-        "socket_keepalive_options": options,
+        "socket_keepalive_options": {
+            socket.TCP_KEEPIDLE: 60,
+            socket.TCP_KEEPINTVL: 15,
+            socket.TCP_KEEPCNT: 4,
+        },
         "health_check_interval": 30,
     }
 
@@ -183,7 +176,7 @@ def iter_pubsub_messages(pubsub: PubSub) -> Iterable[Any]:
 
 
 def _sync[T](value: Awaitable[T] | T) -> T:
-    return value  # type: ignore
+    return cast(T, value)
 
 
 def _with_redis_auth(url: str, acl_enabled: bool, username: str, password: str) -> str:
@@ -415,7 +408,7 @@ class SyncRedisClient:
 
 
 def _awaitable[T](value: Awaitable[T] | T) -> Awaitable[T]:
-    return value  # type: ignore
+    return cast(Awaitable[T], value)
 
 
 class AsyncRedisClient:
