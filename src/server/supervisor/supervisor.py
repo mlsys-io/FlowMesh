@@ -370,8 +370,7 @@ def _run_supervisor(
         command_listener.rebind(new_node_id)
         # The rebind is reader-owned and idempotent; a timeout means the reader
         # is unresponsive, not that the switch was lost. Surface it and proceed
-        # rather than stall the heartbeat thread — the reader applies the pending
-        # id once it recovers, and leaving the node half-migrated is worse.
+        # rather than stall the heartbeat thread.
         if not task_listener.wait_rebound(_REBIND_APPLY_TIMEOUT_SEC):
             logger.error(
                 "Task dispatch did not rebind to %s within %ss",

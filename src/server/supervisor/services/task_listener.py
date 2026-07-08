@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import time
 from threading import Event, Lock, Thread
 from typing import Any
 
@@ -19,6 +20,7 @@ from ...clients.redis import (
 from ...utils.helpers import TSQueue
 
 _POLL_TIMEOUT_SEC = 0.25
+_RECONNECT_BACKOFF_SEC = 1.0
 
 
 class TaskListener:
@@ -127,6 +129,34 @@ class TaskListener:
             raise RuntimeError(f"Worker {worker_id} is not registered")
         return await self._qs[worker_id].get()
 
+    def _resubscribe(self, current_id: str) -> PubSub | None:
+        """Re-establish the dispatch subscription after a dropped connection,
+        retrying with backoff until it succeeds or the listener is stopped.
+
+        A dead reader is never restarted elsewhere, so recovering the connection
+        here is what guarantees a pending rebind eventually applies.
+        """
+        if self._pubsub is not None:
+            try:
+                self._pubsub.close()
+            except (ConnectionError, OSError):
+                pass
+        while self._running:
+            try:
+                pubsub = self._redis.subscribe_control(
+                    node_dispatch_channel(current_id)
+                )
+            except (ConnectionError, OSError) as exc:
+                self.logger.warning(
+                    "Task listener resubscribe failed (%s); retrying", exc
+                )
+                time.sleep(_RECONNECT_BACKOFF_SEC)
+                continue
+            self._pubsub = pubsub
+            self.logger.info("Task listener reconnected on node %s", current_id)
+            return pubsub
+        return None
+
     def _run(self) -> None:
         pubsub = self._pubsub
         loop = self._loop
@@ -134,8 +164,8 @@ class TaskListener:
             self.logger.error("Task listener not properly initialized")
             return
         current_id = self._node_id
-        try:
-            while self._running:
+        while self._running:
+            try:
                 current_id = self._apply_pending_rebind(pubsub, current_id)
                 msg = pubsub.get_message(timeout=_POLL_TIMEOUT_SEC)
                 data = parse_pubsub_message(msg)
@@ -179,8 +209,17 @@ class TaskListener:
                     continue
                 queue = self._qs[worker_id]
                 asyncio.run_coroutine_threadsafe(queue.put(payload), loop)
-        except (ConnectionError, OSError):
-            return
-        except Exception as exc:
-            if self._running:
-                self.logger.exception("Task listener loop error: %s", exc)
+            except (ConnectionError, OSError) as exc:
+                if not self._running:
+                    break
+                self.logger.warning(
+                    "Task listener connection lost (%s); reconnecting", exc
+                )
+                reconnected = self._resubscribe(current_id)
+                if reconnected is None:
+                    break
+                pubsub = reconnected
+            except Exception as exc:
+                if self._running:
+                    self.logger.exception("Task listener loop error: %s", exc)
+                break

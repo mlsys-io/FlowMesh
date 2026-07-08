@@ -16,8 +16,11 @@ import logging
 from threading import Lock
 from typing import Any, cast
 
+import pytest
 from redis.client import PubSub
 
+import server.supervisor.services.command_listener as command_listener_module
+import server.supervisor.services.task_listener as task_listener_module
 from server.clients.redis import (
     SyncRedisClient,
     node_cmd_channel,
@@ -34,6 +37,26 @@ _LOGGER = logging.getLogger("test.reregister")
 _ANY_OBJECT: Any = None
 
 
+class _FlakyRedis:
+    """subscribe_control raises ConnectionError `fail_times` times, then returns
+    a fresh _FakePubSub subscribed to the requested channel."""
+
+    def __init__(self, fail_times: int) -> None:
+        self.fail_times = fail_times
+        self.calls: list[str] = []
+        self.last_pubsub: _FakePubSub | None = None
+
+    def subscribe_control(self, channel: str) -> PubSub:
+        self.calls.append(channel)
+        if self.fail_times > 0:
+            self.fail_times -= 1
+            raise ConnectionError("redis down")
+        pubsub = _FakePubSub()
+        pubsub.subscribe(channel)
+        self.last_pubsub = pubsub
+        return _as_pubsub(pubsub)
+
+
 class _FakePubSub:
     """Records subscribe/unsubscribe calls made on a live pubsub."""
 
@@ -41,6 +64,10 @@ class _FakePubSub:
         self.subscribed: set[str] = set()
         self.subscribe_log: list[str] = []
         self.unsubscribe_log: list[str] = []
+        self.closed = False
+
+    def close(self) -> None:
+        self.closed = True
 
     def subscribe(self, channel: str) -> None:
         self.subscribed.add(channel)
@@ -140,6 +167,70 @@ def test_command_stream_apply_pending_moves_subscription() -> None:
     assert node_cmd_channel("nde-2") in pubsub.subscribed
     assert node_cmd_channel("nde-1") not in pubsub.subscribed
     assert stream._rebind_applied.is_set()
+
+
+# --------------------------------------------------------------------------- #
+# Reader self-healing: _resubscribe reconnects instead of letting the thread die
+# --------------------------------------------------------------------------- #
+
+
+def test_task_listener_resubscribe_retries_until_connected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(task_listener_module, "_RECONNECT_BACKOFF_SEC", 0.0)
+    redis = _FlakyRedis(fail_times=2)
+    listener = TaskListener(cast(SyncRedisClient, redis), "nde-1", _LOGGER)
+    stale = _FakePubSub()
+    stale.subscribe(node_dispatch_channel("nde-1"))
+    listener._pubsub = _as_pubsub(stale)
+    listener._running = True
+
+    result = listener._resubscribe("nde-1")
+
+    assert result is not None
+    # failed twice then succeeded -> three subscribe attempts on the live channel
+    assert redis.calls == [node_dispatch_channel("nde-1")] * 3
+    assert redis.last_pubsub is not None
+    assert node_dispatch_channel("nde-1") in redis.last_pubsub.subscribed
+
+
+def test_task_listener_resubscribe_gives_up_when_stopped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(task_listener_module, "_RECONNECT_BACKOFF_SEC", 0.0)
+    redis = _FlakyRedis(fail_times=1000)
+    listener = TaskListener(cast(SyncRedisClient, redis), "nde-1", _LOGGER)
+    listener._running = False
+    # a stopped listener must not retry forever; it returns without reconnecting
+    assert listener._resubscribe("nde-1") is None
+    assert redis.calls == []
+
+
+def test_command_stream_resubscribe_retries_until_connected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(command_listener_module, "_RECONNECT_BACKOFF_SEC", 0.0)
+    redis = _FlakyRedis(fail_times=1)
+    stream = _CommandStream("nde-1", cast(SyncRedisClient, redis), None, _LOGGER)
+    stream._pubsub_running = True
+
+    result = stream._resubscribe("nde-1")
+
+    assert result is not None
+    assert redis.calls == [node_cmd_channel("nde-1")] * 2
+    assert redis.last_pubsub is not None
+    assert node_cmd_channel("nde-1") in redis.last_pubsub.subscribed
+
+
+def test_command_stream_resubscribe_gives_up_when_stopped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(command_listener_module, "_RECONNECT_BACKOFF_SEC", 0.0)
+    redis = _FlakyRedis(fail_times=1000)
+    stream = _CommandStream("nde-1", cast(SyncRedisClient, redis), None, _LOGGER)
+    stream._pubsub_running = False
+    assert stream._resubscribe("nde-1") is None
+    assert redis.calls == []
 
 
 # --------------------------------------------------------------------------- #

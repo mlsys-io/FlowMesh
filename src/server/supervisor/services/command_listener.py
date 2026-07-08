@@ -3,6 +3,7 @@ import contextlib
 import logging
 import queue
 import secrets
+import time
 from collections.abc import Callable, Iterable
 from concurrent import futures
 from threading import Event, Lock, Thread
@@ -37,6 +38,7 @@ _CREATE_WORKER_TIMEOUT = 600.0
 _DESTROY_WORKER_TIMEOUT = 60.0
 _DESTROY_WORKERS_TIMEOUT = 120.0
 _POLL_TIMEOUT_SEC = 0.25
+_RECONNECT_BACKOFF_SEC = 1.0
 
 
 def _cmd_receiver_loop(
@@ -72,6 +74,7 @@ class _CommandStream:
         self._cmd_queue: (
             queue.Queue[tuple[CommandMessage, ResponseHandler] | Sentinel] | None
         ) = None
+        self._pubsub: PubSub | None = None
         self._pubsub_running = False
 
         self._rebind_lock = Lock()
@@ -115,6 +118,32 @@ class _CommandStream:
         )
         return pending
 
+    def _resubscribe(self, current_id: str) -> PubSub | None:
+        """Re-establish the command subscription after a dropped connection,
+        retrying with backoff until it succeeds or the stream is stopped.
+
+        A dead reader is never restarted elsewhere, so recovering the connection
+        here is what guarantees a pending rebind eventually applies.
+        """
+        if self._pubsub is not None:
+            try:
+                self._pubsub.close()
+            except (ConnectionError, OSError):
+                pass
+        while self._pubsub_running:
+            try:
+                pubsub = self.redis.subscribe_control(node_cmd_channel(current_id))
+            except (ConnectionError, OSError) as exc:
+                self.logger.warning(
+                    "Command stream resubscribe failed (%s); retrying", exc
+                )
+                time.sleep(_RECONNECT_BACKOFF_SEC)
+                continue
+            self._pubsub = pubsub
+            self.logger.info("Command stream reconnected on node %s", current_id)
+            return pubsub
+        return None
+
     def _run_pubsub(
         self,
         pubsub: PubSub,
@@ -124,8 +153,8 @@ class _CommandStream:
             self.redis.publish_control(NODE_RESPONSE_CHANNEL, resp.model_dump_json())
 
         current_id = self.node_id
-        try:
-            while self._pubsub_running:
+        while self._pubsub_running:
+            try:
                 current_id = self._apply_pending_rebind(pubsub, current_id)
                 msg = pubsub.get_message(timeout=_POLL_TIMEOUT_SEC)
                 data = parse_pubsub_message(msg)
@@ -137,11 +166,20 @@ class _CommandStream:
                     self.logger.error("Invalid command message: %s", e)
                     continue
                 cmd_queue.put((cmd, send_response))
-        except (ConnectionError, OSError):
-            return
-        except Exception as exc:
-            if self._pubsub_running:
-                self.logger.exception("Command pubsub loop error: %s", exc)
+            except (ConnectionError, OSError) as exc:
+                if not self._pubsub_running:
+                    break
+                self.logger.warning(
+                    "Command stream connection lost (%s); reconnecting", exc
+                )
+                reconnected = self._resubscribe(current_id)
+                if reconnected is None:
+                    break
+                pubsub = reconnected
+            except Exception as exc:
+                if self._pubsub_running:
+                    self.logger.exception("Command pubsub loop error: %s", exc)
+                break
 
     def iter_stream(self) -> Iterable[tuple[CommandMessage, ResponseHandler]]:
         if self._cmd_queue is not None:
@@ -159,6 +197,7 @@ class _CommandStream:
             task_thread.start()
 
         pubsub = self.redis.subscribe_control(node_cmd_channel(self.node_id))
+        self._pubsub = pubsub
         self._pubsub_running = True
         pubsub_thread = Thread(
             target=self._run_pubsub,
@@ -178,7 +217,9 @@ class _CommandStream:
         finally:
             self._pubsub_running = False
             pubsub_thread.join()
-            pubsub.close()
+            if self._pubsub is not None:
+                self._pubsub.close()
+                self._pubsub = None
 
 
 class CommandListener:
