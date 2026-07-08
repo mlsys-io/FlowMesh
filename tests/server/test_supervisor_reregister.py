@@ -13,7 +13,6 @@ assert ``rebind`` touches nothing and the reader-side apply does the switch.
 """
 
 import logging
-import queue
 from collections.abc import Callable
 from threading import Lock
 from typing import Any, cast
@@ -22,8 +21,7 @@ import pytest
 import redis.exceptions
 from redis.client import PubSub
 
-import server.supervisor.services.command_listener as command_listener_module
-import server.supervisor.services.task_listener as task_listener_module
+import server.supervisor.services.pubsub_reader as pubsub_reader_module
 from server.clients.redis import (
     SyncRedisClient,
     node_cmd_channel,
@@ -121,6 +119,7 @@ def _build_task_listener(node_id: str) -> tuple[TaskListener, _FakePubSub]:
     listener = TaskListener(_ANY_OBJECT, node_id, _LOGGER)
     pubsub = _FakePubSub()
     pubsub.subscribe(node_dispatch_channel(node_id))
+    listener._pubsub = _as_pubsub(pubsub)
     return listener, pubsub
 
 
@@ -142,7 +141,7 @@ def test_task_listener_apply_pending_moves_subscription() -> None:
     listener.add_worker("wkr-1")
     listener.rebind("nde-2")
 
-    live = listener._apply_pending_rebind(_as_pubsub(pubsub), "nde-1")
+    live = listener._apply_pending_rebind("nde-1")
 
     assert live == "nde-2"
     assert listener._node_id == "nde-2"
@@ -158,7 +157,7 @@ def test_task_listener_rebind_same_id_is_noop() -> None:
     listener.rebind("nde-1")
     # same id resolves immediately, nothing pending, no pubsub mutation on apply
     assert listener._rebind_applied.is_set()
-    assert listener._apply_pending_rebind(_as_pubsub(pubsub), "nde-1") == "nde-1"
+    assert listener._apply_pending_rebind("nde-1") == "nde-1"
     assert pubsub.unsubscribe_log == []
 
 
@@ -171,6 +170,7 @@ def _build_command_stream(node_id: str) -> tuple[_CommandStream, _FakePubSub]:
     stream = _CommandStream(node_id, _ANY_OBJECT, None, _LOGGER)
     pubsub = _FakePubSub()
     pubsub.subscribe(node_cmd_channel(node_id))
+    stream._pubsub = _as_pubsub(pubsub)
     return stream, pubsub
 
 
@@ -190,10 +190,10 @@ def test_command_stream_apply_pending_moves_subscription() -> None:
     stream, pubsub = _build_command_stream("nde-1")
     stream.rebind("nde-2")
 
-    live = stream._apply_pending_rebind(_as_pubsub(pubsub), "nde-1")
+    live = stream._apply_pending_rebind("nde-1")
 
     assert live == "nde-2"
-    assert stream.node_id == "nde-2"
+    assert stream._node_id == "nde-2"
     assert node_cmd_channel("nde-2") in pubsub.subscribed
     assert node_cmd_channel("nde-1") not in pubsub.subscribed
     assert stream._rebind_applied.is_set()
@@ -207,7 +207,7 @@ def test_command_stream_apply_pending_moves_subscription() -> None:
 def test_task_listener_resubscribe_retries_until_connected(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(task_listener_module, "_RECONNECT_BACKOFF_SEC", 0.0)
+    monkeypatch.setattr(pubsub_reader_module, "_RECONNECT_BACKOFF_SEC", 0.0)
     redis = _FlakyRedis(fail_times=2)
     listener = TaskListener(cast(SyncRedisClient, redis), "nde-1", _LOGGER)
     stale = _FakePubSub()
@@ -215,9 +215,9 @@ def test_task_listener_resubscribe_retries_until_connected(
     listener._pubsub = _as_pubsub(stale)
     listener._running = True
 
-    result = listener._resubscribe("nde-1")
+    listener._resubscribe("nde-1")
 
-    assert result is not None
+    assert listener._pubsub is not None
     # failed twice then succeeded -> three subscribe attempts on the live channel
     assert redis.calls == [node_dispatch_channel("nde-1")] * 3
     assert redis.last_pubsub is not None
@@ -228,26 +228,28 @@ def test_task_listener_resubscribe_retries_until_connected(
 def test_task_listener_resubscribe_gives_up_when_stopped(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(task_listener_module, "_RECONNECT_BACKOFF_SEC", 0.0)
+    monkeypatch.setattr(pubsub_reader_module, "_RECONNECT_BACKOFF_SEC", 0.0)
     redis = _FlakyRedis(fail_times=1000)
     listener = TaskListener(cast(SyncRedisClient, redis), "nde-1", _LOGGER)
     listener._running = False
     # a stopped listener must not retry forever; it returns without reconnecting
-    assert listener._resubscribe("nde-1") is None
+    listener._resubscribe("nde-1")
+    assert listener._pubsub is None
     assert redis.calls == []
 
 
 def test_command_stream_resubscribe_retries_until_connected(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(command_listener_module, "_RECONNECT_BACKOFF_SEC", 0.0)
+    monkeypatch.setattr(pubsub_reader_module, "_RECONNECT_BACKOFF_SEC", 0.0)
     redis = _FlakyRedis(fail_times=1)
     stream = _CommandStream("nde-1", cast(SyncRedisClient, redis), None, _LOGGER)
-    stream._pubsub_running = True
+    stream._running = True
+    stream._pubsub = _as_pubsub(_FakePubSub())
 
-    result = stream._resubscribe("nde-1")
+    stream._resubscribe("nde-1")
 
-    assert result is not None
+    assert stream._pubsub is not None
     assert redis.calls == [node_cmd_channel("nde-1")] * 2
     assert redis.last_pubsub is not None
     assert node_cmd_channel("nde-1") in redis.last_pubsub.subscribed
@@ -256,11 +258,12 @@ def test_command_stream_resubscribe_retries_until_connected(
 def test_command_stream_resubscribe_gives_up_when_stopped(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(command_listener_module, "_RECONNECT_BACKOFF_SEC", 0.0)
+    monkeypatch.setattr(pubsub_reader_module, "_RECONNECT_BACKOFF_SEC", 0.0)
     redis = _FlakyRedis(fail_times=1000)
     stream = _CommandStream("nde-1", cast(SyncRedisClient, redis), None, _LOGGER)
-    stream._pubsub_running = False
-    assert stream._resubscribe("nde-1") is None
+    stream._running = False
+    stream._resubscribe("nde-1")
+    assert stream._pubsub is None
     assert redis.calls == []
 
 
@@ -270,17 +273,18 @@ def test_task_listener_apply_rearms_pending_when_connection_drops() -> None:
     listener, _ = _build_task_listener("nde-1")
     pubsub = _RaisingSubscribePubSub(raise_on=node_dispatch_channel("nde-2"))
     pubsub.subscribe(node_dispatch_channel("nde-1"))
+    listener._pubsub = _as_pubsub(pubsub)
     listener.rebind("nde-2")
 
     with pytest.raises(redis.exceptions.ConnectionError):
-        listener._apply_pending_rebind(_as_pubsub(pubsub), "nde-1")
+        listener._apply_pending_rebind("nde-1")
 
     assert listener._pending_node_id == "nde-2"  # re-armed
     assert not listener._rebind_applied.is_set()  # not marked applied
     assert listener._node_id == "nde-1"  # unchanged until it lands
 
     # a retry on the recovered connection completes the move
-    assert listener._apply_pending_rebind(_as_pubsub(pubsub), "nde-1") == "nde-2"
+    assert listener._apply_pending_rebind("nde-1") == "nde-2"
     assert node_dispatch_channel("nde-2") in pubsub.subscribed
     assert node_dispatch_channel("nde-1") not in pubsub.subscribed
     assert listener._rebind_applied.is_set()
@@ -290,16 +294,17 @@ def test_command_stream_apply_rearms_pending_when_connection_drops() -> None:
     stream, _ = _build_command_stream("nde-1")
     pubsub = _RaisingSubscribePubSub(raise_on=node_cmd_channel("nde-2"))
     pubsub.subscribe(node_cmd_channel("nde-1"))
+    stream._pubsub = _as_pubsub(pubsub)
     stream.rebind("nde-2")
 
     with pytest.raises(redis.exceptions.ConnectionError):
-        stream._apply_pending_rebind(_as_pubsub(pubsub), "nde-1")
+        stream._apply_pending_rebind("nde-1")
 
     assert stream._pending_node_id == "nde-2"
     assert not stream._rebind_applied.is_set()
-    assert stream.node_id == "nde-1"
+    assert stream._node_id == "nde-1"
 
-    assert stream._apply_pending_rebind(_as_pubsub(pubsub), "nde-1") == "nde-2"
+    assert stream._apply_pending_rebind("nde-1") == "nde-2"
     assert node_cmd_channel("nde-2") in pubsub.subscribed
     assert stream._rebind_applied.is_set()
 
@@ -309,7 +314,7 @@ def test_task_listener_run_reconnects_and_resumes(
 ) -> None:
     # Full loop: a dropped read triggers reconnect and the loop keeps running on
     # the fresh pubsub instead of the thread dying.
-    monkeypatch.setattr(task_listener_module, "_RECONNECT_BACKOFF_SEC", 0.0)
+    monkeypatch.setattr(pubsub_reader_module, "_RECONNECT_BACKOFF_SEC", 0.0)
     events: list[str] = []
 
     def _stop_after_reconnect(ps: _ScriptedPubSub) -> Any:
@@ -335,7 +340,7 @@ def test_task_listener_run_reconnects_and_resumes(
     listener._pubsub = _as_pubsub(original)
     listener._running = True
 
-    listener._run()
+    listener._read_loop()
 
     assert events == ["read-after-reconnect"]  # resumed reading after reconnect
     assert original.closed  # old pubsub torn down
@@ -345,12 +350,12 @@ def test_task_listener_run_reconnects_and_resumes(
 def test_command_stream_run_reconnects_and_resumes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(command_listener_module, "_RECONNECT_BACKOFF_SEC", 0.0)
+    monkeypatch.setattr(pubsub_reader_module, "_RECONNECT_BACKOFF_SEC", 0.0)
     events: list[str] = []
 
     def _stop_after_reconnect(ps: _ScriptedPubSub) -> Any:
         events.append("read-after-reconnect")
-        stream._pubsub_running = False
+        stream._running = False
         return None
 
     reconnected = _ScriptedPubSub(_stop_after_reconnect)
@@ -368,9 +373,9 @@ def test_command_stream_run_reconnects_and_resumes(
     original = _ScriptedPubSub(_drop_once)
     original.subscribe(node_cmd_channel("nde-1"))
     stream._pubsub = _as_pubsub(original)
-    stream._pubsub_running = True
+    stream._running = True
 
-    stream._run_pubsub(_as_pubsub(original), cast(Any, queue.Queue()))
+    stream._read_loop()
 
     assert events == ["read-after-reconnect"]
     assert original.closed
@@ -496,8 +501,8 @@ def test_full_reregister_rebinds_and_rehomes() -> None:
         task_listener.rebind(new_node_id)
         cmd_listener.rebind(new_node_id)
         # stand in for the reader threads applying the pending rebind
-        task_listener._apply_pending_rebind(_as_pubsub(task_pubsub), "nde-1")
-        cmd_stream._apply_pending_rebind(_as_pubsub(cmd_pubsub), "nde-1")
+        task_listener._apply_pending_rebind("nde-1")
+        cmd_stream._apply_pending_rebind("nde-1")
         assert task_listener.wait_rebound(1.0)
         assert cmd_listener.wait_rebound(1.0)
         servicer.rebind_node(new_node_id)

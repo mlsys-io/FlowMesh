@@ -3,13 +3,12 @@ import contextlib
 import logging
 import queue
 import secrets
-import time
 from collections.abc import Callable, Iterable
 from concurrent import futures
-from threading import Event, Lock, Thread
+from threading import Thread
+from typing import Any
 
 from pydantic import ValidationError
-from redis.client import PubSub
 
 from shared.schemas.command import (
     CommandMessage,
@@ -17,16 +16,11 @@ from shared.schemas.command import (
     CommandType,
 )
 
-from ...clients.redis import (
-    NODE_RESPONSE_CHANNEL,
-    REDIS_CONN_ERRORS,
-    SyncRedisClient,
-    node_cmd_channel,
-    parse_pubsub_message,
-)
+from ...clients.redis import NODE_RESPONSE_CHANNEL, SyncRedisClient, node_cmd_channel
 from ...utils.concurrent import Sentinel, TaskReceiver
 from ..adapters.docker import DockerWorkerConfig
 from ..manager import WorkerInitConfig, WorkerManager
+from .pubsub_reader import RebindableReader
 from .ssh_relay import SshRelayService
 
 type ResponseHandler = Callable[[CommandResponse], None]
@@ -38,8 +32,6 @@ _STOP_WORKER_TIMEOUT = 60.0
 _CREATE_WORKER_TIMEOUT = 600.0
 _DESTROY_WORKER_TIMEOUT = 60.0
 _DESTROY_WORKERS_TIMEOUT = 120.0
-_POLL_TIMEOUT_SEC = 0.25
-_RECONNECT_BACKOFF_SEC = 1.0
 
 
 def _cmd_receiver_loop(
@@ -57,8 +49,9 @@ def _cmd_receiver_loop(
         q.put((cmd, make_handler(cmd_id)))
 
 
-class _CommandStream:
+class _CommandStream(RebindableReader):
     _SENTINEL = Sentinel()
+    _label = "Command stream"
 
     def __init__(
         self,
@@ -67,131 +60,31 @@ class _CommandStream:
         cmd_receiver: TaskReceiver[CommandMessage, CommandResponse] | None,
         logger: logging.Logger,
     ):
-        # node_id is mutated only by the pubsub reader thread once running.
-        self.node_id = node_id
-        self.redis = redis
+        super().__init__(redis, node_id, logger)
         self.cmd_receiver = cmd_receiver
-        self.logger = logger
         self._cmd_queue: (
             queue.Queue[tuple[CommandMessage, ResponseHandler] | Sentinel] | None
         ) = None
-        self._pubsub: PubSub | None = None
-        self._pubsub_running = False
 
-        self._rebind_lock = Lock()
-        self._pending_node_id: str | None = None
-        self._rebind_applied = Event()
+    def _channel(self, node_id: str) -> str:
+        return node_cmd_channel(node_id)
 
     def close(self) -> None:
         if self._cmd_queue is not None:
             self._cmd_queue.put(self._SENTINEL)
             self._cmd_queue = None
 
-    def rebind(self, node_id: str) -> None:
-        """Request moving the command subscription to a new node id.
+    def _send_response(self, resp: CommandResponse) -> None:
+        self._redis.publish_control(NODE_RESPONSE_CHANNEL, resp.model_dump_json())
 
-        Records the target under a lock; the reader thread applies the actual
-        ``subscribe``/``unsubscribe`` between polls (mutating redis-py ``PubSub`` is not
-        thread-safe). ``wait_rebound`` blocks until the switch has taken effect.
-        """
-        if node_id == self.node_id:
-            self._rebind_applied.set()
-            return
-        self._rebind_applied.clear()
-        with self._rebind_lock:
-            self._pending_node_id = node_id
-
-    def wait_rebound(self, timeout: float) -> bool:
-        return self._rebind_applied.wait(timeout)
-
-    def _apply_pending_rebind(self, pubsub: PubSub, current_id: str) -> str:
-        with self._rebind_lock:
-            pending = self._pending_node_id
-            self._pending_node_id = None
-        if pending is None or pending == current_id:
-            return current_id
+    def _handle_message(self, data: Any) -> None:
         try:
-            pubsub.subscribe(node_cmd_channel(pending))
-            pubsub.unsubscribe(node_cmd_channel(current_id))
-        except REDIS_CONN_ERRORS:
-            # The connection dropped mid-switch; re-arm the target (unless a newer
-            # rebind already superseded it) so the reader re-applies it after
-            # reconnecting, rather than silently dropping the move.
-            with self._rebind_lock:
-                if self._pending_node_id is None:
-                    self._pending_node_id = pending
-            raise
-        self.node_id = pending
-        self._rebind_applied.set()
-        self.logger.info(
-            "Command stream rebound from node %s to %s", current_id, pending
-        )
-        return pending
-
-    def _resubscribe(self, current_id: str) -> PubSub | None:
-        """Re-establish the command subscription after a dropped connection,
-        retrying with backoff until it succeeds or the stream is stopped.
-
-        A dead reader is never restarted elsewhere, so recovering the connection
-        here is what guarantees a pending rebind eventually applies.
-        """
-        if self._pubsub is not None:
-            try:
-                self._pubsub.close()
-            except REDIS_CONN_ERRORS:
-                pass
-        while self._pubsub_running:
-            # Backoff before every attempt so a connection that accepts SUBSCRIBE
-            # but drops on the next read can't drive a tight reconnect loop.
-            time.sleep(_RECONNECT_BACKOFF_SEC)
-            try:
-                pubsub = self.redis.subscribe_control(node_cmd_channel(current_id))
-            except REDIS_CONN_ERRORS as exc:
-                self.logger.warning(
-                    "Command stream resubscribe failed (%s); retrying", exc
-                )
-                continue
-            self._pubsub = pubsub
-            self.logger.info("Command stream reconnected on node %s", current_id)
-            return pubsub
-        return None
-
-    def _run_pubsub(
-        self,
-        pubsub: PubSub,
-        cmd_queue: queue.Queue[tuple[CommandMessage, ResponseHandler] | Sentinel],
-    ) -> None:
-        def send_response(resp: CommandResponse) -> None:
-            self.redis.publish_control(NODE_RESPONSE_CHANNEL, resp.model_dump_json())
-
-        current_id = self.node_id
-        while self._pubsub_running:
-            try:
-                current_id = self._apply_pending_rebind(pubsub, current_id)
-                msg = pubsub.get_message(timeout=_POLL_TIMEOUT_SEC)
-                data = parse_pubsub_message(msg)
-                if data is None:
-                    continue
-                try:
-                    cmd = CommandMessage.model_validate(data)
-                except ValidationError as e:
-                    self.logger.error("Invalid command message: %s", e)
-                    continue
-                cmd_queue.put((cmd, send_response))
-            except REDIS_CONN_ERRORS as exc:
-                if not self._pubsub_running:
-                    break
-                self.logger.warning(
-                    "Command stream connection lost (%s); reconnecting", exc
-                )
-                reconnected = self._resubscribe(current_id)
-                if reconnected is None:
-                    break
-                pubsub = reconnected
-            except Exception as exc:
-                if self._pubsub_running:
-                    self.logger.exception("Command pubsub loop error: %s", exc)
-                break
+            cmd = CommandMessage.model_validate(data)
+        except ValidationError as e:
+            self.logger.error("Invalid command message: %s", e)
+            return
+        if self._cmd_queue is not None:
+            self._cmd_queue.put((cmd, self._send_response))
 
     def iter_stream(self) -> Iterable[tuple[CommandMessage, ResponseHandler]]:
         if self._cmd_queue is not None:
@@ -208,14 +101,10 @@ class _CommandStream:
             )
             task_thread.start()
 
-        pubsub = self.redis.subscribe_control(node_cmd_channel(self.node_id))
-        self._pubsub = pubsub
-        self._pubsub_running = True
+        self._subscribe()
+        self._running = True
         pubsub_thread = Thread(
-            target=self._run_pubsub,
-            args=(pubsub, cmd_queue),
-            name="CommandPubSubThread",
-            daemon=True,
+            target=self._read_loop, name="CommandPubSubThread", daemon=True
         )
         pubsub_thread.start()
 
@@ -227,7 +116,7 @@ class _CommandStream:
                     break
                 yield item
         finally:
-            self._pubsub_running = False
+            self._running = False
             pubsub_thread.join()
             if self._pubsub is not None:
                 self._pubsub.close()
