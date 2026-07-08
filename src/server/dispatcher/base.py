@@ -41,6 +41,9 @@ from .worker_selector import DEFAULT_WORKER_SELECTION, select_worker
 
 _SENTINEL: Any = object()
 
+_NO_WORKER_BACKOFF_SEC = 0.5
+_ERROR_BACKOFF_SEC = 1.0
+
 
 class StageReferenceNotReady(Exception):
     """Raised when a task references a stage whose artifacts are not yet available."""
@@ -503,39 +506,35 @@ class Dispatcher:
             try:
                 success = self.dispatch_once(task_id)
                 if not success:
-                    time.sleep(0.5)
+                    time.sleep(_NO_WORKER_BACKOFF_SEC)
             except REDIS_CONN_ERRORS as exc:
-                # Control Redis dropped (e.g. a restart). The connection pool
-                # reconnects on the next command, so back off and keep the loop
-                # alive rather than letting the dispatcher thread die. Requeue is
-                # best-effort; if it also hits the dead connection the watchdog
-                # re-surfaces the task once Redis is back.
+                # Control Redis dropped. The connection pool reconnects on the next
+                # command, so back off and keep the loop alive rather than letting the
+                # dispatcher thread die. Requeue is best-effort; if it also hits the
+                # dead connection the watchdog re-surfaces the task once Redis is back.
                 self._logger.warning(
                     "Dispatch loop lost Redis for %s (%s); backing off", task_id, exc
                 )
                 self._safe_requeue(task_id)
-                time.sleep(1.0)
+                time.sleep(_ERROR_BACKOFF_SEC)
             except Exception as exc:
                 self._logger.exception("Dispatch loop error for %s: %s", task_id, exc)
                 self._safe_requeue(task_id)
-                time.sleep(1.0)
+                time.sleep(_ERROR_BACKOFF_SEC)
 
     def _safe_requeue(self, task_id: str) -> None:
         """Requeue a task without letting a Redis outage kill the dispatch loop.
 
-        ``_requeue_task`` persists the PENDING transition before re-adding the
-        task to the in-memory ready queue, so a persist failure mid-outage would
-        drop the task from the scheduler entirely (nothing else re-enqueues a
-        PENDING task while the server stays up). On a Redis error we therefore
-        still re-enqueue in memory; the durable state re-persists on the task's
-        next successful transition.
+        ``_requeue_task`` persists the PENDING transition before re-adding the task to
+        the in-memory ready queue, so a persist failure mid-outage would drop the task
+        from the scheduler entirely. On a Redis error, we therefore still re-enqueue in
+        memory; the durable state re-persists on the task's next successful transition.
         """
         try:
             self._requeue_task(task_id, reason="dispatch_exception", front=True)
         except REDIS_CONN_ERRORS as exc:
             self._logger.warning(
-                "Requeue persist for %s failed (Redis down: %s); "
-                "re-enqueuing in memory",
+                "Requeue persist for %s failed (Redis down: %s); re-queuing in memory",
                 task_id,
                 exc,
             )
