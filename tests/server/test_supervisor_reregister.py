@@ -13,6 +13,7 @@ assert ``rebind`` touches nothing and the reader-side apply does the switch.
 """
 
 import logging
+import queue
 from collections.abc import Callable
 from threading import Lock
 from typing import Any, cast
@@ -338,6 +339,41 @@ def test_task_listener_run_reconnects_and_resumes(
     assert events == ["read-after-reconnect"]  # resumed reading after reconnect
     assert original.closed  # old pubsub torn down
     assert node_dispatch_channel("nde-1") in reconnected.subscribed
+
+
+def test_command_stream_run_reconnects_and_resumes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(command_listener_module, "_RECONNECT_BACKOFF_SEC", 0.0)
+    events: list[str] = []
+
+    def _stop_after_reconnect(ps: _ScriptedPubSub) -> Any:
+        events.append("read-after-reconnect")
+        stream._pubsub_running = False
+        return None
+
+    reconnected = _ScriptedPubSub(_stop_after_reconnect)
+
+    class _Redis:
+        def subscribe_control(self, channel: str) -> PubSub:
+            reconnected.subscribe(channel)
+            return _as_pubsub(reconnected)
+
+    stream = _CommandStream("nde-1", cast(SyncRedisClient, _Redis()), None, _LOGGER)
+
+    def _drop_once(ps: _ScriptedPubSub) -> Any:
+        raise ConnectionError("connection dropped")
+
+    original = _ScriptedPubSub(_drop_once)
+    original.subscribe(node_cmd_channel("nde-1"))
+    stream._pubsub = _as_pubsub(original)
+    stream._pubsub_running = True
+
+    stream._run_pubsub(_as_pubsub(original), cast(Any, queue.Queue()))
+
+    assert events == ["read-after-reconnect"]
+    assert original.closed
+    assert node_cmd_channel("nde-1") in reconnected.subscribed
 
 
 # --------------------------------------------------------------------------- #
