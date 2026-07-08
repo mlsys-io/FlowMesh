@@ -63,12 +63,11 @@ def _build_registry(sync: _FlakySync) -> NodeRegistry:
 def test_resubscribe_retries_until_connected(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(node_module, "_RECONNECT_BACKOFF_SEC", 0.0)
     sync = _FlakySync(fail_times=2)
-    reg = _build_registry(sync)
     dead = _FakePubSub()
+    reg = _build_registry(sync)
+    reg._pubsub = cast(PubSub, dead)
 
-    result = reg._resubscribe(cast(PubSub, dead))
-
-    assert result is not None
+    assert reg._resubscribe()
     assert dead.closed  # the dropped pubsub is closed before reconnecting
     # failed twice then succeeded -> three subscribe attempts on the channel
     assert sync.calls == [NODE_RESPONSE_CHANNEL] * 3
@@ -79,10 +78,11 @@ def test_resubscribe_retries_until_connected(monkeypatch: pytest.MonkeyPatch) ->
 def test_resubscribe_gives_up_when_stopped(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(node_module, "_RECONNECT_BACKOFF_SEC", 0.0)
     sync = _FlakySync(fail_times=1000)
+    dead = _FakePubSub()
     reg = _build_registry(sync)
     reg._running = False
-    dead = _FakePubSub()
+    reg._pubsub = cast(PubSub, dead)
 
-    assert reg._resubscribe(cast(PubSub, dead)) is None
+    assert not reg._resubscribe()
     assert dead.closed
     assert sync.calls == []  # a stopped registry makes no reconnect attempts

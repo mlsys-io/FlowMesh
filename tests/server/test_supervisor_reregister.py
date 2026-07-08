@@ -215,9 +215,7 @@ def test_task_listener_resubscribe_retries_until_connected(
     listener._pubsub = _as_pubsub(stale)
     listener._running = True
 
-    listener._resubscribe("nde-1")
-
-    assert listener._pubsub is not None
+    assert listener._resubscribe("nde-1")
     # failed twice then succeeded -> three subscribe attempts on the live channel
     assert redis.calls == [node_dispatch_channel("nde-1")] * 3
     assert redis.last_pubsub is not None
@@ -233,8 +231,7 @@ def test_task_listener_resubscribe_gives_up_when_stopped(
     listener = TaskListener(cast(SyncRedisClient, redis), "nde-1", _LOGGER)
     listener._running = False
     # a stopped listener must not retry forever; it returns without reconnecting
-    listener._resubscribe("nde-1")
-    assert listener._pubsub is None
+    assert not listener._resubscribe("nde-1")
     assert redis.calls == []
 
 
@@ -247,9 +244,7 @@ def test_command_stream_resubscribe_retries_until_connected(
     stream._running = True
     stream._pubsub = _as_pubsub(_FakePubSub())
 
-    stream._resubscribe("nde-1")
-
-    assert stream._pubsub is not None
+    assert stream._resubscribe("nde-1")
     assert redis.calls == [node_cmd_channel("nde-1")] * 2
     assert redis.last_pubsub is not None
     assert node_cmd_channel("nde-1") in redis.last_pubsub.subscribed
@@ -262,7 +257,7 @@ def test_command_stream_resubscribe_gives_up_when_stopped(
     redis = _FlakyRedis(fail_times=1000)
     stream = _CommandStream("nde-1", cast(SyncRedisClient, redis), None, _LOGGER)
     stream._running = False
-    stream._resubscribe("nde-1")
+    assert not stream._resubscribe("nde-1")
     assert stream._pubsub is None
     assert redis.calls == []
 
