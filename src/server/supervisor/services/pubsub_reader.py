@@ -96,7 +96,7 @@ class RebindableReader(ABC):
         )
         return pending
 
-    def _resubscribe(self, current_id: str) -> None:
+    def _resubscribe(self, current_id: str) -> bool:
         """Re-establish the subscription after a dropped connection, retrying
         with backoff until it succeeds or the reader is stopped."""
         if self._pubsub is not None:
@@ -116,7 +116,8 @@ class RebindableReader(ABC):
                 )
                 continue
             self.logger.info("%s reconnected on node %s", self._label, current_id)
-            return
+            return True
+        return False
 
     def _read_loop(self) -> None:
         current_id = self._node_id
@@ -126,7 +127,14 @@ class RebindableReader(ABC):
                 msg = pubsub.get_message(timeout=_POLL_TIMEOUT_SEC)
                 data = parse_pubsub_message(msg)
                 if data is not None:
-                    self._handle_message(data)
+                    try:
+                        self._handle_message(data)
+                    except Exception as exc:
+                        # A malformed frame must not take down the reader; handlers
+                        # touch no Redis, so this can't mask a connection drop.
+                        self.logger.exception(
+                            "%s failed to handle message: %s", self._label, exc
+                        )
             except REDIS_CONN_ERRORS as exc:
                 if not self._running:
                     break
