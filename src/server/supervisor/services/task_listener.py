@@ -107,8 +107,17 @@ class TaskListener:
             self._pending_node_id = None
         if pending is None or pending == current_id:
             return current_id
-        pubsub.subscribe(node_dispatch_channel(pending))
-        pubsub.unsubscribe(node_dispatch_channel(current_id))
+        try:
+            pubsub.subscribe(node_dispatch_channel(pending))
+            pubsub.unsubscribe(node_dispatch_channel(current_id))
+        except (ConnectionError, OSError):
+            # The connection dropped mid-switch; re-arm the target (unless a newer
+            # rebind already superseded it) so the reader re-applies it after
+            # reconnecting, rather than silently dropping the move.
+            with self._rebind_lock:
+                if self._pending_node_id is None:
+                    self._pending_node_id = pending
+            raise
         self._node_id = pending
         self._rebind_applied.set()
         self.logger.info(
@@ -142,6 +151,9 @@ class TaskListener:
             except (ConnectionError, OSError):
                 pass
         while self._running:
+            # Backoff before every attempt so a connection that accepts SUBSCRIBE
+            # but drops on the next read can't drive a tight reconnect loop.
+            time.sleep(_RECONNECT_BACKOFF_SEC)
             try:
                 pubsub = self._redis.subscribe_control(
                     node_dispatch_channel(current_id)
@@ -150,7 +162,6 @@ class TaskListener:
                 self.logger.warning(
                     "Task listener resubscribe failed (%s); retrying", exc
                 )
-                time.sleep(_RECONNECT_BACKOFF_SEC)
                 continue
             self._pubsub = pubsub
             self.logger.info("Task listener reconnected on node %s", current_id)

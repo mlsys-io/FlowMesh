@@ -13,6 +13,7 @@ assert ``rebind`` touches nothing and the reader-side apply does the switch.
 """
 
 import logging
+from collections.abc import Callable
 from threading import Lock
 from typing import Any, cast
 
@@ -80,6 +81,33 @@ class _FakePubSub:
 
 def _as_pubsub(fake: _FakePubSub) -> PubSub:
     return cast(PubSub, fake)
+
+
+class _RaisingSubscribePubSub(_FakePubSub):
+    """Raises ConnectionError the first time it is asked to subscribe to
+    ``raise_on`` (the rebind target), then behaves normally."""
+
+    def __init__(self, raise_on: str) -> None:
+        super().__init__()
+        self.raise_on = raise_on
+
+    def subscribe(self, channel: str) -> None:
+        if channel == self.raise_on:
+            self.raise_on = ""
+            raise ConnectionError("dropped mid-switch")
+        super().subscribe(channel)
+
+
+class _ScriptedPubSub(_FakePubSub):
+    """PubSub whose get_message runs a supplied callback, so a test can raise or
+    stop the reader loop deterministically."""
+
+    def __init__(self, on_get: "Callable[[_ScriptedPubSub], Any]") -> None:
+        super().__init__()
+        self._on_get = on_get
+
+    def get_message(self, timeout: float) -> Any:
+        return self._on_get(self)
 
 
 # --------------------------------------------------------------------------- #
@@ -192,6 +220,7 @@ def test_task_listener_resubscribe_retries_until_connected(
     assert redis.calls == [node_dispatch_channel("nde-1")] * 3
     assert redis.last_pubsub is not None
     assert node_dispatch_channel("nde-1") in redis.last_pubsub.subscribed
+    assert stale.closed  # the dead pubsub is closed before reconnecting
 
 
 def test_task_listener_resubscribe_gives_up_when_stopped(
@@ -231,6 +260,84 @@ def test_command_stream_resubscribe_gives_up_when_stopped(
     stream._pubsub_running = False
     assert stream._resubscribe("nde-1") is None
     assert redis.calls == []
+
+
+def test_task_listener_apply_rearms_pending_when_connection_drops() -> None:
+    # Regression guard for the lost-rebind race: if the subscribe fails mid-switch
+    # the target must be re-armed, not silently dropped.
+    listener, _ = _build_task_listener("nde-1")
+    pubsub = _RaisingSubscribePubSub(raise_on=node_dispatch_channel("nde-2"))
+    pubsub.subscribe(node_dispatch_channel("nde-1"))
+    listener.rebind("nde-2")
+
+    with pytest.raises(ConnectionError):
+        listener._apply_pending_rebind(_as_pubsub(pubsub), "nde-1")
+
+    assert listener._pending_node_id == "nde-2"  # re-armed
+    assert not listener._rebind_applied.is_set()  # not marked applied
+    assert listener._node_id == "nde-1"  # unchanged until it lands
+
+    # a retry on the recovered connection completes the move
+    assert listener._apply_pending_rebind(_as_pubsub(pubsub), "nde-1") == "nde-2"
+    assert node_dispatch_channel("nde-2") in pubsub.subscribed
+    assert node_dispatch_channel("nde-1") not in pubsub.subscribed
+    assert listener._rebind_applied.is_set()
+
+
+def test_command_stream_apply_rearms_pending_when_connection_drops() -> None:
+    stream, _ = _build_command_stream("nde-1")
+    pubsub = _RaisingSubscribePubSub(raise_on=node_cmd_channel("nde-2"))
+    pubsub.subscribe(node_cmd_channel("nde-1"))
+    stream.rebind("nde-2")
+
+    with pytest.raises(ConnectionError):
+        stream._apply_pending_rebind(_as_pubsub(pubsub), "nde-1")
+
+    assert stream._pending_node_id == "nde-2"
+    assert not stream._rebind_applied.is_set()
+    assert stream.node_id == "nde-1"
+
+    assert stream._apply_pending_rebind(_as_pubsub(pubsub), "nde-1") == "nde-2"
+    assert node_cmd_channel("nde-2") in pubsub.subscribed
+    assert stream._rebind_applied.is_set()
+
+
+def test_task_listener_run_reconnects_and_resumes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Full loop: a dropped read triggers reconnect and the loop keeps running on
+    # the fresh pubsub instead of the thread dying.
+    monkeypatch.setattr(task_listener_module, "_RECONNECT_BACKOFF_SEC", 0.0)
+    events: list[str] = []
+
+    def _stop_after_reconnect(ps: _ScriptedPubSub) -> Any:
+        events.append("read-after-reconnect")
+        listener._running = False
+        return None
+
+    reconnected = _ScriptedPubSub(_stop_after_reconnect)
+
+    class _Redis:
+        def subscribe_control(self, channel: str) -> PubSub:
+            reconnected.subscribe(channel)
+            return _as_pubsub(reconnected)
+
+    listener = TaskListener(cast(SyncRedisClient, _Redis()), "nde-1", _LOGGER)
+    listener._loop = cast(Any, object())  # never used: no message is processed
+
+    def _drop_once(ps: _ScriptedPubSub) -> Any:
+        raise ConnectionError("connection dropped")
+
+    original = _ScriptedPubSub(_drop_once)
+    original.subscribe(node_dispatch_channel("nde-1"))
+    listener._pubsub = _as_pubsub(original)
+    listener._running = True
+
+    listener._run()
+
+    assert events == ["read-after-reconnect"]  # resumed reading after reconnect
+    assert original.closed  # old pubsub torn down
+    assert node_dispatch_channel("nde-1") in reconnected.subscribed
 
 
 # --------------------------------------------------------------------------- #

@@ -109,8 +109,17 @@ class _CommandStream:
             self._pending_node_id = None
         if pending is None or pending == current_id:
             return current_id
-        pubsub.subscribe(node_cmd_channel(pending))
-        pubsub.unsubscribe(node_cmd_channel(current_id))
+        try:
+            pubsub.subscribe(node_cmd_channel(pending))
+            pubsub.unsubscribe(node_cmd_channel(current_id))
+        except (ConnectionError, OSError):
+            # The connection dropped mid-switch; re-arm the target (unless a newer
+            # rebind already superseded it) so the reader re-applies it after
+            # reconnecting, rather than silently dropping the move.
+            with self._rebind_lock:
+                if self._pending_node_id is None:
+                    self._pending_node_id = pending
+            raise
         self.node_id = pending
         self._rebind_applied.set()
         self.logger.info(
@@ -131,13 +140,15 @@ class _CommandStream:
             except (ConnectionError, OSError):
                 pass
         while self._pubsub_running:
+            # Backoff before every attempt so a connection that accepts SUBSCRIBE
+            # but drops on the next read can't drive a tight reconnect loop.
+            time.sleep(_RECONNECT_BACKOFF_SEC)
             try:
                 pubsub = self.redis.subscribe_control(node_cmd_channel(current_id))
             except (ConnectionError, OSError) as exc:
                 self.logger.warning(
                     "Command stream resubscribe failed (%s); retrying", exc
                 )
-                time.sleep(_RECONNECT_BACKOFF_SEC)
                 continue
             self._pubsub = pubsub
             self.logger.info("Command stream reconnected on node %s", current_id)
