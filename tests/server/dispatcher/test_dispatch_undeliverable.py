@@ -8,21 +8,26 @@ budget, then fail with a descriptive error after the no-worker grace.
 
 import time
 from types import SimpleNamespace
+from typing import cast
+
+from server.task.models import TaskRecord
 
 from .helpers import make_capturing_dispatcher
 
 
-def _record() -> SimpleNamespace:
-    return SimpleNamespace(
-        no_dispatch_since=None,
-        last_error=None,
-        last_failed_worker=None,
+def _record() -> TaskRecord:
+    return cast(
+        TaskRecord,
+        SimpleNamespace(
+            no_dispatch_since=None,
+            last_error=None,
+            last_failed_worker=None,
+        ),
     )
 
 
 def test_undeliverable_within_grace_requeues_without_retry() -> None:
     disp = make_capturing_dispatcher(grace_sec=60)
-    disp._runtime.release_merge = lambda task_id: None
     record = _record()
 
     result = disp._grace_then_fail_undeliverable(
@@ -42,7 +47,6 @@ def test_undeliverable_within_grace_requeues_without_retry() -> None:
 
 def test_undeliverable_after_grace_fails_with_message() -> None:
     disp = make_capturing_dispatcher(grace_sec=60)
-    disp._runtime.release_merge = lambda task_id: None
     record = _record()
     # Pretend the condition has persisted longer than the grace window.
     record.no_dispatch_since = time.time() - 120
