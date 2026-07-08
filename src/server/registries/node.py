@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import time
 from collections.abc import Sequence
 from threading import Thread
 from typing import Any
@@ -25,12 +26,15 @@ from ..clients.redis import (
     NODE_ID_SEQ_KEY,
     NODE_RESPONSE_CHANNEL,
     NODES_SET_KEY,
+    REDIS_CONN_ERRORS,
     RedisClient,
     iter_pubsub_messages,
     node_cmd_channel,
     node_hb_key,
     node_key,
 )
+
+_RECONNECT_BACKOFF_SEC = 1.0
 
 
 class Node(BaseModel):
@@ -107,32 +111,70 @@ class NodeRegistry:
         return thread
 
     def shutdown(self) -> None:
-        if self._pubsub is None:
-            self.logger.warning("Node registry not started")
-            return
-        assert self._running
         self._running = False
-        self._pubsub.close()
-        self._pubsub = None
+        pubsub = self._pubsub
+        if pubsub is not None:
+            try:
+                pubsub.close()
+            except REDIS_CONN_ERRORS:
+                pass
         self._loop = None
 
+    def _resubscribe(self, dead: PubSub) -> PubSub | None:
+        """Re-establish the response subscription after a dropped connection,
+        retrying with backoff until it succeeds or the registry is shut down."""
+        try:
+            dead.close()
+        except REDIS_CONN_ERRORS:
+            pass
+        self.logger.warning("Node registry pubsub dropped; reconnecting")
+        while self._running:
+            time.sleep(_RECONNECT_BACKOFF_SEC)
+            try:
+                pubsub = self._rds.sync.subscribe_control(NODE_RESPONSE_CHANNEL)
+            except REDIS_CONN_ERRORS as exc:
+                self.logger.warning(
+                    "Node registry resubscribe failed (%s); retrying", exc
+                )
+                continue
+            self.logger.info("Node registry reconnected")
+            return pubsub
+        return None
+
     def _run(self) -> None:
-        pubsub = self._pubsub
-        loop = self._loop
-        if pubsub is None or loop is None:
+        if self._loop is None:
             self.logger.error("Node registry not started")
             return
         try:
-            for data in iter_pubsub_messages(pubsub):
+            while self._running:
+                pubsub = self._pubsub
+                if pubsub is None:
+                    break
                 try:
-                    cmd = CommandResponse.model_validate(data)
-                except ValidationError as exc:
-                    self.logger.error("Invalid node response: %s", exc)
-                    continue
-                self.set_node_response(cmd)
-        except Exception as exc:
-            if self._running:
-                self.logger.exception("Node registry error: %s", exc)
+                    for data in iter_pubsub_messages(pubsub):
+                        try:
+                            cmd = CommandResponse.model_validate(data)
+                        except ValidationError as exc:
+                            self.logger.error("Invalid node response: %s", exc)
+                            continue
+                        self.set_node_response(cmd)
+                except Exception as exc:
+                    if self._running:
+                        self.logger.exception("Node registry error: %s", exc)
+                if not self._running:
+                    break
+                # The subscription ended because the connection dropped;
+                # re-subscribe so command responses keep flowing after a
+                # control-Redis restart.
+                self._pubsub = self._resubscribe(pubsub)
+        finally:
+            pubsub = self._pubsub
+            self._pubsub = None
+            if pubsub is not None:
+                try:
+                    pubsub.close()
+                except REDIS_CONN_ERRORS:
+                    pass
 
     # ------------------------------------------------------------------ #
     # Node lifecycle helpers

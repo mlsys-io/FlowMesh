@@ -30,6 +30,7 @@ from shared.tasks.specs import (
 )
 from shared.tasks.worker_message import WorkerStatus, WorkerTaskMessage
 
+from ..clients.redis import REDIS_CONN_ERRORS
 from ..registries.worker import Worker, WorkerRegistry
 from ..services.metrics import MetricsRecorder
 from ..task.metadata import extract_model_dataset_names
@@ -503,10 +504,33 @@ class Dispatcher:
                 success = self.dispatch_once(task_id)
                 if not success:
                     time.sleep(0.5)
+            except REDIS_CONN_ERRORS as exc:
+                # Control Redis dropped (e.g. a restart). The connection pool
+                # reconnects on the next command, so back off and keep the loop
+                # alive rather than letting the dispatcher thread die. Requeue is
+                # best-effort; if it also hits the dead connection the watchdog
+                # re-surfaces the task once Redis is back.
+                self._logger.warning(
+                    "Dispatch loop lost Redis for %s (%s); backing off", task_id, exc
+                )
+                self._safe_requeue(task_id)
+                time.sleep(1.0)
             except Exception as exc:
                 self._logger.exception("Dispatch loop error for %s: %s", task_id, exc)
-                self._requeue_task(task_id, reason="dispatch_exception", front=True)
+                self._safe_requeue(task_id)
                 time.sleep(1.0)
+
+    def _safe_requeue(self, task_id: str) -> None:
+        """Requeue a task, swallowing a Redis outage so the dispatch loop never
+        dies in its own error handler."""
+        try:
+            self._requeue_task(task_id, reason="dispatch_exception", front=True)
+        except REDIS_CONN_ERRORS as exc:
+            self._logger.warning(
+                "Could not requeue %s (Redis down: %s); watchdog will recover it",
+                task_id,
+                exc,
+            )
 
     def _requeue_task(
         self,
