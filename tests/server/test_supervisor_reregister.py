@@ -12,6 +12,7 @@ mutated from a second thread while its owner is reading it, so these tests
 assert ``rebind`` touches nothing and the reader-side apply does the switch.
 """
 
+import json
 import logging
 from collections.abc import Callable
 from threading import Lock
@@ -375,6 +376,33 @@ def test_command_stream_run_reconnects_and_resumes(
     assert events == ["read-after-reconnect"]
     assert original.closed
     assert node_cmd_channel("nde-1") in reconnected.subscribed
+
+
+def test_task_listener_survives_a_handler_error() -> None:
+    # A handler that raises (e.g. a schema-invalid frame) must not kill the
+    # reader: it is logged and the loop reads the next frame. Distinct from a
+    # connection drop, so no reconnect is triggered.
+    reads: list[str] = []
+
+    def _on_get(ps: _ScriptedPubSub) -> Any:
+        if not reads:
+            reads.append("bad-frame")
+            return {"type": "message", "data": json.dumps({"kind": "task"})}
+        reads.append("next-read")
+        listener._running = False
+        return None
+
+    pubsub = _ScriptedPubSub(_on_get)
+    pubsub.subscribe(node_dispatch_channel("nde-1"))
+    listener = TaskListener(_ANY_OBJECT, "nde-1", _LOGGER)
+    listener._loop = cast(Any, object())  # never used: the frame fails validation
+    listener._pubsub = _as_pubsub(pubsub)
+    listener._running = True
+
+    listener._read_loop()
+
+    assert reads == ["bad-frame", "next-read"]  # kept reading past the bad frame
+    assert not pubsub.closed  # a handler error is not a connection drop
 
 
 # --------------------------------------------------------------------------- #

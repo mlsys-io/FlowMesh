@@ -5,6 +5,9 @@ import logging
 import threading
 from typing import Any, cast
 
+import pytest
+import redis.exceptions
+
 from server.services.monitoring import (
     TASK_EVENT_HANDLER_MAX_ATTEMPTS,
     EventMonitor,
@@ -83,6 +86,7 @@ class _ConsumerMonitor(EventMonitor):
         redis: _RecordingRedis,
         fail_times: dict[str, int] | None = None,
         parse_raises_on: set[str] | None = None,
+        conn_error_on: set[str] | None = None,
     ) -> None:
         self._redis_client = cast(Any, redis)
         self._stop_event = threading.Event()
@@ -91,6 +95,7 @@ class _ConsumerMonitor(EventMonitor):
         self.handled: list[str] = []
         self._fail_times = dict(fail_times or {})
         self._parse_raises_on = parse_raises_on or set()
+        self._conn_error_on = conn_error_on or set()
         self._handle_calls: dict[str, int] = {}
 
     def _parse_stream_event(self, fields: dict[str, Any]) -> Event | None:
@@ -102,6 +107,8 @@ class _ConsumerMonitor(EventMonitor):
     def _handle_task_event(self, event: TaskEvent) -> None:
         seen = self._handle_calls.get(event.task_id, 0) + 1
         self._handle_calls[event.task_id] = seen
+        if event.task_id in self._conn_error_on:
+            raise redis.exceptions.ConnectionError(f"redis down {event.task_id}")
         if seen <= self._fail_times.get(event.task_id, 0):
             raise RuntimeError(f"boom {event.task_id}")
         self.handled.append(event.task_id)
@@ -110,9 +117,10 @@ class _ConsumerMonitor(EventMonitor):
 def _consumer(
     fail_times: dict[str, int] | None = None,
     parse_raises_on: set[str] | None = None,
+    conn_error_on: set[str] | None = None,
 ) -> tuple[_ConsumerMonitor, _RecordingRedis, list[str]]:
     redis = _RecordingRedis()
-    monitor = _ConsumerMonitor(redis, fail_times, parse_raises_on)
+    monitor = _ConsumerMonitor(redis, fail_times, parse_raises_on, conn_error_on)
     return monitor, redis, monitor.handled
 
 
@@ -164,6 +172,19 @@ def test_batch_dead_letters_poison_handler_after_max_attempts() -> None:
     cursor = monitor._consume_stream_batch(remaining, cursor)
     assert cursor == "3-0"
     assert handled == ["tsk-1", "tsk-3"]
+
+
+def test_batch_propagates_redis_conn_error_without_burning_budget() -> None:
+    # A control-Redis outage in the handler is not a poison event: it propagates
+    # so the outer loop backs off and replays from the cursor, and it must not
+    # advance the cursor or count against tsk-2's dead-letter budget.
+    monitor, recording, handled = _consumer(conn_error_on={"tsk-2"})
+    entries = [(f"{i}-0", {"task_id": f"tsk-{i}"}) for i in range(1, 4)]
+    with pytest.raises(redis.exceptions.ConnectionError):
+        monitor._consume_stream_batch(entries, "$")
+    assert handled == ["tsk-1"]  # tsk-1 applied; tsk-2 raised before tsk-3
+    assert recording.cursors == ["1-0"]  # cursor not advanced past the outage
+    assert monitor._event_handler_attempts == {}  # budget untouched
 
 
 def test_batch_stops_mid_batch_when_stop_event_set() -> None:
