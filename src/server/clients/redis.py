@@ -171,7 +171,7 @@ def parse_pubsub_message(msg: dict[str, Any] | None) -> Any | None:
 def iter_pubsub_messages(pubsub: PubSub) -> Iterable[Any]:
     """Iterate over messages from a Redis PubSub instance.
 
-    Stops cleanly on pubsub teardown (`ConnectionError`, `OSError`); skips
+    Stops cleanly on a dropped Redis connection (``REDIS_CONN_ERRORS``); skips
     individual malformed JSON payloads without ending iteration so a single
     bad message can't kill the listener.
     """
