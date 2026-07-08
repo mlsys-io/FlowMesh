@@ -8,11 +8,21 @@ from urllib.parse import urlparse, urlunparse
 
 import redis
 import redis.asyncio as async_redis
+import redis.exceptions
 from redis.asyncio.client import PubSub as AsyncPubSub
 from redis.asyncio.connection import SSLConnection as AsyncSSLConnection
 from redis.client import Pipeline, PubSub
 from redis.connection import SSLConnection as SyncSSLConnection
 from redis.typing import EncodableT
+
+# redis-py wraps dropped sockets in its own ConnectionError/TimeoutError, which
+# do NOT subclass the builtins; OSError covers raw socket failures. Loops that
+# read Redis must catch these to reconnect instead of dying.
+REDIS_CONN_ERRORS: tuple[type[BaseException], ...] = (
+    redis.exceptions.ConnectionError,
+    redis.exceptions.TimeoutError,
+    OSError,
+)
 
 
 def _keepalive_kwargs() -> dict[str, Any]:
@@ -171,7 +181,7 @@ def iter_pubsub_messages(pubsub: PubSub) -> Iterable[Any]:
             if parsed is None:
                 continue
             yield parsed
-    except (ConnectionError, OSError):
+    except REDIS_CONN_ERRORS:
         return
 
 
