@@ -4,6 +4,7 @@ import time
 from threading import Event, Lock, Thread
 from typing import Any
 
+import redis.exceptions
 from redis.client import PubSub
 
 from shared.schemas.command import (
@@ -21,6 +22,13 @@ from ...utils.helpers import TSQueue
 
 _POLL_TIMEOUT_SEC = 0.25
 _RECONNECT_BACKOFF_SEC = 1.0
+# redis-py wraps dropped sockets in its own ConnectionError/TimeoutError, which
+# do NOT subclass the builtins; OSError covers raw socket failures.
+_CONN_ERRORS = (
+    redis.exceptions.ConnectionError,
+    redis.exceptions.TimeoutError,
+    OSError,
+)
 
 
 class TaskListener:
@@ -110,7 +118,7 @@ class TaskListener:
         try:
             pubsub.subscribe(node_dispatch_channel(pending))
             pubsub.unsubscribe(node_dispatch_channel(current_id))
-        except (ConnectionError, OSError):
+        except _CONN_ERRORS:
             # The connection dropped mid-switch; re-arm the target (unless a newer
             # rebind already superseded it) so the reader re-applies it after
             # reconnecting, rather than silently dropping the move.
@@ -148,7 +156,7 @@ class TaskListener:
         if self._pubsub is not None:
             try:
                 self._pubsub.close()
-            except (ConnectionError, OSError):
+            except _CONN_ERRORS:
                 pass
         while self._running:
             # Backoff before every attempt so a connection that accepts SUBSCRIBE
@@ -158,7 +166,7 @@ class TaskListener:
                 pubsub = self._redis.subscribe_control(
                     node_dispatch_channel(current_id)
                 )
-            except (ConnectionError, OSError) as exc:
+            except _CONN_ERRORS as exc:
                 self.logger.warning(
                     "Task listener resubscribe failed (%s); retrying", exc
                 )
@@ -220,7 +228,7 @@ class TaskListener:
                     continue
                 queue = self._qs[worker_id]
                 asyncio.run_coroutine_threadsafe(queue.put(payload), loop)
-            except (ConnectionError, OSError) as exc:
+            except _CONN_ERRORS as exc:
                 if not self._running:
                     break
                 self.logger.warning(

@@ -8,6 +8,7 @@ from collections.abc import Callable, Iterable
 from concurrent import futures
 from threading import Event, Lock, Thread
 
+import redis.exceptions
 from pydantic import ValidationError
 from redis.client import PubSub
 
@@ -39,6 +40,13 @@ _DESTROY_WORKER_TIMEOUT = 60.0
 _DESTROY_WORKERS_TIMEOUT = 120.0
 _POLL_TIMEOUT_SEC = 0.25
 _RECONNECT_BACKOFF_SEC = 1.0
+# redis-py wraps dropped sockets in its own ConnectionError/TimeoutError, which
+# do NOT subclass the builtins; OSError covers raw socket failures.
+_CONN_ERRORS = (
+    redis.exceptions.ConnectionError,
+    redis.exceptions.TimeoutError,
+    OSError,
+)
 
 
 def _cmd_receiver_loop(
@@ -112,7 +120,7 @@ class _CommandStream:
         try:
             pubsub.subscribe(node_cmd_channel(pending))
             pubsub.unsubscribe(node_cmd_channel(current_id))
-        except (ConnectionError, OSError):
+        except _CONN_ERRORS:
             # The connection dropped mid-switch; re-arm the target (unless a newer
             # rebind already superseded it) so the reader re-applies it after
             # reconnecting, rather than silently dropping the move.
@@ -137,7 +145,7 @@ class _CommandStream:
         if self._pubsub is not None:
             try:
                 self._pubsub.close()
-            except (ConnectionError, OSError):
+            except _CONN_ERRORS:
                 pass
         while self._pubsub_running:
             # Backoff before every attempt so a connection that accepts SUBSCRIBE
@@ -145,7 +153,7 @@ class _CommandStream:
             time.sleep(_RECONNECT_BACKOFF_SEC)
             try:
                 pubsub = self.redis.subscribe_control(node_cmd_channel(current_id))
-            except (ConnectionError, OSError) as exc:
+            except _CONN_ERRORS as exc:
                 self.logger.warning(
                     "Command stream resubscribe failed (%s); retrying", exc
                 )
@@ -177,7 +185,7 @@ class _CommandStream:
                     self.logger.error("Invalid command message: %s", e)
                     continue
                 cmd_queue.put((cmd, send_response))
-            except (ConnectionError, OSError) as exc:
+            except _CONN_ERRORS as exc:
                 if not self._pubsub_running:
                     break
                 self.logger.warning(

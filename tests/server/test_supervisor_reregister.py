@@ -19,6 +19,7 @@ from threading import Lock
 from typing import Any, cast
 
 import pytest
+import redis.exceptions
 from redis.client import PubSub
 
 import server.supervisor.services.command_listener as command_listener_module
@@ -52,7 +53,7 @@ class _FlakyRedis:
         self.calls.append(channel)
         if self.fail_times > 0:
             self.fail_times -= 1
-            raise ConnectionError("redis down")
+            raise redis.exceptions.ConnectionError("redis down")
         pubsub = _FakePubSub()
         pubsub.subscribe(channel)
         self.last_pubsub = pubsub
@@ -95,7 +96,7 @@ class _RaisingSubscribePubSub(_FakePubSub):
     def subscribe(self, channel: str) -> None:
         if channel == self.raise_on:
             self.raise_on = ""
-            raise ConnectionError("dropped mid-switch")
+            raise redis.exceptions.ConnectionError("dropped mid-switch")
         super().subscribe(channel)
 
 
@@ -271,7 +272,7 @@ def test_task_listener_apply_rearms_pending_when_connection_drops() -> None:
     pubsub.subscribe(node_dispatch_channel("nde-1"))
     listener.rebind("nde-2")
 
-    with pytest.raises(ConnectionError):
+    with pytest.raises(redis.exceptions.ConnectionError):
         listener._apply_pending_rebind(_as_pubsub(pubsub), "nde-1")
 
     assert listener._pending_node_id == "nde-2"  # re-armed
@@ -291,7 +292,7 @@ def test_command_stream_apply_rearms_pending_when_connection_drops() -> None:
     pubsub.subscribe(node_cmd_channel("nde-1"))
     stream.rebind("nde-2")
 
-    with pytest.raises(ConnectionError):
+    with pytest.raises(redis.exceptions.ConnectionError):
         stream._apply_pending_rebind(_as_pubsub(pubsub), "nde-1")
 
     assert stream._pending_node_id == "nde-2"
@@ -327,7 +328,7 @@ def test_task_listener_run_reconnects_and_resumes(
     listener._loop = cast(Any, object())  # never used: no message is processed
 
     def _drop_once(ps: _ScriptedPubSub) -> Any:
-        raise ConnectionError("connection dropped")
+        raise redis.exceptions.ConnectionError("connection dropped")
 
     original = _ScriptedPubSub(_drop_once)
     original.subscribe(node_dispatch_channel("nde-1"))
@@ -362,7 +363,7 @@ def test_command_stream_run_reconnects_and_resumes(
     stream = _CommandStream("nde-1", cast(SyncRedisClient, _Redis()), None, _LOGGER)
 
     def _drop_once(ps: _ScriptedPubSub) -> Any:
-        raise ConnectionError("connection dropped")
+        raise redis.exceptions.ConnectionError("connection dropped")
 
     original = _ScriptedPubSub(_drop_once)
     original.subscribe(node_cmd_channel("nde-1"))
