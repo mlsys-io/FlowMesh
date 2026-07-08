@@ -294,10 +294,6 @@ class EventMonitor:
                 rows = self._redis_client.xread_telemetry(
                     {TASK_EVENT_STREAM_KEY: cursor}, count=200, block_ms=1000
                 )
-                # Consume inside the try: the per-entry cursor write lands on the
-                # control Redis, so a control-plane drop here must back off and
-                # replay from the last persisted cursor (handlers are idempotent)
-                # rather than kill this thread and stop all task-lifecycle updates.
                 for _, entries in rows:
                     cursor = self._consume_stream_batch(entries, cursor)
                     if self._stop_event.is_set():
@@ -338,9 +334,7 @@ class EventMonitor:
                 try:
                     self._handle_task_event(event)
                 except REDIS_CONN_ERRORS:
-                    # A control-plane outage is not a bad event: propagate so the
-                    # loop backs off and replays from this cursor, rather than
-                    # burning the dead-letter budget and dropping the transition.
+                    # Propagate so the loop backs off and replays from this cursor.
                     raise
                 except Exception as exc:
                     # Don't advance past a handler failure: it may be transient,
