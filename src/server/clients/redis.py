@@ -3,7 +3,7 @@ import logging
 import socket
 import ssl
 from collections.abc import Awaitable, Iterable
-from typing import Any, cast
+from typing import Any
 from urllib.parse import urlparse, urlunparse
 
 import redis
@@ -176,7 +176,7 @@ def iter_pubsub_messages(pubsub: PubSub) -> Iterable[Any]:
 
 
 def _sync[T](value: Awaitable[T] | T) -> T:
-    return cast(T, value)
+    return value  # type: ignore[return-value]
 
 
 def _with_redis_auth(url: str, acl_enabled: bool, username: str, password: str) -> str:
@@ -408,7 +408,7 @@ class SyncRedisClient:
 
 
 def _awaitable[T](value: Awaitable[T] | T) -> Awaitable[T]:
-    return cast(Awaitable[T], value)
+    return value  # type: ignore[return-value]
 
 
 class AsyncRedisClient:
