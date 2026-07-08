@@ -7,6 +7,7 @@ reconnects on the next command and the watchdog re-surfaces the task).
 """
 
 from typing import Any
+from unittest import mock
 
 import pytest
 import redis.exceptions
@@ -14,18 +15,21 @@ import redis.exceptions
 from tests.server.dispatcher.helpers import make_capturing_dispatcher
 
 
-def test_safe_requeue_swallows_redis_connection_error(
+def test_safe_requeue_reenqueues_in_memory_when_persist_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    dispatcher = make_capturing_dispatcher()
+    runtime = mock.Mock()
+    dispatcher = make_capturing_dispatcher(runtime=runtime)
 
     def _boom(task_id: str, **kwargs: Any) -> None:
         raise redis.exceptions.ConnectionError("control redis down")
 
     monkeypatch.setattr(dispatcher, "_requeue_task", _boom)
-    # Must not raise: a requeue that also hits the outage cannot be allowed to
-    # kill the dispatch loop.
+    # Must not raise (a requeue that also hits the outage cannot kill the loop),
+    # AND the task must still be re-enqueued in memory so it isn't orphaned:
+    # nothing else re-surfaces a PENDING task while the server stays up.
     dispatcher._safe_requeue("tsk-1")
+    runtime.requeue.assert_called_once_with("tsk-1", front=True)
 
 
 def test_safe_requeue_propagates_non_redis_error(

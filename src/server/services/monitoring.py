@@ -25,6 +25,7 @@ from shared.utils.manifest import RESULTS_NAME, sync_manifest
 from ..auth import default_principal, deregister_resource, register_resource
 from ..clients.redis import (
     NODE_EVENT_CHANNEL,
+    REDIS_CONN_ERRORS,
     TASK_EVENT_CURSOR_KEY,
     TASK_EVENT_STREAM_KEY,
     TASK_EVENT_STREAM_MAXLEN,
@@ -336,6 +337,11 @@ class EventMonitor:
             if isinstance(event, TaskEvent):
                 try:
                     self._handle_task_event(event)
+                except REDIS_CONN_ERRORS:
+                    # A control-plane outage is not a bad event: propagate so the
+                    # loop backs off and replays from this cursor, rather than
+                    # burning the dead-letter budget and dropping the transition.
+                    raise
                 except Exception as exc:
                     # Don't advance past a handler failure: it may be transient,
                     # and the watchdog only reclaims dead workers (not a task stuck

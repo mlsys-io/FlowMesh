@@ -521,16 +521,28 @@ class Dispatcher:
                 time.sleep(1.0)
 
     def _safe_requeue(self, task_id: str) -> None:
-        """Requeue a task, swallowing a Redis outage so the dispatch loop never
-        dies in its own error handler."""
+        """Requeue a task without letting a Redis outage kill the dispatch loop.
+
+        ``_requeue_task`` persists the PENDING transition before re-adding the
+        task to the in-memory ready queue, so a persist failure mid-outage would
+        drop the task from the scheduler entirely (nothing else re-enqueues a
+        PENDING task while the server stays up). On a Redis error we therefore
+        still re-enqueue in memory; the durable state re-persists on the task's
+        next successful transition.
+        """
         try:
             self._requeue_task(task_id, reason="dispatch_exception", front=True)
         except REDIS_CONN_ERRORS as exc:
             self._logger.warning(
-                "Could not requeue %s (Redis down: %s); watchdog will recover it",
+                "Requeue persist for %s failed (Redis down: %s); "
+                "re-enqueuing in memory",
                 task_id,
                 exc,
             )
+            try:
+                self._runtime.requeue(task_id, front=True)
+            except Exception:
+                self._logger.exception("In-memory requeue of %s failed", task_id)
 
     def _requeue_task(
         self,
