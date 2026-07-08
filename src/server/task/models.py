@@ -129,7 +129,7 @@ class TaskRecord(BaseModel):
     no_dispatch_since: float | None = Field(
         default=None,
         description="Epoch seconds when a selected worker was first found "
-        "undeliverable (no live dispatch subscriber / publish failure).",
+        "undeliverable.",
         exclude=True,
     )
     local_name: str | None = Field(default=None, description="Workflow stage name.")

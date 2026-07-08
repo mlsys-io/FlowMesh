@@ -142,12 +142,12 @@ class Dispatcher:
         message: str,
         extra_payload: dict[str, Any] | None = None,
     ) -> bool:
-        """A worker was selected but the task could not be delivered to it (its
-        node has no live dispatch subscriber, or publish failed). This is an
-        infrastructure fault, not a task-execution failure: keep retrying without
-        spending the task's ``max_attempts`` budget, then fail with a descriptive
-        error after ``no_worker_grace_sec``. Uses its own clock so the eligibility
-        path resetting ``no_eligible_since`` does not clobber the timer."""
+        """Handle a selected worker that turned out undeliverable due to an
+        infrastructure fault.
+
+        Retry without spending the task's ``max_attempts`` budget and then fail after
+        ``no_worker_grace_sec``.
+        """
         self._runtime.release_merge(task_id)
         record.last_error = message
         now = time.time()
@@ -487,7 +487,9 @@ class Dispatcher:
         try:
             receivers = self._worker_registry.publish_task(worker, message)
         except Exception as exc:
-            self._logger.warning("Failed to publish task %s: %s", task_id, exc)
+            self._logger.warning(
+                "Failed to publish task %s to worker %s: %s", task_id, worker.id, exc
+            )
             return self._grace_then_fail_undeliverable(
                 task_id,
                 record,
