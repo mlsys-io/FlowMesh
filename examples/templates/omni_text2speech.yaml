@@ -1,7 +1,10 @@
 apiVersion: flowmesh/v1
 kind: OmniTask
 metadata:
-  name: omni-text2speech
+  name: e2e-omni-text2speech
+  owner: vllm-bump-e2e
+  annotations:
+    description: vllm-omni text-to-speech smoke.
 
 spec:
   taskType: omni_text2speech
@@ -10,7 +13,7 @@ spec:
     hardware:
       gpu:
         count: 1
-        memory: 16GB
+        memory: 12GB
 
   model:
     source:
@@ -20,7 +23,7 @@ spec:
   data:
     type: list
     items:
-      - "Hello, welcome to FlowMesh. This is a text-to-speech demo."
+      - "Hello, welcome to FlowMesh. This is a text-to-speech smoke test."
 
   omni:
     output_format: wav

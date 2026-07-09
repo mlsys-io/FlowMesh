@@ -1,7 +1,10 @@
 apiVersion: flowmesh/v1
 kind: OmniTask
 metadata:
-  name: omni-text2audio-bgm
+  name: e2e-omni-text2audio-bgm
+  owner: vllm-bump-e2e
+  annotations:
+    description: vllm-omni text-to-audio smoke.
 
 spec:
   taskType: omni_text2audio
@@ -10,7 +13,7 @@ spec:
     hardware:
       gpu:
         count: 1
-        memory: 16GB
+        memory: 12GB
 
   model:
     source:
@@ -20,15 +23,15 @@ spec:
   data:
     type: list
     items:
-      - Upbeat electronic music with synth pads and a driving beat
+      - Short upbeat electronic music cue with soft synth pads
 
   omni:
     output_format: wav
     sample_rate: 44100
-    audio_length: 10.0
+    audio_length: 1.0
     num_waveforms: 1
     guidance_scale: 7.0
-    num_inference_steps: 100
+    num_inference_steps: 4
     seed: 42
     negative_prompt: Low quality.
 

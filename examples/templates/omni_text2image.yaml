@@ -1,7 +1,10 @@
 apiVersion: flowmesh/v1
 kind: OmniTask
 metadata:
-  name: omni-text2image
+  name: e2e-omni-text2image
+  owner: vllm-bump-e2e
+  annotations:
+    description: vllm-omni text-to-image smoke.
 
 spec:
   taskType: omni_text2image
@@ -20,8 +23,7 @@ spec:
   data:
     type: list
     items:
-      - "A futuristic city skyline at sunset, photorealistic"
-      - A cat wearing a space helmet on the moon
+      - "A small red cube on a white tabletop, simple studio photo"
 
   omni:
     output_format: png
