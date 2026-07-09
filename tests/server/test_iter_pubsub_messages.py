@@ -1,11 +1,8 @@
-"""iter_pubsub_messages must poll (get_message) rather than block (listen()).
+"""iter_pubsub_messages polls (get_message) instead of blocking (listen()).
 
-A blocking listen() never re-drives redis-py's health_check_interval on an idle
-subscription, so the SUBSCRIBE connection sends no traffic and gets culled by an
-idle proxy/LB timeout. Polling with get_message(timeout=...) runs check_health()
-each iteration, emitting the periodic PING that keeps the connection warm. The
-disconnect that ends iteration is redis-py's own ConnectionError, which does not
-subclass the builtin, so the stop path is exercised with the production type.
+Polling drives redis-py's periodic health-check PING that keeps an idle
+SUBSCRIBE connection from being culled. Iteration ends on redis-py's own
+ConnectionError (not the builtin), matching production.
 """
 
 import json
@@ -32,7 +29,7 @@ class _FakePubSub:
             raise item
         return item
 
-    def listen(self) -> Any:  # pragma: no cover - must never be used
+    def listen(self) -> Any:
         self.listen_called = True
         raise AssertionError("iter_pubsub_messages must not use blocking listen()")
 
@@ -40,10 +37,10 @@ class _FakePubSub:
 def test_polls_with_timeout_and_yields_messages() -> None:
     ps = _FakePubSub(
         [
-            None,  # idle tick — must NOT end iteration
-            {"type": "subscribe", "data": 1},  # non-message — skipped
+            None,  # idle tick, not terminal
+            {"type": "subscribe", "data": 1},  # non-message, skipped
             {"type": "message", "data": json.dumps({"a": 1})},  # yielded
-            {"type": "message", "data": b"not-json"},  # bad payload — skipped
+            {"type": "message", "data": b"not-json"},  # bad payload, skipped
             {"type": "message", "data": json.dumps({"b": 2})},  # yielded
             redis.exceptions.ConnectionError("culled"),  # clean stop
         ]
@@ -52,13 +49,12 @@ def test_polls_with_timeout_and_yields_messages() -> None:
 
     assert out == [{"a": 1}, {"b": 2}]
     assert ps.listen_called is False
-    # Every read went through get_message with the poll timeout (drives check_health).
+    # Reads polled get_message with the timeout (which drives check_health).
     assert ps.get_message_timeouts and all(t == 0.01 for t in ps.get_message_timeouts)
 
 
 def test_idle_only_does_not_terminate_until_disconnect() -> None:
-    # A long stretch of idle ticks keeps iterating (each tick emits the PING);
-    # only a connection error ends it.
+    # Idle ticks keep iterating; only a disconnect ends it.
     ps = _FakePubSub([None] * 5 + [redis.exceptions.ConnectionError("bye")])
     out = list(iter_pubsub_messages(cast(PubSub, ps), poll_timeout=0.01))
     assert out == []
