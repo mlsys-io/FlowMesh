@@ -103,7 +103,7 @@ class ForwardService:
     def _require_loop(self) -> asyncio.AbstractEventLoop:
         loop = self._loop
         if loop is None:
-            raise RuntimeError("SSH forward service not started")
+            raise RuntimeError("Forward service not started")
         return loop
 
     async def _register_task_async(
@@ -115,14 +115,14 @@ class ForwardService:
     ) -> dict[str, Any]:
         relay_target = ssh_info.get("_relay_target")
         if not isinstance(relay_target, dict):
-            raise RuntimeError("Missing relay target for forward-mode SSH task")
+            raise RuntimeError("Missing relay target for forward-mode task")
         session_id = ssh_info.get("session_id")
         if not session_id:
-            raise RuntimeError("Missing SSH session_id for forward-mode SSH task")
+            raise RuntimeError("Missing session_id for forward-mode task")
         target_host = relay_target.get("host")
         target_port = relay_target.get("port")
         if not (target_host and target_port):
-            raise RuntimeError("Incomplete relay target for forward-mode SSH task")
+            raise RuntimeError("Incomplete relay target for forward-mode task")
         worker = await self._worker_registry.get_worker_async(assigned_worker)
         if worker is None:
             raise RuntimeError(f"Assigned worker not found: {assigned_worker}")
@@ -208,9 +208,7 @@ class ForwardService:
             except OSError:
                 await self._release_port(port)
                 continue
-            self._logger.info(
-                "Allocated SSH forward port %s for task %s", port, task_id
-            )
+            self._logger.info("Allocated forward port %s for task %s", port, task_id)
             return ForwardSession(
                 task_id=task_id,
                 workflow_id=workflow_id,
@@ -223,7 +221,7 @@ class ForwardService:
                 port=port,
                 server=server,
             )
-        raise RuntimeError("No available SSH forward ports")
+        raise RuntimeError("No available forward ports")
 
     async def _unregister_task_async(self, task_id: str) -> None:
         async with self._lock:

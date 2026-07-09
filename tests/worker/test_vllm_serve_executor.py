@@ -4,6 +4,7 @@ import collections
 import importlib.metadata
 import io
 import logging
+import socket
 import threading
 import time
 from pathlib import Path
@@ -20,7 +21,12 @@ from tests.worker.factories import (
     make_worker_hardware,
     make_worker_task_message,
 )
-from worker.executors.vllm_serve_executor import VLLMServeExecutor, _drain_to_log
+from worker.executors.base_executor import ExecutionError
+from worker.executors.vllm_serve_executor import (
+    VLLMServeExecutor,
+    _drain_to_log,
+    _resolve_port,
+)
 
 
 def _ep(name: str, value: str) -> importlib.metadata.EntryPoint:
@@ -280,6 +286,143 @@ class TestServeExecutorCmdBuilding:
         ex = self._make_executor()
         with pytest.raises(ExecutionError, match="model.source.identifier"):
             ex.run(task, tmp_path)
+
+
+class TestServeAccessModeHostBinding:
+    """Direct mode binds all interfaces and advertises a resolvable host; forward
+    mode binds loopback and advertises the relay target."""
+
+    def _make_executor(self) -> VLLMServeExecutor:
+        return VLLMServeExecutor(make_worker_config(), make_worker_hardware())
+
+    def _run(
+        self, spec: ServeSpecStrict, tmp_path: Path
+    ) -> tuple[list[str], dict[str, object]]:
+        task = make_worker_task_message(spec=spec, task_type=TaskType.SERVE)
+        ex = self._make_executor()
+        captured: list[list[str]] = []
+
+        def fake_popen(cmd: list[str], **_: object) -> MagicMock:
+            captured.append(list(cmd))
+            m = MagicMock()
+            m.stdout = io.StringIO("")
+            m.poll.return_value = 0
+            m.returncode = 0
+            m.pid = 12345
+            return m
+
+        emit = MagicMock()
+        with (
+            patch("subprocess.Popen", side_effect=fake_popen),
+            patch("socket.getfqdn", return_value="worker-1.cluster.local"),
+            patch.object(ex, "_poll_health"),
+            patch.object(ex, "_wait_for_serve"),
+            patch.object(ex, "emit_update", emit),
+            patch.object(ex, "_terminate_process_group"),
+        ):
+            ex.run(task, tmp_path)
+
+        serve = emit.call_args.args[1]["serve"]
+        return captured[0], serve
+
+    def test_direct_mode_binds_all_interfaces(self, tmp_path: Path) -> None:
+        spec = ServeSpecStrict(
+            taskType=TaskType.SERVE,
+            accessMode="direct",
+            model=ModelConfig(source=ModelSource(identifier="m")),
+        )
+        cmd, serve = self._run(spec, tmp_path)
+        assert cmd[cmd.index("--host") + 1] == "0.0.0.0"
+        assert serve["mode"] == "direct"
+        assert serve["host"] == "worker-1.cluster.local"
+        assert serve["_relay_target"] == {"host": "127.0.0.1", "port": serve["port"]}
+
+    def test_forward_mode_binds_loopback(self, tmp_path: Path) -> None:
+        spec = ServeSpecStrict(
+            taskType=TaskType.SERVE,
+            accessMode="forward",
+            model=ModelConfig(source=ModelSource(identifier="m")),
+        )
+        cmd, serve = self._run(spec, tmp_path)
+        assert cmd[cmd.index("--host") + 1] == "127.0.0.1"
+        assert serve["mode"] == "forward"
+        assert serve["host"] == "127.0.0.1"
+
+    def test_default_mode_is_forward_loopback(self, tmp_path: Path) -> None:
+        spec = ServeSpecStrict(
+            taskType=TaskType.SERVE,
+            model=ModelConfig(source=ModelSource(identifier="m")),
+        )
+        cmd, serve = self._run(spec, tmp_path)
+        assert cmd[cmd.index("--host") + 1] == "127.0.0.1"
+        assert serve["host"] == "127.0.0.1"
+
+    def test_unset_port_auto_selects_free_port(self, tmp_path: Path) -> None:
+        spec = ServeSpecStrict(
+            taskType=TaskType.SERVE,
+            model=ModelConfig(source=ModelSource(identifier="m")),
+        )
+        cmd, serve = self._run(spec, tmp_path)
+        port = int(cmd[cmd.index("--port") + 1])
+        assert 1 <= port <= 65535
+        assert serve["port"] == port
+        assert serve["_relay_target"] == {"host": "127.0.0.1", "port": port}
+
+    def test_explicit_free_port_is_used(self, tmp_path: Path) -> None:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            probe.bind(("127.0.0.1", 0))
+            free_port = probe.getsockname()[1]
+        spec = ServeSpecStrict(
+            taskType=TaskType.SERVE,
+            port=free_port,
+            model=ModelConfig(source=ModelSource(identifier="m")),
+        )
+        cmd, serve = self._run(spec, tmp_path)
+        assert cmd[cmd.index("--port") + 1] == str(free_port)
+        assert serve["port"] == free_port
+
+    def test_explicit_occupied_port_fails_with_clear_error(
+        self, tmp_path: Path
+    ) -> None:
+        holder = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            holder.bind(("127.0.0.1", 0))
+            holder.listen(1)
+            occupied = holder.getsockname()[1]
+            spec = ServeSpecStrict(
+                taskType=TaskType.SERVE,
+                port=occupied,
+                model=ModelConfig(source=ModelSource(identifier="m")),
+            )
+            task = make_worker_task_message(spec=spec, task_type=TaskType.SERVE)
+            ex = self._make_executor()
+            with pytest.raises(ExecutionError, match=f"port {occupied} is unavailable"):
+                ex.run(task, tmp_path)
+        finally:
+            holder.close()
+
+
+class TestResolvePort:
+    def test_none_returns_free_ephemeral_port(self) -> None:
+        port = _resolve_port(None, "127.0.0.1")
+        assert 1 <= port <= 65535
+
+    def test_two_calls_can_return_distinct_usable_ports(self) -> None:
+        first = _resolve_port(None, "127.0.0.1")
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as holder:
+            holder.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            holder.bind(("127.0.0.1", first))
+            holder.listen(1)
+            second = _resolve_port(None, "127.0.0.1")
+            assert second != first
+
+    def test_occupied_requested_port_raises(self) -> None:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as holder:
+            holder.bind(("127.0.0.1", 0))
+            holder.listen(1)
+            occupied = holder.getsockname()[1]
+            with pytest.raises(ExecutionError, match="unavailable"):
+                _resolve_port(occupied, "127.0.0.1")
 
 
 class TestDefaultReadinessTimeout:

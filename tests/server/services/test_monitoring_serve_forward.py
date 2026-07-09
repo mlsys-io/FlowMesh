@@ -167,6 +167,26 @@ class TestServeForwardRegistration:
         assert result["serve"]["host"] == "127.0.0.1"
         assert result["serve"]["port"] == 8000
 
+    def test_direct_mode_preserves_worker_resolvable_host(self) -> None:
+        """The worker-advertised resolvable host is surfaced to clients as-is;
+        direct mode is not relayed through the server."""
+        ssh_forward = MagicMock()
+        monitor = _make_monitor(forward=ssh_forward)
+
+        payload = {
+            "serve": {
+                "model": "m",
+                "mode": "direct",
+                "host": "worker-1.cluster.local",
+                "port": 8000,
+            }
+        }
+        result = monitor._handle_serve_task_update("tsk-abc", "wrk-1", payload)
+
+        ssh_forward.register_forward_task.assert_not_called()
+        assert result["serve"]["host"] == "worker-1.cluster.local"
+        assert result["serve"]["port"] == 8000
+
     def test_no_forward_service_drops_serve_endpoint(self) -> None:
         """When forward is None, forward mode is rejected and the serve endpoint
         is dropped rather than degraded to direct (serve has no proxy fallback)."""

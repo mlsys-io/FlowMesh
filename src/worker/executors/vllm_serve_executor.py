@@ -11,6 +11,7 @@ import logging
 import os
 import secrets
 import signal
+import socket
 import subprocess  # nosec B404
 import sys
 import threading
@@ -32,7 +33,6 @@ logger = logging.getLogger(__name__)
 
 _DEFAULT_TTL_SEC = 3600.0
 _MAX_TTL_SEC = 86400.0
-_DEFAULT_PORT = 8000
 _HEALTH_POLL_INTERVAL_SEC = 2.0
 # 600s default: cold-start includes model download, engine init, and CUDA graph capture
 _DEFAULT_READINESS_TIMEOUT_SEC = 600.0
@@ -61,6 +61,27 @@ def _tail_snippet(tail: "collections.deque[str]") -> str:
     if len(raw) > _TAIL_SNIPPET_BYTES:
         text = "...\n" + raw[-_TAIL_SNIPPET_BYTES:].decode("utf-8", errors="replace")
     return text
+
+
+def _resolve_port(requested: int | None, bind_host: str) -> int:
+    """Resolve the port vLLM binds on ``bind_host``.
+
+    When ``requested`` is ``None`` a free ephemeral port is selected; hardcoding
+    a default (e.g. 8000) collides with co-located services such as the FlowMesh
+    server on a host-networked node. When ``requested`` is set but unavailable,
+    raise so the caller reports a clear error instead of a raw vLLM bind failure.
+    """
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            probe.bind((bind_host, requested or 0))
+        except OSError as exc:
+            raise ExecutionError(
+                f"serve port {requested} is unavailable on the worker "
+                f"({bind_host}): {exc}. Choose a different spec.port, or omit it "
+                "to auto-select a free port."
+            ) from exc
+        return probe.getsockname()[1]
 
 
 class ServeResult(BaseExecutorResult):
@@ -113,9 +134,13 @@ class VLLMServeExecutor(Executor):
         readiness_timeout = (
             spec.readinessTimeoutSeconds or _DEFAULT_READINESS_TIMEOUT_SEC
         )
-        port = spec.port or _DEFAULT_PORT
         access_mode = spec.accessMode or "forward"
         api_key = secrets.token_hex(32)
+
+        bind_host = (
+            "0.0.0.0" if access_mode == "direct" else "127.0.0.1"
+        )  # nosec B104 - direct mode is an explicit opt-in to a client-reachable endpoint
+        port = _resolve_port(spec.port, bind_host)
 
         cmd = [
             sys.executable,
@@ -123,6 +148,8 @@ class VLLMServeExecutor(Executor):
             "vllm.entrypoints.openai.api_server",
             "--model",
             model_id,
+            "--host",
+            bind_host,
             "--port",
             str(port),
             "--api-key",
@@ -196,11 +223,14 @@ class VLLMServeExecutor(Executor):
             self._poll_health(
                 proc, port, task.task_id, readiness_timeout, tail, eof_event
             )
+            advertised_host = (
+                socket.getfqdn() if access_mode == "direct" else "127.0.0.1"
+            )
             update_payload: dict[str, Any] = {
                 "serve": {
                     "mode": access_mode,
                     "_relay_target": {"host": "127.0.0.1", "port": port},
-                    "host": "127.0.0.1",
+                    "host": advertised_host,
                     "port": port,
                     "api_key": api_key,
                     "model": model_id,

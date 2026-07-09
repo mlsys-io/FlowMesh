@@ -26,9 +26,6 @@ spec:
       trust_remote_code: true
       max_model_len: 4096
 
-  # Worker-side port the vLLM OpenAI server binds to.
-  port: 8000
-
   # How the endpoint is exposed to an external client:
   #   forward — TCP relay through the FlowMesh server (recommended; reach it at
   #             server_host:<allocated_port>)
