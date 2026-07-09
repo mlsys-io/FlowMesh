@@ -269,7 +269,7 @@ def _extract_audio_waveforms(outputs: list[OmniRequestOutput]) -> list[dict[str,
     return collected
 
 
-def _split_waveforms(audio_obj: Any) -> list[np.ndarray]:
+def _split_waveforms(audio_obj: Any) -> "list[np.ndarray]":
     arr = _to_numpy(audio_obj)
     if arr is None:
         return []
@@ -295,7 +295,7 @@ def _split_waveforms(audio_obj: Any) -> list[np.ndarray]:
     return [arr.reshape(-1)]
 
 
-def _to_numpy(value: Any) -> np.ndarray | None:
+def _to_numpy(value: Any) -> "np.ndarray | None":
     if np is None or value is None:
         return None
     if isinstance(value, np.ndarray):
@@ -315,7 +315,7 @@ def _to_numpy(value: Any) -> np.ndarray | None:
     return None
 
 
-def _save_waveform(waveform: np.ndarray, path: Path, sample_rate: int) -> None:
+def _save_waveform(waveform: "np.ndarray", path: Path, sample_rate: int) -> None:
     data = waveform
     if data.ndim == 2 and data.shape[0] <= 8 and data.shape[1] > data.shape[0]:
         data = data.T
