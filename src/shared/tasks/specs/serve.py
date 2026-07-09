@@ -13,6 +13,9 @@ class ServeSpecStrict(ModelSpecStrict):
     accessMode: Literal["direct", "forward"] | None = None
     port: Annotated[int, Field(ge=1, le=65535)] | None = None
 
+    def validate_dispatchable(self) -> None:
+        _validate_serve_dispatchable(self)
+
 
 class ServeSpecTemplate(ModelSpecTemplate):
     taskType: Literal[TaskType.SERVE]
@@ -20,3 +23,19 @@ class ServeSpecTemplate(ModelSpecTemplate):
     readinessTimeoutSeconds: Annotated[float, Field(gt=0)] | None = None
     accessMode: Literal["direct", "forward"] | None = None
     port: Annotated[int, Field(ge=1, le=65535)] | None = None
+
+    def validate_dispatchable(self) -> None:
+        _validate_serve_dispatchable(self)
+
+
+def _validate_serve_dispatchable(spec: "ServeSpecStrict | ServeSpecTemplate") -> None:
+    """A serve task always launches a persistent vLLM GPU server, so it must
+    request at least one GPU or GPU scheduling and accounting are bypassed."""
+    hardware = spec.resources.hardware if spec.resources else None
+    gpu = hardware.gpu if hardware else None
+    if gpu and gpu.count is not None and gpu.count >= 1:
+        return
+    raise ValueError(
+        "serve task launches a persistent vLLM server but requests no GPU. "
+        "Set spec.resources.hardware.gpu.count >= 1."
+    )

@@ -245,3 +245,39 @@ class TestInferenceSpecValidation:
             "resources:\n  hardware:\n    gpu:\n      count: 1\n"
         )
         assert self._gpu_count(spec) == 1
+
+
+class TestServeSpecValidation:
+    def _parse_serve(self, body: str) -> TaskSpecTemplateBase:
+        doc = textwrap.dedent("""\
+            apiVersion: flowmesh/v1
+            kind: Task
+            metadata:
+              name: serve
+            spec:
+              taskType: serve
+            """) + textwrap.indent(textwrap.dedent(body), "  ")
+        return parse_workflow(doc, format="native").tasks[0].task.spec
+
+    def _gpu_count(self, spec: TaskSpecTemplateBase) -> int | None:
+        hardware = spec.resources.hardware if spec.resources else None
+        gpu = hardware.gpu if hardware else None
+        return gpu.count if gpu else None
+
+    def test_without_gpu_is_rejected(self) -> None:
+        with pytest.raises(ValueError, match="requests no GPU"):
+            self._parse_serve("model:\n  source:\n    identifier: Qwen/Qwen3-7B\n")
+
+    def test_zero_gpu_is_rejected(self) -> None:
+        with pytest.raises(ValueError, match="requests no GPU"):
+            self._parse_serve(
+                "model:\n  source:\n    identifier: Qwen/Qwen3-7B\n"
+                "resources:\n  hardware:\n    gpu:\n      count: 0\n"
+            )
+
+    def test_with_gpu_parses(self) -> None:
+        spec = self._parse_serve(
+            "model:\n  source:\n    identifier: Qwen/Qwen3-7B\n"
+            "resources:\n  hardware:\n    gpu:\n      count: 1\n"
+        )
+        assert self._gpu_count(spec) == 1
