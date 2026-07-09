@@ -6,9 +6,9 @@ from typing import Any, cast
 import pytest
 
 from worker.executors.omni_executor_base import (
+    OmniRequestOutput,
     extract_audio_from_mm,
     extract_multimodal_output,
-    OmniRequestOutput,
 )
 from worker.executors.omni_text2audio_executor import _extract_audio_waveforms
 from worker.executors.omni_text2general_executor import _extract_request_audio
