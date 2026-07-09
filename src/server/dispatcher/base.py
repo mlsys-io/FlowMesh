@@ -500,8 +500,8 @@ class Dispatcher:
 
         if receivers <= 0:
             self._logger.info(
-                "Node %s dispatch channel has no live subscriber; delaying task %s "
-                "(orphaned worker %s)",
+                "Node %s dispatch channel has no subscriber; delaying task %s "
+                "(worker %s)",
                 worker.node_id,
                 task_id,
                 worker.id,
@@ -511,10 +511,10 @@ class Dispatcher:
                 record,
                 reason="no_dispatch_subscriber",
                 message=(
-                    f"Selected worker {worker.id} on node {worker.node_id} has no "
-                    "live dispatch subscriber (orphaned/stale worker registration); "
-                    "the worker heartbeats but its supervisor is not consuming the "
-                    "node dispatch channel"
+                    f"Selected worker {worker.id} on node {worker.node_id} is "
+                    "undeliverable: nothing is subscribed to the node's dispatch "
+                    "channel (the node may be down, restarting, or its worker "
+                    "registration stale)"
                 ),
                 extra_payload={"worker_id": worker.id, "node_id": worker.node_id},
             )
