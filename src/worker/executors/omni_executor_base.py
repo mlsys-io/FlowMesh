@@ -147,6 +147,7 @@ class OmniExecutorBase(InferenceMixin, Executor):
             cfg.get("log_stats"),
             cfg.get("stage_init_timeout"),
             cfg.get("init_timeout"),
+            cfg.get("async_chunk"),
         )
 
     def _materialize_stage_configs(self, cfg: dict[str, Any]) -> str | None:
@@ -271,6 +272,8 @@ class OmniExecutorBase(InferenceMixin, Executor):
             init_kwargs["stage_configs_path"] = stage_configs_path
         if cfg.get("log_stats") is not None:
             init_kwargs["log_stats"] = to_bool(cfg.get("log_stats"), default=False)
+        if cfg.get("async_chunk") is not None:
+            init_kwargs["async_chunk"] = to_bool(cfg.get("async_chunk"), default=False)
         for key in ("stage_init_timeout", "init_timeout"):
             val = to_int(cfg.get(key))
             if val is not None:
