@@ -337,7 +337,12 @@ class NodeRegistry:
         channel = node_cmd_channel(node_id)
         fut = self._loop.create_future()
         self._node_responses[cmd.command_id] = fut
-        self._rds.sync.publish_control(channel, cmd.model_dump_json())
+        try:
+            self._rds.sync.publish_control(channel, cmd.model_dump_json())
+        except Exception:
+            self._node_responses.pop(cmd.command_id, None)
+            fut.cancel()
+            raise
         return fut
 
     async def exec_node_cmd(
