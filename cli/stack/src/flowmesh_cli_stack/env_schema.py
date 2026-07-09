@@ -263,15 +263,9 @@ STACK_ENV_SCHEMA = EnvSchema(
             ],
         ),
         EnvSection(
-            title="SSH Task Support",
+            title="Forward Task Support (SSH / Serve)",
             vars=[
-                EnvVar("ENABLE_SERVER_SSH_PROXY", "true", var_type=EnvVarType.BOOL),
                 EnvVar("ENABLE_SERVER_FORWARD", "true", var_type=EnvVarType.BOOL),
-                EnvVar(
-                    "ENABLE_SERVER_SSH_CONNECTION_AUDIT",
-                    "true",
-                    var_type=EnvVarType.BOOL,
-                ),
                 EnvVar("SERVER_FORWARD_BIND_HOST", "0.0.0.0", required=True),
                 EnvVar("SERVER_FORWARD_PUBLIC_HOST", "localhost", required=True),
                 EnvVar(
@@ -287,6 +281,17 @@ STACK_ENV_SCHEMA = EnvSchema(
                     var_type=EnvVarType.INT,
                     required=True,
                     min_value=1,
+                ),
+            ],
+        ),
+        EnvSection(
+            title="SSH Task Support",
+            vars=[
+                EnvVar("ENABLE_SERVER_SSH_PROXY", "true", var_type=EnvVarType.BOOL),
+                EnvVar(
+                    "ENABLE_SERVER_SSH_CONNECTION_AUDIT",
+                    "true",
+                    var_type=EnvVarType.BOOL,
                 ),
             ],
         ),
