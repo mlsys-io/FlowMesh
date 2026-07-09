@@ -313,12 +313,6 @@ def _extract_request_audio(req: OmniRequestOutput) -> Any:
             mm.get("audio") is not None or mm.get("model_outputs") is not None
         ):
             return extract_audio_from_mm(mm)
-    if isinstance(req, Mapping):
-        mm = req.get("multimodal_output")
-        if isinstance(mm, Mapping) and (
-            mm.get("audio") is not None or mm.get("model_outputs") is not None
-        ):
-            return extract_audio_from_mm(mm)
     return None
 
 
