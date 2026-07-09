@@ -55,8 +55,9 @@ server plus one supervisor-only server process per worker node.
 
 ## Quick start
 
-Requires Docker, Docker Compose, and Python 3.12+. If you want to use GPU
-workers, ensure the NVIDIA Container Toolkit is also installed.
+FlowMesh targets Linux only. Requires Docker, Docker Compose, and Python
+3.12+. If you want to use GPU workers, ensure the NVIDIA Container Toolkit is
+also installed.
 
 ```bash
 # 1. Install
