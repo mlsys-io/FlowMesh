@@ -1,18 +1,25 @@
 """Omni executor for image generation via vllm_omni."""
 
 import logging
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
+
+from PIL import Image
 
 from shared.schemas.artifact import ArtifactRef
 from shared.schemas.governance import SpanType
 from shared.tasks.specs import TaskSpecStrictBase
 from shared.tasks.specs.omni import OmniText2ImageSpecStrict
 from shared.tasks.task_type import TaskType
-from shared.utils.parsing import as_list
 
 from .base_executor import ExecutionError, ExecutorTask
-from .omni_executor_base import _HAS_OMNI, OmniExecutorBase, OmniResult
+from .omni_executor_base import (
+    _HAS_OMNI,
+    OmniExecutorBase,
+    OmniRequestOutput,
+    OmniResult,
+)
 
 logger = logging.getLogger(__name__)
 EXECUTOR_NAME = "omni_text2image"
@@ -79,7 +86,7 @@ class OmniText2ImageExecutor(OmniExecutorBase):
                     default_prefix="generated_image",
                 )
                 save_path.parent.mkdir(parents=True, exist_ok=True)
-                _save_image(image, save_path)
+                image.save(save_path.as_posix())
                 items.append(
                     {
                         "index": idx,
@@ -124,7 +131,7 @@ class OmniText2ImageExecutor(OmniExecutorBase):
 
     # ── generation ───────────────────────────────────────────────────────
 
-    def _generate_images(self, prompts: list[str]) -> list[Any]:
+    def _generate_images(self, prompts: list[str]) -> list[Image.Image]:
         if self._omni is None:
             raise ExecutionError("Omni model not initialized.")
         if len(prompts) == 1:
@@ -138,7 +145,7 @@ class OmniText2ImageExecutor(OmniExecutorBase):
             )
         return images
 
-    def _generate_single(self, prompt: str) -> Any:
+    def _generate_single(self, prompt: str) -> Image.Image:
         if self._omni is None:
             raise ExecutionError("Omni model not initialized.")
         outputs = self._omni.generate(prompt, use_tqdm=False)
@@ -151,35 +158,5 @@ class OmniText2ImageExecutor(OmniExecutorBase):
 # ── image extraction helpers ─────────────────────────────────────────────────
 
 
-def _extract_images(outputs: Any) -> list[Any]:
-    collected: list[Any] = []
-    for stage_output in as_list(outputs):
-        request_outputs = as_list(getattr(stage_output, "request_output", None))
-        if request_outputs:
-            for ro in request_outputs:
-                if ro is None:
-                    continue
-                imgs = getattr(ro, "images", None)
-                if isinstance(imgs, list) and imgs:
-                    collected.extend(imgs[:1])
-                    continue
-                if isinstance(ro, dict):
-                    imgs = ro.get("images")
-                    if isinstance(imgs, list) and imgs:
-                        collected.extend(imgs[:1])
-            continue
-        imgs = getattr(stage_output, "images", None)
-        if isinstance(imgs, list) and imgs:
-            collected.extend(imgs[:1])
-        if isinstance(stage_output, dict):
-            imgs = stage_output.get("images")
-            if isinstance(imgs, list) and imgs:
-                collected.extend(imgs[:1])
-    return collected
-
-
-def _save_image(image: Any, path: Path) -> None:
-    if hasattr(image, "save"):
-        image.save(path.as_posix())
-        return
-    raise ExecutionError("Omni image object does not support save().")
+def _extract_images(outputs: Iterable[OmniRequestOutput]) -> list[Image.Image]:
+    return [imgs[0] for stage_output in outputs if (imgs := stage_output.images)]

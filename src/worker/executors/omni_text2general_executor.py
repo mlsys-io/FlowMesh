@@ -1,6 +1,7 @@
 """Omni executor for narration/speech generation via Qwen3-Omni."""
 
 import logging
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -15,19 +16,24 @@ except Exception:
         SamplingParams = None
     _HAS_VLLM = False
 
+if TYPE_CHECKING:
+    from vllm_omni.inputs.data import OmniTextPrompt
+
 from shared.schemas.artifact import ArtifactRef
 from shared.schemas.governance import SpanType
 from shared.tasks.specs import TaskSpecStrictBase
 from shared.tasks.specs.omni import OmniText2GeneralSpecStrict
 from shared.tasks.task_type import TaskType
-from shared.utils.parsing import as_list, to_bool, to_float, to_int, to_int_list
+from shared.utils.parsing import to_bool, to_float, to_int, to_int_list
 from worker.config import WorkerConfig
 
 from .base_executor import ExecutionError, ExecutorTask
 from .omni_executor_base import (
     _HAS_OMNI,
     OmniExecutorBase,
+    OmniRequestOutput,
     OmniResult,
+    RequestOutput,
     extract_audio_from_mm,
     save_audio,
 )
@@ -101,7 +107,7 @@ class OmniText2GeneralExecutor(OmniExecutorBase):
         if self._omni is None:
             raise ExecutionError("Omni model failed to initialize.")
 
-        prompts = [
+        prompts: list[OmniTextPrompt] = [
             {
                 "prompt": self._build_prompt(text, spec_dict=spec_dict),
                 "modalities": output_modalities,
@@ -117,40 +123,41 @@ class OmniText2GeneralExecutor(OmniExecutorBase):
             span_type=SpanType.COMPUTE,
             attributes={"task_id": task.task_id, "prompt_count": len(prompts)},
         ):
+            generator: Iterable[OmniRequestOutput]
             try:
-                generator = self._omni.generate(
-                    prompts, sampling_params, py_generator=py_generator
-                )
+                if py_generator:
+                    generator = self._omni.generate(
+                        prompts, sampling_params, py_generator=True
+                    )
+                else:
+                    generator = self._omni.generate(
+                        prompts, sampling_params, py_generator=False
+                    )
             except Exception as exc:
                 raise ExecutionError(
                     f"omni_text2general generation failed to start: {exc}",
                     retryable=True,
                 ) from exc
 
-            for stage_outputs in generator:
-                final_type = (
-                    str(getattr(stage_outputs, "final_output_type", "")).strip().lower()
-                )
-                request_outputs = as_list(
-                    getattr(stage_outputs, "request_output", None)
-                )
-                if not request_outputs:
+            for stage_output in generator:
+                final_type = stage_output.final_output_type
+                request_output = stage_output.request_output
+                if not request_output:
                     continue
                 if final_type == "text":
-                    for req in request_outputs:
-                        rid = _request_id(req, default_index=len(text_results) + 1)
-                        text_out = _extract_text_output(req)
-                        if text_out is not None:
-                            text_results[rid] = text_out
+                    text_out = _extract_text_output(request_output)
+                    if text_out is not None:
+                        text_results[request_output.request_id] = text_out
                     continue
                 if final_type == "audio":
-                    for req in request_outputs:
-                        rid = _request_id(req, default_index=len(audio_results) + 1)
-                        audio_obj = _extract_request_audio(req)
-                        if audio_obj is not None:
-                            audio_results.append(
-                                {"request_id": rid, "audio": audio_obj}
-                            )
+                    audio_obj = _extract_request_audio(stage_output)
+                    if audio_obj is not None:
+                        audio_results.append(
+                            {
+                                "request_id": request_output.request_id,
+                                "audio": audio_obj,
+                            }
+                        )
 
         if not audio_results:
             raise ExecutionError(
@@ -296,38 +303,24 @@ def _build_sampling_params(cfg: dict[str, Any]) -> list[Any]:
     return [thinker, talker, code2wav]
 
 
-def _extract_request_audio(req: Any) -> Any:
-    outputs = getattr(req, "outputs", None)
+def _extract_request_audio(req: OmniRequestOutput) -> Any:
+    outputs = req.outputs
     if isinstance(outputs, list) and outputs:
         mm = getattr(outputs[0], "multimodal_output", None)
-        if isinstance(mm, dict) and mm.get("audio") is not None:
+        if isinstance(mm, Mapping) and (
+            mm.get("audio") is not None or mm.get("model_outputs") is not None
+        ):
             return extract_audio_from_mm(mm)
-    if isinstance(req, dict):
+    if isinstance(req, Mapping):
         mm = req.get("multimodal_output")
-        if isinstance(mm, dict) and mm.get("audio") is not None:
+        if isinstance(mm, Mapping) and (
+            mm.get("audio") is not None or mm.get("model_outputs") is not None
+        ):
             return extract_audio_from_mm(mm)
     return None
 
 
-def _extract_text_output(req: Any) -> str | None:
-    outputs = getattr(req, "outputs", None)
-    if isinstance(outputs, list) and outputs:
-        text = getattr(outputs[0], "text", None)
-        if text is not None:
-            s = str(text).strip()
-            return s if s else None
-    if isinstance(req, dict):
-        outputs = req.get("outputs")
-        if isinstance(outputs, list) and outputs and isinstance(outputs[0], dict):
-            text = outputs[0].get("text")
-            if text is not None:
-                s = str(text).strip()
-                return s if s else None
-    return None
-
-
-def _request_id(req: Any, default_index: int) -> str:
-    value = getattr(req, "request_id", None)
-    if value in (None, "") and isinstance(req, dict):
-        value = req.get("request_id")
-    return str(value) if value not in (None, "") else f"req_{default_index}"
+def _extract_text_output(output: RequestOutput) -> str | None:
+    if not (outputs := output.outputs):
+        return None
+    return text if (text := outputs[0].text.strip()) else None

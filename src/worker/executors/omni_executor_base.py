@@ -15,6 +15,7 @@ import struct
 import tempfile
 import wave
 from abc import abstractmethod
+from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, cast
 
@@ -39,6 +40,15 @@ except Exception:
     else:
         np = None
         torch = None
+
+if TYPE_CHECKING:
+    from vllm import RequestOutput as RequestOutput
+    from vllm_omni.entrypoints.omni import Omni as Omni
+    from vllm_omni.outputs import OmniRequestOutput as OmniRequestOutput
+else:
+    Omni = object
+    OmniRequestOutput = object
+    RequestOutput = object
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +77,7 @@ class OmniExecutorBase(InferenceMixin, Executor):
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
-        self._omni: Any | None = None
+        self._omni: Omni | None = None
         self._model_name: str | None = None
         self._omni_spec: tuple[Any, ...] | None = None
         self._stage_configs_tmp: Path | None = None
@@ -384,25 +394,20 @@ def write_wav(path: Path, samples: list[float], sample_rate: int) -> None:
 # ── multimodal output extraction (shared by tts, narration) ─────────────────
 
 
-def extract_multimodal_output(value: Any) -> dict[str, Any] | None:
-    if value is None:
+def extract_multimodal_output(
+    output: OmniRequestOutput | None,
+) -> Mapping[str, Any] | None:
+    if output is None:
         return None
-    if isinstance(value, dict):
-        mm = value.get("multimodal_output")
-        return mm if isinstance(mm, dict) else None
-    outputs = getattr(value, "outputs", None)
-    if isinstance(outputs, list) and outputs:
-        mm = getattr(outputs[0], "multimodal_output", None)
-        if isinstance(mm, dict):
-            return mm
-    mm = getattr(value, "multimodal_output", None)
-    return mm if isinstance(mm, dict) else None
+    return mm if isinstance(mm := output.multimodal_output, Mapping) else None
 
 
-def extract_audio_from_mm(mm: dict[str, Any] | None) -> Any:
-    if not isinstance(mm, dict):
+def extract_audio_from_mm(mm: Mapping[str, Any] | None) -> Any:
+    if mm is None:
         return None
     audio = mm.get("audio")
+    if audio is None:
+        audio = mm.get("model_outputs")
     if audio is None:
         return None
     sr = (
@@ -411,4 +416,6 @@ def extract_audio_from_mm(mm: dict[str, Any] | None) -> Any:
         or mm.get("sampling_rate")
         or mm.get("sr")
     )
+    if isinstance(sr, (list, tuple)) and sr:
+        sr = sr[0]
     return {"audio": audio, "sample_rate": sr} if sr is not None else audio

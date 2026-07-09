@@ -27,6 +27,7 @@ from .base_executor import ExecutionError, ExecutorTask
 from .omni_executor_base import (
     _HAS_OMNI,
     OmniExecutorBase,
+    OmniRequestOutput,
     OmniResult,
     extract_multimodal_output,
 )
@@ -104,7 +105,7 @@ class OmniText2AudioExecutor(OmniExecutorBase):
             raise ExecutionError("Omni BGM model failed to initialize.")
 
         generator_device = _resolve_generator_device()
-        per_prompt_outputs: list[tuple[int, str, Any]] = []
+        per_prompt_outputs: list[tuple[int, str, list[OmniRequestOutput]]] = []
         with self._span(
             "generation",
             span_type=SpanType.COMPUTE,
@@ -250,61 +251,25 @@ def _resolve_generator_device() -> str:
     return "cpu"
 
 
-def _extract_audio_waveforms(outputs: Any) -> list[dict[str, Any]]:
+def _extract_audio_waveforms(outputs: list[OmniRequestOutput]) -> list[dict[str, Any]]:
     collected: list[dict[str, Any]] = []
-    for stage_output in _iter_outputs(outputs):
-        for req in _extract_request_outputs(stage_output):
-            request_id = _request_id(req)
-            mm = extract_multimodal_output(req)
-            audio_obj = mm.get("audio") if isinstance(mm, dict) else None
-            if audio_obj is None and isinstance(stage_output, dict):
-                mm2 = stage_output.get("multimodal_output")
-                if isinstance(mm2, dict):
-                    audio_obj = mm2.get("audio")
-            if audio_obj is None:
-                continue
-            for waveform in _split_waveforms(audio_obj):
-                collected.append({"request_id": request_id, "waveform": waveform})
+    for stage_output in outputs:
+        mm = extract_multimodal_output(stage_output)
+        if not mm:
+            continue
+        audio_obj = mm.get("audio")
+        if audio_obj is None:
+            audio_obj = mm.get("model_outputs")
+        if audio_obj is None:
+            continue
+        for waveform in _split_waveforms(audio_obj):
+            collected.append(
+                {"request_id": stage_output.request_id, "waveform": waveform}
+            )
     return collected
 
 
-def _iter_outputs(outputs: Any) -> list[Any]:
-    if outputs is None:
-        return []
-    if isinstance(outputs, (list, tuple)):
-        return list(outputs)
-    if hasattr(outputs, "__iter__") and not isinstance(
-        outputs, (dict, str, bytes, bytearray)
-    ):
-        try:
-            return list(outputs)
-        except Exception:
-            return [outputs]
-    return [outputs]
-
-
-def _extract_request_outputs(stage_output: Any) -> list[Any]:
-    if stage_output is None:
-        return []
-    if isinstance(stage_output, dict):
-        ro = stage_output.get("request_output")
-        if isinstance(ro, list):
-            return ro
-        return [ro] if ro is not None else [stage_output]
-    ro = getattr(stage_output, "request_output", None)
-    if isinstance(ro, list):
-        return ro
-    return [ro] if ro is not None else [stage_output]
-
-
-def _request_id(value: Any) -> str:
-    rid = getattr(value, "request_id", None)
-    if rid in (None, "") and isinstance(value, dict):
-        rid = value.get("request_id")
-    return str(rid) if rid not in (None, "") else "req"
-
-
-def _split_waveforms(audio_obj: Any) -> list[Any]:
+def _split_waveforms(audio_obj: Any) -> list[np.ndarray]:
     arr = _to_numpy(audio_obj)
     if arr is None:
         return []
@@ -316,9 +281,9 @@ def _split_waveforms(audio_obj: Any) -> list[Any]:
             arr = arr.T
         return [arr]
     if arr.ndim == 3:
-        waveforms: list[Any] = []
+        waveforms: list[np.ndarray] = []
         for idx in range(arr.shape[0]):
-            sample = arr[idx]
+            sample: np.ndarray = arr[idx]
             if (
                 sample.ndim == 2
                 and sample.shape[0] <= 8
@@ -330,7 +295,7 @@ def _split_waveforms(audio_obj: Any) -> list[Any]:
     return [arr.reshape(-1)]
 
 
-def _to_numpy(value: Any) -> Any:
+def _to_numpy(value: Any) -> np.ndarray | None:
     if np is None or value is None:
         return None
     if isinstance(value, np.ndarray):
@@ -350,7 +315,7 @@ def _to_numpy(value: Any) -> Any:
     return None
 
 
-def _save_waveform(waveform: Any, path: Path, sample_rate: int) -> None:
+def _save_waveform(waveform: np.ndarray, path: Path, sample_rate: int) -> None:
     data = waveform
     if data.ndim == 2 and data.shape[0] <= 8 and data.shape[1] > data.shape[0]:
         data = data.T
