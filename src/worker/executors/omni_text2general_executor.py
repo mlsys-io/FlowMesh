@@ -18,6 +18,8 @@ except Exception:
 
 if TYPE_CHECKING:
     from vllm_omni.inputs.data import OmniTextPrompt
+else:
+    OmniTextPrompt = object
 
 from shared.schemas.artifact import ArtifactRef
 from shared.schemas.governance import SpanType
