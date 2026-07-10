@@ -96,29 +96,6 @@ def container_logs(
     )
 
 
-def inspect_image(
-    image: str, capture_output: bool = False
-) -> subprocess.CompletedProcess[str]:
-    """Inspect a docker image by tag."""
-    ensure_docker_available()
-    return subprocess.run(
-        ["docker", "image", "inspect", image],
-        check=False,
-        capture_output=capture_output,
-        text=True,
-    )
-
-
-def remove_image(
-    image: str, capture_output: bool = False
-) -> subprocess.CompletedProcess[str]:
-    """Remove a docker image by tag."""
-    ensure_docker_available()
-    return subprocess.run(
-        ["docker", "rmi", image], check=False, capture_output=capture_output, text=True
-    )
-
-
 def image_env_overrides(image_tag: str | None) -> dict[str, str]:
     """Build ``FLOWMESH_VERSION`` overrides for compose commands."""
     env: dict[str, str] = {}
