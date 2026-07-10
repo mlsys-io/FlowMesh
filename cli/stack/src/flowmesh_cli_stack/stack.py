@@ -16,8 +16,6 @@ from flowmesh_stack.docker import (
     DockerError,
     ensure_docker_available,
     image_env_overrides,
-    inspect_image,
-    remove_image,
 )
 from flowmesh_stack.doctor import DoctorFinding, run_doctor_checks
 from flowmesh_stack.env import ensure_env_file, load_env, parse_env_file
@@ -27,7 +25,6 @@ from flowmesh_stack.images import (
     BUILD_TARGETS,
     expand_build_targets,
     get_cache_ref,
-    get_image_ref,
     get_push_platforms,
 )
 
@@ -770,76 +767,3 @@ def init(
     }
     env_file.write_text(render_env_example(STACK_ENV_SCHEMA, overrides=overrides))
     logging.success(f"Wrote {env_file} (NODE_ROLE={node_role.value}).")
-
-
-@app.command("purge")
-def purge(
-    version: str = typer.Argument(
-        ..., help="FlowMesh version to purge from local Docker"
-    ),
-    targets: list[str] | None = typer.Option(
-        None,
-        "--target",
-        "-t",
-        help="Optional specific image targets to purge "
-        "(e.g., flowmesh_server, flowmesh_worker_gpu, etc.)",
-    ),
-    dry_run: bool = typer.Option(
-        False, "--dry-run", help="List images to be purged without deleting them"
-    ),
-    env_file: Path = typer.Option(
-        DEFAULT_ENV_FILE, "--env-file", help="Env file for docker"
-    ),
-) -> None:
-    """Purge FlowMesh Docker images for a specific version from local Docker."""
-    try:
-        ensure_docker_available()
-    except DockerError as exc:
-        logging.error(str(exc))
-        raise typer.Exit(code=1)
-
-    logging.info(f"Purging FlowMesh Docker images with version '{version}'...")
-    load_env(env_file, base_dir=Path.cwd(), path_keys=STACK_PATH_KEYS)
-
-    if targets is None:
-        targets = list(BUILD_TARGETS)
-    else:
-        invalid = [t for t in targets if t not in BUILD_TARGETS]
-        if invalid:
-            logging.error(f"Invalid targets specified: {', '.join(invalid)}")
-            raise typer.Exit(code=1)
-
-    images_to_purge: list[str] = []
-    registry = os.getenv("FLOWMESH_REGISTRY", "ghcr.io/mlsys-io")
-    for target in targets:
-        image_ref = get_image_ref(registry=registry, version=version, target=target)
-        result = inspect_image(image_ref, capture_output=True)  # Check if image exists
-        if result.returncode == 0:
-            images_to_purge.append(image_ref)
-        else:
-            logging.warning(f"Image not found: {image_ref}")
-
-    if not images_to_purge:
-        logging.info("No images to purge.")
-        return
-
-    if dry_run:
-        logging.info("Images to be purged:")
-        for image in images_to_purge:
-            logging.log(f"  {image}")
-        return
-
-    error = False
-    for image in images_to_purge:
-        result = remove_image(image, capture_output=True)
-        if result.returncode == 0:
-            logging.success(f"Removed image: {image}")
-        else:
-            logging.error(f"Failed to remove image: {image}")
-            if result.stdout:
-                logging.log(result.stdout)
-            if result.stderr:
-                logging.log(result.stderr, err=True)
-            error = True
-    if error:
-        raise typer.Exit(code=1)
