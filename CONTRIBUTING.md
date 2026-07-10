@@ -65,8 +65,10 @@ This installs three hook stages:
   `chore:`, `test:`, `perf:`, `docs:`. Use `docs:` for doc-only PRs —
   those skip the code-related CI jobs (lint, tests, security,
   env/requirements sync).
-- Optional scope: `feat(server): ...`. Optional `[BREAKING]` prefix
-  *before* the type for breaking changes: `[BREAKING] feat: ...`.
+- PR titles take no scope: `check_pr_title.py` accepts only `type:
+  description`, so a scoped title like `feat(server): ...` fails the check.
+  Optional `[BREAKING]` prefix *before* the type for breaking changes:
+  `[BREAKING] feat: ...`.
 - For commit messages, the subject should be a short sentence about the key changes;
   add body only when the reason for the changes need elaboration.
 - Sign off (`--signoff`) is required for every commit.
