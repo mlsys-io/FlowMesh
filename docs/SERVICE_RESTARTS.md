@@ -131,8 +131,8 @@ the container or the server process:
   from a graceful stop and reloads the snapshot on the next start. This is what
   lets a restart (or a plain `stack down` / `stack up`) resume in-flight work.
 - `flowmesh stack clean` is the only command that wipes the state: it runs
-  `down -v`, removing the volumes. (`stack purge` only deletes images; it does
-  not touch the volumes.)
+  `down -v`, removing the volumes. (`stack image prune` / `stack image rm` only
+  delete images; they do not touch the volumes.)
 
 Persistence is snapshot-based (RDB), not write-synchronous, so a *graceful*
 restart preserves everything, but an abrupt loss of a Redis container (kill,
