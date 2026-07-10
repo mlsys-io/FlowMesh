@@ -1,7 +1,7 @@
 """Omni executor for narration/speech generation via Qwen3-Omni."""
 
 import logging
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -38,6 +38,7 @@ from .omni_executor_base import (
     OmniResult,
     RequestOutput,
     extract_audio_from_mm,
+    extract_multimodal_output,
     save_audio,
 )
 
@@ -153,7 +154,9 @@ class OmniText2GeneralExecutor(OmniExecutorBase):
                         text_results[request_output.request_id] = text_out
                     continue
                 if final_type == "audio":
-                    audio_obj = _extract_request_audio(stage_output)
+                    audio_obj = extract_audio_from_mm(
+                        extract_multimodal_output(stage_output)
+                    )
                     if audio_obj is not None:
                         audio_results.append(
                             {
@@ -302,17 +305,6 @@ def _build_sampling_params(cfg: dict[str, Any]) -> list[Any]:
         ),
     )
     return [thinker, talker, code2wav]
-
-
-def _extract_request_audio(req: OmniRequestOutput) -> Any:
-    outputs = req.outputs
-    if isinstance(outputs, list) and outputs:
-        mm = getattr(outputs[0], "multimodal_output", None)
-        if isinstance(mm, Mapping) and (
-            mm.get("audio") is not None or mm.get("model_outputs") is not None
-        ):
-            return extract_audio_from_mm(mm)
-    return None
 
 
 def _extract_text_output(output: RequestOutput) -> str | None:

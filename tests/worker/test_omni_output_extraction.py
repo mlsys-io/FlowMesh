@@ -11,7 +11,6 @@ from worker.executors.omni_executor_base import (
     extract_multimodal_output,
 )
 from worker.executors.omni_text2audio_executor import _extract_audio_waveforms
-from worker.executors.omni_text2general_executor import _extract_request_audio
 
 
 class MappingPayload(Mapping[str, Any]):
@@ -160,7 +159,7 @@ def test_text2general_extracts_mapping_payload_model_outputs() -> None:
         )
     ).as_omni_request_output()
 
-    assert _extract_request_audio(output) == {
+    assert extract_audio_from_mm(extract_multimodal_output(output)) == {
         "audio": [[0.1, -0.1]],
         "sample_rate": 24000,
     }
