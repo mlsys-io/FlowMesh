@@ -111,6 +111,9 @@ WORKER_HB_DIR: str = os.getenv("WORKER_HB_DIR") or os.path.join(
     tempfile.gettempdir(), "flowmesh_worker_health"
 )
 WORKER_UPLOAD_RESULTS: bool = parse_bool_env("WORKER_UPLOAD_RESULTS", False)
+WORKER_EXECUTOR_IDLE_CLEANUP_SEC: float = parse_float_env(
+    "WORKER_EXECUTOR_IDLE_CLEANUP_SEC", 60
+)
 
 VAST_SEARCH_LIMIT: int = int(os.getenv("VAST_SEARCH_LIMIT") or "10")
 VAST_MAX_RETRIES: int = int(os.getenv("VAST_MAX_RETRIES") or "1")

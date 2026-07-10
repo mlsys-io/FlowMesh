@@ -511,6 +511,12 @@ STACK_ENV_SCHEMA = EnvSchema(
                 ),
                 EnvVar("WORKER_UPLOAD_RESULTS", "false", var_type=EnvVarType.BOOL),
                 EnvVar(
+                    "WORKER_EXECUTOR_IDLE_CLEANUP_SEC",
+                    "60",
+                    var_type=EnvVarType.FLOAT,
+                    min_value=0,
+                ),
+                EnvVar(
                     "MODEL_CLEANUP_AFTER_UPLOAD",
                     "0",
                     var_type=EnvVarType.INT,

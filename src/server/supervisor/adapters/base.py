@@ -73,6 +73,8 @@ class WorkerConfig(BaseModel):
     upload_results: bool = env.WORKER_UPLOAD_RESULTS
     """Whether to always upload results to the server if spec.output.destination
     is unspecified."""
+    executor_idle_cleanup_sec: float = env.WORKER_EXECUTOR_IDLE_CLEANUP_SEC
+    """Seconds an executor may sit idle before the worker unloads it"""
 
 
 WorkerTokenType = NewType("WorkerTokenType", str)
@@ -162,6 +164,9 @@ class WorkerAdapter(ABC):
                 config.network_bandwidth
             ),
             "WORKER_UPLOAD_RESULTS": to_env_str(config.upload_results),
+            "WORKER_EXECUTOR_IDLE_CLEANUP_SEC": to_env_str(
+                config.executor_idle_cleanup_sec
+            ),
             "DOCKER_GPU_RUNTIME": to_env_str(env.DOCKER_GPU_RUNTIME),
             "FLOWMESH_API_KEY": to_env_str(env.FLOWMESH_API_KEY),
             "WORKER_OWNER_PRINCIPAL_JSON": self.owner.model_dump_json(),
