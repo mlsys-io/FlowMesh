@@ -110,3 +110,57 @@ def get_push_platforms(target: str) -> str:
     if target not in PUSH_PLATFORMS:
         raise ValueError(f"Unknown build target: {target}")
     return PUSH_PLATFORMS[target]
+
+
+_REF_SENTINEL = "\x00"
+_RESERVED_CACHE_VERSION = "cache"
+_RESERVED_CACHE_PREFIX = "cache-"
+
+
+def _ref_pattern(registry: str, target: str) -> tuple[str, str]:
+    """Return the ``(repo, tag_suffix)`` a build target's refs take under a registry.
+
+    Derived from :data:`BUILD_TARGETS` so the mapping never drifts from the
+    canonical format strings. ``tag_suffix`` is ``""`` for targets whose tag is
+    the bare version (e.g. the server), or ``-cpu`` / ``-gpu`` otherwise.
+    """
+    ref = BUILD_TARGETS[target].format(registry=registry, version=_REF_SENTINEL)
+    repo, _, tag_template = ref.partition(":")
+    _, _, suffix = tag_template.partition(_REF_SENTINEL)
+    return repo, suffix
+
+
+def managed_repos(registry: str) -> set[str]:
+    """Return the distinct image repositories FlowMesh publishes under a registry."""
+    return {_ref_pattern(registry, target)[0] for target in BUILD_TARGETS}
+
+
+def parse_image_ref(registry: str, ref: str) -> tuple[str, str] | None:
+    """Map a concrete image reference back to its ``(target, version)``.
+
+    Inverse of :func:`get_image_ref`. Returns ``None`` for references outside the
+    managed repositories, references without a tag, and cache-scope tags reserved
+    by :data:`CACHE_TARGETS` (``cache`` / ``cache-*``), which are registry-only
+    and must never be treated as prunable versions.
+    """
+    repo, sep, tag = ref.partition(":")
+    if not sep or not tag:
+        return None
+    for target in BUILD_TARGETS:
+        target_repo, suffix = _ref_pattern(registry, target)
+        if repo != target_repo:
+            continue
+        if suffix:
+            if not tag.endswith(suffix):
+                continue
+            version = tag[: -len(suffix)]
+        else:
+            version = tag
+        if not version:
+            continue
+        if version == _RESERVED_CACHE_VERSION or version.startswith(
+            _RESERVED_CACHE_PREFIX
+        ):
+            return None
+        return target, version
+    return None

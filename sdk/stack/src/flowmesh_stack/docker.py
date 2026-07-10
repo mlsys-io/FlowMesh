@@ -1,11 +1,20 @@
 """Local Docker and compose helpers for FlowMesh tooling."""
 
+import json
 import os
+import re
 import shutil
 import subprocess
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
+
+from .images import managed_repos, parse_image_ref
+
+FLOWMESH_IMAGE_SOURCE = "https://github.com/mlsys-io/FlowMesh"
+"""``org.opencontainers.image.source`` label carried by every FlowMesh image."""
 
 
 class DockerError(RuntimeError):
@@ -116,6 +125,223 @@ def image_env_overrides(image_tag: str | None) -> dict[str, str]:
     if image_tag:
         env["FLOWMESH_VERSION"] = image_tag
     return env
+
+
+@dataclass
+class ManagedImage:
+    """A FlowMesh Docker image present on the local daemon."""
+
+    repo: str
+    tag: str | None
+    target: str | None
+    version: str | None
+    image_id: str
+    size_bytes: int
+    created: datetime
+    dangling: bool
+    in_use: bool
+
+    @property
+    def removal_ref(self) -> str:
+        """Reference to pass to ``docker rmi`` (tag when tagged, else image id)."""
+        return self.tag if self.tag else self.image_id
+
+
+@dataclass
+class RemovalResult:
+    """Outcome of removing a single image reference."""
+
+    ref: str
+    ok: bool
+    error: str | None = None
+
+
+_EPOCH = datetime.fromtimestamp(0, tz=UTC)
+_TIMESTAMP_FRACTION = re.compile(r"(\.\d{6})\d+")
+
+
+def _parse_docker_timestamp(value: str) -> datetime:
+    text = value.strip().replace("Z", "+00:00")
+    if not text:
+        return _EPOCH
+    text = _TIMESTAMP_FRACTION.sub(r"\1", text)
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return _EPOCH
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+
+
+def _docker_json_lines(
+    result: subprocess.CompletedProcess[str],
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for line in result.stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(obj, dict):
+            rows.append(obj)
+    return rows
+
+
+def _inspect_image_metadata(image_ids: list[str]) -> dict[str, tuple[int, datetime]]:
+    if not image_ids:
+        return {}
+    result = subprocess.run(
+        ["docker", "image", "inspect", *image_ids, "--format", "{{json .}}"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    metadata: dict[str, tuple[int, datetime]] = {}
+    for obj in _docker_json_lines(result):
+        image_id = obj.get("Id", "")
+        if not isinstance(image_id, str) or not image_id:
+            continue
+        size = obj.get("Size", 0)
+        size_bytes = int(size) if isinstance(size, (int, float)) else 0
+        metadata[image_id] = (
+            size_bytes,
+            _parse_docker_timestamp(str(obj.get("Created", ""))),
+        )
+    return metadata
+
+
+def container_image_refs() -> set[str]:
+    """Return the image ids referenced by every container, running or stopped."""
+    ensure_docker_available()
+    listing = subprocess.run(
+        ["docker", "ps", "-aq"], capture_output=True, text=True, check=False
+    )
+    container_ids = [
+        line.strip() for line in listing.stdout.splitlines() if line.strip()
+    ]
+    if not container_ids:
+        return set()
+    inspected = subprocess.run(
+        ["docker", "container", "inspect", *container_ids, "--format", "{{.Image}}"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return {line.strip() for line in inspected.stdout.splitlines() if line.strip()}
+
+
+def list_managed_images(
+    registry: str,
+    *,
+    include_dangling: bool = False,
+    in_use_ids: set[str] | None = None,
+) -> list[ManagedImage]:
+    """List FlowMesh images on the local daemon.
+
+    Tagged images under a managed repository are attributed to their build target
+    and version. When ``include_dangling`` is set, untagged FlowMesh layers
+    (identified by the ``org.opencontainers.image.source`` label) are included
+    with ``target``/``version`` unset. ``in_use_ids`` marks images referenced by
+    a container.
+    """
+    ensure_docker_available()
+    in_use = in_use_ids or set()
+    repos = managed_repos(registry)
+
+    images: list[ManagedImage] = []
+    listing = subprocess.run(
+        ["docker", "image", "ls", "--no-trunc", "--format", "{{json .}}"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    for row in _docker_json_lines(listing):
+        repo = str(row.get("Repository", ""))
+        tag = str(row.get("Tag", ""))
+        image_id = str(row.get("ID", ""))
+        if repo not in repos or not image_id or tag == "<none>":
+            continue
+        ref = f"{repo}:{tag}"
+        parsed = parse_image_ref(registry, ref)
+        target, version = parsed if parsed else (None, None)
+        images.append(
+            ManagedImage(
+                repo=repo,
+                tag=ref,
+                target=target,
+                version=version,
+                image_id=image_id,
+                size_bytes=0,
+                created=_EPOCH,
+                dangling=False,
+                in_use=image_id in in_use,
+            )
+        )
+
+    if include_dangling:
+        dangling = subprocess.run(
+            [
+                "docker",
+                "image",
+                "ls",
+                "--no-trunc",
+                "--filter",
+                "dangling=true",
+                "--filter",
+                f"label=org.opencontainers.image.source={FLOWMESH_IMAGE_SOURCE}",
+                "--format",
+                "{{json .}}",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        for row in _docker_json_lines(dangling):
+            image_id = str(row.get("ID", ""))
+            if not image_id:
+                continue
+            images.append(
+                ManagedImage(
+                    repo=str(row.get("Repository", "<none>")),
+                    tag=None,
+                    target=None,
+                    version=None,
+                    image_id=image_id,
+                    size_bytes=0,
+                    created=_EPOCH,
+                    dangling=True,
+                    in_use=image_id in in_use,
+                )
+            )
+
+    metadata = _inspect_image_metadata([image.image_id for image in images])
+    for image in images:
+        if image.image_id in metadata:
+            image.size_bytes, image.created = metadata[image.image_id]
+    return images
+
+
+def remove_images(refs: list[str], *, force: bool = False) -> list[RemovalResult]:
+    """Remove image references via ``docker rmi``, reporting each outcome.
+
+    Never aborts mid-batch: a failed removal is recorded and the rest proceed.
+    """
+    ensure_docker_available()
+    results: list[RemovalResult] = []
+    for ref in refs:
+        args = ["docker", "rmi"]
+        if force:
+            args.append("-f")
+        args.append(ref)
+        result = subprocess.run(args, capture_output=True, text=True, check=False)
+        if result.returncode == 0:
+            results.append(RemovalResult(ref=ref, ok=True))
+        else:
+            error = (result.stderr or result.stdout).strip()
+            results.append(RemovalResult(ref=ref, ok=False, error=error or None))
+    return results
 
 
 @dataclass
