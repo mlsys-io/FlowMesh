@@ -58,6 +58,20 @@ def test_parse_image_ref_rejects_reserved_cache_tags() -> None:
     )
 
 
+def test_parse_image_ref_handles_registry_with_port() -> None:
+    reg = "localhost:5000/mlsys-io"
+    ref = get_image_ref(reg, "1.2.3", "flowmesh_worker_gpu")
+    assert parse_image_ref(reg, ref) == ("flowmesh_worker_gpu", "1.2.3")
+    assert managed_repos(reg) == {
+        f"{reg}/flowmesh_server",
+        f"{reg}/flowmesh_worker",
+        f"{reg}/flowmesh_worker_builder",
+        f"{reg}/flowmesh_ssh",
+    }
+    # A port colon with no tag must not be mistaken for a tag separator.
+    assert parse_image_ref(reg, f"{reg}/flowmesh_server") is None
+
+
 def test_managed_repos_returns_distinct_repos() -> None:
     assert managed_repos(REGISTRY) == {
         f"{REGISTRY}/flowmesh_server",

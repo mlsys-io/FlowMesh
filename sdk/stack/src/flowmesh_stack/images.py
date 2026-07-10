@@ -117,6 +117,19 @@ _RESERVED_CACHE_VERSION = "cache"
 _RESERVED_CACHE_PREFIX = "cache-"
 
 
+def _split_repo_tag(ref: str) -> tuple[str, str] | None:
+    """Split an image ref into ``(repo, tag)``, or ``None`` when it has no tag.
+
+    Splits on the final colon and applies the Docker rule that a colon whose
+    right side contains ``/`` is a registry port, not a tag separator (e.g.
+    ``localhost:5000/org/img``).
+    """
+    repo, sep, tag = ref.rpartition(":")
+    if not sep or "/" in tag:
+        return None
+    return repo, tag
+
+
 def _ref_pattern(registry: str, target: str) -> tuple[str, str]:
     """Return the ``(repo, tag_suffix)`` a build target's refs take under a registry.
 
@@ -125,7 +138,7 @@ def _ref_pattern(registry: str, target: str) -> tuple[str, str]:
     the bare version (e.g. the server), or ``-cpu`` / ``-gpu`` otherwise.
     """
     ref = BUILD_TARGETS[target].format(registry=registry, version=_REF_SENTINEL)
-    repo, _, tag_template = ref.partition(":")
+    repo, tag_template = ref.rpartition(":")[::2]
     _, _, suffix = tag_template.partition(_REF_SENTINEL)
     return repo, suffix
 
@@ -143,9 +156,10 @@ def parse_image_ref(registry: str, ref: str) -> tuple[str, str] | None:
     by :data:`CACHE_TARGETS` (``cache`` / ``cache-*``), which are registry-only
     and must never be treated as prunable versions.
     """
-    repo, sep, tag = ref.partition(":")
-    if not sep or not tag:
+    split = _split_repo_tag(ref)
+    if split is None:
         return None
+    repo, tag = split
     for target in BUILD_TARGETS:
         target_repo, suffix = _ref_pattern(registry, target)
         if repo != target_repo:

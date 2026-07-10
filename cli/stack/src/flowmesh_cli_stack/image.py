@@ -4,6 +4,7 @@ import json
 import os
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import typer
 from flowmesh_cli.core import logging
@@ -66,7 +67,7 @@ def _human_size(num: int) -> str:
     return f"{size:.1f}TiB"
 
 
-def _image_row(image: ManagedImage) -> dict[str, object]:
+def _image_row(image: ManagedImage) -> dict[str, Any]:
     return {
         "repo": image.repo,
         "tag": image.tag,
@@ -80,7 +81,7 @@ def _image_row(image: ManagedImage) -> dict[str, object]:
     }
 
 
-def _short(image: ManagedImage) -> dict[str, object]:
+def _short(image: ManagedImage) -> dict[str, Any]:
     return {
         "tag": image.tag,
         "target": image.target,
@@ -219,6 +220,12 @@ def prune(
             "Pass at least one of --keep-last, --older-than, or --dangling."
         )
         raise typer.Exit(code=1)
+    if as_json and not yes and not dry_run:
+        logging.error(
+            "Refusing to delete in --json mode without confirmation. "
+            "Add --yes to proceed non-interactively, or --dry-run to preview."
+        )
+        raise typer.Exit(code=1)
 
     registry = _prepare(env_file)
     resolved = set(_resolve_targets(targets, include_builder))
@@ -292,6 +299,12 @@ def rm(
     ),
 ) -> None:
     """Remove FlowMesh images for one or more explicit versions."""
+    if as_json and not yes and not dry_run:
+        logging.error(
+            "Refusing to delete in --json mode without confirmation. "
+            "Add --yes to proceed non-interactively, or --dry-run to preview."
+        )
+        raise typer.Exit(code=1)
     registry = _prepare(env_file)
     resolved = _resolve_targets(targets, include_builder)
 
@@ -338,9 +351,9 @@ def rm(
 
 def _result_payload(
     dry_run: bool,
-    deleted: list[dict[str, object]],
-    failed: list[dict[str, object]],
-) -> dict[str, object]:
+    deleted: list[dict[str, Any]],
+    failed: list[dict[str, Any]],
+) -> dict[str, Any]:
     return {"dry_run": dry_run, "deleted": deleted, "failed": failed}
 
 

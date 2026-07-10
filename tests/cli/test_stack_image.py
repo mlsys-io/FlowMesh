@@ -173,6 +173,37 @@ def test_prune_exit_on_failure(monkeypatch: pytest.MonkeyPatch) -> None:
         )
 
 
+def test_prune_json_without_yes_refuses() -> None:
+    with pytest.raises(typer.Exit):
+        image_module.prune(
+            keep_last=1,
+            keep_active=False,
+            keep=None,
+            older_than=None,
+            dangling=False,
+            targets=None,
+            include_builder=False,
+            dry_run=False,
+            yes=False,
+            as_json=True,
+            env_file=Path(".env"),
+        )
+
+
+def test_rm_json_without_yes_refuses() -> None:
+    with pytest.raises(typer.Exit):
+        image_module.rm(
+            versions=["v1"],
+            targets=None,
+            include_builder=False,
+            force=False,
+            dry_run=False,
+            yes=False,
+            as_json=True,
+            env_file=Path(".env"),
+        )
+
+
 def test_rm_resolves_present_refs(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         image_module,
