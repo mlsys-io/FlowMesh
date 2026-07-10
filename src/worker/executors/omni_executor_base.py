@@ -7,7 +7,6 @@ focused on its generation logic.
 """
 
 import gc
-import importlib.util
 import json
 import logging
 import os
@@ -41,20 +40,25 @@ except Exception:
         np = None
         torch = None
 
-if TYPE_CHECKING:
+try:
     from vllm import RequestOutput as RequestOutput
     from vllm_omni.entrypoints.omni import Omni as Omni
     from vllm_omni.outputs import OmniRequestOutput as OmniRequestOutput
-else:
-    Omni = object
-    OmniRequestOutput = object
-    RequestOutput = object
+
+    _HAS_OMNI = True
+except Exception:
+    if TYPE_CHECKING:
+        from vllm import RequestOutput as RequestOutput
+        from vllm_omni.entrypoints.omni import Omni as Omni
+        from vllm_omni.outputs import OmniRequestOutput as OmniRequestOutput
+    else:
+        Omni = object
+        OmniRequestOutput = object
+        RequestOutput = object
+
+    _HAS_OMNI = False
 
 logger = logging.getLogger(__name__)
-
-# find_spec, not import: importing vllm_omni rebinds vllm.v1.request.Request
-# and breaks plain-model warmup.
-_HAS_OMNI: bool = importlib.util.find_spec("vllm_omni") is not None
 
 
 class OmniResult(BaseExecutorResult):

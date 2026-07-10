@@ -16,6 +16,7 @@ from shared.tasks.task_type import TaskType
 from .base_executor import ExecutionError, ExecutorTask
 from .omni_executor_base import (
     _HAS_OMNI,
+    Omni,
     OmniExecutorBase,
     OmniRequestOutput,
     OmniResult,
@@ -106,8 +107,6 @@ class OmniText2ImageExecutor(OmniExecutorBase):
     # ── model ────────────────────────────────────────────────────────────
 
     def _ensure_omni(self, spec_dict: dict[str, Any]) -> None:
-        from vllm_omni.entrypoints.omni import Omni
-
         cfg = self.omni_cfg(spec_dict, "omni:image generation", "omni_text2image")
         model_name = self.resolve_model_identifier(
             spec_dict,

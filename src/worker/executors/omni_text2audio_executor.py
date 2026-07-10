@@ -16,6 +16,18 @@ except Exception:
         np = None
         torch = None
 
+try:
+    from vllm_omni.inputs.data import OmniDiffusionSamplingParams, OmniTextPrompt
+    from vllm_omni.platforms import current_omni_platform
+except Exception:
+    if TYPE_CHECKING:
+        from vllm_omni.inputs.data import OmniDiffusionSamplingParams, OmniTextPrompt
+        from vllm_omni.platforms import current_omni_platform
+    else:
+        OmniDiffusionSamplingParams = object
+        OmniTextPrompt = object
+        current_omni_platform = None
+
 from shared.schemas.artifact import ArtifactRef
 from shared.schemas.governance import SpanType
 from shared.tasks.specs import TaskSpecStrictBase
@@ -26,6 +38,7 @@ from shared.utils.parsing import to_float, to_int
 from .base_executor import ExecutionError, ExecutorTask
 from .omni_executor_base import (
     _HAS_OMNI,
+    Omni,
     OmniExecutorBase,
     OmniRequestOutput,
     OmniResult,
@@ -71,8 +84,6 @@ class OmniText2AudioExecutor(OmniExecutorBase):
         out_dir: Path,
     ) -> OmniText2AudioResult:
         assert isinstance(spec, OmniText2AudioSpecStrict)
-        from vllm_omni.inputs.data import OmniDiffusionSamplingParams, OmniTextPrompt
-
         prompts = self._collect_text_inputs(spec, task.task_id)
 
         cfg = _bgm_cfg(spec_dict)
@@ -203,8 +214,6 @@ class OmniText2AudioExecutor(OmniExecutorBase):
     # ── model ────────────────────────────────────────────────────────────
 
     def _ensure_omni(self, spec_dict: dict[str, Any]) -> None:
-        from vllm_omni.entrypoints.omni import Omni
-
         model_name = self.resolve_model_identifier(
             spec_dict,
             _bgm_cfg(spec_dict),
@@ -237,15 +246,12 @@ def _bgm_cfg(spec_dict: dict[str, Any]) -> dict[str, Any]:
 
 
 def _resolve_generator_device() -> str:
-    if _HAS_OMNI:
-        from vllm_omni.platforms import current_omni_platform
-
-        if current_omni_platform is not None:
-            device_type = (
-                str(getattr(current_omni_platform, "device_type", "")).strip().lower()
-            )
-            if device_type in {"cuda", "cpu", "mps", "xpu", "hpu", "npu"}:
-                return device_type
+    if current_omni_platform is not None:
+        device_type = (
+            str(getattr(current_omni_platform, "device_type", "")).strip().lower()
+        )
+        if device_type in {"cuda", "cpu", "mps", "xpu", "hpu", "npu"}:
+            return device_type
     if torch is not None and torch.cuda.is_available():
         return "cuda"
     return "cpu"
