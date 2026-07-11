@@ -95,7 +95,7 @@ class GrpcConfig:
 
 
 @dataclass
-class ForwardConfig:
+class PortForwardConfig:
     enabled: bool = True
     proxy_enabled: bool = True
     audit_enabled: bool = True
@@ -105,15 +105,17 @@ class ForwardConfig:
     port_end: int = 32100
 
     @classmethod
-    def from_env(cls) -> "ForwardConfig":
+    def from_env(cls) -> "PortForwardConfig":
         return cls(
-            enabled=parse_bool_env("ENABLE_SERVER_FORWARD", True),
+            enabled=parse_bool_env("ENABLE_SERVER_PORT_FORWARD", True),
             proxy_enabled=parse_bool_env("ENABLE_SERVER_SSH_PROXY", True),
             audit_enabled=parse_bool_env("ENABLE_SERVER_SSH_CONNECTION_AUDIT", True),
-            bind_host=os.getenv("SERVER_FORWARD_BIND_HOST", "0.0.0.0").strip(),
-            public_host=os.getenv("SERVER_FORWARD_PUBLIC_HOST", "localhost").strip(),
-            port_start=parse_int_env("SERVER_FORWARD_PORT_START", 32000),
-            port_end=parse_int_env("SERVER_FORWARD_PORT_END", 32100),
+            bind_host=os.getenv("SERVER_PORT_FORWARD_BIND_HOST", "0.0.0.0").strip(),
+            public_host=os.getenv(
+                "SERVER_PORT_FORWARD_PUBLIC_HOST", "localhost"
+            ).strip(),
+            port_start=parse_int_env("SERVER_PORT_FORWARD_PORT_START", 32000),
+            port_end=parse_int_env("SERVER_PORT_FORWARD_PORT_END", 32100),
         )
 
 
@@ -270,7 +272,7 @@ class ServerConfig:
     redis: RedisConfig
     http: HttpConfig
     grpc: GrpcConfig
-    forward: ForwardConfig
+    port_forward: PortForwardConfig
     identity: IdentityConfig
     dispatch: DispatchConfig
     watchdog: WatchdogConfig
@@ -297,7 +299,7 @@ class ServerConfig:
             redis=RedisConfig.from_env(),
             http=HttpConfig.from_env(),
             grpc=GrpcConfig.from_env(),
-            forward=ForwardConfig.from_env(),
+            port_forward=PortForwardConfig.from_env(),
             identity=IdentityConfig.from_env(),
             dispatch=DispatchConfig.from_env(),
             watchdog=WatchdogConfig.from_env(),

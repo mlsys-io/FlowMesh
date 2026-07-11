@@ -55,8 +55,8 @@ from ..task.models import TaskRecord, TaskStatus, TaskUsage
 from ..task.runtime import TaskRuntime
 from ..utils.logging import log_node_event, log_worker_event
 from ..utils.time import now_iso
-from .forward import ForwardService
 from .metrics import MetricsRecorder
+from .port_forward import PortForwardService
 from .watchdog import WorkerWatchdog
 
 TASK_EVENT_HANDLER_MAX_ATTEMPTS = 5
@@ -98,7 +98,7 @@ class EventMonitor:
         metrics_recorder: MetricsRecorder,
         watchdog: WorkerWatchdog,
         ssh_proxy_enabled: bool = False,
-        forward: ForwardService | None = None,
+        port_forward: PortForwardService | None = None,
         results_dir: Path | str = ".",
         log_stream_ttl_sec: int = 0,
     ) -> None:
@@ -112,7 +112,7 @@ class EventMonitor:
         self._metrics = metrics_recorder
         self._watchdog = watchdog
         self._ssh_proxy_enabled = ssh_proxy_enabled
-        self._forward = forward
+        self._port_forward = port_forward
         self._results_dir = Path(results_dir)
         self._log_stream_ttl_sec = max(0, int(log_stream_ttl_sec))
 
@@ -426,7 +426,7 @@ class EventMonitor:
                 )
                 self._runtime.mark_updated(event.task_id, payload)
             case "TASK_SUCCEEDED":
-                self._unregister_forward_task(event.task_id)
+                self._unregister_port_forward(event.task_id)
                 self._metrics.record_task_event(event)
                 merged_children = self._runtime.get_merged_children(event.task_id)
                 if merged_children:
@@ -503,7 +503,7 @@ class EventMonitor:
                     max_attempts = None
 
                 if failed_task_can_retry(record, event.retryable):
-                    self._unregister_forward_task(event.task_id)
+                    self._unregister_port_forward(event.task_id)
                     limit_display = (
                         "∞"
                         if max_attempts is None or max_attempts < 0
@@ -527,7 +527,7 @@ class EventMonitor:
                     )
                     return
 
-                self._unregister_forward_task(event.task_id)
+                self._unregister_port_forward(event.task_id)
                 self._metrics.record_task_event(event)
                 impacted, merged_children, usages = self._runtime.mark_failed(
                     event.task_id,
@@ -568,7 +568,7 @@ class EventMonitor:
                     self._maybe_close_workflow_log_stream(child_id)
                 self._maybe_close_workflow_log_stream(event.task_id)
             case "TASK_CANCELLED":
-                self._unregister_forward_task(event.task_id)
+                self._unregister_port_forward(event.task_id)
                 self._metrics.record_task_event(event)
                 usages = self._runtime.mark_cancelled(
                     event.task_id,
@@ -716,7 +716,7 @@ class EventMonitor:
                         to_requeue: list[str] = []
                         ts = now_iso()
                         for task_id in recovered:
-                            self._unregister_forward_task(task_id)
+                            self._unregister_port_forward(task_id)
                             record = self._runtime.get_record(task_id)
                             if record and record.status == TaskStatus.CANCELLING:
                                 self._runtime.mark_cancelled(task_id, worker_id, {}, ts)
@@ -747,7 +747,7 @@ class EventMonitor:
     # SSH / serve forward task handling
     # ------------------------------------------------------------------ #
 
-    def _handle_forward_task_update(
+    def _handle_port_forward_update(
         self,
         task_id: str,
         worker_id: str | None,
@@ -759,7 +759,7 @@ class EventMonitor:
         inject_session_id: bool,
         strip_relay_target_after: bool,
     ) -> dict[str, Any]:
-        """Register a forward relay for a task update payload."""
+        """Register a port-forward relay for a task update payload."""
         inner = payload.get(key)
         if not isinstance(inner, dict):
             return payload
@@ -781,14 +781,14 @@ class EventMonitor:
         if normalized_mode != "forward":
             return payload
 
-        assert self._forward is not None
+        assert self._port_forward is not None
         assert worker_id is not None
         record = self._runtime.get_record(task_id)
         try:
             forward_input = dict(inner)
             if inject_session_id:
                 forward_input.setdefault("session_id", task_id)
-            inner = self._forward.register_forward_task(
+            inner = self._port_forward.register_port_forward(
                 task_id,
                 record.workflow_id if record is not None else None,
                 worker_id,
@@ -815,7 +815,7 @@ class EventMonitor:
         self, task_id: str, worker_id: str | None, payload: dict[str, Any]
     ) -> dict[str, Any]:
         """Handle SSH forward registration for task updates."""
-        return self._handle_forward_task_update(
+        return self._handle_port_forward_update(
             task_id,
             worker_id,
             payload,
@@ -830,7 +830,7 @@ class EventMonitor:
         self, task_id: str, worker_id: str | None, payload: dict[str, Any]
     ) -> dict[str, Any]:
         """Handle serve forward registration for task updates."""
-        return self._handle_forward_task_update(
+        return self._handle_port_forward_update(
             task_id,
             worker_id,
             payload,
@@ -854,9 +854,9 @@ class EventMonitor:
                     "Serve task with forward mode has no worker_id; dropping endpoint"
                 )
                 return None
-            if self._forward is None:
+            if self._port_forward is None:
                 self._logger.error(
-                    "Serve task requested forward mode but no forward service is "
+                    "Serve task requested forward mode but no port-forward service is "
                     "configured (serve has no proxy fallback); dropping endpoint"
                 )
                 return None
@@ -1016,11 +1016,11 @@ class EventMonitor:
             except Exception as exc:
                 self._logger.warning("Usage sink %s failed: %s", sink.name, exc)
 
-    def _unregister_forward_task(self, task_id: str) -> None:
-        if self._forward is None:
+    def _unregister_port_forward(self, task_id: str) -> None:
+        if self._port_forward is None:
             return
         try:
-            self._forward.unregister_task(task_id)
+            self._port_forward.unregister_task(task_id)
         except Exception as exc:
             self._logger.debug(
                 "Failed to unregister forward target for task %s: %s", task_id, exc
@@ -1037,7 +1037,7 @@ class EventMonitor:
                     "degrading access mode"
                 )
                 return "proxy" if self._ssh_proxy_enabled else "direct"
-            if self._forward is not None:
+            if self._port_forward is not None:
                 return "forward"
             if self._ssh_proxy_enabled:
                 return "proxy"

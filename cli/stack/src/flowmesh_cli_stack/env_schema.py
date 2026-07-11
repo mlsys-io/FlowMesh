@@ -263,20 +263,20 @@ STACK_ENV_SCHEMA = EnvSchema(
             ],
         ),
         EnvSection(
-            title="Forward Task Support (SSH / Serve)",
+            title="Port Forward Support",
             vars=[
-                EnvVar("ENABLE_SERVER_FORWARD", "true", var_type=EnvVarType.BOOL),
-                EnvVar("SERVER_FORWARD_BIND_HOST", "0.0.0.0", required=True),
-                EnvVar("SERVER_FORWARD_PUBLIC_HOST", "localhost", required=True),
+                EnvVar("ENABLE_SERVER_PORT_FORWARD", "true", var_type=EnvVarType.BOOL),
+                EnvVar("SERVER_PORT_FORWARD_BIND_HOST", "0.0.0.0", required=True),
+                EnvVar("SERVER_PORT_FORWARD_PUBLIC_HOST", "localhost", required=True),
                 EnvVar(
-                    "SERVER_FORWARD_PORT_START",
+                    "SERVER_PORT_FORWARD_PORT_START",
                     "32000",
                     var_type=EnvVarType.INT,
                     required=True,
                     min_value=1,
                 ),
                 EnvVar(
-                    "SERVER_FORWARD_PORT_END",
+                    "SERVER_PORT_FORWARD_PORT_END",
                     "32100",
                     var_type=EnvVarType.INT,
                     required=True,

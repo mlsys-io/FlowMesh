@@ -11,7 +11,7 @@ from shared.utils.encoding import (
     encode_bytes_to_base64_text,
 )
 
-from ..clients.redis import RedisClient, ssh_down_key, ssh_up_key
+from ..clients.redis import RedisClient, relay_down_key, relay_up_key
 from ..registries.node import NodeRegistry
 from ..registries.worker import WorkerRegistry
 from ..schemas.ssh import SSHConnectionInfo
@@ -22,23 +22,33 @@ _READ_CHUNK = 16384
 
 
 @dataclass(slots=True)
-class ForwardSession:
-    task_id: str
+class _AuditContext:
+    """Connection-audit metadata for a forwarded session.
+
+    Fed to the audit service when a client connects; not used by the forwarding path.
+    """
+
     workflow_id: str | None
     worker_id: str
+    username: str | None
+
+
+@dataclass(slots=True)
+class PortForwardSession:
+    task_id: str
     node_id: str
     session_id: str
-    username: str | None
     target_host: str
-    """The host to which the SSH session will be forwarded."""
+    """The worker-internal host to which the connection is forwarded."""
     target_port: int
-    """The port to which the SSH session will be forwarded."""
+    """The worker-internal port to which the connection is forwarded."""
     port: int
-    """The local port on which the forward service listens for this session."""
+    """The local port on which the port-forward service listens for this session."""
     server: asyncio.AbstractServer
+    audit: _AuditContext
 
 
-class ForwardService:
+class PortForwardService:
     def __init__(
         self,
         redis_client: RedisClient,
@@ -61,7 +71,7 @@ class ForwardService:
         self._port_start = port_start
         self._port_end = port_end
         self._loop: asyncio.AbstractEventLoop | None = None
-        self._sessions: dict[str, ForwardSession] = {}
+        self._sessions: dict[str, PortForwardSession] = {}
         self._used_ports: set[int] = set()
         self._lock = asyncio.Lock()
 
@@ -77,16 +87,16 @@ class ForwardService:
         for session in sessions:
             await self._close_session(session, release_port=False)
 
-    def register_forward_task(
+    def register_port_forward(
         self,
         task_id: str,
         workflow_id: str | None,
         assigned_worker: str,
-        ssh_info: dict[str, Any],
+        endpoint: dict[str, Any],
     ) -> dict[str, Any]:
         loop = self._require_loop()
         fut = asyncio.run_coroutine_threadsafe(
-            self._register_task_async(task_id, workflow_id, assigned_worker, ssh_info),
+            self._register_task_async(task_id, workflow_id, assigned_worker, endpoint),
             loop,
         )
         return fut.result(timeout=5.0)
@@ -111,12 +121,12 @@ class ForwardService:
         task_id: str,
         workflow_id: str | None,
         assigned_worker: str,
-        ssh_info: dict[str, Any],
+        endpoint: dict[str, Any],
     ) -> dict[str, Any]:
-        relay_target = ssh_info.get("_relay_target")
+        relay_target = endpoint.get("_relay_target")
         if not isinstance(relay_target, dict):
             raise RuntimeError("Missing relay target for forward-mode task")
-        session_id = ssh_info.get("session_id")
+        session_id = endpoint.get("session_id")
         if not session_id:
             raise RuntimeError("Missing session_id for forward-mode task")
         target_host = relay_target.get("host")
@@ -126,19 +136,24 @@ class ForwardService:
         worker = await self._worker_registry.get_worker_async(assigned_worker)
         if worker is None:
             raise RuntimeError(f"Assigned worker not found: {assigned_worker}")
+        username = (
+            str(raw_username)
+            if (raw_username := endpoint.get("username")) is not None
+            else None
+        )
 
         async with self._lock:
             session = self._sessions.get(task_id)
             if session is not None:
                 # Update existing session info
-                session.workflow_id = workflow_id
-                session.worker_id = assigned_worker
                 session.node_id = worker.node_id
                 session.session_id = str(session_id)
-                session.username = str(ssh_info.get("username", "flowmesh"))
                 session.target_host = str(target_host)
                 session.target_port = int(target_port)
-                updated = dict(ssh_info)
+                session.audit.workflow_id = workflow_id
+                session.audit.worker_id = assigned_worker
+                session.audit.username = username
+                updated = dict(endpoint)
                 updated["host"] = self._public_host
                 updated["port"] = session.port
                 updated["mode"] = "forward"
@@ -147,35 +162,37 @@ class ForwardService:
         # Create new session for this task
         session = await self._create_session(
             task_id=task_id,
-            workflow_id=workflow_id,
-            worker_id=assigned_worker,
             node_id=worker.node_id,
             session_id=str(session_id),
-            username=str(ssh_info.get("username", "flowmesh")),
             target_host=str(target_host),
             target_port=int(target_port),
+            audit=_AuditContext(
+                workflow_id=workflow_id,
+                worker_id=assigned_worker,
+                username=username,
+            ),
         )
 
-        stale_session: ForwardSession | None = None
+        stale_session: PortForwardSession | None = None
         async with self._lock:
             existing = self._sessions.get(task_id)
             if existing is None:
                 self._sessions[task_id] = session
             else:
                 # Another session was created; update it with the new info.
-                existing.workflow_id = workflow_id
-                existing.worker_id = assigned_worker
                 existing.node_id = worker.node_id
                 existing.session_id = str(session_id)
-                existing.username = str(ssh_info.get("username", "flowmesh"))
                 existing.target_host = str(target_host)
                 existing.target_port = int(target_port)
+                existing.audit.workflow_id = workflow_id
+                existing.audit.worker_id = assigned_worker
+                existing.audit.username = username
                 stale_session = session
                 session = existing
         if stale_session is not None:
             await self._close_session(stale_session)
 
-        updated = dict(ssh_info)
+        updated = dict(endpoint)
         updated["host"] = self._public_host
         updated["port"] = session.port
         updated["mode"] = "forward"
@@ -184,14 +201,12 @@ class ForwardService:
     async def _create_session(
         self,
         task_id: str,
-        workflow_id: str | None,
-        worker_id: str,
         node_id: str,
         session_id: str,
-        username: str | None,
         target_host: str,
         target_port: int,
-    ) -> ForwardSession:
+        audit: _AuditContext,
+    ) -> PortForwardSession:
         async def _client_handler(
             reader: asyncio.StreamReader, writer: asyncio.StreamWriter
         ) -> None:
@@ -209,17 +224,15 @@ class ForwardService:
                 await self._release_port(port)
                 continue
             self._logger.info("Allocated forward port %s for task %s", port, task_id)
-            return ForwardSession(
+            return PortForwardSession(
                 task_id=task_id,
-                workflow_id=workflow_id,
-                worker_id=worker_id,
                 node_id=node_id,
                 session_id=session_id,
-                username=username,
                 target_host=target_host,
                 target_port=target_port,
                 port=port,
                 server=server,
+                audit=audit,
             )
         raise RuntimeError("No available forward ports")
 
@@ -242,7 +255,7 @@ class ForwardService:
             self._used_ports.discard(port)
 
     async def _close_session(
-        self, session: ForwardSession, release_port: bool = True
+        self, session: PortForwardSession, release_port: bool = True
     ) -> None:
         if release_port:
             await self._release_port(session.port)
@@ -286,7 +299,7 @@ class ForwardService:
             await self._start_server_uplink(session, relay_token)
         except Exception as exc:
             self._logger.warning(
-                "Failed to start SSH forward uplink for task %s: %s", task_id, exc
+                "Failed to start relay uplink for task %s: %s", task_id, exc
             )
             writer.close()
             try:
@@ -302,11 +315,15 @@ class ForwardService:
                         connection_id=connection_id,
                         access_mode="forward",
                         task_id=task_id,
-                        workflow_id=session.workflow_id,
-                        worker_id=session.worker_id,
+                        workflow_id=session.audit.workflow_id,
+                        worker_id=session.audit.worker_id,
                         node_id=session.node_id,
                         session_id=session.session_id,
-                        username=session.username,
+                        username=(
+                            username
+                            if (username := session.audit.username) is not None
+                            else "flowmesh"
+                        ),
                         source_ip=source_ip,
                         source_port=source_port,
                         connected_at=now_iso(),
@@ -319,8 +336,8 @@ class ForwardService:
                     exc_info=True,
                 )
 
-        up = ssh_up_key(relay_token)
-        down = ssh_down_key(relay_token)
+        up = relay_up_key(relay_token)
+        down = relay_down_key(relay_token)
 
         async def redis_to_client() -> None:
             last_id = "0"
@@ -392,11 +409,11 @@ class ForwardService:
                 pass
 
     async def _start_server_uplink(
-        self, session: ForwardSession, relay_token: str
+        self, session: PortForwardSession, relay_token: str
     ) -> None:
-        """Send command to server to start SSH relay for this session."""
+        """Ask the assigned node to start a relay uplink for this session."""
         cmd = CommandMessage(
-            command=CommandType.START_SSH_RELAY,
+            command=CommandType.START_RELAY,
             payload={
                 "relay_token": relay_token,
                 "target_host": session.target_host,
@@ -408,4 +425,4 @@ class ForwardService:
             session.node_id, cmd, timeout=5.0
         )
         if not resp.success:
-            raise RuntimeError(resp.message or "Server refused START_SSH_RELAY")
+            raise RuntimeError(resp.message or "Server refused START_RELAY")

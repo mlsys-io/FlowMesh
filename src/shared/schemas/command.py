@@ -16,7 +16,7 @@ class CommandType(StrEnum):
     STOP_WORKER = "STOP_WORKER"
     DESTROY_WORKER = "DESTROY_WORKER"  # payload: {worker_name: str}
     DESTROY_WORKERS = "DESTROY_WORKERS"  # payload: {worker_names: [str]} or null
-    START_SSH_RELAY = "START_SSH_RELAY"
+    START_RELAY = "START_RELAY"
 
 
 class CommandMessage(BaseModel):

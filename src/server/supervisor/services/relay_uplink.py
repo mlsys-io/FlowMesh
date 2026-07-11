@@ -14,15 +14,15 @@ _STREAM_MAXLEN = 1000
 
 
 def _up_key(relay_token: str) -> str:
-    return f"ssh:relay:{relay_token}:up"
+    return f"relay:{relay_token}:up"
 
 
 def _down_key(relay_token: str) -> str:
-    return f"ssh:relay:{relay_token}:down"
+    return f"relay:{relay_token}:down"
 
 
-class SshRelayService:
-    """Manages SSH relay uplinks from container TCP to Redis Streams."""
+class RelayUplinkService:
+    """Manages relay uplinks from a worker-internal TCP endpoint to Redis Streams."""
 
     def __init__(self, logger: logging.Logger) -> None:
         self._logger = logger
@@ -34,7 +34,7 @@ class SshRelayService:
             self._loop = asyncio.get_running_loop()
         except RuntimeError as exc:
             raise RuntimeError(
-                "SSH relay service must be started inside an event loop"
+                "Relay uplink service must be started inside an event loop"
             ) from exc
 
     def start_uplink(
@@ -47,7 +47,7 @@ class SshRelayService:
     ) -> None:
         loop = self._loop
         if loop is None:
-            raise RuntimeError("SSH relay service not started")
+            raise RuntimeError("Relay uplink service not started")
 
         def _schedule() -> None:
             if relay_token in self._tasks:
@@ -84,14 +84,14 @@ class SshRelayService:
             reader, writer = await asyncio.open_connection(target_host, target_port)
         except OSError as exc:
             self._logger.warning(
-                "SSH uplink: cannot connect to %s:%s: %s",
+                "Relay uplink: cannot connect to %s:%s: %s",
                 target_host,
                 target_port,
                 exc,
             )
             return
 
-        self._logger.info("SSH uplink started: session=%s", session_id)
+        self._logger.info("Relay uplink started: session=%s", session_id)
         try:
 
             async def tcp_to_redis() -> None:
@@ -148,7 +148,7 @@ class SshRelayService:
         except asyncio.CancelledError:
             pass
         except Exception as exc:
-            self._logger.warning("SSH uplink error: session=%s: %s", session_id, exc)
+            self._logger.warning("Relay uplink error: session=%s: %s", session_id, exc)
         finally:
             writer.close()
             try:
@@ -160,4 +160,4 @@ class SshRelayService:
                 await asyncio.to_thread(rds.delete, up, down)
             except Exception:
                 pass
-            self._logger.info("SSH uplink ended: session=%s", session_id)
+            self._logger.info("Relay uplink ended: session=%s", session_id)

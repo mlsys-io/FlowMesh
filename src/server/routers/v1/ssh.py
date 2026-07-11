@@ -30,7 +30,7 @@ from ...auth.security import (
     authenticate_websocket,
     require_permission,
 )
-from ...clients.redis import RedisClient, ssh_down_key, ssh_up_key
+from ...clients.redis import RedisClient, relay_down_key, relay_up_key
 from ...hooks import ResourceAction, ResourceKind
 from ...registries.node import NodeRegistry
 from ...registries.worker import Worker, WorkerRegistry
@@ -68,7 +68,7 @@ async def _start_server_uplink(
         raise RuntimeError("Missing SSH session_id in latest_update")
 
     cmd = CommandMessage(
-        command=CommandType.START_SSH_RELAY,
+        command=CommandType.START_RELAY,
         payload={
             "relay_token": relay_token,
             "target_host": relay_target.get("host"),
@@ -78,7 +78,7 @@ async def _start_server_uplink(
     )
     resp = await node_registry.exec_node_cmd(worker.node_id, cmd, timeout=5.0)
     if not resp.success:
-        raise RuntimeError(resp.message or "Server refused START_SSH_RELAY")
+        raise RuntimeError(resp.message or "Server refused START_RELAY")
     return worker
 
 
@@ -143,8 +143,8 @@ async def ssh_proxy(
         )
         return
 
-    up = ssh_up_key(relay_token)
-    down = ssh_down_key(relay_token)
+    up = relay_up_key(relay_token)
+    down = relay_down_key(relay_token)
 
     await websocket.accept()
     if ssh_audit is not None:

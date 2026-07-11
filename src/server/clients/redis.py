@@ -134,12 +134,12 @@ def workflow_log_closed_key(workflow_id: str) -> str:
     return f"workflow:{workflow_id}:logs:closed"
 
 
-def ssh_up_key(relay_token: str) -> str:
-    return f"ssh:relay:{relay_token}:up"
+def relay_up_key(relay_token: str) -> str:
+    return f"relay:{relay_token}:up"
 
 
-def ssh_down_key(relay_token: str) -> str:
-    return f"ssh:relay:{relay_token}:down"
+def relay_down_key(relay_token: str) -> str:
+    return f"relay:{relay_token}:down"
 
 
 def ssh_connection_key(connection_id: str) -> str:

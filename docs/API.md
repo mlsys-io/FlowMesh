@@ -83,7 +83,7 @@ calls.
 | GET | `/api/v1/ssh/connections` | List active server-audited SSH proxy/forward connections. |
 
 Server policy toggles: `ENABLE_SERVER_SSH_PROXY`,
-`ENABLE_SERVER_FORWARD`, `ENABLE_SERVER_SSH_CONNECTION_AUDIT`.
+`ENABLE_SERVER_PORT_FORWARD`, `ENABLE_SERVER_SSH_CONNECTION_AUDIT`.
 
 ## System
 

@@ -254,7 +254,7 @@ def _run_supervisor(
     from .services.grpc_server import GrpcServer
     from .services.lifecycle import Lifecycle
     from .services.relay_service import RelayService
-    from .services.ssh_relay import SshRelayService
+    from .services.relay_uplink import RelayUplinkService
     from .services.task_listener import TaskListener
 
     # --- logging (child has its own logger) ---
@@ -331,7 +331,7 @@ def _run_supervisor(
     # --- Supervisor components (constructed with the assigned node_id) ---
     worker_adapter_registry = WorkerAdapterRegistry()
     relay_service = RelayService(redis=redis_client.sync, logger=logger)
-    ssh_relay = SshRelayService(logger=logger)
+    relay_uplink = RelayUplinkService(logger=logger)
     task_listener = TaskListener(
         redis=redis_client.sync, node_id=node_id, logger=logger
     )
@@ -348,7 +348,7 @@ def _run_supervisor(
         worker_manager=worker_manager,
         logger=logger,
         cmd_receiver=cmd_receiver,
-        ssh_relay=ssh_relay,
+        relay_uplink=relay_uplink,
     )
     grpc_server = GrpcServer(
         grpc_cfg.host,
@@ -401,7 +401,7 @@ def _run_supervisor(
 
     async def _run() -> None:
         # Startup — lifecycle already started above (registration is synchronous)
-        ssh_relay.start()
+        relay_uplink.start()
         relay_service.start()
         task_listener.start()
         await worker_manager.start()
@@ -423,7 +423,7 @@ def _run_supervisor(
         await command_listener.stop()
         await worker_manager.stop()
         relay_service.stop()
-        await ssh_relay.stop()
+        await relay_uplink.stop()
         task_listener.stop()
         lifecycle.stop()
         logger.info("Supervisor stopped for node %s", node_id)

@@ -462,7 +462,7 @@ class TestTargetWorkerNames:
             CommandType.CREATE_WORKER,
             CommandType.CREATE_WORKER_ON_NODE,
             CommandType.GET_WORKERS,
-            CommandType.START_SSH_RELAY,
+            CommandType.START_RELAY,
         ):
             payload = {"worker_name": "w-1"}
             assert CommandListener._target_worker_names(_cmd(cmd_type, payload)) == []
