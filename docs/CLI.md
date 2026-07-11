@@ -198,8 +198,7 @@ accepts the same `--role` flag for direct (non-bundle) bootstrap, plus
 
 ## Managing local images
 
-`flowmesh stack image` manages FlowMesh images on the local Docker daemon
-(inventory and cleanup). It does not touch the registry or other nodes.
+`flowmesh stack image` manages FlowMesh images on the local Docker daemon.
 
 ```bash
 flowmesh stack image list                       # inventory: repo, tag, version, size, created, in-use
@@ -208,18 +207,15 @@ flowmesh stack image prune --keep-last 2        # keep the 2 newest versions per
 flowmesh stack image rm dev myfeature           # remove specific version(s)
 ```
 
-`stack image prune` removes stale images by policy. It requires at least one
-*selection* policy — `--keep-last N`, `--older-than <dur>` (e.g. `30d`, `12h`),
-or `--dangling` — and refuses to run without one, so a misfire can't wipe
-everything. `--keep <version>` and `--keep-active` only *protect* images and
-never select on their own. Selection is `candidate pool − protected`: the pool
-is the age-filtered (or, with `--keep-last`, all) tagged images plus dangling
-layers when `--dangling` is set; protections subtract the newest N versions per
-target, explicitly kept versions, and versions backing a container (running or
-stopped, via `--keep-active`).
+`stack image prune` deletes stale images by policy. Pick what to remove with at
+least one *selection* flag — `--keep-last N` (keep the N newest versions per
+target), `--older-than <dur>` (e.g. `30d`, `12h`), or `--dangling` (untagged
+leftovers) — prune refuses to run without one. `--keep <version>` and
+`--keep-active` protect images from deletion; `--keep-active` spares any version
+currently in use by a container.
 
 ```bash
-# Typical CD cleanup: keep the running version and the last two, drop the rest.
+# Typical cleanup: keep the running version and the last two, drop the rest.
 flowmesh stack image prune --keep-last 2 --keep-active --yes --json
 
 # Delete images older than 30 days except the three newest per target.
@@ -231,7 +227,7 @@ All mutating commands take `--dry-run` (print the plan, change nothing),
 plan/result) for non-interactive pipelines. The GPU builder image is excluded by
 default; pass `--include-builder` (or name it with `--target`) to include it.
 
-Migration: the former `flowmesh stack purge <version>` is replaced by
+Migration: the former `flowmesh stack purge <version>` (pre-v0.2.0) is replaced by
 `flowmesh stack image rm <version>`.
 
 ## SSH tasks
