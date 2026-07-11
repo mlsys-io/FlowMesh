@@ -4,23 +4,23 @@ Provides the canonical mapping from build targets to image references,
 used by both the CLI dev commands and programmatic build/deploy scripts.
 """
 
+_TARGET_COMPONENTS: dict[str, tuple[str, str]] = {
+    "flowmesh_server": ("flowmesh_server", ""),
+    "flowmesh_worker_cpu": ("flowmesh_worker", "-cpu"),
+    "flowmesh_worker_gpu_builder": ("flowmesh_worker_builder", "-gpu"),
+    "flowmesh_worker_gpu": ("flowmesh_worker", "-gpu"),
+    "flowmesh_ssh_cpu": ("flowmesh_ssh", "-cpu"),
+    "flowmesh_ssh_gpu": ("flowmesh_ssh", "-gpu"),
+}
 BUILD_TARGETS: dict[str, str] = {
-    "flowmesh_server": "{registry}/flowmesh_server:{version}",
-    "flowmesh_worker_cpu": "{registry}/flowmesh_worker:{version}-cpu",
-    "flowmesh_worker_gpu_builder": "{registry}/flowmesh_worker_builder:{version}-gpu",
-    "flowmesh_worker_gpu": "{registry}/flowmesh_worker:{version}-gpu",
-    "flowmesh_ssh_cpu": "{registry}/flowmesh_ssh:{version}-cpu",
-    "flowmesh_ssh_gpu": "{registry}/flowmesh_ssh:{version}-gpu",
+    target: f"{{registry}}/{repo}:{{version}}{suffix}"
+    for target, (repo, suffix) in _TARGET_COMPONENTS.items()
 }
 """Mapping from build target name to image reference format string."""
 
 CACHE_TARGETS: dict[str, str] = {
-    "flowmesh_server": "{registry}/flowmesh_server:{scope}",
-    "flowmesh_worker_cpu": "{registry}/flowmesh_worker:{scope}-cpu",
-    "flowmesh_worker_gpu_builder": "{registry}/flowmesh_worker_builder:{scope}-gpu",
-    "flowmesh_worker_gpu": "{registry}/flowmesh_worker:{scope}-gpu",
-    "flowmesh_ssh_cpu": "{registry}/flowmesh_ssh:{scope}-cpu",
-    "flowmesh_ssh_gpu": "{registry}/flowmesh_ssh:{scope}-gpu",
+    target: f"{{registry}}/{repo}:{{scope}}{suffix}"
+    for target, (repo, suffix) in _TARGET_COMPONENTS.items()
 }
 """Mapping from build target name to registry cache reference format string."""
 
@@ -112,7 +112,6 @@ def get_push_platforms(target: str) -> str:
     return PUSH_PLATFORMS[target]
 
 
-_REF_SENTINEL = "\x00"
 _RESERVED_CACHE_VERSION = "cache"
 _RESERVED_CACHE_PREFIX = "cache-"
 
@@ -120,56 +119,37 @@ _RESERVED_CACHE_PREFIX = "cache-"
 def _split_repo_tag(ref: str) -> tuple[str, str] | None:
     """Split an image ref into ``(repo, tag)``, or ``None`` when it has no tag.
 
-    Splits on the final colon and applies the Docker rule that a colon whose
-    right side contains ``/`` is a registry port, not a tag separator (e.g.
+    Splits on the final colon and applies the Docker rule that a colon whose right side
+    contains ``/`` is a registry port, not a tag separator (e.g.
     ``localhost:5000/org/img``).
     """
     repo, sep, tag = ref.rpartition(":")
-    if not sep or "/" in tag:
-        return None
-    return repo, tag
-
-
-def _ref_pattern(registry: str, target: str) -> tuple[str, str]:
-    """Return the ``(repo, tag_suffix)`` a build target's refs take under a registry.
-
-    Derived from :data:`BUILD_TARGETS` so the mapping never drifts from the
-    canonical format strings. ``tag_suffix`` is ``""`` for targets whose tag is
-    the bare version (e.g. the server), or ``-cpu`` / ``-gpu`` otherwise.
-    """
-    ref = BUILD_TARGETS[target].format(registry=registry, version=_REF_SENTINEL)
-    repo, tag_template = ref.rpartition(":")[::2]
-    _, _, suffix = tag_template.partition(_REF_SENTINEL)
-    return repo, suffix
+    return (repo, tag) if sep and "/" not in tag else None
 
 
 def managed_repos(registry: str) -> set[str]:
     """Return the distinct image repositories FlowMesh publishes under a registry."""
-    return {_ref_pattern(registry, target)[0] for target in BUILD_TARGETS}
+    return {f"{registry}/{_TARGET_COMPONENTS[target][0]}" for target in BUILD_TARGETS}
 
 
 def parse_image_ref(registry: str, ref: str) -> tuple[str, str] | None:
     """Map a concrete image reference back to its ``(target, version)``.
 
     Inverse of :func:`get_image_ref`. Returns ``None`` for references outside the
-    managed repositories, references without a tag, and cache-scope tags reserved
-    by :data:`CACHE_TARGETS` (``cache`` / ``cache-*``), which are registry-only
-    and must never be treated as prunable versions.
+    managed repositories, references without a tag, and cache-scope tags reserved by
+    :data:`CACHE_TARGETS` (``cache`` / ``cache-*``), which are registry-only and must
+    never be treated as prunable versions.
     """
     split = _split_repo_tag(ref)
     if split is None:
         return None
     repo, tag = split
-    for target in BUILD_TARGETS:
-        target_repo, suffix = _ref_pattern(registry, target)
-        if repo != target_repo:
+    for target, (target_repo, suffix) in _TARGET_COMPONENTS.items():
+        if repo != f"{registry}/{target_repo}":
             continue
-        if suffix:
-            if not tag.endswith(suffix):
-                continue
-            version = tag[: -len(suffix)]
-        else:
-            version = tag
+        if suffix and not tag.endswith(suffix):
+            continue
+        version = tag.removesuffix(suffix)
         if not version:
             continue
         if version == _RESERVED_CACHE_VERSION or version.startswith(

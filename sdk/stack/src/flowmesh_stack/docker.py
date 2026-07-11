@@ -196,7 +196,7 @@ def container_image_refs() -> set[str]:
         ["docker", "ps", "-aq"], capture_output=True, text=True, check=False
     )
     container_ids = [
-        line.strip() for line in listing.stdout.splitlines() if line.strip()
+        stripped for line in listing.stdout.splitlines() if (stripped := line.strip())
     ]
     if not container_ids:
         return set()
@@ -206,7 +206,9 @@ def container_image_refs() -> set[str]:
         text=True,
         check=False,
     )
-    return {line.strip() for line in inspected.stdout.splitlines() if line.strip()}
+    return {
+        stripped for line in inspected.stdout.splitlines() if (stripped := line.strip())
+    }
 
 
 def list_managed_images(
@@ -217,11 +219,10 @@ def list_managed_images(
 ) -> list[ManagedImage]:
     """List FlowMesh images on the local daemon.
 
-    Tagged images under a managed repository are attributed to their build target
-    and version. When ``include_dangling`` is set, untagged FlowMesh layers
-    (identified by the ``org.opencontainers.image.source`` label) are included
-    with ``target``/``version`` unset. ``in_use_ids`` marks images referenced by
-    a container.
+    Tagged images under a managed repository are attributed to their build target and
+    version. When ``include_dangling`` is set, untagged FlowMesh layers (identified by
+    the ``org.opencontainers.image.source`` label) are included with
+    ``target``/``version`` unset. ``in_use_ids`` marks images referenced by a container.
     """
     ensure_docker_available()
     in_use = in_use_ids or set()

@@ -1,6 +1,12 @@
 """FlowMesh SDK — Stack management extensions."""
 
-from .images import BUILD_GROUPS, BUILD_TARGETS, get_image_ref
+from .images import (
+    BUILD_GROUPS,
+    BUILD_TARGETS,
+    get_image_ref,
+    managed_repos,
+    parse_image_ref,
+)
 from .node_client import NodeClient
 from .workers import (
     create_workers,
@@ -17,7 +23,9 @@ __all__ = [
     "create_workers",
     "detect_gpu_targets",
     "get_image_ref",
+    "managed_repos",
     "operate_workers",
+    "parse_image_ref",
     "pull_images",
     "select_worker_images",
 ]

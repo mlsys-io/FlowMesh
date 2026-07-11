@@ -47,6 +47,7 @@ def test_parse_image_ref_rejects_unmanaged_and_malformed() -> None:
     assert parse_image_ref(REGISTRY, "other.io/mlsys-io/flowmesh_server:dev") is None
     assert parse_image_ref(REGISTRY, f"{REGISTRY}/flowmesh_server") is None
     assert parse_image_ref(REGISTRY, f"{REGISTRY}/flowmesh_worker:dev-tpu") is None
+    assert parse_image_ref(REGISTRY, "flowmesh_server:dev") is None
 
 
 def test_parse_image_ref_rejects_reserved_cache_tags() -> None:
