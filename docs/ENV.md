@@ -69,7 +69,7 @@ Spark), set `DOCKER_GPU_RUNTIME=` in the stack env.
 | `WORKER_TAGS` | `` | Scheduler hints |
 | `WORKER_COST_PER_HOUR` | `1.0` | Cost metadata |
 | `WORKER_UPLOAD_RESULTS` | `false` | Upload results when no destination set |
-| `WORKER_EXECUTOR_IDLE_CLEANUP_SEC` | `60` | Seconds an executor may idle before the worker unloads it from GPU; higher avoids reload thrash |
+| `WORKER_EXECUTOR_IDLE_CLEANUP_SEC` | `60` | Seconds a worker waits before unloading an idle executor to release the resources it holds; higher values avoid reload thrash between tasks but keep those resources reserved while idle |
 | `HF_CACHE_DIR` | – | Shared HuggingFace cache mount |
 | `HEARTBEAT_INTERVAL_SEC` | `30` | Heartbeat cadence |
 
