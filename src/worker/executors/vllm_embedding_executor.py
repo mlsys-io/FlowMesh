@@ -34,6 +34,8 @@ from .vllm_executor import VLLMExecutor
 
 logger = logging.getLogger(__name__)
 
+_TOKEN_BUDGET_SAFETY = 0.9
+
 
 class VLLMEmbeddingResult(BaseExecutorResult):
     ok: bool = True
@@ -101,7 +103,7 @@ class VLLMEmbeddingExecutor(VLLMExecutor):
             span_type=SpanType.COMPUTE,
             attributes={"task_ids": [task_id], "input_count": len(texts)},
         ):
-            outputs = self._llm.encode(texts, pooling_task="embed")
+            outputs = self._encode_in_batches(texts, task_id=task_id)
         latency = time.time() - t0
         if len(outputs) != len(texts):
             raise ExecutionError(
@@ -131,6 +133,58 @@ class VLLMEmbeddingExecutor(VLLMExecutor):
             dependencies_by_task={task_id: self._extract_source_data_ids(spec)},
         )
         return result
+
+    def _encode_in_batches(self, texts: list[str], *, task_id: str) -> list[Any]:
+        """Encode ``texts`` in scheduler-budget-sized batches, preserving input order.
+
+        Pooling models disable chunked prefill, so each request must fit the
+        per-step token budget.
+        """
+        assert self._llm is not None
+        tokenizer = self._llm.get_tokenizer()
+        raw_budget = (
+            self._llm.llm_engine.vllm_config.scheduler_config.max_num_batched_tokens
+        )
+        pack_budget = int(raw_budget * _TOKEN_BUDGET_SAFETY)
+
+        token_counts = [len(tokenizer.encode(text)) for text in texts]
+        for idx, count in enumerate(token_counts):
+            if count > raw_budget:
+                raise ExecutionError(
+                    f"Input {idx} requires {count} tokens, exceeding the "
+                    f"{raw_budget}-token scheduler budget (task={task_id}); "
+                    "chunked prefill is disabled for pooling models so it can "
+                    "never be scheduled in a single request."
+                )
+
+        chunks: list[list[str]] = []
+        current_chunk: list[str] = []
+        current_tokens = 0
+        for idx, text in enumerate(texts):
+            text_tokens = token_counts[idx]
+            if current_chunk and current_tokens + text_tokens > pack_budget:
+                chunks.append(current_chunk)
+                current_chunk = []
+                current_tokens = 0
+            current_chunk.append(text)
+            current_tokens += text_tokens
+        if current_chunk:
+            chunks.append(current_chunk)
+
+        outputs: list[Any] = []
+        cursor = 0
+        for chunk in chunks:
+            end_idx = cursor + len(chunk) - 1
+            try:
+                chunk_outputs = self._llm.encode(chunk, pooling_task="embed")
+            except Exception as exc:
+                raise ExecutionError(
+                    f"vLLM encode failed for inputs {cursor}-{end_idx} "
+                    f"(task={task_id})."
+                ) from exc
+            outputs.extend(chunk_outputs)
+            cursor += len(chunk)
+        return outputs
 
     @staticmethod
     def _stack_embeddings(outputs: list[Any], *, task_id: str) -> "torch.Tensor":

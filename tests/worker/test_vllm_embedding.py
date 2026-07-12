@@ -33,23 +33,46 @@ from worker.runner import Runner
 
 
 class _FakeEmbeddingLLM:
-    """Stand-in for a vLLM ``LLM`` initialized in pooling mode."""
+    """Stand-in for a vLLM ``LLM`` initialized in pooling mode.
 
-    def __init__(self, vectors: list[list[float]], token_counts: list[int]) -> None:
+    ``vectors`` / ``token_counts`` are indexed by the input's position in the
+    original (unsplit) text list, so assertions hold regardless of how many
+    ``encode`` calls the executor issues.
+    """
+
+    def __init__(
+        self,
+        vectors: list[list[float]],
+        token_counts: list[int],
+        tokenizer: Any | None = None,
+        budget: int = 1_000_000,
+    ) -> None:
         self._vectors = vectors
         self._token_counts = token_counts
+        self._tokenizer = tokenizer
+        self._offset = 0
+        self.llm_engine = SimpleNamespace(
+            vllm_config=SimpleNamespace(
+                scheduler_config=SimpleNamespace(max_num_batched_tokens=budget)
+            )
+        )
         self.encoded: list[list[str]] = []
         self.pooling_tasks: list[str | None] = []
+
+    def get_tokenizer(self) -> Any | None:
+        return self._tokenizer
 
     def encode(self, prompts: list[str], pooling_task: str | None = None) -> list[Any]:
         self.encoded.append(list(prompts))
         self.pooling_tasks.append(pooling_task)
+        start = self._offset
+        self._offset += len(prompts)
         return [
             SimpleNamespace(
-                outputs=SimpleNamespace(data=torch.tensor(self._vectors[idx])),
-                prompt_token_ids=[0] * self._token_counts[idx],
+                outputs=SimpleNamespace(data=torch.tensor(self._vectors[start + i])),
+                prompt_token_ids=[0] * self._token_counts[start + i],
             )
-            for idx in range(len(prompts))
+            for i in range(len(prompts))
         ]
 
 
@@ -76,9 +99,11 @@ def _executor_with_fake_engine(fake: _FakeEmbeddingLLM) -> VLLMEmbeddingExecutor
 
 
 def test_embedding_writes_tensor_artifact_and_metadata(tmp_path: Path) -> None:
+    token_counts = {"hello world": 3, "second input": 5}
     fake = _FakeEmbeddingLLM(
         vectors=[[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]],
         token_counts=[3, 5],
+        tokenizer=SimpleNamespace(encode=lambda text: [0] * token_counts[text]),
     )
     executor = _executor_with_fake_engine(fake)
     spec = _embedding_spec(
@@ -200,6 +225,7 @@ def test_embedding_rejects_inconsistent_dimensions(tmp_path: Path) -> None:
     fake = _FakeEmbeddingLLM(
         vectors=[[0.1, 0.2, 0.3], [0.4, 0.5]],
         token_counts=[3, 3],
+        tokenizer=SimpleNamespace(encode=lambda text: [0]),
     )
     executor = _executor_with_fake_engine(fake)
     spec = _embedding_spec(["a", "b"])
@@ -230,3 +256,102 @@ def test_embedding_executor_routing_prefers_vllm_when_configured() -> None:
 
     assert runner._select_embedding_executor_key(vllm_spec) == "vllm_embedding"
     assert runner._select_embedding_executor_key(transformers_spec) == "default"
+
+
+def test_encode_in_batches_splits_by_token_budget_and_preserves_order() -> None:
+    texts = ["a", "b", "c", "d"]
+    token_counts = {"a": 3, "b": 3, "c": 3, "d": 3}
+    fake = _FakeEmbeddingLLM(
+        vectors=[[float(idx)] for idx in range(len(texts))],
+        token_counts=[3, 3, 3, 3],
+        tokenizer=SimpleNamespace(encode=lambda text: [0] * token_counts[text]),
+        budget=10,
+    )
+    executor = _executor_with_fake_engine(fake)
+
+    outputs = executor._encode_in_batches(texts, task_id="tsk-batch")
+
+    # budget = int(10 * 0.9) = 9; three 3-token items pack into one chunk
+    # (3+3+3=9), the fourth cannot join (9+3>9) and starts a new chunk.
+    assert fake.encoded == [["a", "b", "c"], ["d"]]
+    assert [out.outputs.data.item() for out in outputs] == [0.0, 1.0, 2.0, 3.0]
+
+
+def test_encode_in_batches_accepts_item_between_pack_and_raw_budget() -> None:
+    # raw_budget=10, pack_budget=int(10*0.9)=9; a 10-token item exceeds
+    # pack_budget but fits the raw scheduler budget, so it is encoded alone.
+    texts = ["short", "a heavy single input"]
+    token_counts = {texts[0]: 3, texts[1]: 10}
+    fake = _FakeEmbeddingLLM(
+        vectors=[[0.0], [1.0]],
+        token_counts=[3, 10],
+        tokenizer=SimpleNamespace(encode=lambda text: [0] * token_counts[text]),
+        budget=10,
+    )
+    executor = _executor_with_fake_engine(fake)
+
+    outputs = executor._encode_in_batches(texts, task_id="tsk-edge")
+
+    assert fake.encoded == [["short"], ["a heavy single input"]]
+    assert [out.outputs.data.item() for out in outputs] == [0.0, 1.0]
+
+
+def test_encode_in_batches_raises_for_oversized_single_item() -> None:
+    texts = ["short", "an input requiring far too many tokens to schedule"]
+    token_counts = {texts[0]: 3, texts[1]: 50}
+    fake = _FakeEmbeddingLLM(
+        vectors=[[0.0], [0.0]],
+        token_counts=[3, 50],
+        tokenizer=SimpleNamespace(encode=lambda text: [0] * token_counts[text]),
+        budget=10,
+    )
+    executor = _executor_with_fake_engine(fake)
+
+    with pytest.raises(
+        ExecutionError, match="Input 1 requires 50 tokens.*10-token scheduler budget"
+    ):
+        executor._encode_in_batches(texts, task_id="tsk-oversized")
+    assert fake.encoded == []
+
+
+def test_encode_in_batches_uses_engine_config_budget() -> None:
+    texts = ["a", "b", "c"]
+    token_counts = {"a": 40, "b": 40, "c": 40}
+    fake = _FakeEmbeddingLLM(
+        vectors=[[0.0], [1.0], [2.0]],
+        token_counts=[40, 40, 40],
+        tokenizer=SimpleNamespace(encode=lambda text: [0] * token_counts[text]),
+        budget=100,
+    )
+    executor = _executor_with_fake_engine(fake)
+
+    outputs = executor._encode_in_batches(texts, task_id="tsk-engine")
+
+    # raw_budget=100 (from engine config), pack_budget=90; two 40-token items
+    # pack (80<=90), the third cannot join (120>90) and starts a new chunk.
+    assert fake.encoded == [["a", "b"], ["c"]]
+    assert [out.outputs.data.item() for out in outputs] == [0.0, 1.0, 2.0]
+
+
+def test_encode_in_batches_wraps_encode_failure() -> None:
+    class _FailingLLM:
+        llm_engine = SimpleNamespace(
+            vllm_config=SimpleNamespace(
+                scheduler_config=SimpleNamespace(max_num_batched_tokens=1_000_000)
+            )
+        )
+
+        def get_tokenizer(self) -> Any:
+            return SimpleNamespace(encode=lambda text: [0])
+
+        def encode(self, prompts: list[str], pooling_task: str | None = None) -> Any:
+            raise RuntimeError("scheduler blew up")
+
+    executor = VLLMEmbeddingExecutor(DEFAULT_WORKER_CONFIG, lifecycle=None)
+    executor._llm = cast(Any, _FailingLLM())
+
+    with pytest.raises(
+        ExecutionError, match=r"vLLM encode failed for inputs 0-1"
+    ) as exc_info:
+        executor._encode_in_batches(["a", "b"], task_id="tsk-fail")
+    assert isinstance(exc_info.value.__cause__, RuntimeError)
