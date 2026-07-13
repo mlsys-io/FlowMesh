@@ -210,9 +210,10 @@ flowmesh stack image rm dev myfeature           # remove specific version(s)
 `stack image prune` deletes stale images by policy. Pick what to remove with at
 least one *selection* flag — `--keep-last N` (keep the N newest versions per
 target), `--older-than <dur>` (e.g. `30d`, `12h`), or `--dangling` (untagged
-leftovers) — prune refuses to run without one. `--keep <version>` and
-`--keep-active` protect images from deletion; `--keep-active` spares any version
-currently in use by a container.
+leftovers, which have no build target and so can't be narrowed with `--target`)
+— prune refuses to run without one. `--keep <version>` and `--keep-active`
+protect images from deletion; `--keep-active` spares any version currently in
+use by a container.
 
 ```bash
 # Typical cleanup: keep the running version and the last two, drop the rest.

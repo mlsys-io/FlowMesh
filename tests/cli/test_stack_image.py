@@ -79,6 +79,23 @@ def test_prune_requires_policy() -> None:
         )
 
 
+def test_prune_dangling_with_target_refuses() -> None:
+    with pytest.raises(typer.Exit):
+        image_module.prune(
+            keep_last=None,
+            keep_active=False,
+            keep=None,
+            older_than=None,
+            dangling=True,
+            targets=["flowmesh_server"],
+            include_builder=False,
+            dry_run=False,
+            yes=True,
+            as_json=False,
+            env_file=Path(".env"),
+        )
+
+
 def test_prune_dry_run_removes_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         image_module,

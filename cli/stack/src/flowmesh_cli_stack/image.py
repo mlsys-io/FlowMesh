@@ -235,6 +235,12 @@ def prune(
             "Add --yes to proceed non-interactively, or --dry-run to preview."
         )
         raise typer.Exit(code=1)
+    if dangling and targets:
+        logging.error(
+            "--dangling cannot be combined with --target: dangling layers have no "
+            "build target to restrict them to. Drop --target, or drop --dangling."
+        )
+        raise typer.Exit(code=1)
 
     registry = _prepare(env_file)
     resolved = set(_resolve_targets(targets, include_builder))
