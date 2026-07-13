@@ -40,7 +40,7 @@ opentelemetry-semantic-conventions==0.59b0
 pandas==2.3.3
 peft==0.19.1
 pexpect==4.9.0
-pillow==12.2.0
+pillow==12.3.0
 prompt-toolkit==3.0.52
 protobuf==5.29.6
 psycopg[binary]==3.2.12
