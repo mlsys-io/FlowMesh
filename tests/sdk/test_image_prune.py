@@ -13,7 +13,7 @@ def _img(
     version: str | None,
     *,
     target: str | None = "flowmesh_server",
-    age_days: int = 0,
+    age_days: int | None = 0,
     image_id: str | None = None,
     dangling: bool = False,
     in_use: bool = False,
@@ -26,7 +26,7 @@ def _img(
         version=None if dangling else version,
         image_id=image_id or f"sha256:{version}-{target}",
         size_bytes=1,
-        created=NOW - timedelta(days=age_days),
+        created=None if age_days is None else NOW - timedelta(days=age_days),
         dangling=dangling,
         in_use=in_use,
     )
@@ -129,6 +129,25 @@ def test_unparsed_tag_never_deleted() -> None:
     # older-than-30d and keep-last both leave the target=None tag untouched.
     assert _deleted_versions(images, older_than=timedelta(days=30)) == {"v1"}
     assert _deleted_versions(images, keep_last=0) == {"v1"}
+
+
+def test_negative_keep_last_raises() -> None:
+    with pytest.raises(ValueError):
+        select_prune_targets([_img("v1")], keep_last=-1, now=NOW)
+
+
+def test_older_than_skips_undeterminable_created() -> None:
+    images = [_img("old", age_days=40), _img("unknown", age_days=None)]
+    assert _deleted_versions(images, older_than=timedelta(days=30)) == {"old"}
+
+
+def test_keep_last_protects_undeterminable_created() -> None:
+    images = [
+        _img("new", age_days=1),
+        _img("old", age_days=5),
+        _img("unknown", age_days=None),
+    ]
+    assert _deleted_versions(images, keep_last=1) == {"old"}
 
 
 def test_keep_active_protects_dangling_by_id() -> None:

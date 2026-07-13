@@ -39,8 +39,12 @@ def _keep_last_versions(
     parsed: list[ManagedImage], keep_last: int
 ) -> dict[str, set[str]]:
     newest: dict[str, dict[str, datetime]] = {}
+    ignored: list[tuple[str, str]] = []
     for image in parsed:
         if image.target is None or image.version is None:
+            continue
+        if image.created is None:
+            ignored.append((image.target, image.version))
             continue
         per_target = newest.setdefault(image.target, {})
         if image.version not in per_target or image.created > per_target[image.version]:
@@ -49,6 +53,8 @@ def _keep_last_versions(
     for target, versions in newest.items():
         ordered = sorted(versions.items(), key=lambda item: item[1], reverse=True)
         protected[target] = {version for version, _ in ordered[:keep_last]}
+    for target, version in ignored:
+        protected.setdefault(target, set()).add(version)
     return protected
 
 
@@ -66,15 +72,20 @@ def select_prune_targets(
 
     The candidate pool is a filter — protections only subtract from it. The
     non-dangling base is restricted to parsed images (``target`` set) so manual
-    tags on a managed repo are never candidates.
+    tags on a managed repo are never candidates. Images whose ``created`` time
+    couldn't be determined (``None``) are never selected by ``older_than``.
     """
+    if keep_last is not None and keep_last < 0:
+        raise ValueError("keep_last must be >= 0")
     keep_versions = keep_versions or set()
     parsed = [i for i in images if not i.dangling and i.target is not None]
     dangling = [i for i in images if i.dangling]
 
     if older_than is not None:
         cutoff = now - older_than
-        pool: list[ManagedImage] = [i for i in parsed if i.created < cutoff]
+        pool: list[ManagedImage] = [
+            i for i in parsed if i.created is not None and i.created < cutoff
+        ]
     elif keep_last is not None:
         pool = list(parsed)
     else:

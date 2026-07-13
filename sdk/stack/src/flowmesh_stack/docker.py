@@ -114,7 +114,7 @@ class ManagedImage:
     version: str | None
     image_id: str
     size_bytes: int
-    created: datetime
+    created: datetime | None
     dangling: bool
     in_use: bool
 
@@ -133,19 +133,19 @@ class RemovalResult:
     error: str | None = None
 
 
-_EPOCH = datetime.fromtimestamp(0, tz=UTC)
 _TIMESTAMP_FRACTION = re.compile(r"(\.\d{6})\d+")
 
 
-def _parse_docker_timestamp(value: str) -> datetime:
+def _parse_docker_timestamp(value: str) -> datetime | None:
+    """Parse a docker timestamp, or return ``None`` when it can't be determined."""
     text = value.strip().replace("Z", "+00:00")
     if not text:
-        return _EPOCH
+        return None
     text = _TIMESTAMP_FRACTION.sub(r"\1", text)
     try:
         parsed = datetime.fromisoformat(text)
     except ValueError:
-        return _EPOCH
+        return None
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
 
 
@@ -166,7 +166,14 @@ def _docker_json_lines(
     return rows
 
 
-def _inspect_image_metadata(image_ids: list[str]) -> dict[str, tuple[int, datetime]]:
+@dataclass
+class _ImageMetadata:
+    size_bytes: int
+    created: datetime | None
+    source: str
+
+
+def _inspect_image_metadata(image_ids: list[str]) -> dict[str, _ImageMetadata]:
     if not image_ids:
         return {}
     result = subprocess.run(
@@ -175,26 +182,39 @@ def _inspect_image_metadata(image_ids: list[str]) -> dict[str, tuple[int, dateti
         text=True,
         check=False,
     )
-    metadata: dict[str, tuple[int, datetime]] = {}
+    metadata: dict[str, _ImageMetadata] = {}
     for obj in _docker_json_lines(result):
         image_id = obj.get("Id", "")
         if not isinstance(image_id, str) or not image_id:
             continue
         size = obj.get("Size", 0)
         size_bytes = int(size) if isinstance(size, (int, float)) else 0
-        metadata[image_id] = (
-            size_bytes,
-            _parse_docker_timestamp(str(obj.get("Created", ""))),
+        config = obj.get("Config")
+        labels = config.get("Labels") if isinstance(config, dict) else None
+        source = (
+            str(labels.get("org.opencontainers.image.source") or "")
+            if isinstance(labels, dict)
+            else ""
+        )
+        metadata[image_id] = _ImageMetadata(
+            size_bytes=size_bytes,
+            created=_parse_docker_timestamp(str(obj.get("Created", ""))),
+            source=source,
         )
     return metadata
 
 
 def container_image_refs() -> set[str]:
-    """Return the image ids referenced by every container, running or stopped."""
+    """Return the image ids referenced by every container, running or stopped.
+
+    Raises :class:`DockerError` if the daemon can't be queried.
+    """
     ensure_docker_available()
     listing = subprocess.run(
         ["docker", "ps", "-aq"], capture_output=True, text=True, check=False
     )
+    if listing.returncode != 0:
+        raise DockerError(f"failed to list containers: {listing.stderr.strip()}")
     container_ids = [
         stripped for line in listing.stdout.splitlines() if (stripped := line.strip())
     ]
@@ -206,6 +226,8 @@ def container_image_refs() -> set[str]:
         text=True,
         check=False,
     )
+    if inspected.returncode != 0:
+        raise DockerError(f"failed to inspect containers: {inspected.stderr.strip()}")
     return {
         stripped for line in inspected.stdout.splitlines() if (stripped := line.strip())
     }
@@ -252,7 +274,7 @@ def list_managed_images(
                 version=version,
                 image_id=image_id,
                 size_bytes=0,
-                created=_EPOCH,
+                created=None,
                 dangling=False,
                 in_use=image_id in in_use,
             )
@@ -288,17 +310,22 @@ def list_managed_images(
                     version=None,
                     image_id=image_id,
                     size_bytes=0,
-                    created=_EPOCH,
+                    created=None,
                     dangling=True,
                     in_use=image_id in in_use,
                 )
             )
 
     metadata = _inspect_image_metadata([image.image_id for image in images])
+    resolved: list[ManagedImage] = []
     for image in images:
-        if image.image_id in metadata:
-            image.size_bytes, image.created = metadata[image.image_id]
-    return images
+        meta = metadata.get(image.image_id)
+        if meta is None or meta.source != FLOWMESH_IMAGE_SOURCE:
+            continue
+        image.size_bytes = meta.size_bytes
+        image.created = meta.created
+        resolved.append(image)
+    return resolved
 
 
 def remove_images(refs: list[str], *, force: bool = False) -> list[RemovalResult]:

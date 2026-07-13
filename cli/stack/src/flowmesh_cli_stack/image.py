@@ -41,6 +41,15 @@ def _prepare(env_file: Path) -> str:
     return os.getenv("FLOWMESH_REGISTRY", _DEFAULT_REGISTRY)
 
 
+def _in_use_ids() -> set[str]:
+    """Resolve in-use image ids, aborting if the daemon can't be queried."""
+    try:
+        return container_image_refs()
+    except DockerError as exc:
+        logging.error(str(exc))
+        raise typer.Exit(code=1)
+
+
 def _resolve_targets(targets: list[str] | None, include_builder: bool) -> list[str]:
     if targets:
         invalid = [t for t in targets if t not in BUILD_TARGETS]
@@ -75,7 +84,7 @@ def _image_row(image: ManagedImage) -> dict[str, Any]:
         "version": image.version,
         "image_id": image.image_id,
         "size_bytes": image.size_bytes,
-        "created": image.created.isoformat(),
+        "created": image.created.isoformat() if image.created else None,
         "dangling": image.dangling,
         "in_use": image.in_use,
     }
@@ -101,7 +110,7 @@ def _render_table(images: list[ManagedImage]) -> None:
                 tag,
                 image.version or "-",
                 _human_size(image.size_bytes),
-                image.created.date().isoformat(),
+                image.created.date().isoformat() if image.created else "unknown",
                 "yes" if image.in_use else "no",
             )
         )
@@ -139,7 +148,7 @@ def list_images(
     """List FlowMesh Docker images on the local daemon."""
     registry = _prepare(env_file)
     resolved = _resolve_targets(targets, include_builder)
-    in_use_ids = container_image_refs()
+    in_use_ids = _in_use_ids()
     images = list_managed_images(
         registry, include_dangling=dangling, in_use_ids=in_use_ids
     )
@@ -176,7 +185,7 @@ def list_images(
 @app.command("prune")
 def prune(
     keep_last: int | None = typer.Option(
-        None, "--keep-last", help="Protect the N newest versions per target."
+        None, "--keep-last", min=0, help="Protect the N newest versions per target."
     ),
     keep_active: bool = typer.Option(
         False,
@@ -237,7 +246,7 @@ def prune(
             logging.error(str(exc))
             raise typer.Exit(code=1)
 
-    in_use_ids = container_image_refs()
+    in_use_ids = _in_use_ids()
     images = list_managed_images(
         registry, include_dangling=dangling, in_use_ids=in_use_ids
     )
