@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import secrets
+from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
 from typing import Any
 
@@ -43,8 +44,7 @@ class PortForwardSession:
     target_port: int
     """The worker-internal port to which the connection is forwarded."""
     port: int
-    """The local port on which the port-forward service listens for this session."""
-    server: asyncio.AbstractServer
+    """The local port assigned from the persistent listener pool."""
     audit: _AuditContext
 
 
@@ -72,20 +72,62 @@ class PortForwardService:
         self._port_end = port_end
         self._loop: asyncio.AbstractEventLoop | None = None
         self._sessions: dict[str, PortForwardSession] = {}
-        self._used_ports: set[int] = set()
+        self._servers: dict[int, asyncio.AbstractServer] = {}
+        self._port_to_task: dict[int, str] = {}
+        self._task_to_port: dict[str, int] = {}
         self._lock = asyncio.Lock()
 
     async def start(self) -> None:
+        """Bind every port in the configured range up front.
+
+        Each port keeps a persistent listener regardless of whether a session
+        currently occupies it, so an external TCP health check (e.g. a load
+        balancer probing the port) always succeeds. A connection that arrives on
+        a port with no active session is closed immediately by the handler.
+        """
         self._loop = asyncio.get_running_loop()
+        for port in range(self._port_start, self._port_end + 1):
+            try:
+                server = await asyncio.start_server(
+                    self._make_handler(port), host=self._bind_host, port=port
+                )
+            except OSError as exc:
+                self._logger.warning("Port forward: cannot bind port %s: %s", port, exc)
+                continue
+            self._servers[port] = server
+        self._logger.info(
+            "Port forward listening on %s port(s) %s-%s",
+            len(self._servers),
+            self._port_start,
+            self._port_end,
+        )
 
     async def stop(self) -> None:
         async with self._lock:
-            sessions = list(self._sessions.values())
+            servers = list(self._servers.values())
+            self._servers.clear()
             self._sessions.clear()
-            self._used_ports.clear()
+            self._port_to_task.clear()
+            self._task_to_port.clear()
             self._loop = None
-        for session in sessions:
-            await self._close_session(session, release_port=False)
+        for server in servers:
+            server.close()
+            try:
+                await server.wait_closed()
+            except Exception:
+                pass
+
+    def _make_handler(
+        self, port: int
+    ) -> Callable[
+        [asyncio.StreamReader, asyncio.StreamWriter], Coroutine[Any, Any, None]
+    ]:
+        async def _handler(
+            reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+        ) -> None:
+            await self._handle_client(port, reader, writer)
+
+        return _handler
 
     def register_port_forward(
         self,
@@ -145,7 +187,6 @@ class PortForwardService:
         async with self._lock:
             session = self._sessions.get(task_id)
             if session is not None:
-                # Update existing session info
                 session.node_id = worker.node_id
                 session.session_id = str(session_id)
                 session.target_host = str(target_host)
@@ -153,128 +194,63 @@ class PortForwardService:
                 session.audit.workflow_id = workflow_id
                 session.audit.worker_id = assigned_worker
                 session.audit.username = username
-                updated = dict(endpoint)
-                updated["host"] = self._public_host
-                updated["port"] = session.port
-                updated["mode"] = "forward"
-                return updated
-
-        # Create new session for this task
-        session = await self._create_session(
-            task_id=task_id,
-            node_id=worker.node_id,
-            session_id=str(session_id),
-            target_host=str(target_host),
-            target_port=int(target_port),
-            audit=_AuditContext(
-                workflow_id=workflow_id,
-                worker_id=assigned_worker,
-                username=username,
-            ),
-        )
-
-        stale_session: PortForwardSession | None = None
-        async with self._lock:
-            existing = self._sessions.get(task_id)
-            if existing is None:
-                self._sessions[task_id] = session
+                port = session.port
             else:
-                # Another session was created; update it with the new info.
-                existing.node_id = worker.node_id
-                existing.session_id = str(session_id)
-                existing.target_host = str(target_host)
-                existing.target_port = int(target_port)
-                existing.audit.workflow_id = workflow_id
-                existing.audit.worker_id = assigned_worker
-                existing.audit.username = username
-                stale_session = session
-                session = existing
-        if stale_session is not None:
-            await self._close_session(stale_session)
+                acquired = self._acquire_port_locked()
+                if acquired is None:
+                    raise RuntimeError("No available forward ports")
+                port = acquired
+                self._sessions[task_id] = PortForwardSession(
+                    task_id=task_id,
+                    node_id=worker.node_id,
+                    session_id=str(session_id),
+                    target_host=str(target_host),
+                    target_port=int(target_port),
+                    port=port,
+                    audit=_AuditContext(
+                        workflow_id=workflow_id,
+                        worker_id=assigned_worker,
+                        username=username,
+                    ),
+                )
+                self._port_to_task[port] = task_id
+                self._task_to_port[task_id] = port
+                self._logger.info("Assigned forward port %s to task %s", port, task_id)
 
         updated = dict(endpoint)
         updated["host"] = self._public_host
-        updated["port"] = session.port
+        updated["port"] = port
         updated["mode"] = "forward"
         return updated
 
-    async def _create_session(
-        self,
-        task_id: str,
-        node_id: str,
-        session_id: str,
-        target_host: str,
-        target_port: int,
-        audit: _AuditContext,
-    ) -> PortForwardSession:
-        async def _client_handler(
-            reader: asyncio.StreamReader, writer: asyncio.StreamWriter
-        ) -> None:
-            await self._handle_client(task_id, reader, writer)
-
-        bind_host = self._bind_host
+    def _acquire_port_locked(self) -> int | None:
+        """Return a bound, currently unoccupied port, or None if the pool is full."""
         for port in range(self._port_start, self._port_end + 1):
-            if not await self._reserve_port(port):
-                continue
-            try:
-                server = await asyncio.start_server(
-                    _client_handler, host=bind_host, port=port
-                )
-            except OSError:
-                await self._release_port(port)
-                continue
-            self._logger.info("Allocated forward port %s for task %s", port, task_id)
-            return PortForwardSession(
-                task_id=task_id,
-                node_id=node_id,
-                session_id=session_id,
-                target_host=target_host,
-                target_port=target_port,
-                port=port,
-                server=server,
-                audit=audit,
-            )
-        raise RuntimeError("No available forward ports")
+            if port in self._servers and port not in self._port_to_task:
+                return port
+        return None
 
     async def _unregister_task_async(self, task_id: str) -> None:
+        """Release the task's port back to the pool; the listener stays bound."""
         async with self._lock:
-            session = self._sessions.pop(task_id, None)
-            if session is None:
-                return
-        await self._close_session(session)
-
-    async def _reserve_port(self, port: int) -> bool:
-        async with self._lock:
-            if port in self._used_ports:
-                return False
-            self._used_ports.add(port)
-            return True
-
-    async def _release_port(self, port: int) -> None:
-        async with self._lock:
-            self._used_ports.discard(port)
-
-    async def _close_session(
-        self, session: PortForwardSession, release_port: bool = True
-    ) -> None:
-        if release_port:
-            await self._release_port(session.port)
-        session.server.close()
-        try:
-            await session.server.wait_closed()
-        except Exception:
-            pass
+            self._sessions.pop(task_id, None)
+            port = self._task_to_port.pop(task_id, None)
+            if port is not None:
+                self._port_to_task.pop(port, None)
 
     async def _handle_client(
         self,
-        task_id: str,
+        port: int,
         reader: asyncio.StreamReader,
         writer: asyncio.StreamWriter,
     ) -> None:
         async with self._lock:
-            session = self._sessions.get(task_id)
-        if session is None:
-            # Task unregistered while client was connecting
+            task_id = self._port_to_task.get(port)
+            session = self._sessions.get(task_id) if task_id is not None else None
+        if session is None or task_id is None:
+            # No session occupies this port: an external health-check probe or a
+            # connection that arrived before the port was assigned / after it was
+            # released. Close cleanly.
             writer.close()
             try:
                 await writer.wait_closed()
