@@ -1,7 +1,6 @@
 """Tests for VLLMServeExecutor."""
 
 import collections
-import importlib.metadata
 import io
 import logging
 import socket
@@ -23,26 +22,11 @@ from tests.worker.factories import (
 )
 from worker.executors.base_executor import ExecutionError
 from worker.executors.vllm_serve_executor import (
+    ServeResult,
     VLLMServeExecutor,
     _drain_to_log,
     _resolve_port,
 )
-
-
-def _ep(name: str, value: str) -> importlib.metadata.EntryPoint:
-    return importlib.metadata.EntryPoint(
-        name=name, value=value, group="vllm.general_plugins"
-    )
-
-
-def _mock_eps(
-    monkeypatch: pytest.MonkeyPatch, eps: list[importlib.metadata.EntryPoint]
-) -> None:
-    monkeypatch.setattr(
-        importlib.metadata,
-        "entry_points",
-        lambda group: eps if group == "vllm.general_plugins" else [],
-    )
 
 
 class TestVLLMServeExecutorInit:
@@ -66,40 +50,6 @@ class TestVLLMServeExecutorInit:
         assert result is True
 
 
-class TestPluginFiltering:
-    _OMNI_EP_NAME = "vllm_omni_register_models"
-    _OMNI_EP_VALUE = "vllm_omni.engine.arg_utils:register_omni_models_to_vllm"
-
-    def test_excludes_omni_keeps_others(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        _mock_eps(
-            monkeypatch,
-            [
-                _ep(self._OMNI_EP_NAME, self._OMNI_EP_VALUE),
-                _ep("some_other_plugin", "some_pkg.plugins:register"),
-            ],
-        )
-        result = VLLMServeExecutor._vllm_plugins_excluding_omni()
-        assert result == "some_other_plugin"
-
-    def test_empty_when_only_omni(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        _mock_eps(monkeypatch, [_ep(self._OMNI_EP_NAME, self._OMNI_EP_VALUE)])
-        assert VLLMServeExecutor._vllm_plugins_excluding_omni() == ""
-
-    def test_no_eps_returns_empty(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        _mock_eps(monkeypatch, [])
-        assert VLLMServeExecutor._vllm_plugins_excluding_omni() == ""
-
-    def test_filters_by_module_prefix(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        _mock_eps(
-            monkeypatch,
-            [
-                _ep("renamed", "vllm_omni.something.else:fn"),
-                _ep("keep", "another_pkg:fn"),
-            ],
-        )
-        assert VLLMServeExecutor._vllm_plugins_excluding_omni() == "keep"
-
-
 class TestServeSpecStrict:
     def test_minimal_spec(self) -> None:
         spec = ServeSpecStrict(taskType=TaskType.SERVE)
@@ -109,6 +59,7 @@ class TestServeSpecStrict:
         assert spec.readinessTimeoutSeconds is None
         assert spec.accessMode is None
         assert spec.port is None
+        assert spec.apiKey is None
 
     def test_spec_with_all_fields(self) -> None:
         spec = ServeSpecStrict(
@@ -121,6 +72,7 @@ class TestServeSpecStrict:
             readinessTimeoutSeconds=300.0,
             accessMode="forward",
             port=8001,
+            apiKey="sk-user-supplied",
         )
         assert spec.model_name == "meta-llama/Llama-3-8B"
         assert spec.model is not None
@@ -129,6 +81,7 @@ class TestServeSpecStrict:
         assert spec.readinessTimeoutSeconds == 300.0
         assert spec.accessMode == "forward"
         assert spec.port == 8001
+        assert spec.apiKey == "sk-user-supplied"
 
     def test_parses_inference_style_model_block(self) -> None:
         """ServeSpecStrict accepts the same model block as InferenceSpecStrict."""
@@ -286,6 +239,72 @@ class TestServeExecutorCmdBuilding:
         ex = self._make_executor()
         with pytest.raises(ExecutionError, match="model.source.identifier"):
             ex.run(task, tmp_path)
+
+
+class TestServeApiKey:
+    """User-supplied apiKey is used verbatim; otherwise one is generated. Either
+    way the secret is surfaced only via the task update, never in the result."""
+
+    def _make_executor(self) -> VLLMServeExecutor:
+        return VLLMServeExecutor(make_worker_config(), make_worker_hardware())
+
+    def _run(
+        self, spec: ServeSpecStrict, tmp_path: Path
+    ) -> tuple[list[str], dict[str, object], ServeResult]:
+        task = make_worker_task_message(spec=spec, task_type=TaskType.SERVE)
+        ex = self._make_executor()
+        captured: list[list[str]] = []
+
+        def fake_popen(cmd: list[str], **_: object) -> MagicMock:
+            captured.append(list(cmd))
+            m = MagicMock()
+            m.stdout = io.StringIO("")
+            m.poll.return_value = 0
+            m.returncode = 0
+            m.pid = 12345
+            return m
+
+        emit = MagicMock()
+        with (
+            patch("subprocess.Popen", side_effect=fake_popen),
+            patch.object(ex, "_poll_health"),
+            patch.object(ex, "_wait_for_serve"),
+            patch.object(ex, "emit_update", emit),
+            patch.object(ex, "_terminate_process_group"),
+        ):
+            result = ex.run(task, tmp_path)
+
+        serve = emit.call_args.args[1]["serve"]
+        return captured[0], serve, result
+
+    def test_generates_api_key_when_not_provided(self, tmp_path: Path) -> None:
+        spec = ServeSpecStrict(
+            taskType=TaskType.SERVE,
+            model=ModelConfig(source=ModelSource(identifier="m")),
+        )
+        cmd, serve, _ = self._run(spec, tmp_path)
+        generated = cmd[cmd.index("--api-key") + 1]
+        assert len(generated) == 64
+        assert serve["api_key"] == generated
+
+    def test_uses_user_supplied_api_key(self, tmp_path: Path) -> None:
+        spec = ServeSpecStrict(
+            taskType=TaskType.SERVE,
+            apiKey="sk-user-supplied",
+            model=ModelConfig(source=ModelSource(identifier="m")),
+        )
+        cmd, serve, _ = self._run(spec, tmp_path)
+        assert cmd[cmd.index("--api-key") + 1] == "sk-user-supplied"
+        assert serve["api_key"] == "sk-user-supplied"
+
+    def test_result_never_carries_api_key(self, tmp_path: Path) -> None:
+        spec = ServeSpecStrict(
+            taskType=TaskType.SERVE,
+            apiKey="sk-user-supplied",
+            model=ModelConfig(source=ModelSource(identifier="m")),
+        )
+        _, _, result = self._run(spec, tmp_path)
+        assert "api_key" not in result.model_dump()
 
 
 class TestServeAccessModeHostBinding:
@@ -592,9 +611,9 @@ class TestPollHealth:
         mod._HEALTH_POLL_INTERVAL_SEC = 0.001
         try:
             with patch("requests.get", side_effect=requests.ConnectionError()):
-                with pytest.raises(ExecutionError, match=r"within 42s"):
+                with pytest.raises(ExecutionError, match=r"within 3s"):
                     ex._poll_health(
-                        mock_proc, 8000, "tsk-x", timeout_sec=42.0, tail=tail
+                        mock_proc, 8000, "tsk-x", timeout_sec=3.0, tail=tail
                     )
         finally:
             mod._HEALTH_POLL_INTERVAL_SEC = orig

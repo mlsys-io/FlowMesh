@@ -72,6 +72,8 @@ Spark), set `DOCKER_GPU_RUNTIME=` in the stack env.
 | `WORKER_EXECUTOR_IDLE_CLEANUP_SEC` | `60` | Seconds a worker waits before unloading an idle executor to release the resources it holds; higher values avoid reload thrash between tasks but keep those resources reserved while idle |
 | `HF_CACHE_DIR` | – | Shared HuggingFace cache mount |
 | `HEARTBEAT_INTERVAL_SEC` | `30` | Heartbeat cadence |
+| `SERVE_DEFAULT_TTL_SEC` | `3600` | Default vLLM serve session TTL when `spec.ttlSeconds` is unset |
+| `SERVE_MAX_TTL_SEC` | `86400` | Upper bound on vLLM serve session TTL, regardless of `spec.ttlSeconds` |
 
 ## Supervisor
 

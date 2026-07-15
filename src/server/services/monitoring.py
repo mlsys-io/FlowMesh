@@ -755,9 +755,9 @@ class EventMonitor:
         *,
         key: str,
         normalize_mode: Callable[[str, str | None], str | None],
-        direct_pop_keys: list[str],
         inject_session_id: bool,
         strip_relay_target_after: bool,
+        fall_back_to_direct_on_failure: bool,
     ) -> dict[str, Any]:
         """Register a port-forward relay for a task update payload."""
         inner = payload.get(key)
@@ -774,8 +774,9 @@ class EventMonitor:
             inner = inner.copy()
             inner["mode"] = normalized_mode
             if normalized_mode == "direct":
-                for k in direct_pop_keys:
-                    inner.pop(k, None)
+                inner.pop("directHost", None)
+                inner.pop("directPort", None)
+                inner.pop("_relay_target", None)
             payload[key] = inner
 
         if normalized_mode != "forward":
@@ -785,7 +786,7 @@ class EventMonitor:
         assert worker_id is not None
         record = self._runtime.get_record(task_id)
         try:
-            forward_input = dict(inner)
+            forward_input = inner.copy()
             if inject_session_id:
                 forward_input.setdefault("session_id", task_id)
             inner = self._port_forward.register_port_forward(
@@ -805,6 +806,12 @@ class EventMonitor:
                 key,
                 exc,
             )
+            if fall_back_to_direct_on_failure:
+                inner = inner.copy()
+                inner["mode"] = "direct"
+                inner.pop("_relay_target", None)
+                payload[key] = inner
+                return payload
             payload.pop(key, None)
             return payload
 
@@ -821,9 +828,9 @@ class EventMonitor:
             payload,
             key="ssh",
             normalize_mode=self._normalize_ssh_mode,
-            direct_pop_keys=["directHost", "directPort", "_relay_target"],
             inject_session_id=False,
             strip_relay_target_after=False,
+            fall_back_to_direct_on_failure=True,
         )
 
     def _handle_serve_task_update(
@@ -836,35 +843,10 @@ class EventMonitor:
             payload,
             key="serve",
             normalize_mode=self._normalize_serve_mode,
-            direct_pop_keys=["_relay_target"],
             inject_session_id=True,
             strip_relay_target_after=True,
+            fall_back_to_direct_on_failure=False,
         )
-
-    def _normalize_serve_mode(self, mode: str, worker_id: str | None) -> str | None:
-        """Normalize the serve access mode.
-
-        Returns None when the endpoint cannot be served (e.g. no forward service).
-        """
-        if mode == "direct":
-            return "direct"
-        if mode == "forward":
-            if not worker_id:
-                self._logger.warning(
-                    "Serve task with forward mode has no worker_id; dropping endpoint"
-                )
-                return None
-            if self._port_forward is None:
-                self._logger.error(
-                    "Serve task requested forward mode but no port-forward service is "
-                    "configured (serve has no proxy fallback); dropping endpoint"
-                )
-                return None
-            return "forward"
-        self._logger.warning(
-            "Unsupported serve access mode %r; dropping endpoint", mode
-        )
-        return None
 
     def _track_pending(self, fut: Future[Any]) -> None:
         fut.add_done_callback(self._untrack_pending)
@@ -1043,6 +1025,31 @@ class EventMonitor:
                 return "proxy"
             return "direct"
         return "direct"
+
+    def _normalize_serve_mode(self, mode: str, worker_id: str | None) -> str | None:
+        """Normalize the serve access mode.
+
+        Returns None when the endpoint cannot be served (e.g. no forward service).
+        """
+        if mode == "direct":
+            return "direct"
+        if mode == "forward":
+            if not worker_id:
+                self._logger.warning(
+                    "Serve task with forward mode has no worker_id; dropping endpoint"
+                )
+                return None
+            if self._port_forward is None:
+                self._logger.error(
+                    "Serve task requested forward mode but no port-forward service "
+                    "is configured; dropping endpoint"
+                )
+                return None
+            return "forward"
+        self._logger.warning(
+            "Unsupported serve access mode %r; dropping endpoint", mode
+        )
+        return None
 
     # ------------------------------------------------------------------ #
     # Helper methods

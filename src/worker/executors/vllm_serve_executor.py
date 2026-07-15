@@ -6,7 +6,6 @@ arrives.
 """
 
 import collections
-import importlib.metadata
 import logging
 import os
 import secrets
@@ -17,7 +16,7 @@ import sys
 import threading
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
 import requests
 
@@ -43,8 +42,8 @@ _TAIL_SNIPPET_BYTES = 4096
 
 
 def _drain_to_log(
-    proc: "subprocess.Popen[str]",
-    tail: "collections.deque[str]",
+    proc: subprocess.Popen[str],
+    tail: collections.deque[str],
     eof_event: threading.Event,
 ) -> None:
     assert proc.stdout is not None
@@ -55,12 +54,19 @@ def _drain_to_log(
     eof_event.set()
 
 
-def _tail_snippet(tail: "collections.deque[str]") -> str:
+def _tail_snippet(tail: collections.deque[str]) -> str:
     text = "\n".join(tail)
     raw = text.encode("utf-8", errors="replace")
     if len(raw) > _TAIL_SNIPPET_BYTES:
         text = "...\n" + raw[-_TAIL_SNIPPET_BYTES:].decode("utf-8", errors="replace")
     return text
+
+
+def _raise_with_tail(message: str, tail: collections.deque[str]) -> NoReturn:
+    snippet = _tail_snippet(tail)
+    raise ExecutionError(
+        message + (f"\n--- last vLLM output ---\n{snippet}" if snippet else "")
+    )
 
 
 def _resolve_port(requested: int | None, bind_host: str) -> int:
@@ -87,7 +93,6 @@ def _resolve_port(requested: int | None, bind_host: str) -> int:
 class ServeResult(BaseExecutorResult):
     model: str
     port: int
-    api_key: str
 
 
 class VLLMServeExecutor(Executor):
@@ -98,7 +103,7 @@ class VLLMServeExecutor(Executor):
         super().__init__(*args, **kwargs)
         self._cancel_event = threading.Event()
         self._stop_event = threading.Event()
-        self._proc: subprocess.Popen | None = None  # type: ignore[type-arg]
+        self._proc: subprocess.Popen[str] | None = None
 
     @classmethod
     def is_available(cls, config: WorkerConfig) -> bool:
@@ -108,16 +113,6 @@ class VLLMServeExecutor(Executor):
             return True
         except Exception:
             return False
-
-    @staticmethod
-    def _vllm_plugins_excluding_omni() -> str:
-        names: list[str] = []
-        for ep in importlib.metadata.entry_points(group="vllm.general_plugins"):
-            module = ep.value.split(":", 1)[0].strip()
-            if module == "vllm_omni" or module.startswith("vllm_omni."):
-                continue
-            names.append(ep.name)
-        return ",".join(names)
 
     def run(self, task: ExecutorTask, out_dir: Path) -> ServeResult:
         spec = self.require_spec(task, ServeSpecStrict)
@@ -135,7 +130,7 @@ class VLLMServeExecutor(Executor):
             spec.readinessTimeoutSeconds or _DEFAULT_READINESS_TIMEOUT_SEC
         )
         access_mode = spec.accessMode or "forward"
-        api_key = secrets.token_hex(32)
+        api_key = spec.apiKey or secrets.token_hex(32)
 
         bind_host = (
             "0.0.0.0" if access_mode == "direct" else "127.0.0.1"
@@ -155,8 +150,7 @@ class VLLMServeExecutor(Executor):
             "--api-key",
             api_key,
         ]
-        revision = spec.model_revision
-        if revision:
+        if revision := spec.model_revision:
             cmd.extend(["--revision", revision])
 
         vllm_kwargs = spec.model.vllm if spec.model is not None else None
@@ -175,7 +169,6 @@ class VLLMServeExecutor(Executor):
             cmd.append("--trust-remote-code")
 
         env = dict(os.environ)
-        env["VLLM_PLUGINS"] = self._vllm_plugins_excluding_omni()
         env.setdefault("VLLM_CONFIGURE_LOGGING", "0")
         env["PYTHONUNBUFFERED"] = "1"
 
@@ -246,15 +239,15 @@ class VLLMServeExecutor(Executor):
             self._terminate_process_group(proc)
             drain_thread.join(timeout=5.0)
 
-        return ServeResult(model=model_id, port=port, api_key=api_key)
+        return ServeResult(model=model_id, port=port)
 
     def _poll_health(
         self,
-        proc: "subprocess.Popen[str]",
+        proc: subprocess.Popen[str],
         port: int,
         task_id: str,
         timeout_sec: float,
-        tail: "collections.deque[str]",
+        tail: collections.deque[str],
         eof_event: threading.Event | None = None,
     ) -> None:
         url = f"http://127.0.0.1:{port}/health"
@@ -265,11 +258,10 @@ class VLLMServeExecutor(Executor):
             if self._stop_event.is_set():
                 raise TaskCancelledError("Serve task stopped during health poll")
             if proc.poll() is not None:
-                snippet = _tail_snippet(tail)
-                raise ExecutionError(
+                _raise_with_tail(
                     f"vLLM server process exited (code={proc.returncode}) "
-                    f"before becoming ready (task={task_id})"
-                    + (f"\n--- last vLLM output ---\n{snippet}" if snippet else "")
+                    f"before becoming ready (task={task_id})",
+                    tail,
                 )
             if eof_event is not None and eof_event.is_set():
                 # Stdout pipe closed: the whole vLLM process tree exited.
@@ -278,11 +270,10 @@ class VLLMServeExecutor(Executor):
                     proc.wait(timeout=2.0)
                 except subprocess.TimeoutExpired:
                     pass
-                snippet = _tail_snippet(tail)
-                raise ExecutionError(
+                _raise_with_tail(
                     f"vLLM server process exited (code={proc.returncode}) "
-                    f"before becoming ready (task={task_id})"
-                    + (f"\n--- last vLLM output ---\n{snippet}" if snippet else "")
+                    f"before becoming ready (task={task_id})",
+                    tail,
                 )
             try:
                 resp = requests.get(url, timeout=2.0)  # nosec B113 - explicit timeout
@@ -291,14 +282,13 @@ class VLLMServeExecutor(Executor):
             except requests.RequestException:
                 pass
             time.sleep(_HEALTH_POLL_INTERVAL_SEC)
-        snippet = _tail_snippet(tail)
-        raise ExecutionError(
+        _raise_with_tail(
             f"vLLM server did not become ready within {timeout_sec:.0f}s "
-            f"(task={task_id})"
-            + (f"\n--- last vLLM output ---\n{snippet}" if snippet else "")
+            f"(task={task_id})",
+            tail,
         )
 
-    def _wait_for_serve(self, proc: "subprocess.Popen[str]", ttl_sec: float) -> None:
+    def _wait_for_serve(self, proc: subprocess.Popen[str], ttl_sec: float) -> None:
         deadline = time.time() + ttl_sec
         while time.time() < deadline:
             if self._cancel_event.is_set():
@@ -313,7 +303,7 @@ class VLLMServeExecutor(Executor):
             time.sleep(_POLL_INTERVAL_SEC)
         logger.info("Serve task TTL reached; terminating vLLM server")
 
-    def _terminate_process_group(self, proc: "subprocess.Popen[str]") -> None:
+    def _terminate_process_group(self, proc: subprocess.Popen[str]) -> None:
         try:
             pgid = os.getpgid(proc.pid)
         except OSError:

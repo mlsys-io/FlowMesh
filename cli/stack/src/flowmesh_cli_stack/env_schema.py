@@ -527,6 +527,18 @@ STACK_ENV_SCHEMA = EnvSchema(
                     var_type=EnvVarType.INT,
                     min_value=0,
                 ),
+                EnvVar(
+                    "SERVE_DEFAULT_TTL_SEC",
+                    "3600",
+                    var_type=EnvVarType.FLOAT,
+                    min_value=0,
+                ),
+                EnvVar(
+                    "SERVE_MAX_TTL_SEC",
+                    "86400",
+                    var_type=EnvVarType.FLOAT,
+                    min_value=0,
+                ),
             ],
         ),
         EnvSection(

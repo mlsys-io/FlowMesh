@@ -12,6 +12,7 @@ class ServeSpecStrict(ModelSpecStrict):
     readinessTimeoutSeconds: Annotated[float, Field(gt=0)] | None = None
     accessMode: Literal["direct", "forward"] | None = None
     port: Annotated[int, Field(ge=1, le=65535)] | None = None
+    apiKey: str | None = Field(default=None, min_length=1)
 
     def validate_dispatchable(self) -> None:
         _validate_serve_dispatchable(self)
@@ -23,6 +24,7 @@ class ServeSpecTemplate(ModelSpecTemplate):
     readinessTimeoutSeconds: Annotated[float, Field(gt=0)] | None = None
     accessMode: Literal["direct", "forward"] | None = None
     port: Annotated[int, Field(ge=1, le=65535)] | None = None
+    apiKey: str | None = Field(default=None, min_length=1)
 
     def validate_dispatchable(self) -> None:
         _validate_serve_dispatchable(self)

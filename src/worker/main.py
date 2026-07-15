@@ -137,13 +137,13 @@ def initialize_executors(
         "vllm",
         "vllm_lora",
         "vllm_embedding",
+        "vllm_serve",
         "ppo",
         "dpo",
         "omni_text2image",
         "omni_text2speech",
         "omni_text2audio",
         "omni_text2general",
-        "vllm_serve",
     ]:
         inst = init_executor(key, gpu_required=True)
         if inst:

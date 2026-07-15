@@ -32,5 +32,10 @@ spec:
   #   direct  — connect straight to the worker (must be network-reachable)
   accessMode: forward
 
+  # Pre-set the endpoint API key instead of letting the worker generate a
+  # random one, so tests can authenticate with a known key. Omit to
+  # auto-generate.
+  apiKey: flowmesh-serve-demo-key
+
   # Task TTL (seconds): the executor tears down the endpoint on expiry.
   ttlSeconds: 3600
