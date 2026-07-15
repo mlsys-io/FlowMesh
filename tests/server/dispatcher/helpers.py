@@ -13,17 +13,17 @@ from server.registries.workflow import PersistedTask, WorkflowSched
 
 
 class CapturingDispatcher(Dispatcher):
-    """Dispatcher that records _fail_task / _requeue_task calls instead of acting."""
+    """Dispatcher that records fail_task / requeue_task calls instead of acting."""
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self.failed: list[tuple[str, str, dict[str, Any]]] = []
         self.requeued: list[tuple[str, dict[str, Any]]] = []
 
-    def _fail_task(self, task_id: str, error_message: str, **kwargs: Any) -> None:
+    def fail_task(self, task_id: str, error_message: str, **kwargs: Any) -> None:
         self.failed.append((task_id, error_message, kwargs))
 
-    def _requeue_task(self, task_id: str, **kwargs: Any) -> None:
+    def requeue_task(self, task_id: str, **kwargs: Any) -> None:
         self.requeued.append((task_id, kwargs))
 
 

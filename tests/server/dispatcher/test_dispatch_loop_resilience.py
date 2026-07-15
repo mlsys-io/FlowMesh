@@ -24,7 +24,7 @@ def test_safe_requeue_reenqueues_in_memory_when_persist_fails(
     def _boom(task_id: str, **kwargs: Any) -> None:
         raise redis.exceptions.ConnectionError("control redis down")
 
-    monkeypatch.setattr(dispatcher, "_requeue_task", _boom)
+    monkeypatch.setattr(dispatcher, "requeue_task", _boom)
     # Must not raise (a requeue that also hits the outage cannot kill the loop),
     # AND the task must still be re-enqueued in memory so it isn't orphaned:
     # nothing else re-surfaces a PENDING task while the server stays up.
@@ -40,7 +40,7 @@ def test_safe_requeue_propagates_non_redis_error(
     def _boom(task_id: str, **kwargs: Any) -> None:
         raise ValueError("a real bug, not an outage")
 
-    monkeypatch.setattr(dispatcher, "_requeue_task", _boom)
+    monkeypatch.setattr(dispatcher, "requeue_task", _boom)
     # A non-Redis error is a genuine defect and must not be silently swallowed.
     with pytest.raises(ValueError, match="real bug"):
         dispatcher._safe_requeue("tsk-1")

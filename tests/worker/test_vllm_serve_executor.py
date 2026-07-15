@@ -20,7 +20,8 @@ from tests.worker.factories import (
     make_worker_hardware,
     make_worker_task_message,
 )
-from worker.executors.base_executor import ExecutionError
+from worker.executors import vllm_serve_executor as mod
+from worker.executors.base_executor import ExecutionError, TaskCancelledError
 from worker.executors.vllm_serve_executor import (
     ServeResult,
     VLLMServeExecutor,
@@ -232,8 +233,6 @@ class TestServeExecutorCmdBuilding:
         assert "--revision" not in cmd
 
     def test_missing_model_identifier_raises(self, tmp_path: Path) -> None:
-        from worker.executors.base_executor import ExecutionError
-
         spec = ServeSpecStrict(taskType=TaskType.SERVE)
         task = make_worker_task_message(spec=spec, task_type=TaskType.SERVE)
         ex = self._make_executor()
@@ -446,8 +445,6 @@ class TestResolvePort:
 
 class TestDefaultReadinessTimeout:
     def test_default_is_at_least_600s(self) -> None:
-        from worker.executors import vllm_serve_executor as mod
-
         assert mod._DEFAULT_READINESS_TIMEOUT_SEC >= 600.0
 
 
@@ -497,8 +494,6 @@ class TestWaitForServe:
         return VLLMServeExecutor(cfg, make_worker_hardware())
 
     def test_exits_on_cancel(self) -> None:
-        from worker.executors.base_executor import TaskCancelledError
-
         ex = self._make_executor()
         mock_proc = MagicMock()
         mock_proc.poll.return_value = None
@@ -514,8 +509,6 @@ class TestWaitForServe:
         ex._wait_for_serve(mock_proc, ttl_sec=60.0)
 
     def test_raises_on_unexpected_proc_exit(self) -> None:
-        from worker.executors.base_executor import ExecutionError
-
         ex = self._make_executor()
         mock_proc = MagicMock()
         mock_proc.poll.return_value = 1
@@ -524,8 +517,6 @@ class TestWaitForServe:
             ex._wait_for_serve(mock_proc, ttl_sec=60.0)
 
     def test_exits_when_ttl_expires(self) -> None:
-        from worker.executors import vllm_serve_executor as mod
-
         ex = self._make_executor()
         mock_proc = MagicMock()
         mock_proc.poll.return_value = None
@@ -550,9 +541,6 @@ class TestPollHealth:
 
     def test_timeout_error_includes_subprocess_output(self) -> None:
         """Timeout error message contains the last lines captured from vLLM."""
-        from worker.executors import vllm_serve_executor as mod
-        from worker.executors.base_executor import ExecutionError
-
         ex = self._make_executor()
         mock_proc = MagicMock()
         mock_proc.poll.return_value = None
@@ -578,8 +566,6 @@ class TestPollHealth:
 
     def test_early_exit_error_includes_subprocess_output(self) -> None:
         """Proc-died error message contains the last captured lines."""
-        from worker.executors.base_executor import ExecutionError
-
         ex = self._make_executor()
         mock_proc = MagicMock()
         mock_proc.poll.return_value = 1
@@ -599,9 +585,6 @@ class TestPollHealth:
 
     def test_timeout_message_reflects_timeout_sec_argument(self) -> None:
         """Error message reports the actual timeout used, not a hardcoded value."""
-        from worker.executors import vllm_serve_executor as mod
-        from worker.executors.base_executor import ExecutionError
-
         ex = self._make_executor()
         mock_proc = MagicMock()
         mock_proc.poll.return_value = None
@@ -631,8 +614,6 @@ class TestPollHealth:
             ex._poll_health(mock_proc, 8000, "tsk-ok", timeout_sec=30.0, tail=tail)
 
     def test_cancel_during_poll_raises(self) -> None:
-        from worker.executors.base_executor import TaskCancelledError
-
         ex = self._make_executor()
         mock_proc = MagicMock()
         mock_proc.poll.return_value = None
@@ -646,8 +627,6 @@ class TestPollHealth:
                 )
 
     def test_stop_during_poll_raises(self) -> None:
-        from worker.executors.base_executor import TaskCancelledError
-
         ex = self._make_executor()
         mock_proc = MagicMock()
         mock_proc.poll.return_value = None
@@ -662,9 +641,6 @@ class TestPollHealth:
 
     def test_empty_tail_no_snippet_in_message(self) -> None:
         """When subprocess produced no output, the error omits the snippet block."""
-        from worker.executors import vllm_serve_executor as mod
-        from worker.executors.base_executor import ExecutionError
-
         ex = self._make_executor()
         mock_proc = MagicMock()
         mock_proc.poll.return_value = None
@@ -770,8 +746,6 @@ class TestPollHealthEofFastFail:
 
     def test_fails_promptly_when_pipe_eof(self) -> None:
         """Raises ExecutionError well before timeout when eof_event is set."""
-        from worker.executors.base_executor import ExecutionError
-
         ex = self._make_executor()
         mock_proc = MagicMock()
         mock_proc.poll.return_value = None  # top-level process still "alive"
@@ -801,8 +775,6 @@ class TestPollHealthEofFastFail:
 
     def test_error_includes_captured_output_on_eof(self) -> None:
         """ExecutionError raised on EOF carries the tail snippet."""
-        from worker.executors.base_executor import ExecutionError
-
         ex = self._make_executor()
         mock_proc = MagicMock()
         mock_proc.poll.return_value = None
@@ -831,9 +803,6 @@ class TestPollHealthEofFastFail:
 
     def test_no_false_trigger_when_eof_not_set(self) -> None:
         """Health poll reaches normal timeout when eof_event is not set."""
-        from worker.executors import vllm_serve_executor as mod
-        from worker.executors.base_executor import ExecutionError
-
         ex = self._make_executor()
         mock_proc = MagicMock()
         mock_proc.poll.return_value = None

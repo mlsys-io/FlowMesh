@@ -9,7 +9,7 @@ from concurrent.futures import Future
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from shared.schemas.event import (
     Event,
@@ -515,7 +515,7 @@ class EventMonitor:
                         attempts + 1,
                         limit_display,
                     )
-                    self._dispatcher._requeue_task(  # noqa: SLF001
+                    self._dispatcher.requeue_task(
                         event.task_id,
                         reason="worker_failed",
                         front=True,
@@ -732,7 +732,7 @@ class EventMonitor:
                                 ", ".join(to_requeue),
                             )
                             for task_id in to_requeue:
-                                self._dispatcher._requeue_task(
+                                self._dispatcher.requeue_task(
                                     task_id,
                                     reason="worker_unregistered",
                                     front=True,
@@ -757,7 +757,7 @@ class EventMonitor:
         normalize_mode: Callable[[str, str | None], str | None],
         inject_session_id: bool,
         strip_relay_target_after: bool,
-        fall_back_to_direct_on_failure: bool,
+        on_registration_failure: Literal["fall_back_direct", "fail_task", "drop"],
     ) -> dict[str, Any]:
         """Register a port-forward relay for a task update payload."""
         inner = payload.get(key)
@@ -768,7 +768,16 @@ class EventMonitor:
         mode = str(inner.get("mode") or "direct")
         normalized_mode = normalize_mode(mode, worker_id)
         if normalized_mode is None:
-            payload.pop(key, None)
+            match on_registration_failure:
+                case "fail_task":
+                    payload.pop(key, None)
+                    self._fail_forward_task(
+                        task_id,
+                        worker_id,
+                        f"{key} access mode {mode!r} could not be served",
+                    )
+                case "drop":
+                    payload.pop(key, None)
             return payload
         if normalized_mode != mode:
             inner = inner.copy()
@@ -806,17 +815,39 @@ class EventMonitor:
                 key,
                 exc,
             )
-            if fall_back_to_direct_on_failure:
-                inner = inner.copy()
-                inner["mode"] = "direct"
-                inner.pop("_relay_target", None)
-                payload[key] = inner
-                return payload
-            payload.pop(key, None)
+            match on_registration_failure:
+                case "fall_back_direct":
+                    inner = inner.copy()
+                    inner["mode"] = "direct"
+                    inner.pop("_relay_target", None)
+                    payload[key] = inner
+                    return payload
+                case "fail_task":
+                    payload.pop(key, None)
+                    self._fail_forward_task(
+                        task_id,
+                        worker_id,
+                        f"failed to register {key} forward target: {exc}",
+                    )
+                case "drop":
+                    payload.pop(key, None)
             return payload
 
         payload[key] = inner
         return payload
+
+    def _fail_forward_task(
+        self, task_id: str, worker_id: str | None, reason: str
+    ) -> None:
+        """Fail a task whose forward endpoint was dropped with no fallback.
+
+        Without a client-reachable endpoint, the worker executor keeps
+        running for no purpose until its TTL expires; mark the task failed
+        immediately so it gets torn down instead.
+        """
+        self._dispatcher.fail_task(
+            task_id, reason, worker_id=worker_id, payload={"error": reason}
+        )
 
     def _handle_ssh_task_update(
         self, task_id: str, worker_id: str | None, payload: dict[str, Any]
@@ -830,7 +861,7 @@ class EventMonitor:
             normalize_mode=self._normalize_ssh_mode,
             inject_session_id=False,
             strip_relay_target_after=False,
-            fall_back_to_direct_on_failure=True,
+            on_registration_failure="fall_back_direct",
         )
 
     def _handle_serve_task_update(
@@ -845,7 +876,7 @@ class EventMonitor:
             normalize_mode=self._normalize_serve_mode,
             inject_session_id=True,
             strip_relay_target_after=True,
-            fall_back_to_direct_on_failure=False,
+            on_registration_failure="fail_task",
         )
 
     def _track_pending(self, fut: Future[Any]) -> None:

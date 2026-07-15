@@ -198,6 +198,18 @@ class TestServeForwardRegistration:
 
         assert "serve" not in result
 
+    def test_no_forward_service_fails_task(self) -> None:
+        """With no way to serve the endpoint, the task must be failed instead of
+        left DISPATCHED with an executor running to no purpose until its TTL."""
+        monitor = _make_monitor(port_forward=None)
+
+        monitor._handle_serve_task_update("tsk-abc", "wrk-1", _serve_forward_payload())
+
+        monitor._dispatcher.fail_task.assert_called_once()  # type: ignore[attr-defined]
+        call_args = monitor._dispatcher.fail_task.call_args  # type: ignore[attr-defined]
+        assert call_args.args[0] == "tsk-abc"
+        assert call_args.kwargs["worker_id"] == "wrk-1"
+
     def test_register_port_forward_failure_drops_serve_endpoint(self) -> None:
         """If register_port_forward raises, the serve endpoint is dropped so the
         worker-internal address is never stored as a client-facing endpoint."""
@@ -212,3 +224,76 @@ class TestServeForwardRegistration:
         )
 
         assert "serve" not in result
+
+    def test_register_port_forward_failure_fails_task(self) -> None:
+        """A forward-registration failure must fail the task (no fallback for
+        serve) so the worker executor is torn down rather than left running."""
+        port_forward = MagicMock()
+        port_forward.register_port_forward.side_effect = RuntimeError("port exhausted")
+
+        monitor = _make_monitor(port_forward=port_forward)
+        monitor._runtime.get_record.return_value = None  # type: ignore[attr-defined]
+
+        monitor._handle_serve_task_update("tsk-abc", "wrk-1", _serve_forward_payload())
+
+        monitor._dispatcher.fail_task.assert_called_once()  # type: ignore[attr-defined]
+        call_args = monitor._dispatcher.fail_task.call_args  # type: ignore[attr-defined]
+        assert call_args.args[0] == "tsk-abc"
+        assert call_args.kwargs["worker_id"] == "wrk-1"
+
+    def test_direct_mode_does_not_fail_task(self) -> None:
+        """A healthy direct-mode update must never fail the task."""
+        monitor = _make_monitor(port_forward=MagicMock())
+
+        payload = {
+            "serve": {
+                "model": "m",
+                "mode": "direct",
+                "host": "127.0.0.1",
+                "port": 8000,
+            }
+        }
+        monitor._handle_serve_task_update("tsk-abc", "wrk-1", payload)
+
+        monitor._dispatcher.fail_task.assert_not_called()  # type: ignore[attr-defined]
+
+    def test_forward_mode_success_does_not_fail_task(self) -> None:
+        """A successful forward registration must never fail the task."""
+        port_forward = MagicMock()
+        port_forward.register_port_forward.return_value = {
+            "model": "Qwen/Qwen3-7B",
+            "api_key": "key123",
+            "mode": "forward",
+            "host": "server.example.com",
+            "port": 32001,
+            "_relay_target": {"host": "127.0.0.1", "port": 8000},
+        }
+
+        monitor = _make_monitor(port_forward=port_forward)
+        monitor._runtime.get_record.return_value = None  # type: ignore[attr-defined]
+
+        monitor._handle_serve_task_update("tsk-abc", "wrk-1", _serve_forward_payload())
+
+        monitor._dispatcher.fail_task.assert_not_called()  # type: ignore[attr-defined]
+
+    def test_ssh_forward_failure_does_not_fail_task(self) -> None:
+        """SSH keeps its fall_back_to_direct behavior; forward-registration
+        failure must never fail the SSH task."""
+        port_forward = MagicMock()
+        port_forward.register_port_forward.side_effect = RuntimeError("port exhausted")
+
+        monitor = _make_monitor(port_forward=port_forward)
+        monitor._runtime.get_record.return_value = None  # type: ignore[attr-defined]
+
+        payload = {
+            "ssh": {
+                "mode": "forward",
+                "host": "127.0.0.1",
+                "port": 8000,
+                "_relay_target": {"host": "127.0.0.1", "port": 8000},
+            }
+        }
+        result = monitor._handle_ssh_task_update("tsk-abc", "wrk-1", payload)
+
+        assert result["ssh"]["mode"] == "direct"
+        monitor._dispatcher.fail_task.assert_not_called()  # type: ignore[attr-defined]

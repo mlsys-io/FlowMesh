@@ -124,14 +124,14 @@ class Dispatcher:
             payload = {"reason": reason}
             if extra_payload:
                 payload.update(extra_payload)
-            self._fail_task(
+            self.fail_task(
                 task_id,
                 record.last_error or message,
                 worker_id=record.last_failed_worker,
                 payload=payload,
             )
             return False
-        self._requeue_task(task_id, reason=reason, count_retry=False)
+        self.requeue_task(task_id, reason=reason, count_retry=False)
         return False
 
     def _grace_then_fail_undeliverable(
@@ -164,11 +164,11 @@ class Dispatcher:
             payload = {"reason": reason}
             if extra_payload:
                 payload.update(extra_payload)
-            self._fail_task(
+            self.fail_task(
                 task_id, message, worker_id=record.last_failed_worker, payload=payload
             )
             return False
-        self._requeue_task(task_id, reason=reason, front=True, count_retry=False)
+        self.requeue_task(task_id, reason=reason, front=True, count_retry=False)
         return False
 
     def _grace_then_fail_exhausted(
@@ -229,7 +229,7 @@ class Dispatcher:
                 "candidate_workers_busy" if record.selected_worker else "no_idle_worker"
             )
             self._logger.debug("No idle worker available for %s; requeueing", task_id)
-            self._requeue_task(task_id, reason=reason, count_retry=False)
+            self.requeue_task(task_id, reason=reason, count_retry=False)
             return False
 
         # 4. Prefer workers that have not failed this task.
@@ -245,7 +245,7 @@ class Dispatcher:
                     "untried worker",
                     task_id,
                 )
-                self._requeue_task(
+                self.requeue_task(
                     task_id, reason="untried_workers_busy", count_retry=False
                 )
                 return False
@@ -288,7 +288,7 @@ class Dispatcher:
                         sticky_worker_id,
                         task_id,
                     )
-                    self._requeue_task(
+                    self.requeue_task(
                         task_id, reason="sticky_worker_busy", count_retry=False
                     )
                     return False
@@ -341,7 +341,7 @@ class Dispatcher:
             self._logger.debug(
                 "No suitable worker selected for %s; requeueing", task_id
             )
-            self._requeue_task(task_id, reason="no_selection")
+            self.requeue_task(task_id, reason="no_selection")
             return False
 
         # Plan task merge: coalesce sibling merge candidates onto this worker
@@ -362,13 +362,13 @@ class Dispatcher:
             rendered_task = self._resolve_stage_references(task_id, task, record)
         except StageReferenceNotReady as exc:
             self._logger.debug("Task %s waiting on stage artifacts: %s", task_id, exc)
-            self._requeue_task(
+            self.requeue_task(
                 task_id, reason="stage_reference_pending", count_retry=False
             )
             return False
         except ValidationError as exc:
             self._runtime.release_merge(task_id)
-            self._fail_task(
+            self.fail_task(
                 task_id,
                 "task_schema_validation_failed",
                 payload={"error": str(exc)},
@@ -379,7 +379,7 @@ class Dispatcher:
                 "Failed to resolve stage references for %s: %s", task_id, exc
             )
             self._runtime.release_merge(task_id)
-            self._fail_task(task_id, str(exc), payload={"error": str(exc)})
+            self.fail_task(task_id, str(exc), payload={"error": str(exc)})
             return True
 
         # Re-validate resolved task spec
@@ -387,7 +387,7 @@ class Dispatcher:
             rendered_task.spec.validate_dispatchable()
         except ValueError as exc:
             self._runtime.release_merge(task_id)
-            self._fail_task(
+            self.fail_task(
                 task_id, "spec_validation_failed", payload={"error": str(exc)}
             )
             return True
@@ -403,7 +403,7 @@ class Dispatcher:
             for child_id in record.merged_children:
                 if not child_id:
                     self._runtime.release_merge(task_id)
-                    self._fail_task(
+                    self.fail_task(
                         task_id,
                         "merged_child_missing_task_id",
                         payload={"error": "Merged child entry missing task_id"},
@@ -412,7 +412,7 @@ class Dispatcher:
                 child_record = self._runtime.get_record(child_id)
                 if not child_record:
                     self._runtime.release_merge(task_id)
-                    self._fail_task(
+                    self.fail_task(
                         task_id,
                         "merged_child_missing_record",
                         payload={"error": f"Merged child record missing: {child_id}"},
@@ -429,7 +429,7 @@ class Dispatcher:
                         exc,
                     )
                     self._runtime.release_merge(task_id)
-                    self._requeue_task(
+                    self.requeue_task(
                         task_id, reason="stage_reference_pending", count_retry=False
                     )
                     return False
@@ -440,7 +440,7 @@ class Dispatcher:
                         exc,
                     )
                     self._runtime.release_merge(task_id)
-                    self._fail_task(
+                    self.fail_task(
                         task_id,
                         f"Failed to resolve merged child {child_id}: {exc}",
                         payload={"error": str(exc)},
@@ -458,7 +458,7 @@ class Dispatcher:
                     )
                 except ValidationError as exc:
                     self._runtime.release_merge(task_id)
-                    self._fail_task(
+                    self.fail_task(
                         task_id,
                         "merged_child_schema_validation_failed",
                         payload={"error": str(exc), "child_task_id": child_id},
@@ -584,13 +584,13 @@ class Dispatcher:
     def _safe_requeue(self, task_id: str) -> None:
         """Requeue a task without letting a Redis outage kill the dispatch loop.
 
-        ``_requeue_task`` persists the PENDING transition before re-adding the task to
+        ``requeue_task`` persists the PENDING transition before re-adding the task to
         the in-memory ready queue, so a persist failure mid-outage would drop the task
         from the scheduler entirely. On a Redis error, we therefore still re-enqueue in
         memory; the durable state re-persists on the task's next successful transition.
         """
         try:
-            self._requeue_task(task_id, reason="dispatch_exception", front=True)
+            self.requeue_task(task_id, reason="dispatch_exception", front=True)
         except REDIS_CONN_ERRORS as exc:
             self._logger.warning(
                 "Requeue persist for %s failed (Redis down: %s); re-queuing in memory",
@@ -602,7 +602,7 @@ class Dispatcher:
             except Exception:
                 self._logger.exception("In-memory requeue of %s failed", task_id)
 
-    def _requeue_task(
+    def requeue_task(
         self,
         task_id: str,
         *,
@@ -628,7 +628,7 @@ class Dispatcher:
                 and max_attempts >= 0
                 and attempts >= max_attempts
             ):
-                self._fail_task(
+                self.fail_task(
                     task_id,
                     record.last_error or "max_attempts_exceeded",
                     payload={
@@ -655,7 +655,7 @@ class Dispatcher:
                 payload.update(extra_payload)
             self._emit_task_event("TASK_REQUEUED", task_id, payload=payload)
 
-    def _fail_task(
+    def fail_task(
         self,
         task_id: str,
         error_message: str,
@@ -1187,7 +1187,7 @@ class Dispatcher:
                 condition.node,
                 exc,
             )
-            self._requeue_task(
+            self.requeue_task(
                 task_id, reason="condition_upstream_pending", count_retry=False
             )
             return True
@@ -1196,7 +1196,7 @@ class Dispatcher:
                 "Failed to evaluate condition for task %s: %s", task_id, exc
             )
             self._runtime.release_merge(task_id)
-            self._fail_task(
+            self.fail_task(
                 task_id,
                 f"condition_evaluation_failed: {exc}",
                 payload={"error": str(exc)},

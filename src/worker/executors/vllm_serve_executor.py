@@ -54,16 +54,11 @@ def _drain_to_log(
     eof_event.set()
 
 
-def _tail_snippet(tail: collections.deque[str]) -> str:
-    text = "\n".join(tail)
-    raw = text.encode("utf-8", errors="replace")
-    if len(raw) > _TAIL_SNIPPET_BYTES:
-        text = "...\n" + raw[-_TAIL_SNIPPET_BYTES:].decode("utf-8", errors="replace")
-    return text
-
-
 def _raise_with_tail(message: str, tail: collections.deque[str]) -> NoReturn:
-    snippet = _tail_snippet(tail)
+    snippet = "\n".join(tail)
+    raw = snippet.encode("utf-8", errors="replace")
+    if len(raw) > _TAIL_SNIPPET_BYTES:
+        snippet = "...\n" + raw[-_TAIL_SNIPPET_BYTES:].decode("utf-8", errors="replace")
     raise ExecutionError(
         message + (f"\n--- last vLLM output ---\n{snippet}" if snippet else "")
     )

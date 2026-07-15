@@ -106,11 +106,12 @@ CVE exposure tracks PyPI `vllm 0.24.0` regardless of the build variant.
 | PYSEC-2026-87 | lxml | 6.1.0 | crawl4ai 0.8.6 caps lxml<6 |
 | GHSA-w8v5-vhqr-4h9v | diskcache | (none) | upstream unmaintained, no fixed version published |
 | PYSEC-2026-597 | nltk | (none) | latest 3.9.4 is last_affected, no fixed release; transitive via crawl4ai and not reachable |
+| PYSEC-2026-3447 | setuptools | 83.0.0 | vllm 0.24.0 pins setuptools<81 for py>=3.12, so the fixed >=83.0.0 is unsatisfiable; no reachable fix |
 
-The worker GPU audit ignores `GHSA-rrmf-rvhw-rf47` and
-`GHSA-w8v5-vhqr-4h9v`; the worker CPU audit ignores
-`GHSA-rrmf-rvhw-rf47`, `PYSEC-2026-87`, and `PYSEC-2026-597`; the server
-audit ignores nothing.
+The worker GPU audit ignores `GHSA-rrmf-rvhw-rf47`,
+`GHSA-w8v5-vhqr-4h9v`, and `PYSEC-2026-3447`; the worker CPU audit
+ignores `GHSA-rrmf-rvhw-rf47`, `PYSEC-2026-87`, `PYSEC-2026-597`, and
+`PYSEC-2026-3447`; the server audit ignores nothing.
 
 When a blocker lifts (e.g. crawl4ai unpins lxml, or a fixed torch
 release ships), drop the corresponding `--ignore-vuln` flag from the

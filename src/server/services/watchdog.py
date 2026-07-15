@@ -181,7 +181,7 @@ class WorkerWatchdog:
                     exc,
                 )
                 try:
-                    self._dispatcher._requeue_task(
+                    self._dispatcher.requeue_task(
                         task_id,
                         reason="worker_heartbeat_expired",
                         front=True,
