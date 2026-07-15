@@ -169,6 +169,7 @@ if IS_ROOT_NODE:
         port_forward=PORT_FORWARD_SERVICE,
         results_dir=RESULTS_DIR,
         log_stream_ttl_sec=config.log_stream.ttl_sec,
+        server_base_url=config.identity.base_url,
     )
 
     LOG_ARCHIVER = TaskLogArchiver(
@@ -262,6 +263,7 @@ openapi_tags = [
     {"name": "Workers", "description": "Worker pool operations and metadata."},
     {"name": "Nodes", "description": "Node registry and worker control."},
     {"name": "SSH", "description": "SSH proxy endpoint for task connectivity."},
+    {"name": "Serve", "description": "HTTP reverse-proxy endpoint for serve tasks."},
     {"name": "System", "description": "System metrics and admin operations."},
     {"name": "Stack", "description": "Local worker lifecycle management."},
 ]
@@ -434,6 +436,7 @@ if IS_ROOT_NODE:
     app.include_router(v1.tasks.router, prefix=v1_prefix)
     app.include_router(v1.results.router, prefix=v1_prefix)
     app.include_router(v1.ssh.router, prefix=v1_prefix)
+    app.include_router(v1.serve.router, prefix=v1_prefix)
     app.include_router(v1.system.router, prefix=v1_prefix)
     app.include_router(v1.traces.router, prefix=v1_prefix)
 

@@ -1,6 +1,7 @@
 from . import (
     nodes,
     results,
+    serve,
     ssh,
     stack,
     system,
@@ -13,6 +14,7 @@ from . import (
 __all__ = [
     "nodes",
     "results",
+    "serve",
     "ssh",
     "stack",
     "system",

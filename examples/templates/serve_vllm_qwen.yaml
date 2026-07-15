@@ -27,10 +27,16 @@ spec:
       max_model_len: 4096
 
   # How the endpoint is exposed to an external client:
-  #   forward — TCP relay through the FlowMesh server (recommended; reach it at
+  #   forward — TCP relay through the FlowMesh server (reach it at
   #             server_host:<allocated_port>)
+  #   proxy   — HTTP reverse-proxy through the FlowMesh server over the Redis
+  #             relay uplink (recommended for workers with no direct network
+  #             path to the server, e.g. private cloud GPU nodes; reach it at
+  #             <server_base_url>/api/v1/serve/tasks/<task_id>). PAT-exempt:
+  #             authenticated solely by this task's apiKey, sent as
+  #             `Authorization: Bearer <apiKey>`.
   #   direct  — connect straight to the worker (must be network-reachable)
-  accessMode: forward
+  accessMode: proxy
 
   # Pre-set the endpoint API key instead of letting the worker generate a
   # random one, so tests can authenticate with a known key. Omit to

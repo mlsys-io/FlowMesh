@@ -85,6 +85,22 @@ calls.
 Server policy toggles: `ENABLE_SERVER_SSH_PROXY`,
 `ENABLE_SERVER_PORT_FORWARD`, `ENABLE_SERVER_SSH_CONNECTION_AUDIT`.
 
+## Serve
+
+| Method | Path | Description |
+|--------|------|-------------|
+| ANY | `/api/v1/serve/tasks/{task_id}/{upstream_path:path}` | HTTP reverse proxy to a `proxy`-mode serve task's vLLM server. |
+
+PAT-exempt: unlike every other endpoint under `/api/v1/*`, this route has no
+`authenticate_connection`/`require_permission` dependency. Access is
+controlled solely by the vLLM api-key the client sends as `Authorization`,
+which is forwarded to vLLM untouched — a Lumid PAT would collide with it on
+the same header. The proxy resolves `task_id` to that task's own relay
+target only (never a caller-supplied host), rejecting anything that isn't a
+running `proxy`-mode serve task with `404`/`409`. Gated by the same
+`ENABLE_SERVER_SSH_PROXY` toggle as the SSH proxy, since both relay over the
+same Redis-stream uplink.
+
 ## System
 
 | Method | Path | Description |

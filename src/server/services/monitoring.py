@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, Literal
+from urllib.parse import urlparse
 
 from shared.schemas.event import (
     Event,
@@ -101,6 +102,7 @@ class EventMonitor:
         port_forward: PortForwardService | None = None,
         results_dir: Path | str = ".",
         log_stream_ttl_sec: int = 0,
+        server_base_url: str = "http://localhost:8000",
     ) -> None:
         self._redis_client = redis_client
         self._stop_event = threading.Event()
@@ -115,6 +117,7 @@ class EventMonitor:
         self._port_forward = port_forward
         self._results_dir = Path(results_dir)
         self._log_stream_ttl_sec = max(0, int(log_stream_ttl_sec))
+        self._server_base_url = server_base_url
 
         self._pending_result_clones: dict[str, list[str]] = {}
         self._pending_lock = threading.RLock()
@@ -758,6 +761,7 @@ class EventMonitor:
         inject_session_id: bool,
         strip_relay_target_after: bool,
         on_registration_failure: Literal["fall_back_direct", "fail_task", "drop"],
+        proxy_endpoint_path: Callable[[str], str] | None = None,
     ) -> dict[str, Any]:
         """Register a port-forward relay for a task update payload."""
         inner = payload.get(key)
@@ -787,6 +791,21 @@ class EventMonitor:
                 inner.pop("directPort", None)
                 inner.pop("_relay_target", None)
             payload[key] = inner
+
+        if normalized_mode == "proxy" and proxy_endpoint_path is not None:
+            inner = inner.copy()
+            parsed_base = urlparse(self._server_base_url)
+            inner["mode"] = "proxy"
+            inner["host"] = parsed_base.hostname or self._server_base_url
+            if parsed_base.port is not None:
+                inner["port"] = parsed_base.port
+            else:
+                inner.pop("port", None)
+            inner["url"] = (
+                f"{self._server_base_url.rstrip('/')}{proxy_endpoint_path(task_id)}"
+            )
+            payload[key] = inner
+            return payload
 
         if normalized_mode != "forward":
             return payload
@@ -867,7 +886,7 @@ class EventMonitor:
     def _handle_serve_task_update(
         self, task_id: str, worker_id: str | None, payload: dict[str, Any]
     ) -> dict[str, Any]:
-        """Handle serve forward registration for task updates."""
+        """Handle serve forward/proxy registration for task updates."""
         return self._handle_port_forward_update(
             task_id,
             worker_id,
@@ -877,6 +896,7 @@ class EventMonitor:
             inject_session_id=True,
             strip_relay_target_after=True,
             on_registration_failure="fail_task",
+            proxy_endpoint_path=lambda tid: f"/api/v1/serve/tasks/{tid}",
         )
 
     def _track_pending(self, fut: Future[Any]) -> None:
@@ -1077,6 +1097,19 @@ class EventMonitor:
                 )
                 return None
             return "forward"
+        if mode == "proxy":
+            if not worker_id:
+                self._logger.warning(
+                    "Serve task with proxy mode has no worker_id; dropping endpoint"
+                )
+                return None
+            if not self._ssh_proxy_enabled:
+                self._logger.error(
+                    "Serve task requested proxy mode but the relay proxy is "
+                    "disabled; dropping endpoint"
+                )
+                return None
+            return "proxy"
         self._logger.warning(
             "Unsupported serve access mode %r; dropping endpoint", mode
         )

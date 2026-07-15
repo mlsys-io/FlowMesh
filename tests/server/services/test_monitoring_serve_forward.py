@@ -12,7 +12,11 @@ from unittest.mock import MagicMock
 from server.services.monitoring import EventMonitor
 
 
-def _make_monitor(port_forward: MagicMock | None = None) -> EventMonitor:
+def _make_monitor(
+    port_forward: MagicMock | None = None,
+    ssh_proxy_enabled: bool = False,
+    server_base_url: str = "http://server.example.com:8000",
+) -> EventMonitor:
     return EventMonitor(
         redis_client=MagicMock(),
         logger=logging.getLogger("test.monitoring.serve_forward"),
@@ -22,8 +26,9 @@ def _make_monitor(port_forward: MagicMock | None = None) -> EventMonitor:
         node_registry=MagicMock(),
         metrics_recorder=MagicMock(),
         watchdog=MagicMock(),
-        ssh_proxy_enabled=False,
+        ssh_proxy_enabled=ssh_proxy_enabled,
         port_forward=port_forward,
+        server_base_url=server_base_url,
     )
 
 
@@ -297,3 +302,105 @@ class TestServeForwardRegistration:
 
         assert result["ssh"]["mode"] == "direct"
         monitor._dispatcher.fail_task.assert_not_called()  # type: ignore[attr-defined]
+
+
+def _serve_proxy_payload(host: str = "127.0.0.1", port: int = 8000) -> dict:
+    return {
+        "serve": {
+            "model": "Qwen/Qwen3-7B",
+            "api_key": "key123",
+            "mode": "proxy",
+            "host": host,
+            "port": port,
+            "_relay_target": {"host": host, "port": port},
+        }
+    }
+
+
+class TestServeProxyRegistration:
+    def test_proxy_mode_does_not_call_register_port_forward(self) -> None:
+        """Proxy mode never touches the port_forward relay-allocation path."""
+        port_forward = MagicMock()
+        monitor = _make_monitor(port_forward=port_forward, ssh_proxy_enabled=True)
+
+        monitor._handle_serve_task_update("tsk-abc", "wrk-1", _serve_proxy_payload())
+
+        port_forward.register_port_forward.assert_not_called()
+
+    def test_proxy_mode_advertises_server_public_proxy_url(self) -> None:
+        """The client-visible endpoint is the server's own proxy route, not the
+        worker-internal host/port."""
+        monitor = _make_monitor(
+            port_forward=None,
+            ssh_proxy_enabled=True,
+            server_base_url="http://server.example.com:8000",
+        )
+
+        result = monitor._handle_serve_task_update(
+            "tsk-abc", "wrk-1", _serve_proxy_payload()
+        )
+
+        serve_info = result["serve"]
+        assert serve_info["mode"] == "proxy"
+        assert serve_info["host"] == "server.example.com"
+        assert serve_info["port"] == 8000
+        assert (
+            serve_info["url"]
+            == "http://server.example.com:8000/api/v1/serve/tasks/tsk-abc"
+        )
+
+    def test_proxy_mode_keeps_relay_target_for_server_side_uplink(self) -> None:
+        """`_relay_target` must survive so the proxy router can start the
+        uplink; it never reaches the client because tasks.py strips private
+        (underscore-prefixed) fields before returning latest_update."""
+        monitor = _make_monitor(port_forward=None, ssh_proxy_enabled=True)
+
+        result = monitor._handle_serve_task_update(
+            "tsk-abc", "wrk-1", _serve_proxy_payload(host="127.0.0.1", port=9001)
+        )
+
+        assert result["serve"]["_relay_target"] == {"host": "127.0.0.1", "port": 9001}
+
+    def test_proxy_mode_keeps_api_key_and_model(self) -> None:
+        monitor = _make_monitor(port_forward=None, ssh_proxy_enabled=True)
+
+        result = monitor._handle_serve_task_update(
+            "tsk-abc", "wrk-1", _serve_proxy_payload()
+        )
+
+        assert result["serve"]["api_key"] == "key123"
+        assert result["serve"]["model"] == "Qwen/Qwen3-7B"
+
+    def test_proxy_mode_disabled_drops_endpoint(self) -> None:
+        """When the relay proxy is disabled, proxy mode is rejected like an
+        unservable access mode (dropped, no fallback)."""
+        monitor = _make_monitor(port_forward=None, ssh_proxy_enabled=False)
+
+        result = monitor._handle_serve_task_update(
+            "tsk-abc", "wrk-1", _serve_proxy_payload()
+        )
+
+        assert "serve" not in result
+
+    def test_proxy_mode_disabled_fails_task(self) -> None:
+        monitor = _make_monitor(port_forward=None, ssh_proxy_enabled=False)
+
+        monitor._handle_serve_task_update("tsk-abc", "wrk-1", _serve_proxy_payload())
+
+        monitor._dispatcher.fail_task.assert_called_once()  # type: ignore[attr-defined]
+
+    def test_proxy_mode_success_does_not_fail_task(self) -> None:
+        monitor = _make_monitor(port_forward=None, ssh_proxy_enabled=True)
+
+        monitor._handle_serve_task_update("tsk-abc", "wrk-1", _serve_proxy_payload())
+
+        monitor._dispatcher.fail_task.assert_not_called()  # type: ignore[attr-defined]
+
+    def test_proxy_mode_no_worker_id_drops_endpoint(self) -> None:
+        monitor = _make_monitor(port_forward=None, ssh_proxy_enabled=True)
+
+        result = monitor._handle_serve_task_update(
+            "tsk-abc", None, _serve_proxy_payload()
+        )
+
+        assert "serve" not in result

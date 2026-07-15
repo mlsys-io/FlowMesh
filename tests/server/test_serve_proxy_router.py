@@ -1,0 +1,628 @@
+"""Tests for the PAT-exempt serve-task HTTP proxy router."""
+
+import asyncio
+import logging
+from types import SimpleNamespace
+from typing import cast
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+from fastapi import FastAPI, HTTPException, status
+from httpx import ASGITransport, AsyncClient
+from starlette.requests import Request
+
+from server.clients.redis import RedisClient
+from server.routers.v1 import serve as serve_router
+from shared.schemas.command import CommandResponse
+from shared.utils.encoding import (
+    decode_base64_text_to_bytes,
+    encode_bytes_to_base64_text,
+)
+
+PREFIX = "/api/v1"
+
+
+class _FakeAsyncRedis:
+    """Stands in for `AsyncRedisClient`, splitting the canned response across
+    several stream entries to exercise cross-boundary reads through the
+    `asyncio.StreamReader` adapter."""
+
+    def __init__(self, response_bytes: bytes, chunk_size: int = 7) -> None:
+        self._response_bytes = response_bytes
+        self._chunk_size = chunk_size
+        self.sent_to_down: list[bytes] = []
+        self.eof_signaled = False
+        self.eof_signal_count = 0
+        self._served = False
+
+    async def xadd_telemetry(
+        self,
+        key: str,
+        fields: dict,
+        maxlen: int | None = None,
+        approximate: bool = True,
+    ) -> str:
+        if "eof" in fields:
+            self.eof_signaled = True
+            self.eof_signal_count += 1
+            return "0-1"
+        self.sent_to_down.append(decode_base64_text_to_bytes(fields["d"]))
+        return "0-1"
+
+    async def xread_telemetry(
+        self, streams: dict, count: int | None = None, block_ms: int | None = None
+    ) -> list:
+        if self._served:
+            return []
+        self._served = True
+        entries = []
+        data = self._response_bytes
+        idx = 0
+        seq = 0
+        while idx < len(data):
+            seq += 1
+            piece = data[idx : idx + self._chunk_size]
+            idx += self._chunk_size
+            entries.append((f"1-{seq}", {"d": encode_bytes_to_base64_text(piece)}))
+        seq += 1
+        entries.append((f"1-{seq}", {"eof": "1"}))
+        up_key = next(iter(streams))
+        return [(up_key, entries)]
+
+
+class _HangingAsyncRedis(_FakeAsyncRedis):
+    """Never delivers a response, so callers waiting on the response head
+    time out instead of completing (simulates a stalled/dead uplink)."""
+
+    async def xread_telemetry(
+        self, streams: dict, count: int | None = None, block_ms: int | None = None
+    ) -> list:
+        await asyncio.sleep(1)
+        return []
+
+
+class _DelayedEofAsyncRedis(_FakeAsyncRedis):
+    """Delays the `eof` xadd, opening a window in which a caller awaiting
+    cleanup can be cancelled while that xadd is still in flight."""
+
+    def __init__(self, response_bytes: bytes, delay: float = 0.05) -> None:
+        super().__init__(response_bytes)
+        self._delay = delay
+
+    async def xadd_telemetry(
+        self,
+        key: str,
+        fields: dict,
+        maxlen: int | None = None,
+        approximate: bool = True,
+    ) -> str:
+        if "eof" in fields:
+            await asyncio.sleep(self._delay)
+        return await super().xadd_telemetry(
+            key, fields, maxlen=maxlen, approximate=approximate
+        )
+
+
+class _FakeRedisClient:
+    def __init__(self, response_bytes: bytes, chunk_size: int = 7) -> None:
+        self.asyncio = _FakeAsyncRedis(response_bytes, chunk_size)
+
+
+def _fixed_length_http_response(
+    body: bytes,
+    status_line: str = "HTTP/1.1 200 OK",
+    content_type: str = "application/json",
+) -> bytes:
+    head = (
+        f"{status_line}\r\nContent-Type: {content_type}\r\n"
+        f"Content-Length: {len(body)}\r\n\r\n"
+    ).encode("latin-1")
+    return head + body
+
+
+def _chunked_http_response(
+    body_parts: list[bytes], status_line: str = "HTTP/1.1 200 OK"
+) -> bytes:
+    head = (
+        f"{status_line}\r\nContent-Type: text/event-stream\r\n"
+        "Transfer-Encoding: chunked\r\n\r\n"
+    ).encode("latin-1")
+    body = b""
+    for part in body_parts:
+        body += f"{len(part):x}\r\n".encode("ascii") + part + b"\r\n"
+    body += b"0\r\n\r\n"
+    return head + body
+
+
+def _make_record(
+    task_id: str = "tsk-abc",
+    status: str = "DISPATCHED",
+    task_type: str | None = "serve",
+    assigned_worker: str | None = "wkr-1",
+    latest_update: dict | None = None,
+) -> MagicMock:
+    record = MagicMock()
+    record.task_id = task_id
+    record.status = status
+    record.task_type = task_type
+    record.assigned_worker = assigned_worker
+    record.latest_update = (
+        latest_update
+        if latest_update is not None
+        else {
+            "serve": {
+                "mode": "proxy",
+                "_relay_target": {"host": "127.0.0.1", "port": 9001},
+                "api_key": "vllm-secret-key",
+                "model": "Qwen/Qwen3-7B",
+            }
+        }
+    )
+    return record
+
+
+def _make_app(
+    record: MagicMock | None,
+    response_bytes: bytes,
+    proxy_enabled: bool = True,
+    redis_client: _FakeRedisClient | None = None,
+) -> tuple[FastAPI, _FakeRedisClient]:
+    runtime = MagicMock()
+    runtime.get_record.return_value = record
+
+    if redis_client is None:
+        redis_client = _FakeRedisClient(response_bytes)
+
+    worker_registry = MagicMock()
+    worker_registry.get_worker_async = AsyncMock(
+        return_value=SimpleNamespace(id="wkr-1", node_id="nod-1")
+    )
+
+    node_registry = MagicMock()
+    node_registry.exec_node_cmd = AsyncMock(
+        return_value=CommandResponse(command_id="cmd-1", success=True)
+    )
+
+    app = FastAPI()
+    app.state.runtime = runtime
+    app.state.redis_client = redis_client
+    app.state.logger = logging.getLogger("test.serve_proxy_router")
+    app.state.ssh_proxy_enabled = proxy_enabled
+    app.state.node_registry = node_registry
+    app.state.worker_registry = worker_registry
+    app.include_router(serve_router.router, prefix=PREFIX)
+    return app, redis_client
+
+
+@pytest.mark.anyio
+async def test_pat_exempt_no_auth_required() -> None:
+    """The route has no `authenticate_connection`/`require_permission` gate:
+    a request carrying no Lumid PAT at all still succeeds."""
+    body = b'{"choices": []}'
+    app, _ = _make_app(_make_record(), _fixed_length_http_response(body))
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as ac:
+        resp = await ac.get(f"{PREFIX}/serve/tasks/tsk-abc/v1/models")
+
+    assert resp.status_code == 200
+    assert resp.content == body
+
+
+@pytest.mark.anyio
+async def test_authorization_header_forwarded_untouched() -> None:
+    """The client's vLLM api-key `Authorization` header reaches the upstream
+    request byte-for-byte."""
+    app, redis_client = _make_app(_make_record(), _fixed_length_http_response(b"{}"))
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as ac:
+        resp = await ac.get(
+            f"{PREFIX}/serve/tasks/tsk-abc/v1/models",
+            headers={"Authorization": "Bearer vllm-secret-key"},
+        )
+
+    assert resp.status_code == 200
+    sent = b"".join(redis_client.asyncio.sent_to_down)
+    assert b"Bearer vllm-secret-key\r\n" in sent
+    assert b"authorization" in sent.lower()
+
+
+@pytest.mark.anyio
+async def test_streaming_response_passthrough() -> None:
+    """Chunked (SSE-style) upstream bodies are de-chunked and streamed through
+    without buffering the whole response."""
+    parts = [
+        b'data: {"delta": "wor"}\n\n',
+        b'data: {"delta": "ld"}\n\n',
+        b"data: [DONE]\n\n",
+    ]
+    app, _ = _make_app(_make_record(), _chunked_http_response(parts))
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as ac:
+        resp = await ac.post(
+            f"{PREFIX}/serve/tasks/tsk-abc/v1/chat/completions",
+            json={"stream": True},
+        )
+
+    assert resp.status_code == 200
+    assert resp.content == b"".join(parts)
+
+
+@pytest.mark.anyio
+async def test_unknown_task_rejected() -> None:
+    app, _ = _make_app(None, b"")
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as ac:
+        resp = await ac.get(f"{PREFIX}/serve/tasks/tsk-missing/v1/models")
+
+    assert resp.status_code == 404
+
+
+@pytest.mark.anyio
+async def test_non_serve_task_rejected() -> None:
+    """SSRF guard: a task_id that resolves to a non-serve task must not be
+    proxyable, regardless of its own relay target."""
+    record = _make_record(task_type="inference")
+    app, _ = _make_app(record, b"")
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as ac:
+        resp = await ac.get(f"{PREFIX}/serve/tasks/tsk-abc/v1/models")
+
+    assert resp.status_code == 404
+
+
+@pytest.mark.anyio
+async def test_not_running_task_rejected() -> None:
+    record = _make_record(status="DONE")
+    app, _ = _make_app(record, b"")
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as ac:
+        resp = await ac.get(f"{PREFIX}/serve/tasks/tsk-abc/v1/models")
+
+    assert resp.status_code == 409
+
+
+@pytest.mark.anyio
+async def test_non_proxy_mode_rejected() -> None:
+    """A serve task running in forward/direct mode has no relay target to
+    proxy through; the route must reject it rather than guess."""
+    record = _make_record(
+        latest_update={
+            "serve": {
+                "mode": "forward",
+                "host": "server.example.com",
+                "port": 32001,
+            }
+        }
+    )
+    app, _ = _make_app(record, b"")
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as ac:
+        resp = await ac.get(f"{PREFIX}/serve/tasks/tsk-abc/v1/models")
+
+    assert resp.status_code == 409
+
+
+@pytest.mark.anyio
+async def test_missing_relay_target_rejected() -> None:
+    record = _make_record(latest_update={"serve": {"mode": "proxy"}})
+    app, _ = _make_app(record, b"")
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as ac:
+        resp = await ac.get(f"{PREFIX}/serve/tasks/tsk-abc/v1/models")
+
+    assert resp.status_code == 409
+
+
+@pytest.mark.anyio
+async def test_proxy_disabled_returns_403() -> None:
+    app, _ = _make_app(_make_record(), b"", proxy_enabled=False)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as ac:
+        resp = await ac.get(f"{PREFIX}/serve/tasks/tsk-abc/v1/models")
+
+    assert resp.status_code == 403
+
+
+@pytest.mark.anyio
+async def test_oversized_body_returns_413(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A declared Content-Length over the cap is rejected before the
+    unauthenticated body would otherwise be buffered in full."""
+    monkeypatch.setattr(serve_router, "_MAX_PROXY_BODY_BYTES", 10)
+    app, _ = _make_app(_make_record(), b"")
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as ac:
+        resp = await ac.post(
+            f"{PREFIX}/serve/tasks/tsk-abc/v1/chat/completions",
+            content=b"x" * 100,
+        )
+
+    assert resp.status_code == status.HTTP_413_CONTENT_TOO_LARGE
+
+
+@pytest.mark.anyio
+async def test_declared_content_length_checked_before_reading_body() -> None:
+    """The Content-Length cap check must run before any body bytes are read
+    off the wire, since the route authenticates nothing before that point."""
+
+    async def _boom() -> dict:
+        raise AssertionError(
+            "body must not be read once Content-Length exceeds the cap"
+        )
+
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "headers": [
+            (
+                b"content-length",
+                str(serve_router._MAX_PROXY_BODY_BYTES + 1).encode(),
+            )
+        ],
+    }
+    request = Request(scope, _boom)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await serve_router._read_capped_body(request)
+
+    assert exc_info.value.status_code == status.HTTP_413_CONTENT_TOO_LARGE
+
+
+@pytest.mark.anyio
+async def test_streamed_body_without_content_length_capped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A body streamed without a Content-Length header (e.g. chunked request)
+    is still capped incrementally, not just via the declared-length check."""
+    monkeypatch.setattr(serve_router, "_MAX_PROXY_BODY_BYTES", 8)
+    chunks = [b"12345", b"67890"]
+
+    async def _receive() -> dict:
+        if chunks:
+            chunk = chunks.pop(0)
+            return {"type": "http.request", "body": chunk, "more_body": bool(chunks)}
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    scope = {"type": "http", "method": "POST", "headers": []}
+    request = Request(scope, _receive)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await serve_router._read_capped_body(request)
+
+    assert exc_info.value.status_code == status.HTTP_413_CONTENT_TOO_LARGE
+
+
+@pytest.mark.anyio
+async def test_eof_signaled_to_relay_after_response_completes() -> None:
+    """Once the proxied response finishes, the router must eof the `down`
+    stream so the worker-side relay's `redis_to_tcp` loop stops looping and
+    the upstream TCP connection is closed instead of leaking."""
+    app, redis_client = _make_app(_make_record(), _fixed_length_http_response(b"{}"))
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as ac:
+        resp = await ac.get(f"{PREFIX}/serve/tasks/tsk-abc/v1/models")
+
+    assert resp.status_code == 200
+    assert redis_client.asyncio.eof_signaled is True
+
+
+@pytest.mark.anyio
+async def test_eof_signaled_on_response_head_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A stalled uplink (no response head within the timeout) must still tear
+    down the worker-side relay rather than leaving it running forever."""
+    monkeypatch.setattr(serve_router, "_RESPONSE_HEAD_TIMEOUT_SEC", 0.05)
+    redis_client = _FakeRedisClient(b"")
+    redis_client.asyncio = _HangingAsyncRedis(b"")
+
+    app, _ = _make_app(_make_record(), b"", redis_client=redis_client)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as ac:
+        resp = await ac.get(f"{PREFIX}/serve/tasks/tsk-abc/v1/models")
+
+    assert resp.status_code == 502
+    assert redis_client.asyncio.eof_signaled is True
+
+
+def _bare_request(
+    method: str = "GET", headers: list[tuple[bytes, bytes]] | None = None
+) -> Request:
+    scope = {
+        "type": "http",
+        "method": method,
+        "headers": headers or [],
+        "path": "/api/v1/serve/tasks/tsk-abc/v1/models",
+        "query_string": b"",
+        "scheme": "http",
+        "server": ("testserver", 80),
+        "root_path": "",
+    }
+
+    async def _receive() -> dict:
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    return Request(scope, _receive)
+
+
+@pytest.mark.anyio
+async def test_client_disconnect_before_response_head_still_signals_eof() -> None:
+    """`asyncio.CancelledError` (a `BaseException`, not `Exception`) raised
+    while awaiting the response head — e.g. a client disconnect mid-request —
+    must still tear down the worker-side relay uplink instead of leaking it."""
+    record = _make_record()
+    runtime = MagicMock()
+    runtime.get_record.return_value = record
+
+    redis_client = _FakeRedisClient(b"")
+    redis_client.asyncio = _HangingAsyncRedis(b"")
+
+    worker_registry = MagicMock()
+    worker_registry.get_worker_async = AsyncMock(
+        return_value=SimpleNamespace(id="wkr-1", node_id="nod-1")
+    )
+    node_registry = MagicMock()
+    node_registry.exec_node_cmd = AsyncMock(
+        return_value=CommandResponse(command_id="cmd-1", success=True)
+    )
+
+    task = asyncio.ensure_future(
+        serve_router.serve_proxy(
+            _bare_request(),
+            task_id="tsk-abc",
+            upstream_path="v1/models",
+            runtime=runtime,
+            redis_client=cast(RedisClient, redis_client),
+            logger=logging.getLogger("test.serve_proxy_router.cancel"),
+            proxy_enabled=True,
+            node_registry=node_registry,
+            worker_registry=worker_registry,
+        )
+    )
+    await asyncio.sleep(0)  # let the handler reach the hanging response-head wait
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert redis_client.asyncio.eof_signaled is True
+
+
+@pytest.mark.anyio
+async def test_malformed_upstream_content_length_falls_back_and_does_not_leak() -> None:
+    """A malformed upstream Content-Length must not crash the handler (which
+    would skip cleanup); it degrades to reading until EOF instead."""
+    body = b'{"choices": []}'
+    malformed = (
+        b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"
+        b"Content-Length: not-a-number\r\n\r\n" + body
+    )
+    app, redis_client = _make_app(_make_record(), malformed)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as ac:
+        resp = await ac.get(f"{PREFIX}/serve/tasks/tsk-abc/v1/models")
+
+    assert resp.status_code == 200
+    assert resp.content == body
+    assert redis_client.asyncio.eof_signaled is True
+
+
+@pytest.mark.parametrize("bad_value", ["-1", "1_0", "+1", "abc", ""])
+@pytest.mark.anyio
+async def test_declared_content_length_strictly_validated(bad_value: str) -> None:
+    """`int()` alone would accept `-1`, `+1`, and `1_0`; only a plain
+    non-negative digit string is a valid declared Content-Length."""
+    request = _bare_request(
+        method="POST", headers=[(b"content-length", bad_value.encode())]
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await serve_router._read_capped_body(request)
+
+    assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
+
+
+@pytest.mark.anyio
+async def test_uplink_cleanup_idempotent_when_invoked_twice() -> None:
+    """Calling `_UplinkCleanup.run()` more than once must not double-cancel
+    the pump task or send a second `eof` to the relay."""
+    redis_client = _FakeRedisClient(b"")
+
+    async def _never_returns() -> None:
+        await asyncio.sleep(3600)
+
+    pump_task = asyncio.ensure_future(_never_returns())
+    cleanup = serve_router._UplinkCleanup(
+        pump_task, cast(RedisClient, redis_client), "down-key"
+    )
+
+    await cleanup.run()
+    await cleanup.run()
+
+    assert redis_client.asyncio.eof_signal_count == 1
+    assert pump_task.cancelled()
+
+
+@pytest.mark.anyio
+async def test_cancelled_first_caller_does_not_block_eof_for_second_caller() -> None:
+    """A caller cancelled partway through `run()` (e.g. `body_iter`'s
+    `finally` unwinding under its own cancellation) must not prevent a later
+    caller (the response's `BackgroundTask`) from still completing the relay
+    `eof`. Idempotency must key off the shared cleanup task's completion,
+    not merely having been entered once."""
+    redis_client = _FakeRedisClient(b"")
+    redis_client.asyncio = _DelayedEofAsyncRedis(b"", delay=0.05)
+
+    async def _never_returns() -> None:
+        await asyncio.sleep(3600)
+
+    pump_task = asyncio.ensure_future(_never_returns())
+    cleanup = serve_router._UplinkCleanup(
+        pump_task, cast(RedisClient, redis_client), "down-key"
+    )
+
+    first_caller = asyncio.ensure_future(cleanup.run())
+    await asyncio.sleep(0.01)  # let it start the shared task and reach the delayed xadd
+    first_caller.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await first_caller
+
+    # A second caller (e.g. the BackgroundTask) must still observe the
+    # shared cleanup task complete successfully, eof included.
+    await cleanup.run()
+
+    assert redis_client.asyncio.eof_signal_count == 1
+    assert pump_task.cancelled()
+
+
+@pytest.mark.anyio
+async def test_full_response_cleans_up_uplink_exactly_once() -> None:
+    """Both `body_iter`'s `finally` and the response's `BackgroundTask` are
+    reachable on a normal full response; idempotency must collapse that to a
+    single cancel + eof, not two."""
+    app, redis_client = _make_app(_make_record(), _fixed_length_http_response(b"{}"))
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as ac:
+        resp = await ac.get(f"{PREFIX}/serve/tasks/tsk-abc/v1/models")
+
+    assert resp.status_code == 200
+    assert redis_client.asyncio.eof_signal_count == 1
+
+
+@pytest.mark.anyio
+async def test_background_task_alone_cleans_up_abandoned_response() -> None:
+    """Simulates a response abandoned before `body_iter` is ever advanced
+    (e.g. a client disconnect while Starlette is still sending headers): the
+    response's `background` task, run on its own with the body iterator
+    never touched, must still tear down the uplink exactly once."""
+    record = _make_record()
+    runtime = MagicMock()
+    runtime.get_record.return_value = record
+
+    redis_client = _FakeRedisClient(_fixed_length_http_response(b"{}"))
+
+    worker_registry = MagicMock()
+    worker_registry.get_worker_async = AsyncMock(
+        return_value=SimpleNamespace(id="wkr-1", node_id="nod-1")
+    )
+    node_registry = MagicMock()
+    node_registry.exec_node_cmd = AsyncMock(
+        return_value=CommandResponse(command_id="cmd-1", success=True)
+    )
+
+    response = await serve_router.serve_proxy(
+        _bare_request(),
+        task_id="tsk-abc",
+        upstream_path="v1/models",
+        runtime=runtime,
+        redis_client=cast(RedisClient, redis_client),
+        logger=logging.getLogger("test.serve_proxy_router.abandoned"),
+        proxy_enabled=True,
+        node_registry=node_registry,
+        worker_registry=worker_registry,
+    )
+
+    assert response.background is not None
+    # `body_iterator` is intentionally never iterated here, matching a
+    # response abandoned before its first `body_iter` advance.
+    await response.background()
+
+    assert redis_client.asyncio.eof_signal_count == 1

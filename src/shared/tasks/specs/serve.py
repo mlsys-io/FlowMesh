@@ -10,7 +10,7 @@ class ServeSpecStrict(ModelSpecStrict):
     taskType: Literal[TaskType.SERVE]
     ttlSeconds: Annotated[float, Field(gt=0)] | None = None
     readinessTimeoutSeconds: Annotated[float, Field(gt=0)] | None = None
-    accessMode: Literal["direct", "forward"] | None = None
+    accessMode: Literal["direct", "forward", "proxy"] | None = None
     port: Annotated[int, Field(ge=1, le=65535)] | None = None
     apiKey: str | None = Field(default=None, min_length=1)
 
@@ -22,7 +22,7 @@ class ServeSpecTemplate(ModelSpecTemplate):
     taskType: Literal[TaskType.SERVE]
     ttlSeconds: Annotated[float, Field(gt=0)] | None = None
     readinessTimeoutSeconds: Annotated[float, Field(gt=0)] | None = None
-    accessMode: Literal["direct", "forward"] | None = None
+    accessMode: Literal["direct", "forward", "proxy"] | None = None
     port: Annotated[int, Field(ge=1, le=65535)] | None = None
     apiKey: str | None = Field(default=None, min_length=1)
 
