@@ -11,6 +11,7 @@ from shared.utils.encoding import (
 
 _READ_CHUNK = 16384
 _STREAM_MAXLEN = 1000
+_STREAM_CLEANUP_TTL_SEC = 60
 
 
 def _up_key(relay_token: str) -> str:
@@ -22,7 +23,7 @@ def _down_key(relay_token: str) -> str:
 
 
 class RelayUplinkService:
-    """Manages relay uplinks from a worker-internal TCP endpoint to Redis Streams."""
+    """Bridges a worker-internal TCP endpoint to Redis ``up``/``down`` streams."""
 
     def __init__(self, logger: logging.Logger) -> None:
         self._logger = logger
@@ -81,33 +82,17 @@ class RelayUplinkService:
         down = _down_key(relay_token)
 
         try:
-            reader, writer = await asyncio.open_connection(target_host, target_port)
-        except OSError as exc:
-            self._logger.warning(
-                "Relay uplink: cannot connect to %s:%s: %s",
-                target_host,
-                target_port,
-                exc,
-            )
-            return
-
-        self._logger.info("Relay uplink started: session=%s", session_id)
-        try:
-
-            async def tcp_to_redis() -> None:
+            try:
+                reader, writer = await asyncio.open_connection(target_host, target_port)
+            except OSError as exc:
+                self._logger.warning(
+                    "Relay uplink: cannot connect to %s:%s: %s",
+                    target_host,
+                    target_port,
+                    exc,
+                )
+                # Wake the server-side reader instead of leaving it blocked.
                 try:
-                    while True:
-                        data = await reader.read(_READ_CHUNK)
-                        if not data:
-                            break
-                        await asyncio.to_thread(
-                            rds.xadd,
-                            up,
-                            {"d": encode_bytes_to_base64_text(data)},
-                            maxlen=_STREAM_MAXLEN,
-                            approximate=True,
-                        )
-                finally:
                     await asyncio.to_thread(
                         rds.xadd,
                         up,
@@ -115,49 +100,85 @@ class RelayUplinkService:
                         maxlen=_STREAM_MAXLEN,
                         approximate=True,
                     )
-
-            async def redis_to_tcp() -> None:
-                last_id = "0"
-                while True:
-                    result: Any = await asyncio.to_thread(
-                        rds.xread, {down: last_id}, count=10, block=5000
-                    )
-                    if not result:
-                        continue
-                    for _, entries in result:
-                        for entry_id, fields in entries:
-                            last_id = entry_id
-                            if b"eof" in fields or "eof" in fields:
-                                return
-                            raw = fields.get(b"d") or fields.get("d")
-                            if raw:
-                                writer.write(decode_base64_text_to_bytes(raw))
-                                await writer.drain()
-
-            t1 = asyncio.create_task(tcp_to_redis())
-            t2 = asyncio.create_task(redis_to_tcp())
-            _, pending = await asyncio.wait(
-                [t1, t2], return_when=asyncio.FIRST_COMPLETED
-            )
-            for t in pending:
-                t.cancel()
-                try:
-                    await t
-                except (asyncio.CancelledError, Exception):
+                except Exception:
                     pass
-        except asyncio.CancelledError:
-            pass
-        except Exception as exc:
-            self._logger.warning("Relay uplink error: session=%s: %s", session_id, exc)
+                return
+
+            self._logger.info("Relay uplink started: session=%s", session_id)
+            try:
+
+                async def tcp_to_redis() -> None:
+                    try:
+                        while True:
+                            data = await reader.read(_READ_CHUNK)
+                            if not data:
+                                break
+                            await asyncio.to_thread(
+                                rds.xadd,
+                                up,
+                                {"d": encode_bytes_to_base64_text(data)},
+                                maxlen=_STREAM_MAXLEN,
+                                approximate=True,
+                            )
+                    finally:
+                        await asyncio.to_thread(
+                            rds.xadd,
+                            up,
+                            {"eof": "1"},
+                            maxlen=_STREAM_MAXLEN,
+                            approximate=True,
+                        )
+
+                async def redis_to_tcp() -> None:
+                    last_id = "0"
+                    while True:
+                        result: Any = await asyncio.to_thread(
+                            rds.xread, {down: last_id}, count=10, block=5000
+                        )
+                        if not result:
+                            continue
+                        for _, entries in result:
+                            for entry_id, fields in entries:
+                                last_id = entry_id
+                                if b"eof" in fields or "eof" in fields:
+                                    return
+                                raw = fields.get(b"d") or fields.get("d")
+                                if raw:
+                                    writer.write(decode_base64_text_to_bytes(raw))
+                                    await writer.drain()
+
+                t1 = asyncio.create_task(tcp_to_redis())
+                t2 = asyncio.create_task(redis_to_tcp())
+                _, pending = await asyncio.wait(
+                    [t1, t2], return_when=asyncio.FIRST_COMPLETED
+                )
+                for t in pending:
+                    t.cancel()
+                    try:
+                        await t
+                    except (asyncio.CancelledError, Exception):
+                        pass
+            except asyncio.CancelledError:
+                pass
+            except Exception as exc:
+                self._logger.warning(
+                    "Relay uplink error: session=%s: %s", session_id, exc
+                )
+            finally:
+                writer.close()
+                try:
+                    await writer.wait_closed()
+                except Exception:
+                    pass
+                self._logger.info("Relay uplink ended: session=%s", session_id)
         finally:
-            writer.close()
+            # Use a short TTL so consumers can still read the final eof
+            # before cleanup.
             try:
-                await writer.wait_closed()
+                await asyncio.to_thread(rds.expire, up, _STREAM_CLEANUP_TTL_SEC)
             except Exception:
                 pass
-            # Cleanup Redis streams
             try:
-                await asyncio.to_thread(rds.delete, up, down)
+                await asyncio.to_thread(rds.expire, down, _STREAM_CLEANUP_TTL_SEC)
             except Exception:
                 pass
-            self._logger.info("Relay uplink ended: session=%s", session_id)

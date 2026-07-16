@@ -228,6 +228,16 @@ async def ssh_proxy(
             except (asyncio.CancelledError, Exception):
                 pass
     finally:
+        # down is written by this consumer, so the uplink can't TTL it —
+        # delete both streams here (after the pumps are cancelled),
+        # mirroring serve's `_UplinkCleanup`.
+        try:
+            await redis_client.asyncio.delete_telemetry(up)
+            await redis_client.asyncio.delete_telemetry(down)
+        except Exception:
+            logger.debug(
+                "Failed to delete SSH relay streams for task %s", task_id, exc_info=True
+            )
         if ssh_audit is not None:
             try:
                 await ssh_audit.unregister_connection(connection_id)

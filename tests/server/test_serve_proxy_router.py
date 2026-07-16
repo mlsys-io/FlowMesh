@@ -33,6 +33,7 @@ class _FakeAsyncRedis:
         self.sent_to_down: list[bytes] = []
         self.eof_signaled = False
         self.eof_signal_count = 0
+        self.deleted_keys: list[str] = []
         self._served = False
 
     async def xadd_telemetry(
@@ -69,16 +70,107 @@ class _FakeAsyncRedis:
         up_key = next(iter(streams))
         return [(up_key, entries)]
 
+    async def exists_telemetry(self, key: str) -> bool:
+        """The stream is assumed to exist once the uplink is running; fakes
+        that need to simulate an uncreated stream override this."""
+        return True
+
+    async def delete_telemetry(self, key: str) -> None:
+        self.deleted_keys.append(key)
+
 
 class _HangingAsyncRedis(_FakeAsyncRedis):
     """Never delivers a response, so callers waiting on the response head
-    time out instead of completing (simulates a stalled/dead uplink)."""
+    time out instead of completing (simulates a stalled/dead uplink whose
+    stream exists but never receives data)."""
 
     async def xread_telemetry(
         self, streams: dict, count: int | None = None, block_ms: int | None = None
     ) -> list:
         await asyncio.sleep(1)
         return []
+
+
+class _NeverCreatedAsyncRedis(_FakeAsyncRedis):
+    """Simulates an up stream that has never appeared at all: every read
+    times out empty and the key never exists. This must NOT be bailed on —
+    a merely-delayed uplink, or a slow non-streaming vLLM generation that
+    hasn't emitted anything yet, looks identical from the pump's side."""
+
+    async def xread_telemetry(
+        self, streams: dict, count: int | None = None, block_ms: int | None = None
+    ) -> list:
+        # A real block_ms=5000 read always suspends; yield here too so a
+        # bounding `asyncio.wait_for` in tests can actually deliver its
+        # cancellation instead of racing a tight, never-suspending loop.
+        await asyncio.sleep(0)
+        return []
+
+    async def exists_telemetry(self, key: str) -> bool:
+        return False
+
+
+class _SeenThenGoneAsyncRedis(_FakeAsyncRedis):
+    """The stream exists for the first few checks (seen), then disappears
+    without ever delivering an eof entry — simulating the worker's
+    post-completion cleanup running before this reader's next read."""
+
+    def __init__(self, exists_for_checks: int = 1) -> None:
+        super().__init__(b"")
+        self._exists_for_checks = exists_for_checks
+        self._checks = 0
+
+    async def xread_telemetry(
+        self, streams: dict, count: int | None = None, block_ms: int | None = None
+    ) -> list:
+        return []
+
+    async def exists_telemetry(self, key: str) -> bool:
+        self._checks += 1
+        return self._checks <= self._exists_for_checks
+
+
+class _DelayedStreamCreationAsyncRedis(_FakeAsyncRedis):
+    """The stream doesn't exist for the first few reads — simulating a slow
+    non-streaming vLLM generation with nothing emitted yet — then appears
+    and delivers the response. The pump must wait through that window
+    rather than bailing on "doesn't exist yet"."""
+
+    def __init__(
+        self, response_bytes: bytes, empty_reads_before_ready: int = 3
+    ) -> None:
+        super().__init__(response_bytes)
+        self._empty_reads_before_ready = empty_reads_before_ready
+        self._empty_reads = 0
+
+    async def xread_telemetry(
+        self, streams: dict, count: int | None = None, block_ms: int | None = None
+    ) -> list:
+        if self._empty_reads < self._empty_reads_before_ready:
+            self._empty_reads += 1
+            return []
+        return await super().xread_telemetry(streams, count=count, block_ms=block_ms)
+
+    async def exists_telemetry(self, key: str) -> bool:
+        return self._empty_reads >= self._empty_reads_before_ready
+
+
+class _SlowThenReadyAsyncRedis(_FakeAsyncRedis):
+    """Delivers the response only after a short delay, simulating a
+    legitimately slow (but healthy) non-streaming vLLM generation."""
+
+    def __init__(self, response_bytes: bytes, delay: float = 0.2) -> None:
+        super().__init__(response_bytes)
+        self._delay = delay
+        self._slept = False
+
+    async def xread_telemetry(
+        self, streams: dict, count: int | None = None, block_ms: int | None = None
+    ) -> list:
+        if not self._slept:
+            self._slept = True
+            await asyncio.sleep(self._delay)
+        return await super().xread_telemetry(streams, count=count, block_ms=block_ms)
 
 
 class _DelayedEofAsyncRedis(_FakeAsyncRedis):
@@ -314,6 +406,21 @@ async def test_missing_relay_target_rejected() -> None:
 
 
 @pytest.mark.anyio
+async def test_no_endpoint_info_yet_rejected_with_clear_message() -> None:
+    """Before the executor's first TASK_UPDATE, `latest_update` has no
+    `serve` key at all; that must produce a clear, distinct 409 rather than
+    being conflated with "wrong access mode"."""
+    record = _make_record(latest_update={})
+    app, _ = _make_app(record, b"")
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as ac:
+        resp = await ac.get(f"{PREFIX}/serve/tasks/tsk-abc/v1/models")
+
+    assert resp.status_code == 409
+    assert resp.json()["detail"] == "serve task has no endpoint info yet"
+
+
+@pytest.mark.anyio
 async def test_proxy_disabled_returns_403() -> None:
     app, _ = _make_app(_make_record(), b"", proxy_enabled=False)
 
@@ -405,23 +512,133 @@ async def test_eof_signaled_to_relay_after_response_completes() -> None:
     assert redis_client.asyncio.eof_signaled is True
 
 
+def test_no_response_head_timeout_constant() -> None:
+    """A non-streaming vLLM generation can legitimately take longer than any
+    fixed ceiling; there must be no wall-clock timeout wrapping the
+    response-head read (removed in favor of uplink eof-on-failure + client
+    disconnect handling)."""
+    assert not hasattr(serve_router, "_RESPONSE_HEAD_TIMEOUT_SEC")
+
+
 @pytest.mark.anyio
-async def test_eof_signaled_on_response_head_timeout(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A stalled uplink (no response head within the timeout) must still tear
-    down the worker-side relay rather than leaving it running forever."""
-    monkeypatch.setattr(serve_router, "_RESPONSE_HEAD_TIMEOUT_SEC", 0.05)
+async def test_slow_non_streaming_generation_is_not_cut_off() -> None:
+    """A response slower than the old fixed head-timeout would have allowed
+    must still succeed now that the timeout has been removed."""
+    body = b'{"choices": []}'
     redis_client = _FakeRedisClient(b"")
-    redis_client.asyncio = _HangingAsyncRedis(b"")
+    redis_client.asyncio = _SlowThenReadyAsyncRedis(
+        _fixed_length_http_response(body), delay=0.2
+    )
 
     app, _ = _make_app(_make_record(), b"", redis_client=redis_client)
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as ac:
         resp = await ac.get(f"{PREFIX}/serve/tasks/tsk-abc/v1/models")
 
+    assert resp.status_code == 200
+    assert resp.content == body
+
+
+@pytest.mark.anyio
+async def test_slow_generation_with_delayed_stream_creation_succeeds() -> None:
+    """End-to-end: a non-streaming generation whose up stream doesn't exist
+    yet (nothing emitted so far, mirroring real worker behavior since it
+    only creates the stream on its first write) must complete successfully
+    once the stream appears, not be killed early by the exists-check."""
+    body = b'{"choices": []}'
+    response = _fixed_length_http_response(body)
+    redis_client = _FakeRedisClient(response)
+    redis_client.asyncio = _DelayedStreamCreationAsyncRedis(
+        response, empty_reads_before_ready=2
+    )
+
+    app, _ = _make_app(_make_record(), b"", redis_client=redis_client)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as ac:
+        resp = await ac.get(f"{PREFIX}/serve/tasks/tsk-abc/v1/models")
+
+    assert resp.status_code == 200
+    assert resp.content == body
+
+
+@pytest.mark.anyio
+async def test_dead_relay_still_fails_fast_without_head_timeout() -> None:
+    """Even with no wall-clock head timeout, a relay that immediately eofs
+    with no data (e.g. the worker's connect-failure eof) still produces a
+    fast failure rather than hanging."""
+    app, redis_client = _make_app(_make_record(), b"")
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as ac:
+        resp = await ac.get(f"{PREFIX}/serve/tasks/tsk-abc/v1/models")
+
     assert resp.status_code == 502
     assert redis_client.asyncio.eof_signaled is True
+
+
+@pytest.mark.anyio
+async def test_pump_keeps_waiting_when_stream_never_yet_seen() -> None:
+    """A stream that has never appeared at all must NOT be bailed on — that
+    would reintroduce a first-byte timeout and kill healthy slow requests
+    (a delayed uplink and a slow non-streaming generation both look like
+    this from the pump's side). The fake never creates the stream, so the
+    pump must still be running when this gives up waiting on it."""
+    redis_client = _FakeRedisClient(b"")
+    redis_client.asyncio = _NeverCreatedAsyncRedis(b"")
+    reader = asyncio.StreamReader()
+
+    with pytest.raises(TimeoutError):
+        await asyncio.wait_for(
+            serve_router._pump_from_relay(
+                cast(RedisClient, redis_client), "up-key", reader
+            ),
+            timeout=0.1,
+        )
+
+    assert not reader.at_eof()
+
+
+@pytest.mark.anyio
+async def test_pump_terminates_when_stream_seen_then_gone() -> None:
+    """Once the stream has been observed to exist, its later disappearance
+    (without ever delivering an eof entry) means the worker already
+    finished and its own cleanup ran before this reader's next read —
+    that transition, unlike "never seen", is treated as eof."""
+    redis_client = _FakeRedisClient(b"")
+    redis_client.asyncio = _SeenThenGoneAsyncRedis(exists_for_checks=1)
+    reader = asyncio.StreamReader()
+
+    await asyncio.wait_for(
+        serve_router._pump_from_relay(
+            cast(RedisClient, redis_client), "up-key", reader
+        ),
+        timeout=1.0,
+    )
+
+    assert reader.at_eof()
+
+
+@pytest.mark.anyio
+async def test_pump_waits_through_not_yet_seen_window_then_delivers_data() -> None:
+    """A stream that doesn't exist yet (still-forming, e.g. no bytes emitted
+    by a slow non-streaming generation) must not be bailed on; the pump
+    keeps waiting until it actually appears and then delivers normally."""
+    response = _fixed_length_http_response(b"{}")
+    redis_client = _FakeRedisClient(response)
+    redis_client.asyncio = _DelayedStreamCreationAsyncRedis(
+        response, empty_reads_before_ready=3
+    )
+    reader = asyncio.StreamReader()
+
+    await asyncio.wait_for(
+        serve_router._pump_from_relay(
+            cast(RedisClient, redis_client), "up-key", reader
+        ),
+        timeout=1.0,
+    )
+
+    buffered = await reader.read(-1)
+    assert buffered == response
+    assert reader.at_eof()
 
 
 def _bare_request(
@@ -531,7 +748,7 @@ async def test_uplink_cleanup_idempotent_when_invoked_twice() -> None:
 
     pump_task = asyncio.ensure_future(_never_returns())
     cleanup = serve_router._UplinkCleanup(
-        pump_task, cast(RedisClient, redis_client), "down-key"
+        pump_task, cast(RedisClient, redis_client), "up-key", "down-key"
     )
 
     await cleanup.run()
@@ -539,6 +756,25 @@ async def test_uplink_cleanup_idempotent_when_invoked_twice() -> None:
 
     assert redis_client.asyncio.eof_signal_count == 1
     assert pump_task.cancelled()
+
+
+@pytest.mark.anyio
+async def test_cleanup_deletes_both_relay_streams() -> None:
+    """After cleanup, both the up and down relay keys must be removed so a
+    torn-down request doesn't leave its Redis keys behind."""
+    redis_client = _FakeRedisClient(b"")
+
+    async def _never_returns() -> None:
+        await asyncio.sleep(3600)
+
+    pump_task = asyncio.ensure_future(_never_returns())
+    cleanup = serve_router._UplinkCleanup(
+        pump_task, cast(RedisClient, redis_client), "up-key", "down-key"
+    )
+
+    await cleanup.run()
+
+    assert redis_client.asyncio.deleted_keys == ["up-key", "down-key"]
 
 
 @pytest.mark.anyio
@@ -556,7 +792,7 @@ async def test_cancelled_first_caller_does_not_block_eof_for_second_caller() -> 
 
     pump_task = asyncio.ensure_future(_never_returns())
     cleanup = serve_router._UplinkCleanup(
-        pump_task, cast(RedisClient, redis_client), "down-key"
+        pump_task, cast(RedisClient, redis_client), "up-key", "down-key"
     )
 
     first_caller = asyncio.ensure_future(cleanup.run())

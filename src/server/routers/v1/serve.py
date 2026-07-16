@@ -36,12 +36,9 @@ router = APIRouter(prefix="/serve", tags=["Serve"])
 
 _STREAM_MAXLEN = 1000
 _READ_CHUNK = 16384
-_RESPONSE_HEAD_TIMEOUT_SEC = 30.0
 _MAX_PROXY_BODY_BYTES = 100 * 1024 * 1024
 
-# Headers that describe the hop to the upstream vLLM server, not the resource
-# itself; forwarding them verbatim would either duplicate framing the ASGI
-# server manages itself or leak a stale connection-management directive.
+# Hop-by-hop headers: managed by the ASGI server, not forwarded.
 _HOP_BY_HOP_REQUEST_HEADERS = {
     "connection",
     "keep-alive",
@@ -69,11 +66,10 @@ _HOP_BY_HOP_RESPONSE_HEADERS = {
 def _resolve_serve_relay_target(
     runtime: TaskRuntime, task_id: str
 ) -> tuple[TaskRecord, str, int]:
-    """Resolve the vLLM relay target for a live serve task.
+    """Resolve the serve task's relay endpoint.
 
-    The target host/port always comes from the resolved task's own
-    ``latest_update`` (never from caller input), so a client can only ever
-    reach the vLLM server belonging to the task it names.
+    The target comes only from task state, so caller input cannot choose an
+    arbitrary upstream host or port.
     """
     record = runtime.get_record(task_id)
     if record is None or record.task_type != TaskType.SERVE:
@@ -81,7 +77,11 @@ def _resolve_serve_relay_target(
     if record.status != TaskStatus.DISPATCHED:
         raise HTTPException(status.HTTP_409_CONFLICT, "serve task is not running")
     serve_info = safe_get(record.latest_update, "serve")
-    if not isinstance(serve_info, dict) or serve_info.get("mode") != "proxy":
+    if not isinstance(serve_info, dict):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, "serve task has no endpoint info yet"
+        )
+    if serve_info.get("mode") != "proxy":
         raise HTTPException(
             status.HTTP_409_CONFLICT, "serve task is not in proxy access mode"
         )
@@ -129,15 +129,27 @@ async def _start_serve_uplink(
 async def _pump_from_relay(
     redis_client: RedisClient, up_key: str, reader: asyncio.StreamReader
 ) -> None:
-    """Feed bytes read from the relay's ``up`` stream into ``reader``."""
+    """Copy relay bytes into ``reader``.
+
+    A missing ``up`` stream is eof only after the stream has existed once;
+    before that the worker may simply not have produced data yet.
+    """
     last_id = "0"
+    seen = False
     try:
         while True:
             rows: Any = await redis_client.asyncio.xread_telemetry(
                 {up_key: last_id}, count=10, block_ms=5000
             )
             if not rows:
+                if await redis_client.asyncio.exists_telemetry(up_key):
+                    seen = True
+                    continue
+                if seen:
+                    reader.feed_eof()
+                    return
                 continue
+            seen = True
             for _, entries in rows:
                 for entry_id, fields in entries:
                     last_id = entry_id
@@ -163,11 +175,10 @@ async def _send_to_relay(redis_client: RedisClient, down_key: str, data: bytes) 
 
 
 async def _signal_relay_eof(redis_client: RedisClient, down_key: str) -> None:
-    """Tell the worker-side relay to stop forwarding and close its TCP socket.
+    """Signal relay eof so the worker stops forwarding.
 
-    Without this, a client disconnect or a proxy-side error leaves the
-    worker's `redis_to_tcp` loop blocked on `xread` indefinitely and vLLM's
-    generation for that request running unaborted.
+    This prevents disconnect/error paths from leaving the worker blocked on
+    Redis while the upstream request keeps running.
     """
     try:
         await redis_client.asyncio.xadd_telemetry(
@@ -177,24 +188,41 @@ async def _signal_relay_eof(redis_client: RedisClient, down_key: str) -> None:
         pass
 
 
-class _UplinkCleanup:
-    """Idempotent teardown for a per-request relay uplink.
+async def _delete_relay_streams(
+    redis_client: RedisClient, up_key: str, down_key: str
+) -> None:
+    """Remove relay streams after server-side teardown.
 
-    Both `body_iter`'s own `finally` and the response's `BackgroundTask` may
-    reach this. Teardown runs as a single shared task, and every caller
-    awaits it under `asyncio.shield` — so a caller that gets cancelled
-    partway through can't abort the in-flight cleanup for whoever else is
-    (or later starts) awaiting it. Idempotency keys off the shared task's
-    completion, not merely having been entered once, so the relay `eof` is
-    guaranteed to be sent exactly once even if the first caller is cancelled
-    mid-cleanup.
+    Client-driven teardown does not always pass through the worker's
+    clean-close cleanup path.
+    """
+    try:
+        await redis_client.asyncio.delete_telemetry(up_key)
+    except Exception:
+        pass
+    try:
+        await redis_client.asyncio.delete_telemetry(down_key)
+    except Exception:
+        pass
+
+
+class _UplinkCleanup:
+    """Run per-request relay cleanup exactly once.
+
+    Cleanup is shielded so cancellation by one caller cannot interrupt eof
+    signaling for the relay.
     """
 
     def __init__(
-        self, pump_task: asyncio.Task[None], redis_client: RedisClient, down_key: str
+        self,
+        pump_task: asyncio.Task[None],
+        redis_client: RedisClient,
+        up_key: str,
+        down_key: str,
     ) -> None:
         self._pump_task = pump_task
         self._redis_client = redis_client
+        self._up_key = up_key
         self._down_key = down_key
         self._task: asyncio.Task[None] | None = None
 
@@ -210,6 +238,7 @@ class _UplinkCleanup:
             await self._pump_task
         except (asyncio.CancelledError, Exception):
             pass
+        await _delete_relay_streams(self._redis_client, self._up_key, self._down_key)
 
 
 def _connection_nominated_headers(raw_connection: str) -> set[str]:
@@ -221,12 +250,7 @@ def _connection_nominated_headers(raw_connection: str) -> set[str]:
 
 
 def _header_values(headers: list[tuple[str, str]], name: str) -> list[str]:
-    """Collect every value for a (possibly repeated) header name.
-
-    HTTP allows a header field to appear multiple times, equivalent to a
-    single comma-joined value; a plain ``dict`` lookup would only see the
-    last one.
-    """
+    """Return all values for a repeated HTTP header name."""
     lower_name = name.lower()
     return [
         value for header_name, value in headers if header_name.lower() == lower_name
@@ -234,11 +258,10 @@ def _header_values(headers: list[tuple[str, str]], name: str) -> list[str]:
 
 
 async def _read_capped_body(request: Request) -> bytes:
-    """Read the client's request body, rejecting it before the vLLM api-key
-    ever authenticates it if it exceeds ``_MAX_PROXY_BODY_BYTES``.
+    """Read a bounded request body.
 
-    The route is intentionally PAT-exempt, so this cap is the only guard
-    against an unauthenticated caller forcing an unbounded in-memory buffer.
+    This PAT-exempt route must reject oversized unauthenticated bodies
+    before buffering them for the upstream vLLM server.
     """
     declared_length = request.headers.get("content-length")
     if declared_length is not None:
@@ -265,11 +288,10 @@ async def _read_capped_body(request: Request) -> bytes:
 async def _serialize_request(
     request: Request, upstream_path: str, target_host: str, target_port: int
 ) -> bytes:
-    """Render the client's request as a raw HTTP/1.1 request to the vLLM target.
+    """Serialize the request for the relay target.
 
-    ``Connection: close`` is forced so the upstream server ends the TCP
-    connection once its response finishes, letting the response reader treat
-    the relay's ``eof`` marker as an unambiguous end-of-body signal.
+    Force ``Connection: close`` so relay eof cleanly marks the end of the
+    upstream response.
     """
     body = await _read_capped_body(request)
     path = "/" + upstream_path
@@ -333,11 +355,10 @@ async def _iter_until_eof_body(reader: asyncio.StreamReader) -> AsyncIterator[by
 
 
 async def _iter_chunked_body(reader: asyncio.StreamReader) -> AsyncIterator[bytes]:
-    """De-chunk an HTTP/1.1 ``Transfer-Encoding: chunked`` body.
+    """Yield decoded bytes from a chunked HTTP/1.1 body.
 
-    De-chunking here (rather than passing the wire framing through) lets the
-    outbound `StreamingResponse` pick its own framing for the client, instead
-    of double-encoding vLLM's chunk markers inside another transfer encoding.
+    The outbound ``StreamingResponse`` should choose client framing instead
+    of forwarding upstream chunk markers as payload.
     """
     while True:
         size_line = await reader.readline()
@@ -401,7 +422,7 @@ async def serve_proxy(
 
     reader = asyncio.StreamReader()
     pump_task = asyncio.create_task(_pump_from_relay(redis_client, up, reader))
-    cleanup = _UplinkCleanup(pump_task, redis_client, down)
+    cleanup = _UplinkCleanup(pump_task, redis_client, up, down)
     response_ready = False
 
     try:
@@ -409,9 +430,9 @@ async def serve_proxy(
             request, upstream_path, target_host, target_port
         )
         await _send_to_relay(redis_client, down, request_bytes)
-        status_code, headers = await asyncio.wait_for(
-            _read_response_head(reader), timeout=_RESPONSE_HEAD_TIMEOUT_SEC
-        )
+        # Non-streaming generations can exceed any fixed timeout; relay eof
+        # still terminates dead upstreams.
+        status_code, headers = await _read_response_head(reader)
 
         lower_headers = {name.lower(): value for name, value in headers}
         raw_content_length = lower_headers.get("content-length")
@@ -451,13 +472,8 @@ async def serve_proxy(
             finally:
                 await cleanup.run()
 
-        # `background` covers the response-abandoned-before-first-iteration
-        # window (e.g. client disconnect while headers are still being
-        # sent), where `body_iter` never starts and its own `finally` never
-        # runs. If even that doesn't fire, `_pump_from_relay` still
-        # self-terminates once vLLM (given `Connection: close`) finishes and
-        # closes its socket, since the worker relay then writes `up`-eof —
-        # a bounded, self-healing backstop, not an unbounded leak.
+        # Background cleanup covers responses abandoned before body
+        # iteration starts.
         response = StreamingResponse(
             body_iter(),
             status_code=status_code,

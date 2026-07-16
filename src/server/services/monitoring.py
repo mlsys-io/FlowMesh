@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import urlparse
 
+from shared.schemas.command import StopMessage
 from shared.schemas.event import (
     Event,
     NodeEvent,
@@ -117,7 +118,7 @@ class EventMonitor:
         self._port_forward = port_forward
         self._results_dir = Path(results_dir)
         self._log_stream_ttl_sec = max(0, int(log_stream_ttl_sec))
-        self._server_base_url = server_base_url
+        self._server_base_url = self._validate_server_base_url(server_base_url)
 
         self._pending_result_clones: dict[str, list[str]] = {}
         self._pending_lock = threading.RLock()
@@ -134,6 +135,27 @@ class EventMonitor:
         # Set by `set_own_node()` once the supervisor handshake produces a node_id.
         self._own_node_id: str | None = None
         self._own_node_deregistered: asyncio.Event = asyncio.Event()
+
+    def _validate_server_base_url(self, server_base_url: str) -> str:
+        """Validate the server's public base URL used to advertise
+        serve-proxy endpoints, falling back to a safe default instead of
+        silently producing a broken advertised URL (or letting malformed
+        config, e.g. an invalid bracketed IPv6 host, raise out of startup)."""
+        fallback = "http://localhost:8000"
+        try:
+            parsed = urlparse(server_base_url)
+            valid = parsed.scheme in ("http", "https") and bool(parsed.hostname)
+        except ValueError:
+            valid = False
+        if valid:
+            return server_base_url
+        self._logger.error(
+            "Invalid server_base_url %r (missing scheme/host, or unparsable); "
+            "falling back to %r for serve-proxy URL advertisement",
+            server_base_url,
+            fallback,
+        )
+        return fallback
 
     # ------------------------------------------------------------------ #
     # Public API
@@ -858,15 +880,33 @@ class EventMonitor:
     def _fail_forward_task(
         self, task_id: str, worker_id: str | None, reason: str
     ) -> None:
-        """Fail a task whose forward endpoint was dropped with no fallback.
+        """Fail a task whose forward endpoint was dropped with no fallback,
+        and stop its worker executor so it doesn't keep running (and holding
+        its GPU) until the task's TTL expires.
 
-        Without a client-reachable endpoint, the worker executor keeps
-        running for no purpose until its TTL expires; mark the task failed
-        immediately so it gets torn down instead.
+        Marking the task failed only updates scheduling state; it does not
+        itself stop the worker process, so a stop signal is published
+        alongside it.
         """
         self._dispatcher.fail_task(
             task_id, reason, worker_id=worker_id, payload={"error": reason}
         )
+        if not worker_id:
+            return
+        worker = self._worker_registry.get_worker(worker_id)
+        if worker is None:
+            return
+        try:
+            self._worker_registry.publish_stop(
+                worker, StopMessage(task_id=task_id, worker_id=worker.id, reason=reason)
+            )
+        except Exception as exc:
+            self._logger.warning(
+                "Failed to publish stop for task %s on worker %s: %s",
+                task_id,
+                worker_id,
+                exc,
+            )
 
     def _handle_ssh_task_update(
         self, task_id: str, worker_id: str | None, payload: dict[str, Any]

@@ -17,7 +17,7 @@ The worker resolves `spec.taskType` against an executor registry in
 | `data_profiling` | `DataProfilingExecutor` | DataFrame profiling |
 | `data_retrieval` | `DataRetrievalExecutor` | DataFrame loading from sources (`type: sql`, `type: s3`, `type: lumid` with `mode: sql\|s3\|agent` via lumid-data-app; `type: lumid` (mode `sql`/`s3`/`agent`) requires `lumid_data_token`, the bearer forwarded to lumid-data-app) |
 | `ssh` | `SSHExecutor` | Interactive SSH session or non-interactive container job |
-| `serve` | `VLLMServeExecutor` (`vllm_serve`) | Persistent vLLM API server for a single model, torn down at TTL or on stop |
+| `serve` | `VLLMServeExecutor` | Persistent vLLM API server for a single model |
 
 Helper utilities live in `src/worker/executors/utils/` (`artifacts`,
 `checkpoints`, `data_utils`, `distributed`, `graph_templates`,

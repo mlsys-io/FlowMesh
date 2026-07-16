@@ -7,6 +7,7 @@ payloads don't have.
 """
 
 import logging
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 from server.services.monitoring import EventMonitor
@@ -215,6 +216,63 @@ class TestServeForwardRegistration:
         assert call_args.args[0] == "tsk-abc"
         assert call_args.kwargs["worker_id"] == "wrk-1"
 
+    def test_no_forward_service_also_stops_the_worker(self) -> None:
+        """Marking the task failed only updates scheduling state; it does not
+        stop the worker process. Without an explicit stop, the vLLM server
+        the executor started keeps running (and holding its GPU) until the
+        task's TTL expires, so a stop must be published too."""
+        monitor = _make_monitor(port_forward=None)
+        worker = SimpleNamespace(id="wrk-1")
+        monitor._worker_registry.get_worker.return_value = worker  # type: ignore[attr-defined]
+
+        monitor._handle_serve_task_update("tsk-abc", "wrk-1", _serve_forward_payload())
+
+        monitor._worker_registry.get_worker.assert_called_once_with(  # type: ignore[attr-defined]
+            "wrk-1"
+        )
+        monitor._worker_registry.publish_stop.assert_called_once()  # type: ignore[attr-defined]
+        call_args = monitor._worker_registry.publish_stop.call_args  # type: ignore[attr-defined]
+        assert call_args.args[0] is worker
+        stop_message = call_args.args[1]
+        assert stop_message.task_id == "tsk-abc"
+        assert stop_message.worker_id == "wrk-1"
+
+    def test_fail_forward_task_without_worker_id_does_not_call_worker_registry(
+        self,
+    ) -> None:
+        """No worker_id means there's nothing to stop; `get_worker`/
+        `publish_stop` must not be invoked (e.g. with `None`)."""
+        monitor = _make_monitor(port_forward=None)
+
+        monitor._handle_serve_task_update("tsk-abc", None, _serve_forward_payload())
+
+        monitor._worker_registry.get_worker.assert_not_called()  # type: ignore[attr-defined]
+        monitor._worker_registry.publish_stop.assert_not_called()  # type: ignore[attr-defined]
+
+    def test_fail_forward_task_worker_not_found_does_not_crash(self) -> None:
+        """If the worker has already unregistered, there's nothing to stop;
+        this must not raise."""
+        monitor = _make_monitor(port_forward=None)
+        monitor._worker_registry.get_worker.return_value = None  # type: ignore[attr-defined]
+
+        monitor._handle_serve_task_update("tsk-abc", "wrk-1", _serve_forward_payload())
+
+        monitor._worker_registry.publish_stop.assert_not_called()  # type: ignore[attr-defined]
+
+    def test_fail_forward_task_publish_stop_failure_does_not_crash(self) -> None:
+        """A transient failure publishing the stop signal must be logged, not
+        raised — the task is already marked failed regardless."""
+        monitor = _make_monitor(port_forward=None)
+        worker = SimpleNamespace(id="wrk-1")
+        monitor._worker_registry.get_worker.return_value = worker  # type: ignore[attr-defined]
+        monitor._worker_registry.publish_stop.side_effect = RuntimeError(  # type: ignore[attr-defined]
+            "redis unavailable"
+        )
+
+        monitor._handle_serve_task_update("tsk-abc", "wrk-1", _serve_forward_payload())
+
+        monitor._dispatcher.fail_task.assert_called_once()  # type: ignore[attr-defined]
+
     def test_register_port_forward_failure_drops_serve_endpoint(self) -> None:
         """If register_port_forward raises, the serve endpoint is dropped so the
         worker-internal address is never stored as a client-facing endpoint."""
@@ -404,3 +462,43 @@ class TestServeProxyRegistration:
         )
 
         assert "serve" not in result
+
+
+class TestServerBaseUrlValidation:
+    """`server_base_url` is validated at construction so a malformed value
+    can't silently produce a broken advertised proxy URL."""
+
+    def test_valid_https_url_passes_through(self) -> None:
+        monitor = _make_monitor(server_base_url="https://serve.example.com:9443")
+
+        assert (
+            monitor._server_base_url  # type: ignore[attr-defined]
+            == "https://serve.example.com:9443"
+        )
+
+    def test_missing_scheme_falls_back_to_default(self) -> None:
+        monitor = _make_monitor(server_base_url="serve.example.com:9443")
+
+        assert monitor._server_base_url == "http://localhost:8000"  # type: ignore[attr-defined]
+
+    def test_missing_host_falls_back_to_default(self) -> None:
+        monitor = _make_monitor(server_base_url="http://")
+
+        assert monitor._server_base_url == "http://localhost:8000"  # type: ignore[attr-defined]
+
+    def test_empty_string_falls_back_to_default(self) -> None:
+        monitor = _make_monitor(server_base_url="")
+
+        assert monitor._server_base_url == "http://localhost:8000"  # type: ignore[attr-defined]
+
+    def test_unsupported_scheme_falls_back_to_default(self) -> None:
+        monitor = _make_monitor(server_base_url="ftp://serve.example.com")
+
+        assert monitor._server_base_url == "http://localhost:8000"  # type: ignore[attr-defined]
+
+    def test_unparsable_url_falls_back_instead_of_raising(self) -> None:
+        """A malformed bracketed IPv6 host makes `urlparse` itself raise
+        `ValueError`; construction must still fall back, not propagate."""
+        monitor = _make_monitor(server_base_url="http://[::1")
+
+        assert monitor._server_base_url == "http://localhost:8000"  # type: ignore[attr-defined]
