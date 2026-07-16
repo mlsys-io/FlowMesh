@@ -98,8 +98,8 @@ class GrpcConfig:
 class PortForwardConfig:
     enabled: bool = True
     ssh_proxy_enabled: bool = True
+    ssh_audit_enabled: bool = True
     serve_proxy_enabled: bool = True
-    audit_enabled: bool = True
     bind_host: str = "0.0.0.0"
     public_host: str = "localhost"
     port_start: int = 32000
@@ -110,8 +110,10 @@ class PortForwardConfig:
         return cls(
             enabled=parse_bool_env("ENABLE_SERVER_PORT_FORWARD", True),
             ssh_proxy_enabled=parse_bool_env("ENABLE_SERVER_SSH_PROXY", True),
+            ssh_audit_enabled=parse_bool_env(
+                "ENABLE_SERVER_SSH_CONNECTION_AUDIT", True
+            ),
             serve_proxy_enabled=parse_bool_env("ENABLE_SERVER_SERVE_PROXY", True),
-            audit_enabled=parse_bool_env("ENABLE_SERVER_SSH_CONNECTION_AUDIT", True),
             bind_host=os.getenv("SERVER_PORT_FORWARD_BIND_HOST", "0.0.0.0").strip(),
             public_host=os.getenv(
                 "SERVER_PORT_FORWARD_PUBLIC_HOST", "localhost"

@@ -128,7 +128,7 @@ if IS_ROOT_NODE:
     )
 
     _pf_cfg = config.port_forward
-    if _pf_cfg.audit_enabled:
+    if _pf_cfg.ssh_audit_enabled:
         SSH_AUDIT_SERVICE = SshAuditService(REDIS_CLIENT)
 
     if _pf_cfg.enabled:
