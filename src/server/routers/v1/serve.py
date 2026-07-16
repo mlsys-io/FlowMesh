@@ -68,8 +68,8 @@ def _resolve_serve_relay_target(
 ) -> tuple[TaskRecord, str, int]:
     """Resolve the serve task's relay endpoint.
 
-    The target comes only from task state, so caller input cannot choose an
-    arbitrary upstream host or port.
+    The target comes only from task state, so caller input cannot choose an arbitrary
+    upstream host or port.
     """
     record = runtime.get_record(task_id)
     if record is None or record.task_type != TaskType.SERVE:
@@ -131,8 +131,9 @@ async def _pump_from_relay(
 ) -> None:
     """Copy relay bytes into ``reader``.
 
-    A missing ``up`` stream is eof only after the stream has existed once;
-    before that the worker may simply not have produced data yet.
+    A missing ``up`` stream is eof only after the stream has existed once; before that
+    the worker may simply not have produced data yet, assuming that the key cannot be
+    deleted before the first read.
     """
     last_id = "0"
     seen = False
@@ -175,11 +176,7 @@ async def _send_to_relay(redis_client: RedisClient, down_key: str, data: bytes) 
 
 
 async def _signal_relay_eof(redis_client: RedisClient, down_key: str) -> None:
-    """Signal relay eof so the worker stops forwarding.
-
-    This prevents disconnect/error paths from leaving the worker blocked on
-    Redis while the upstream request keeps running.
-    """
+    """Signal relay eof so the worker stops forwarding."""
     try:
         await redis_client.asyncio.xadd_telemetry(
             down_key, {"eof": "1"}, maxlen=_STREAM_MAXLEN, approximate=True
@@ -191,11 +188,7 @@ async def _signal_relay_eof(redis_client: RedisClient, down_key: str) -> None:
 async def _delete_relay_streams(
     redis_client: RedisClient, up_key: str, down_key: str
 ) -> None:
-    """Remove relay streams after server-side teardown.
-
-    Client-driven teardown does not always pass through the worker's
-    clean-close cleanup path.
-    """
+    """Remove relay streams after server-side teardown."""
     try:
         await redis_client.asyncio.delete_telemetry(up_key)
     except Exception:
@@ -209,8 +202,8 @@ async def _delete_relay_streams(
 class _UplinkCleanup:
     """Run per-request relay cleanup exactly once.
 
-    Cleanup is shielded so cancellation by one caller cannot interrupt eof
-    signaling for the relay.
+    Cleanup is shielded so cancellation by one caller cannot interrupt eof signaling
+    for the relay.
     """
 
     def __init__(
@@ -242,8 +235,8 @@ class _UplinkCleanup:
 
 
 def _connection_nominated_headers(raw_connection: str) -> set[str]:
-    """RFC 7230 lets ``Connection`` name additional per-hop headers to drop,
-    e.g. ``Connection: X-Foo`` makes ``X-Foo`` hop-by-hop for this hop only."""
+    """RFC 7230 lets ``Connection`` name additional per-hop headers to drop, e.g.
+    ``Connection: X-Foo`` makes ``X-Foo`` hop-by-hop for this hop only."""
     return {
         token.strip().lower() for token in raw_connection.split(",") if token.strip()
     }
@@ -260,8 +253,8 @@ def _header_values(headers: list[tuple[str, str]], name: str) -> list[str]:
 async def _read_capped_body(request: Request) -> bytes:
     """Read a bounded request body.
 
-    This PAT-exempt route must reject oversized unauthenticated bodies
-    before buffering them for the upstream vLLM server.
+    This PAT-exempt route must reject oversized unauthenticated bodies before buffering
+    them for the upstream vLLM server.
     """
     declared_length = request.headers.get("content-length")
     if declared_length is not None:
@@ -290,8 +283,8 @@ async def _serialize_request(
 ) -> bytes:
     """Serialize the request for the relay target.
 
-    Force ``Connection: close`` so relay eof cleanly marks the end of the
-    upstream response.
+    Force ``Connection: close`` so relay eof cleanly marks the end of the upstream
+    response.
     """
     body = await _read_capped_body(request)
     path = "/" + upstream_path
@@ -357,8 +350,8 @@ async def _iter_until_eof_body(reader: asyncio.StreamReader) -> AsyncIterator[by
 async def _iter_chunked_body(reader: asyncio.StreamReader) -> AsyncIterator[bytes]:
     """Yield decoded bytes from a chunked HTTP/1.1 body.
 
-    The outbound ``StreamingResponse`` should choose client framing instead
-    of forwarding upstream chunk markers as payload.
+    The outbound ``StreamingResponse`` should choose client framing instead of
+    forwarding upstream chunk markers as payload.
     """
     while True:
         size_line = await reader.readline()
@@ -430,8 +423,8 @@ async def serve_proxy(
             request, upstream_path, target_host, target_port
         )
         await _send_to_relay(redis_client, down, request_bytes)
-        # Non-streaming generations can exceed any fixed timeout; relay eof
-        # still terminates dead upstreams.
+
+        # No timeout: a slow non-streaming generation is bounded only by relay eof.
         status_code, headers = await _read_response_head(reader)
 
         lower_headers = {name.lower(): value for name, value in headers}
@@ -472,8 +465,7 @@ async def serve_proxy(
             finally:
                 await cleanup.run()
 
-        # Background cleanup covers responses abandoned before body
-        # iteration starts.
+        # Background cleanup covers responses abandoned before body iteration starts.
         response = StreamingResponse(
             body_iter(),
             status_code=status_code,

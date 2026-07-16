@@ -70,6 +70,15 @@ class RelayUplinkService:
         self._tasks.clear()
         self._loop = None
 
+    async def _send_eof(self, rds: Redis, key: str) -> None:
+        await asyncio.to_thread(
+            rds.xadd,
+            key,
+            {"eof": "1"},
+            maxlen=_STREAM_MAXLEN,
+            approximate=True,
+        )
+
     async def _run(
         self,
         rds: Redis,
@@ -91,15 +100,8 @@ class RelayUplinkService:
                     target_port,
                     exc,
                 )
-                # Wake the server-side reader instead of leaving it blocked.
                 try:
-                    await asyncio.to_thread(
-                        rds.xadd,
-                        up,
-                        {"eof": "1"},
-                        maxlen=_STREAM_MAXLEN,
-                        approximate=True,
-                    )
+                    await self._send_eof(rds, up)
                 except Exception:
                     pass
                 return
@@ -121,13 +123,7 @@ class RelayUplinkService:
                                 approximate=True,
                             )
                     finally:
-                        await asyncio.to_thread(
-                            rds.xadd,
-                            up,
-                            {"eof": "1"},
-                            maxlen=_STREAM_MAXLEN,
-                            approximate=True,
-                        )
+                        await self._send_eof(rds, up)
 
                 async def redis_to_tcp() -> None:
                     last_id = "0"
@@ -172,8 +168,7 @@ class RelayUplinkService:
                     pass
                 self._logger.info("Relay uplink ended: session=%s", session_id)
         finally:
-            # Use a short TTL so consumers can still read the final eof
-            # before cleanup.
+            # Use a short TTL so consumers can still read the final eof before cleanup.
             try:
                 await asyncio.to_thread(rds.expire, up, _STREAM_CLEANUP_TTL_SEC)
             except Exception:
