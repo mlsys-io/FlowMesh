@@ -16,6 +16,7 @@ from server.services.monitoring import EventMonitor
 def _make_monitor(
     port_forward: MagicMock | None = None,
     ssh_proxy_enabled: bool = False,
+    serve_proxy_enabled: bool = False,
     server_base_url: str = "http://server.example.com:8000",
 ) -> EventMonitor:
     return EventMonitor(
@@ -28,6 +29,7 @@ def _make_monitor(
         metrics_recorder=MagicMock(),
         watchdog=MagicMock(),
         ssh_proxy_enabled=ssh_proxy_enabled,
+        serve_proxy_enabled=serve_proxy_enabled,
         port_forward=port_forward,
         server_base_url=server_base_url,
     )
@@ -379,7 +381,7 @@ class TestServeProxyRegistration:
     def test_proxy_mode_does_not_call_register_port_forward(self) -> None:
         """Proxy mode never touches the port_forward relay-allocation path."""
         port_forward = MagicMock()
-        monitor = _make_monitor(port_forward=port_forward, ssh_proxy_enabled=True)
+        monitor = _make_monitor(port_forward=port_forward, serve_proxy_enabled=True)
 
         monitor._handle_serve_task_update("tsk-abc", "wrk-1", _serve_proxy_payload())
 
@@ -390,7 +392,7 @@ class TestServeProxyRegistration:
         worker-internal host/port."""
         monitor = _make_monitor(
             port_forward=None,
-            ssh_proxy_enabled=True,
+            serve_proxy_enabled=True,
             server_base_url="http://server.example.com:8000",
         )
 
@@ -411,7 +413,7 @@ class TestServeProxyRegistration:
         """`_relay_target` must survive so the proxy router can start the
         uplink; it never reaches the client because tasks.py strips private
         (underscore-prefixed) fields before returning latest_update."""
-        monitor = _make_monitor(port_forward=None, ssh_proxy_enabled=True)
+        monitor = _make_monitor(port_forward=None, serve_proxy_enabled=True)
 
         result = monitor._handle_serve_task_update(
             "tsk-abc", "wrk-1", _serve_proxy_payload(host="127.0.0.1", port=9001)
@@ -420,7 +422,7 @@ class TestServeProxyRegistration:
         assert result["serve"]["_relay_target"] == {"host": "127.0.0.1", "port": 9001}
 
     def test_proxy_mode_keeps_api_key_and_model(self) -> None:
-        monitor = _make_monitor(port_forward=None, ssh_proxy_enabled=True)
+        monitor = _make_monitor(port_forward=None, serve_proxy_enabled=True)
 
         result = monitor._handle_serve_task_update(
             "tsk-abc", "wrk-1", _serve_proxy_payload()
@@ -432,7 +434,7 @@ class TestServeProxyRegistration:
     def test_proxy_mode_disabled_drops_endpoint(self) -> None:
         """When the relay proxy is disabled, proxy mode is rejected like an
         unservable access mode (dropped, no fallback)."""
-        monitor = _make_monitor(port_forward=None, ssh_proxy_enabled=False)
+        monitor = _make_monitor(port_forward=None, serve_proxy_enabled=False)
 
         result = monitor._handle_serve_task_update(
             "tsk-abc", "wrk-1", _serve_proxy_payload()
@@ -441,21 +443,35 @@ class TestServeProxyRegistration:
         assert "serve" not in result
 
     def test_proxy_mode_disabled_fails_task(self) -> None:
-        monitor = _make_monitor(port_forward=None, ssh_proxy_enabled=False)
+        monitor = _make_monitor(port_forward=None, serve_proxy_enabled=False)
 
         monitor._handle_serve_task_update("tsk-abc", "wrk-1", _serve_proxy_payload())
 
         monitor._dispatcher.fail_task.assert_called_once()  # type: ignore[attr-defined]
 
+    def test_proxy_mode_does_not_fall_back_to_ssh_proxy_capability(self) -> None:
+        monitor = _make_monitor(
+            port_forward=None,
+            ssh_proxy_enabled=True,
+            serve_proxy_enabled=False,
+        )
+
+        result = monitor._handle_serve_task_update(
+            "tsk-abc", "wrk-1", _serve_proxy_payload()
+        )
+
+        assert "serve" not in result
+        monitor._dispatcher.fail_task.assert_called_once()  # type: ignore[attr-defined]
+
     def test_proxy_mode_success_does_not_fail_task(self) -> None:
-        monitor = _make_monitor(port_forward=None, ssh_proxy_enabled=True)
+        monitor = _make_monitor(port_forward=None, serve_proxy_enabled=True)
 
         monitor._handle_serve_task_update("tsk-abc", "wrk-1", _serve_proxy_payload())
 
         monitor._dispatcher.fail_task.assert_not_called()  # type: ignore[attr-defined]
 
     def test_proxy_mode_no_worker_id_drops_endpoint(self) -> None:
-        monitor = _make_monitor(port_forward=None, ssh_proxy_enabled=True)
+        monitor = _make_monitor(port_forward=None, serve_proxy_enabled=True)
 
         result = monitor._handle_serve_task_update(
             "tsk-abc", None, _serve_proxy_payload()

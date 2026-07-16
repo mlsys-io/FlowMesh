@@ -90,3 +90,7 @@ def get_ssh_audit(conn: HTTPConnection) -> SshAuditService | None:
 
 def get_ssh_proxy_enabled(conn: HTTPConnection) -> bool:
     return conn.app.state.ssh_proxy_enabled
+
+
+def get_serve_proxy_enabled(conn: HTTPConnection) -> bool:
+    return conn.app.state.serve_proxy_enabled

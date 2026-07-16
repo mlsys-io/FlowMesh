@@ -34,9 +34,20 @@ def _serve_workflow(access_mode: str) -> str:
 def test_parse_serve_proxy_rejected_when_proxy_disabled(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr("server.task.parser._ENABLE_SERVER_SSH_PROXY", False)
+    monkeypatch.setattr("server.task.parser._ENABLE_SERVER_SERVE_PROXY", False)
     with pytest.raises(ValueError, match="serve accessMode 'proxy' is disabled"):
         parse_workflow(_serve_workflow("proxy"), format="native")
+
+
+def test_parse_serve_proxy_ignores_ssh_proxy_capability(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("server.task.parser._ENABLE_SERVER_SSH_PROXY", False)
+    monkeypatch.setattr("server.task.parser._ENABLE_SERVER_SERVE_PROXY", True)
+
+    parsed = parse_workflow(_serve_workflow("proxy"), format="native")
+
+    assert len(parsed.tasks) == 1
 
 
 def test_parse_serve_forward_rejected_when_forward_disabled(
@@ -50,7 +61,7 @@ def test_parse_serve_forward_rejected_when_forward_disabled(
 def test_parse_serve_direct_ok_when_both_disabled(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr("server.task.parser._ENABLE_SERVER_SSH_PROXY", False)
+    monkeypatch.setattr("server.task.parser._ENABLE_SERVER_SERVE_PROXY", False)
     monkeypatch.setattr("server.task.parser._ENABLE_SERVER_PORT_FORWARD", False)
     parsed = parse_workflow(_serve_workflow("direct"), format="native")
     assert len(parsed.tasks) == 1

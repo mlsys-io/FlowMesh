@@ -279,7 +279,7 @@ def _make_app(
     app.state.runtime = runtime
     app.state.redis_client = redis_client
     app.state.logger = logging.getLogger("test.serve_proxy_router")
-    app.state.ssh_proxy_enabled = proxy_enabled
+    app.state.serve_proxy_enabled = proxy_enabled
     app.state.node_registry = node_registry
     app.state.worker_registry = worker_registry
     app.include_router(serve_router.router, prefix=PREFIX)

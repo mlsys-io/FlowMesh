@@ -296,6 +296,12 @@ STACK_ENV_SCHEMA = EnvSchema(
             ],
         ),
         EnvSection(
+            title="Serve Task Support",
+            vars=[
+                EnvVar("ENABLE_SERVER_SERVE_PROXY", "true", var_type=EnvVarType.BOOL),
+            ],
+        ),
+        EnvSection(
             title="SSH Worker Defaults",
             vars=[
                 EnvVar("ENABLE_SSH_BY_DEFAULT", "true", var_type=EnvVarType.BOOL),

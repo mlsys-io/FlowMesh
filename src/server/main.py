@@ -165,7 +165,8 @@ if IS_ROOT_NODE:
         node_registry=NODE_REGISTRY,
         metrics_recorder=METRICS_RECORDER,
         watchdog=WATCHDOG,
-        ssh_proxy_enabled=config.port_forward.proxy_enabled,
+        ssh_proxy_enabled=config.port_forward.ssh_proxy_enabled,
+        serve_proxy_enabled=config.port_forward.serve_proxy_enabled,
         port_forward=PORT_FORWARD_SERVICE,
         results_dir=RESULTS_DIR,
         log_stream_ttl_sec=config.log_stream.ttl_sec,
@@ -420,7 +421,8 @@ app.state.watchdog = WATCHDOG
 app.state.event_monitor = EVENT_MONITOR
 app.state.port_forward = PORT_FORWARD_SERVICE
 app.state.ssh_audit = SSH_AUDIT_SERVICE
-app.state.ssh_proxy_enabled = config.port_forward.proxy_enabled and IS_ROOT_NODE
+app.state.ssh_proxy_enabled = config.port_forward.ssh_proxy_enabled and IS_ROOT_NODE
+app.state.serve_proxy_enabled = config.port_forward.serve_proxy_enabled and IS_ROOT_NODE
 
 # Routers — shared
 app.include_router(health.router)

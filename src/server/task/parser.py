@@ -15,6 +15,7 @@ from .n8n_parser import translate_n8n_workflow
 
 _ALLOWED_TASK_TYPES = ", ".join(member.value for member in TaskType)
 _ENABLE_SERVER_SSH_PROXY = parse_bool_env("ENABLE_SERVER_SSH_PROXY", True)
+_ENABLE_SERVER_SERVE_PROXY = parse_bool_env("ENABLE_SERVER_SERVE_PROXY", True)
 _ENABLE_SERVER_PORT_FORWARD = parse_bool_env("ENABLE_SERVER_PORT_FORWARD", True)
 
 
@@ -603,7 +604,7 @@ def _validate_serve_access_mode(task: TaskEnvelopeTemplate, context: str) -> Non
     if task.spec.taskType != TaskType.SERVE:
         return
     access_mode = task.spec.accessMode or "direct"
-    if access_mode == "proxy" and not _ENABLE_SERVER_SSH_PROXY:
+    if access_mode == "proxy" and not _ENABLE_SERVER_SERVE_PROXY:
         raise ValueError(
             f"Invalid task payload{context}: serve accessMode 'proxy' "
             "is disabled on this server"

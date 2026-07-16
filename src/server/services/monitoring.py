@@ -100,6 +100,7 @@ class EventMonitor:
         metrics_recorder: MetricsRecorder,
         watchdog: WorkerWatchdog,
         ssh_proxy_enabled: bool = False,
+        serve_proxy_enabled: bool = False,
         port_forward: PortForwardService | None = None,
         results_dir: Path | str = ".",
         log_stream_ttl_sec: int = 0,
@@ -115,6 +116,7 @@ class EventMonitor:
         self._metrics = metrics_recorder
         self._watchdog = watchdog
         self._ssh_proxy_enabled = ssh_proxy_enabled
+        self._serve_proxy_enabled = serve_proxy_enabled
         self._port_forward = port_forward
         self._results_dir = Path(results_dir)
         self._log_stream_ttl_sec = max(0, int(log_stream_ttl_sec))
@@ -1137,10 +1139,10 @@ class EventMonitor:
                     "Serve task with proxy mode has no worker_id; dropping endpoint"
                 )
                 return None
-            if not self._ssh_proxy_enabled:
+            if not self._serve_proxy_enabled:
                 self._logger.error(
-                    "Serve task requested proxy mode but the relay proxy is "
-                    "disabled; dropping endpoint"
+                    "Serve task requested proxy mode but serve proxy is disabled; "
+                    "dropping endpoint"
                 )
                 return None
             return "proxy"

@@ -92,7 +92,7 @@ Server policy toggles: `ENABLE_SERVER_SSH_PROXY`,
 | ANY | `/api/v1/serve/tasks/{task_id}/{upstream_path:path}` | HTTP reverse proxy to a `proxy`-mode serve task's vLLM server. |
 
 PAT-exempt: authenticated solely by the task's vLLM api-key, not a Lumid PAT.
-Gated by `ENABLE_SERVER_SSH_PROXY`, the same toggle as the SSH proxy.
+Gated by `ENABLE_SERVER_SERVE_PROXY`.
 
 ## System
 

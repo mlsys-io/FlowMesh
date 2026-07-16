@@ -23,7 +23,7 @@ from ...app_state import (
     get_node_registry,
     get_redis_client,
     get_runtime,
-    get_ssh_proxy_enabled,
+    get_serve_proxy_enabled,
     get_worker_registry,
 )
 from ...clients.redis import RedisClient, relay_down_key, relay_up_key
@@ -385,7 +385,7 @@ async def serve_proxy(
     runtime: TaskRuntime = Depends(get_runtime),
     redis_client: RedisClient = Depends(get_redis_client),
     logger: logging.Logger = Depends(get_logger),
-    proxy_enabled: bool = Depends(get_ssh_proxy_enabled),
+    proxy_enabled: bool = Depends(get_serve_proxy_enabled),
     node_registry: NodeRegistry = Depends(get_node_registry),
     worker_registry: WorkerRegistry = Depends(get_worker_registry),
 ) -> StreamingResponse:
