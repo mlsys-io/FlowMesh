@@ -161,6 +161,7 @@ def _build_task_template(
             ) from exc
         raise ValueError(f"Invalid task payload{context}: {exc}") from exc
     _validate_ssh_access_mode(task, context)
+    _validate_serve_access_mode(task, context)
     try:
         task.spec.validate_dispatchable()
     except ValueError as exc:
@@ -594,6 +595,22 @@ def _validate_ssh_access_mode(task: TaskEnvelopeTemplate, context: str) -> None:
     if access_mode == "forward" and not _ENABLE_SERVER_PORT_FORWARD:
         raise ValueError(
             f"Invalid task payload{context}: SSH accessMode 'forward' "
+            "is disabled on this server"
+        )
+
+
+def _validate_serve_access_mode(task: TaskEnvelopeTemplate, context: str) -> None:
+    if task.spec.taskType != TaskType.SERVE:
+        return
+    access_mode = task.spec.accessMode or "direct"
+    if access_mode == "proxy" and not _ENABLE_SERVER_SSH_PROXY:
+        raise ValueError(
+            f"Invalid task payload{context}: serve accessMode 'proxy' "
+            "is disabled on this server"
+        )
+    if access_mode == "forward" and not _ENABLE_SERVER_PORT_FORWARD:
+        raise ValueError(
+            f"Invalid task payload{context}: serve accessMode 'forward' "
             "is disabled on this server"
         )
 
