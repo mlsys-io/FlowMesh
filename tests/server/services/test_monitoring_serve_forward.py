@@ -230,24 +230,24 @@ class TestServeForwardRegistration:
         monitor._worker_registry.get_worker.assert_called_once_with(  # type: ignore[attr-defined]
             "wrk-1"
         )
-        monitor._worker_registry.publish_stop.assert_called_once()  # type: ignore[attr-defined]
-        call_args = monitor._worker_registry.publish_stop.call_args  # type: ignore[attr-defined]
+        monitor._worker_registry.publish_interrupt.assert_called_once()  # type: ignore[attr-defined]
+        call_args = monitor._worker_registry.publish_interrupt.call_args  # type: ignore[attr-defined]
         assert call_args.args[0] is worker
-        stop_message = call_args.args[1]
-        assert stop_message.task_id == "tsk-abc"
-        assert stop_message.worker_id == "wrk-1"
+        interrupt_message = call_args.args[1]
+        assert interrupt_message.task_id == "tsk-abc"
+        assert interrupt_message.worker_id == "wrk-1"
 
     def test_fail_forward_task_without_worker_id_does_not_call_worker_registry(
         self,
     ) -> None:
         """No worker_id means there's nothing to stop; `get_worker`/
-        `publish_stop` must not be invoked (e.g. with `None`)."""
+        `publish_interrupt` must not be invoked (e.g. with `None`)."""
         monitor = _make_monitor(port_forward=None)
 
         monitor._handle_serve_task_update("tsk-abc", None, _serve_forward_payload())
 
         monitor._worker_registry.get_worker.assert_not_called()  # type: ignore[attr-defined]
-        monitor._worker_registry.publish_stop.assert_not_called()  # type: ignore[attr-defined]
+        monitor._worker_registry.publish_interrupt.assert_not_called()  # type: ignore[attr-defined]
 
     def test_fail_forward_task_worker_not_found_does_not_crash(self) -> None:
         """If the worker has already unregistered, there's nothing to stop;
@@ -257,15 +257,15 @@ class TestServeForwardRegistration:
 
         monitor._handle_serve_task_update("tsk-abc", "wrk-1", _serve_forward_payload())
 
-        monitor._worker_registry.publish_stop.assert_not_called()  # type: ignore[attr-defined]
+        monitor._worker_registry.publish_interrupt.assert_not_called()  # type: ignore[attr-defined]
 
-    def test_fail_forward_task_publish_stop_failure_does_not_crash(self) -> None:
+    def test_fail_forward_task_publish_interrupt_failure_does_not_crash(self) -> None:
         """A transient failure publishing the stop signal must be logged, not
         raised — the task is already marked failed regardless."""
         monitor = _make_monitor(port_forward=None)
         worker = SimpleNamespace(id="wrk-1")
         monitor._worker_registry.get_worker.return_value = worker  # type: ignore[attr-defined]
-        monitor._worker_registry.publish_stop.side_effect = RuntimeError(  # type: ignore[attr-defined]
+        monitor._worker_registry.publish_interrupt.side_effect = RuntimeError(  # type: ignore[attr-defined]
             "redis unavailable"
         )
 

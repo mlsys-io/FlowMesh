@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import urlparse
 
-from shared.schemas.command import StopMessage
+from shared.schemas.command import InterruptMessage
 from shared.schemas.event import (
     Event,
     NodeEvent,
@@ -137,10 +137,9 @@ class EventMonitor:
         self._own_node_deregistered: asyncio.Event = asyncio.Event()
 
     def _validate_server_base_url(self, server_base_url: str) -> str:
-        """Validate the server's public base URL used to advertise
-        serve-proxy endpoints, falling back to a safe default instead of
-        silently producing a broken advertised URL (or letting malformed
-        config, e.g. an invalid bracketed IPv6 host, raise out of startup)."""
+        """Validate the server's public base URL used to advertise serve-proxy
+        endpoints, falling back to a safe default instead of silently producing a broken
+        advertised URL."""
         fallback = "http://localhost:8000"
         try:
             parsed = urlparse(server_base_url)
@@ -150,8 +149,8 @@ class EventMonitor:
         if valid:
             return server_base_url
         self._logger.error(
-            "Invalid server_base_url %r (missing scheme/host, or unparsable); "
-            "falling back to %r for serve-proxy URL advertisement",
+            "Invalid server_base_url %r; falling back to %r for serve-proxy URL "
+            "advertisement",
             server_base_url,
             fallback,
         )
@@ -880,14 +879,8 @@ class EventMonitor:
     def _fail_forward_task(
         self, task_id: str, worker_id: str | None, reason: str
     ) -> None:
-        """Fail a task whose forward endpoint was dropped with no fallback,
-        and stop its worker executor so it doesn't keep running (and holding
-        its GPU) until the task's TTL expires.
-
-        Marking the task failed only updates scheduling state; it does not
-        itself stop the worker process, so a stop signal is published
-        alongside it.
-        """
+        """Fail a task whose forward endpoint was dropped with no fallback and stop its
+        executor to free the resources it holds."""
         self._dispatcher.fail_task(
             task_id, reason, worker_id=worker_id, payload={"error": reason}
         )
@@ -897,12 +890,13 @@ class EventMonitor:
         if worker is None:
             return
         try:
-            self._worker_registry.publish_stop(
-                worker, StopMessage(task_id=task_id, worker_id=worker.id, reason=reason)
+            self._worker_registry.publish_interrupt(
+                worker,
+                InterruptMessage(task_id=task_id, worker_id=worker.id, reason=reason),
             )
         except Exception as exc:
             self._logger.warning(
-                "Failed to publish stop for task %s on worker %s: %s",
+                "Failed to publish interrupt for task %s on worker %s: %s",
                 task_id,
                 worker_id,
                 exc,
