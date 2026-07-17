@@ -82,6 +82,36 @@ def _ssh_info(session_id: str, target_port: int) -> dict:
 
 class TestSshForwardPersistentPorts:
     @pytest.mark.anyio
+    async def test_stop_closes_listener_created_during_startup(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        start, end = _free_port_range(1)
+        svc = _make_service(start, end)
+        bound = asyncio.Event()
+        continue_start = asyncio.Event()
+        original_start_server = asyncio.start_server
+
+        async def delayed_start_server(*args: Any, **kwargs: Any) -> asyncio.Server:
+            server = await original_start_server(*args, **kwargs)
+            bound.set()
+            await continue_start.wait()
+            return server
+
+        monkeypatch.setattr(asyncio, "start_server", delayed_start_server)
+        starting = asyncio.create_task(svc.start())
+        await bound.wait()
+        stopping = asyncio.create_task(svc.stop())
+
+        await asyncio.sleep(0)
+        assert not stopping.done()
+
+        continue_start.set()
+        await starting
+        await stopping
+
+        assert not await _tcp_accepts(start)
+
+    @pytest.mark.anyio
     async def test_all_ports_listen_before_any_session(self) -> None:
         start, end = _free_port_range(3)
         svc = _make_service(start, end)
@@ -137,6 +167,59 @@ class TestSshForwardPersistentPorts:
             await svc.stop()
 
     @pytest.mark.anyio
+    async def test_connection_dispatches_endpoint_active_when_handler_starts(
+        self,
+    ) -> None:
+        start, end = _free_port_range(1)
+        svc = _make_service(start, end)
+        old_worker = MagicMock(node_id="nde-old")
+        new_worker = MagicMock(node_id="nde-new")
+        cast(Any, svc._worker_registry).get_worker_async = AsyncMock(
+            return_value=old_worker
+        )
+        dispatch_started = asyncio.Event()
+        continue_uplink = asyncio.Event()
+        dispatched_commands = []
+
+        async def delayed_exec_node_cmd(
+            node_id: str, command: Any, timeout: float
+        ) -> MagicMock:
+            assert timeout == 5.0
+            dispatched_commands.append((node_id, command))
+            dispatch_started.set()
+            await continue_uplink.wait()
+            return MagicMock(success=False, message="test uplink failure")
+
+        cast(Any, svc._node_registry).exec_node_cmd = AsyncMock(
+            side_effect=delayed_exec_node_cmd
+        )
+        await svc.start()
+        try:
+            payload = await svc._register_task_async(
+                "tsk-a", "wfl-a", "wkr-a", _ssh_info("ssn-old", 2201)
+            )
+            reader, writer = await asyncio.open_connection("127.0.0.1", payload["port"])
+            await dispatch_started.wait()
+
+            cast(Any, svc._worker_registry).get_worker_async = AsyncMock(
+                return_value=new_worker
+            )
+            await svc._register_task_async(
+                "tsk-a", "wfl-a", "wkr-a", _ssh_info("ssn-new", 2202)
+            )
+            continue_uplink.set()
+
+            assert await asyncio.wait_for(reader.read(1), timeout=2.0) == b""
+            node_id, command = dispatched_commands[0]
+            assert node_id == "nde-old"
+            assert command.payload["session_id"] == "ssn-old"
+            assert command.payload["target_port"] == 2201
+            writer.close()
+            await writer.wait_closed()
+        finally:
+            await svc.stop()
+
+    @pytest.mark.anyio
     async def test_unregister_frees_port_but_keeps_listener(self) -> None:
         start, end = _free_port_range(2)
         svc = _make_service(start, end)
@@ -175,6 +258,92 @@ class TestSshForwardPersistentPorts:
 
 
 class TestSshForwardSessionListeners:
+    @pytest.mark.anyio
+    async def test_stop_waits_for_dynamic_listener_binding(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        start, end = _free_port_range(1)
+        svc = _make_service(start, end, persistent_listeners=False)
+        bound = asyncio.Event()
+        continue_bind = asyncio.Event()
+        original_start_server = asyncio.start_server
+
+        async def delayed_start_server(*args: Any, **kwargs: Any) -> asyncio.Server:
+            server = await original_start_server(*args, **kwargs)
+            bound.set()
+            await continue_bind.wait()
+            return server
+
+        monkeypatch.setattr(asyncio, "start_server", delayed_start_server)
+        await svc.start()
+        registration = asyncio.create_task(
+            svc._register_task_async(
+                "tsk-a", "wfl-a", "wkr-a", _ssh_info("ssn-a", 2201)
+            )
+        )
+        await bound.wait()
+        stopping = asyncio.create_task(svc.stop())
+
+        await asyncio.sleep(0)
+        assert not stopping.done()
+
+        continue_bind.set()
+        with pytest.raises(RuntimeError, match="registration was cancelled"):
+            await registration
+        await stopping
+
+        assert not await _tcp_accepts(start)
+
+    @pytest.mark.anyio
+    async def test_new_registration_waits_for_superseded_listener_binding(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        start, end = _free_port_range(1)
+        svc = _make_service(start, end, persistent_listeners=False)
+        first_bind_started = asyncio.Event()
+        continue_first_bind = asyncio.Event()
+        original_start_server = asyncio.start_server
+        calls = 0
+
+        async def delayed_first_start_server(
+            *args: Any, **kwargs: Any
+        ) -> asyncio.Server:
+            nonlocal calls
+            calls += 1
+            server = await original_start_server(*args, **kwargs)
+            if calls == 1:
+                first_bind_started.set()
+                await continue_first_bind.wait()
+            return server
+
+        monkeypatch.setattr(asyncio, "start_server", delayed_first_start_server)
+        await svc.start()
+        try:
+            older = asyncio.create_task(
+                svc._register_task_async(
+                    "tsk-a", "wfl-a", "wkr-a", _ssh_info("ssn-old", 2201)
+                )
+            )
+            await first_bind_started.wait()
+
+            newer = asyncio.create_task(
+                svc._register_task_async(
+                    "tsk-a", "wfl-a", "wkr-a", _ssh_info("ssn-new", 2202)
+                )
+            )
+            await asyncio.sleep(0)
+            assert not newer.done()
+
+            continue_first_bind.set()
+            with pytest.raises(RuntimeError, match="registration was cancelled"):
+                await older
+            payload = await newer
+
+            assert payload["port"] == start
+            assert svc._sessions["tsk-a"].session_id == "ssn-new"
+        finally:
+            await svc.stop()
+
     @pytest.mark.anyio
     async def test_listener_exists_only_while_session_is_registered(self) -> None:
         start, end = _free_port_range(1)
@@ -278,9 +447,7 @@ class TestSshForwardSessionListeners:
             await unblock_lookup.wait()
             return worker
 
-        monkeypatch.setattr(
-            "server.services.port_forward._REGISTRATION_TIMEOUT_SEC", 0.01
-        )
+        monkeypatch.setattr("server.services.port_forward._DEFAULT_TIMEOUT_SEC", 0.01)
         cast(Any, svc._worker_registry).get_worker_async = AsyncMock(
             side_effect=get_worker
         )
