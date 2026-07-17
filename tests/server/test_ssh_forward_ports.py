@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import socket
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -34,7 +35,9 @@ def _free_port_range(count: int) -> tuple[int, int]:
     raise RuntimeError("Could not find a free contiguous port range")
 
 
-def _make_service(port_start: int, port_end: int) -> PortForwardService:
+def _make_service(
+    port_start: int, port_end: int, persistent_listeners: bool = True
+) -> PortForwardService:
     worker = MagicMock()
     worker.node_id = "nde-test"
     worker_registry = MagicMock()
@@ -48,6 +51,7 @@ def _make_service(port_start: int, port_end: int) -> PortForwardService:
         public_host="lum.id",
         port_start=port_start,
         port_end=port_end,
+        persistent_listeners=persistent_listeners,
         logger=logging.getLogger("test.ssh_forward"),
     )
 
@@ -168,3 +172,168 @@ class TestSshForwardPersistentPorts:
                 )
         finally:
             await svc.stop()
+
+
+class TestSshForwardSessionListeners:
+    @pytest.mark.anyio
+    async def test_listener_exists_only_while_session_is_registered(self) -> None:
+        start, end = _free_port_range(1)
+        svc = _make_service(start, end, persistent_listeners=False)
+        await svc.start()
+        try:
+            assert not await _tcp_accepts(start)
+
+            payload = await svc._register_task_async(
+                "tsk-a", "wfl-a", "wkr-a", _ssh_info("ssn-a", 2201)
+            )
+            assert payload["port"] == start
+            assert await _tcp_accepts(start)
+
+            await svc._unregister_task_async("tsk-a")
+
+            assert not await _tcp_accepts(start)
+        finally:
+            await svc.stop()
+
+    @pytest.mark.anyio
+    async def test_registration_skips_an_occupied_port(self) -> None:
+        start, end = _free_port_range(2)
+        occupied = await asyncio.start_server(
+            lambda _reader, _writer: None,
+            "127.0.0.1",
+            start,
+        )
+        svc = _make_service(start, end, persistent_listeners=False)
+        await svc.start()
+        try:
+            payload = await svc._register_task_async(
+                "tsk-a", "wfl-a", "wkr-a", _ssh_info("ssn-a", 2201)
+            )
+
+            assert payload["port"] == end
+        finally:
+            await svc.stop()
+            occupied.close()
+            await occupied.wait_closed()
+
+    @pytest.mark.anyio
+    async def test_late_registration_does_not_replace_newer_session(self) -> None:
+        start, end = _free_port_range(1)
+        svc = _make_service(start, end, persistent_listeners=False)
+        lookup_started = asyncio.Event()
+        unblock_lookup = asyncio.Event()
+        worker = MagicMock()
+        worker.node_id = "nde-test"
+        calls = 0
+
+        async def get_worker(_: str) -> MagicMock:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                lookup_started.set()
+                await unblock_lookup.wait()
+            return worker
+
+        cast(Any, svc._worker_registry).get_worker_async = AsyncMock(
+            side_effect=get_worker
+        )
+        await svc.start()
+        try:
+            older = asyncio.create_task(
+                asyncio.to_thread(
+                    svc.register_port_forward,
+                    "tsk-a",
+                    "wfl-a",
+                    "wkr-a",
+                    _ssh_info("ssn-old", 2201),
+                )
+            )
+            await lookup_started.wait()
+
+            newer = await svc._register_task_async(
+                "tsk-a", "wfl-a", "wkr-a", _ssh_info("ssn-new", 2202)
+            )
+            unblock_lookup.set()
+
+            with pytest.raises(RuntimeError, match="registration was cancelled"):
+                await older
+            assert svc._sessions["tsk-a"].session_id == "ssn-new"
+            assert svc._sessions["tsk-a"].port == newer["port"]
+        finally:
+            await svc.stop()
+
+    @pytest.mark.anyio
+    async def test_timed_out_registration_cannot_publish_late_session(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        start, end = _free_port_range(1)
+        svc = _make_service(start, end, persistent_listeners=False)
+        lookup_started = asyncio.Event()
+        unblock_lookup = asyncio.Event()
+        worker = MagicMock()
+        worker.node_id = "nde-test"
+
+        async def get_worker(_: str) -> MagicMock:
+            lookup_started.set()
+            await unblock_lookup.wait()
+            return worker
+
+        monkeypatch.setattr(
+            "server.services.port_forward._REGISTRATION_TIMEOUT_SEC", 0.01
+        )
+        cast(Any, svc._worker_registry).get_worker_async = AsyncMock(
+            side_effect=get_worker
+        )
+        await svc.start()
+        try:
+            timed_out = asyncio.create_task(
+                asyncio.to_thread(
+                    svc.register_port_forward,
+                    "tsk-a",
+                    "wfl-a",
+                    "wkr-a",
+                    _ssh_info("ssn-a", 2201),
+                )
+            )
+            await lookup_started.wait()
+
+            with pytest.raises(TimeoutError):
+                await timed_out
+            unblock_lookup.set()
+            await asyncio.sleep(0)
+
+            assert "tsk-a" not in svc._sessions
+            assert not await _tcp_accepts(start)
+        finally:
+            await svc.stop()
+
+    @pytest.mark.anyio
+    async def test_stop_invalidates_registration_waiting_for_worker(self) -> None:
+        start, end = _free_port_range(1)
+        svc = _make_service(start, end, persistent_listeners=False)
+        lookup_started = asyncio.Event()
+        unblock_lookup = asyncio.Event()
+        worker = MagicMock()
+        worker.node_id = "nde-test"
+
+        async def get_worker(_: str) -> MagicMock:
+            lookup_started.set()
+            await unblock_lookup.wait()
+            return worker
+
+        cast(Any, svc._worker_registry).get_worker_async = AsyncMock(
+            side_effect=get_worker
+        )
+        await svc.start()
+        registration = asyncio.create_task(
+            svc._register_task_async(
+                "tsk-a", "wfl-a", "wkr-a", _ssh_info("ssn-a", 2201)
+            )
+        )
+        await lookup_started.wait()
+        await svc.stop()
+        unblock_lookup.set()
+
+        with pytest.raises(RuntimeError, match="registration was cancelled"):
+            await registration
+        assert not await _tcp_accepts(start)

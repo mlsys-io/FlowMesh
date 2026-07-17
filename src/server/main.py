@@ -141,6 +141,7 @@ if IS_ROOT_NODE:
             public_host=_pf_cfg.public_host,
             port_start=_pf_cfg.port_start,
             port_end=_pf_cfg.port_end,
+            persistent_listeners=_pf_cfg.persistent_listeners,
             logger=logger,
         )
 

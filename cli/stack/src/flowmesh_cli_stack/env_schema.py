@@ -266,6 +266,11 @@ STACK_ENV_SCHEMA = EnvSchema(
             title="Port Forward Support",
             vars=[
                 EnvVar("ENABLE_SERVER_PORT_FORWARD", "true", var_type=EnvVarType.BOOL),
+                EnvVar(
+                    "ENABLE_PERSISTENT_PORT_FORWARD",
+                    "true",
+                    var_type=EnvVarType.BOOL,
+                ),
                 EnvVar("SERVER_PORT_FORWARD_BIND_HOST", "0.0.0.0", required=True),
                 EnvVar("SERVER_PORT_FORWARD_PUBLIC_HOST", "localhost", required=True),
                 EnvVar(
