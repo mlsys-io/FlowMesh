@@ -57,7 +57,7 @@ def _make_service(
 
 
 async def _tcp_accepts(port: int) -> bool:
-    """True if a TCP connection to 127.0.0.1:port is accepted (health-check probe)."""
+    """True when a TCP connection to 127.0.0.1:port is accepted (health-check probe)."""
     try:
         reader, writer = await asyncio.wait_for(
             asyncio.open_connection("127.0.0.1", port), timeout=2.0
