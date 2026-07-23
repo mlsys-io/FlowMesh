@@ -480,10 +480,11 @@ class HFTransformersExecutor(InferenceMixin, Executor):
                 vision_outputs = base_model.vision_tower(
                     inputs.pixel_values, output_hidden_states=True
                 )
+                model_config = self._model.config
                 selected_features = _select_vision_features(
                     vision_outputs.hidden_states,
-                    self._model.config.vision_feature_layer,
-                    self._model.config.vision_feature_select_strategy,
+                    model_config.vision_feature_layer,
+                    model_config.vision_feature_select_strategy,
                 )
                 visual_embeddings = base_model.multi_modal_projector(selected_features)
 
