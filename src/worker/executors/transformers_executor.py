@@ -114,6 +114,28 @@ except Exception:
 logger = logging.getLogger(__name__)
 
 
+def _select_vision_features(
+    hidden_states: "Sequence[torch.Tensor]",
+    feature_layer: int | list[int],
+    select_strategy: str,
+) -> "torch.Tensor":
+    """Select vision-tower hidden states the way LlavaModel.get_image_features does.
+
+    Crops the leading CLS token when ``select_strategy == "default"``. A
+    list-valued ``feature_layer`` gathers each layer and concatenates along the
+    feature dimension.
+    """
+    if isinstance(feature_layer, int):
+        selected = hidden_states[feature_layer]
+        if select_strategy == "default":
+            selected = selected[:, 1:]
+        return selected
+    pool = [hidden_states[layer] for layer in feature_layer]
+    if select_strategy == "default":
+        pool = [layer[:, 1:] for layer in pool]
+    return torch.cat(pool, dim=-1)
+
+
 class TransformersResult(BaseExecutorResult):
     ok: bool = True
     model: str | None = None
@@ -458,9 +480,11 @@ class HFTransformersExecutor(InferenceMixin, Executor):
                 vision_outputs = base_model.vision_tower(
                     inputs.pixel_values, output_hidden_states=True
                 )
-                selected_features = vision_outputs.hidden_states[
-                    self._model.config.vision_feature_layer
-                ]
+                selected_features = _select_vision_features(
+                    vision_outputs.hidden_states,
+                    self._model.config.vision_feature_layer,
+                    self._model.config.vision_feature_select_strategy,
+                )
                 visual_embeddings = base_model.multi_modal_projector(selected_features)
 
             grouped_visual_embeddings: list[torch.Tensor]
