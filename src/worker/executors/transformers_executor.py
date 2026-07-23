@@ -443,24 +443,25 @@ class HFTransformersExecutor(InferenceMixin, Executor):
             inputs = self._image_processor(images=images, return_tensors="pt").to(
                 self._model.device
             )
-            if isinstance(self._model.vision_tower, torch.Tensor):
+            base_model = self._model.model
+            if isinstance(base_model.vision_tower, torch.Tensor):
                 raise ExecutionError(
                     "The vision_tower attribute of the model is a Tensor, "
                     "expected a nn.Module."
                 )
-            if isinstance(self._model.multi_modal_projector, torch.Tensor):
+            if isinstance(base_model.multi_modal_projector, torch.Tensor):
                 raise ExecutionError(
                     "The multi_modal_projector attribute of the model is a Tensor, "
                     "expected a nn.Module."
                 )
             with torch.no_grad():
-                vision_outputs = self._model.vision_tower(
+                vision_outputs = base_model.vision_tower(
                     inputs.pixel_values, output_hidden_states=True
                 )
                 selected_features = vision_outputs.hidden_states[
                     self._model.config.vision_feature_layer
                 ]
-                visual_embeddings = self._model.multi_modal_projector(selected_features)
+                visual_embeddings = base_model.multi_modal_projector(selected_features)
 
             grouped_visual_embeddings: list[torch.Tensor]
             if image_group_sizes is not None:
