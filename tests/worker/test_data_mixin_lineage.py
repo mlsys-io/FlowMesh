@@ -1,14 +1,19 @@
 """DataMixin tests: span emission + asset/lineage row JSONL writes."""
 
+import io
 import json
+from collections.abc import Iterator
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 
+import pytest
 from PIL import Image
 
 from shared.schemas.result import BaseExecutorResult
+from worker.executors.mixins import data as data_mixin_module
 from worker.executors.mixins.data import DataMixin
+from worker.executors.utils import artifacts
 
 
 class _Mixin(DataMixin):
@@ -174,3 +179,127 @@ def test_collect_prompts_resolves_grouped_image_artifact_refs_after_flatten(
         (2, 2),
         (2, 2),
     ]
+
+
+def _png_bytes(color: str) -> bytes:
+    buf = io.BytesIO()
+    Image.new("RGB", (2, 2), color=color).save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def test_collect_prompts_flowmesh_results_url_sends_auth_headers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A bare http(s) image URL item that targets this worker's own
+    FlowMesh server (FLOWMESH_BASE_URL) must go through the same
+    auth-aware fetch path as artifact refs (resolve_artifact), not an
+    unauthenticated `requests.get`. Regression test for a cross-worker
+    results URL (`{base_url}/api/v1/results/{task_id}/files/{rel_path}`)
+    being fetched without the `Authorization` header and failing image
+    decoding."""
+    monkeypatch.setenv("FLOWMESH_API_KEY", "s3cr3t-token")
+    monkeypatch.setenv("FLOWMESH_BASE_URL", "https://worker-b.internal")
+
+    png_bytes = _png_bytes("purple")
+    captured_calls: list[dict[str, Any]] = []
+
+    class _FakeResponse:
+        def __enter__(self) -> "_FakeResponse":
+            return self
+
+        def __exit__(self, *exc_info: object) -> None:
+            return None
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def iter_content(self, chunk_size: int = 8192) -> Iterator[bytes]:
+            yield png_bytes
+
+    def _fake_get(
+        url: str, headers: dict[str, str], stream: bool, timeout: float
+    ) -> _FakeResponse:
+        captured_calls.append({"url": url, "headers": headers})
+        return _FakeResponse()
+
+    monkeypatch.setattr(artifacts.requests, "get", _fake_get)
+
+    mixin = _Mixin()
+    spec = cast(
+        Any,
+        SimpleNamespace(
+            data={
+                "type": "list",
+                "items": [
+                    "https://worker-b.internal/api/v1/results/tsk-1/files/img.png"
+                ],
+            },
+            inference={},
+        ),
+    )
+
+    entry = mixin._collect_prompts_for_spec(spec, "tsk-http", fetch_images=True)
+
+    assert len(captured_calls) == 1
+    assert captured_calls[0]["headers"].get("Authorization") == "Bearer s3cr3t-token"
+    assert len(entry.images) == 1
+    assert entry.images[0] is not None
+    assert entry.images[0].size == (2, 2)
+
+
+def test_collect_prompts_external_url_sends_no_auth_and_bounded_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An http(s) image item that does NOT target this worker's configured
+    FlowMesh server must never receive the worker's bearer token, even when
+    FLOWMESH_API_KEY is set, and must use a short bounded timeout rather
+    than resolve_artifact's long default (a hung/malicious external host
+    must not stall the worker for ~30 minutes).
+
+    `requests` is a single shared module object, so `data.requests` and
+    `artifacts.requests` are the same object — patching one patches both.
+    A single fake therefore both proves no credential leaked AND (via the
+    call signature: no `headers`/`stream` kwargs, short `timeout`) that the
+    call bypassed resolve_artifact's auth-aware download path entirely.
+    """
+    monkeypatch.setenv("FLOWMESH_API_KEY", "s3cr3t-token")
+    monkeypatch.setenv("FLOWMESH_BASE_URL", "https://worker-b.internal")
+
+    png_bytes = _png_bytes("orange")
+    captured_calls: list[dict[str, Any]] = []
+
+    class _FakeResponse:
+        content = png_bytes
+
+        def raise_for_status(self) -> None:
+            return None
+
+    def _fake_get(url: str, **kwargs: Any) -> _FakeResponse:
+        captured_calls.append({"url": url, "kwargs": kwargs})
+        return _FakeResponse()
+
+    monkeypatch.setattr(data_mixin_module.requests, "get", _fake_get)
+
+    mixin = _Mixin()
+    spec = cast(
+        Any,
+        SimpleNamespace(
+            data={
+                "type": "list",
+                "items": ["http://attacker.example/x.png"],
+            },
+            inference={},
+        ),
+    )
+
+    entry = mixin._collect_prompts_for_spec(spec, "tsk-http-ext", fetch_images=True)
+
+    assert len(captured_calls) == 1
+    call = captured_calls[0]
+    assert call["url"] == "http://attacker.example/x.png"
+    assert "headers" not in call["kwargs"]
+    assert "stream" not in call["kwargs"]
+    assert 0 < call["kwargs"].get("timeout", 0) <= 15
+    assert len(entry.images) == 1
+    assert entry.images[0] is not None
+    assert entry.images[0].size == (2, 2)

@@ -56,6 +56,27 @@ def artifact_to_source(
     )
 
 
+def is_flowmesh_origin_url(url: str) -> bool:
+    """Whether `url` targets this worker's configured FlowMesh server.
+
+    Gates whether the worker's bearer token (`FLOWMESH_API_KEY`, attached via
+    `auth_headers()`) may be sent: only to the worker's own FlowMesh origin
+    (`FLOWMESH_BASE_URL`), never to an arbitrary or public URL a workflow
+    happens to reference.
+    """
+    base_url = os.getenv("FLOWMESH_BASE_URL", "").strip()
+    if not base_url:
+        return False
+    base = urlparse(base_url)
+    if not base.scheme or not base.netloc:
+        return False
+    target = urlparse(url)
+    return (
+        target.scheme.lower() == base.scheme.lower()
+        and target.netloc.lower() == base.netloc.lower()
+    )
+
+
 def maybe_resolve_artifact_ref(
     value: Any, context: dict[str, BaseExecutorResult] | None, node: str | None
 ) -> Any:

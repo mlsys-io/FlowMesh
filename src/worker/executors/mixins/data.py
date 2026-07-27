@@ -21,7 +21,11 @@ from shared.utils.json import safe_get
 
 from ...connectors import get_connector_from_spec
 from ..base_executor import ExecutionError
-from ..utils.artifacts import maybe_resolve_artifact_ref, resolve_artifact
+from ..utils.artifacts import (
+    is_flowmesh_origin_url,
+    maybe_resolve_artifact_ref,
+    resolve_artifact,
+)
 from ..utils.data_utils import normalize_prompt_payload
 from ..utils.graph_templates import (
     _evaluate_expr,
@@ -31,6 +35,8 @@ from ..utils.graph_templates import (
 from .governance import GovernanceMixin
 
 logger = logging.getLogger(__name__)
+
+_EXTERNAL_IMAGE_FETCH_TIMEOUT_SEC = 15
 
 type PromptMessage = dict[str, str]
 type PromptInput = str | Sequence[PromptMessage]
@@ -449,10 +455,17 @@ class DataMixin(GovernanceMixin):
                             s3_entries.append((idx, item))
                             images.append(None)
                             continue
-                        response = requests.get(item, timeout=15)
-                        response.raise_for_status()
-                        image = Image.open(io.BytesIO(response.content)).convert("RGB")
-                        images.append(image)
+                        if is_flowmesh_origin_url(item):
+                            images.append(self._load_image_from_artifact(item))
+                        else:
+                            response = requests.get(
+                                item, timeout=_EXTERNAL_IMAGE_FETCH_TIMEOUT_SEC
+                            )
+                            response.raise_for_status()
+                            image = Image.open(io.BytesIO(response.content)).convert(
+                                "RGB"
+                            )
+                            images.append(image)
                     elif isinstance(item, dict):
                         artifact_url = item.get("url")
                         if not isinstance(artifact_url, str) or not artifact_url:
