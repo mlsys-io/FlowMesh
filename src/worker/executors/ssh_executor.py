@@ -1257,7 +1257,8 @@ class SSHExecutor(Executor):
             f"--header {shlex.quote(f'{k}: {v}')}" for k, v in auth_headers().items()
         ]
         header_prefix = f"{' '.join(header_parts)} " if header_parts else ""
-        return f"wget -qO- {header_prefix}{url} | tar -xz -C /dst"
+        timeout = int(_RESULT_BUNDLE_TIMEOUT_SEC)
+        return f"wget -qO- -T {timeout} -t 1 {header_prefix}{url} | tar -xz -C /dst"
 
     def _result_bundle_url(self, task_id: str) -> str:
         base_url = os.getenv("FLOWMESH_BASE_URL", "").strip()

@@ -2,7 +2,7 @@
 
 from pathlib import Path
 from types import SimpleNamespace
-from typing import cast
+from typing import Any, cast
 
 import pytest
 
@@ -104,6 +104,68 @@ class TestMaybeUploadArtifacts:
 
         monkeypatch.setattr(checkpoints.requests, "request", fake_request)
         assert checkpoints.maybe_upload_artifacts(_task(), out_dir) == []
+
+
+@pytest.mark.parametrize(
+    ("url", "expects_auth"),
+    [
+        ("https://flowmesh.example/api/v1/results/tsk-1/files/model.bin", True),
+        ("https://external.example/model.bin", False),
+    ],
+)
+def test_download_and_unpack_only_authenticates_flowmesh_origin(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    url: str,
+    expects_auth: bool,
+) -> None:
+    monkeypatch.setenv("FLOWMESH_API_KEY", "flm-test")
+    monkeypatch.setenv("FLOWMESH_BASE_URL", "https://flowmesh.example")
+    captured_calls: list[dict[str, Any]] = []
+
+    class _Response:
+        def __enter__(self) -> "_Response":
+            return self
+
+        def __exit__(self, *exc_info: object) -> None:
+            return None
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def iter_content(self, chunk_size: int) -> list[bytes]:
+            return [b"checkpoint"]
+
+    def _fake_get(
+        request_url: str,
+        *,
+        headers: dict[str, str],
+        stream: bool,
+        timeout: float,
+    ) -> _Response:
+        captured_calls.append(
+            {
+                "url": request_url,
+                "headers": headers,
+                "stream": stream,
+                "timeout": timeout,
+            }
+        )
+        return _Response()
+
+    monkeypatch.setattr(checkpoints.requests, "get", _fake_get)
+
+    path = checkpoints.download_and_unpack({"url": url, "timeoutSec": 12}, tmp_path)
+
+    assert path.read_bytes() == b"checkpoint"
+    assert len(captured_calls) == 1
+    call = captured_calls[0]
+    assert call["timeout"] == 12
+    assert call["stream"] is True
+    if expects_auth:
+        assert call["headers"]["Authorization"] == "Bearer flm-test"
+    else:
+        assert "Authorization" not in call["headers"]
 
 
 class TestArchiveModelDir:

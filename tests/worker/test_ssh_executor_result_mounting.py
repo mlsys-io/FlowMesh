@@ -241,7 +241,7 @@ def test_stage_inputs_in_volume_downloads_missing_upstream_results(
     )
     assert "cp -a /src/task-local/. /dst/task-local/" in command
     assert (
-        "wget -qO- --header 'Authorization: Bearer secret-token' "
+        "wget -qO- -T 300 -t 1 --header 'Authorization: Bearer secret-token' "
         "'http://flowmesh.example/api/v1/results/task-remote/bundle"
         "?include=results&include=artifacts' | tar -xz -C /dst" in command
     )

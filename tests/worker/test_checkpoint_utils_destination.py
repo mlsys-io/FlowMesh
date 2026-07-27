@@ -163,12 +163,24 @@ def test_explicit_destination_wins_over_upload_results(
 # ---- Authorization header ---------------------------------------------
 
 
-def test_api_key_added_when_no_auth_header(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_api_key_added_for_flowmesh_origin(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("FLOWMESH_API_KEY", "flm-test")
-    spec = _spec({"type": "http", "url": "http://x/y"})
+    monkeypatch.setenv("FLOWMESH_BASE_URL", "http://flowmesh.example")
+    spec = _spec({"type": "http", "url": "http://flowmesh.example/api/v1/results"})
     out = get_http_destination(spec)
     assert out is not None
     assert out.headers["Authorization"] == "Bearer flm-test"
+
+
+def test_api_key_not_added_for_external_destination(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("FLOWMESH_API_KEY", "flm-test")
+    monkeypatch.setenv("FLOWMESH_BASE_URL", "http://flowmesh.example")
+    spec = _spec({"type": "http", "url": "https://external.example/results"})
+    out = get_http_destination(spec)
+    assert out is not None
+    assert "Authorization" not in out.headers
 
 
 def test_existing_authorization_header_preserved(

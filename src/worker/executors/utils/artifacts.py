@@ -2,7 +2,7 @@ import os
 import tempfile
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import ParseResult, urlparse
 
 import requests
 
@@ -56,13 +56,24 @@ def artifact_to_source(
     )
 
 
+_DEFAULT_PORT_BY_SCHEME = {"http": 80, "https": 443}
+
+
+def _effective_port(parsed: ParseResult) -> int | None:
+    if parsed.port is not None:
+        return parsed.port
+    return _DEFAULT_PORT_BY_SCHEME.get(parsed.scheme.lower())
+
+
 def is_flowmesh_origin_url(url: str) -> bool:
     """Whether `url` targets this worker's configured FlowMesh server.
 
     Gates whether the worker's bearer token (`FLOWMESH_API_KEY`, attached via
     `auth_headers()`) may be sent: only to the worker's own FlowMesh origin
     (`FLOWMESH_BASE_URL`), never to an arbitrary or public URL a workflow
-    happens to reference.
+    happens to reference. Compares scheme, hostname, and effective port
+    (defaulting http/https to 80/443) so `https://flowmesh` and
+    `https://flowmesh:443` are recognized as the same origin.
     """
     base_url = os.getenv("FLOWMESH_BASE_URL", "").strip()
     if not base_url:
@@ -73,7 +84,8 @@ def is_flowmesh_origin_url(url: str) -> bool:
     target = urlparse(url)
     return (
         target.scheme.lower() == base.scheme.lower()
-        and target.netloc.lower() == base.netloc.lower()
+        and (target.hostname or "").lower() == (base.hostname or "").lower()
+        and _effective_port(target) == _effective_port(base)
     )
 
 
@@ -113,9 +125,8 @@ def resolve_artifact(source: str, timeout: float = 1800) -> Path:
         return local_path
 
     try:
-        with requests.get(
-            source, headers=auth_headers(), stream=True, timeout=timeout
-        ) as r:
+        headers = auth_headers() if is_flowmesh_origin_url(source) else None
+        with requests.get(source, headers=headers, stream=True, timeout=timeout) as r:
             r.raise_for_status()
             with open(local_path, "wb") as f:
                 for chunk in r.iter_content(chunk_size=8192):

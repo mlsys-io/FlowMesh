@@ -1,11 +1,13 @@
-"""Tests for `normalize_prompt_payload` in `data_utils`. Covers the
-list-of-strings passthrough and the chat-style list-of-message-arrays
-validation/normalization.
-"""
+"""Tests for data utility validation and downloads."""
+
+from collections.abc import Iterator
+from pathlib import Path
+from typing import Any
 
 import pytest
 
 from worker.executors.base_executor import ExecutionError
+from worker.executors.utils import data_utils
 from worker.executors.utils.data_utils import normalize_prompt_payload
 
 # ---- Empty / strings passthrough --------------------------------------
@@ -190,3 +192,65 @@ def test_baseline_no_system_then_system_rejected() -> None:
     ]
     with pytest.raises(ExecutionError, match="not present"):
         normalize_prompt_payload(items)
+
+
+@pytest.mark.parametrize(
+    ("url", "expects_auth"),
+    [
+        ("https://flowmesh.example/api/v1/results/tsk-1/files/data.jsonl", True),
+        ("https://external.example/data.jsonl", False),
+    ],
+)
+def test_resolve_jsonl_path_only_authenticates_flowmesh_origin(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    url: str,
+    expects_auth: bool,
+) -> None:
+    monkeypatch.setenv("FLOWMESH_API_KEY", "flm-test")
+    monkeypatch.setenv("FLOWMESH_BASE_URL", "https://flowmesh.example")
+    captured_calls: list[dict[str, Any]] = []
+
+    class _Response:
+        def __enter__(self) -> "_Response":
+            return self
+
+        def __exit__(self, *exc_info: object) -> None:
+            return None
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def iter_content(self, chunk_size: int) -> Iterator[bytes]:
+            yield b'{"text": "example"}\n'
+
+    def _fake_get(
+        request_url: str,
+        *,
+        headers: dict[str, str],
+        timeout: float,
+        stream: bool,
+    ) -> _Response:
+        captured_calls.append(
+            {
+                "url": request_url,
+                "headers": headers,
+                "timeout": timeout,
+                "stream": stream,
+            }
+        )
+        return _Response()
+
+    monkeypatch.setattr(data_utils.requests, "get", _fake_get)
+
+    path = data_utils.resolve_jsonl_path(url, out_dir=tmp_path, timeout=12)
+
+    assert path.read_text() == '{"text": "example"}\n'
+    assert len(captured_calls) == 1
+    call = captured_calls[0]
+    assert call["timeout"] == 12
+    assert call["stream"] is True
+    if expects_auth:
+        assert call["headers"]["Authorization"] == "Bearer flm-test"
+    else:
+        assert "Authorization" not in call["headers"]

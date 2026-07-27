@@ -303,3 +303,147 @@ def test_collect_prompts_external_url_sends_no_auth_and_bounded_timeout(
     assert len(entry.images) == 1
     assert entry.images[0] is not None
     assert entry.images[0].size == (2, 2)
+
+
+def test_collect_prompts_external_dict_url_sends_no_auth_and_bounded_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("FLOWMESH_API_KEY", "s3cr3t-token")
+    monkeypatch.setenv("FLOWMESH_BASE_URL", "https://worker-b.internal")
+
+    png_bytes = _png_bytes("orange")
+    captured_calls: list[dict[str, Any]] = []
+
+    class _FakeResponse:
+        content = png_bytes
+
+        def raise_for_status(self) -> None:
+            return None
+
+    def _fake_get(url: str, **kwargs: Any) -> _FakeResponse:
+        captured_calls.append({"url": url, "kwargs": kwargs})
+        return _FakeResponse()
+
+    monkeypatch.setattr(data_mixin_module.requests, "get", _fake_get)
+
+    mixin = _Mixin()
+    spec = cast(
+        Any,
+        SimpleNamespace(
+            data={
+                "type": "list",
+                "items": [{"url": "http://attacker.example/x.png"}],
+            },
+            inference={},
+        ),
+    )
+
+    entry = mixin._collect_prompts_for_spec(spec, "tsk-http-ext", fetch_images=True)
+
+    assert len(captured_calls) == 1
+    call = captured_calls[0]
+    assert call["url"] == "http://attacker.example/x.png"
+    assert "headers" not in call["kwargs"]
+    assert "stream" not in call["kwargs"]
+    assert 0 < call["kwargs"].get("timeout", 0) <= 15
+    assert len(entry.images) == 1
+    assert entry.images[0] is not None
+    assert entry.images[0].size == (2, 2)
+
+
+def test_collect_prompts_dict_local_path_uses_artifact_loader(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A dict item whose 'url' is a bare local filesystem path (no scheme)
+    must go through _load_image_from_artifact, not the external-http path.
+    Regression test: urlparse("/local/x.png").scheme == "", which used to
+    fall into the http(s)-only branch and call requests.get on a path,
+    raising MissingSchema."""
+    monkeypatch.delenv("FLOWMESH_API_KEY", raising=False)
+    monkeypatch.delenv("FLOWMESH_BASE_URL", raising=False)
+
+    img_path = tmp_path / "local.png"
+    Image.new("RGB", (2, 2), color="red").save(img_path)
+
+    def _fail_if_called(*args: Any, **kwargs: Any) -> None:
+        raise AssertionError("requests.get must not be called for a local path")
+
+    monkeypatch.setattr(data_mixin_module.requests, "get", _fail_if_called)
+
+    mixin = _Mixin()
+    spec = cast(
+        Any,
+        SimpleNamespace(
+            data={
+                "type": "list",
+                "items": [{"url": img_path.as_posix()}],
+            },
+            inference={},
+        ),
+    )
+
+    entry = mixin._collect_prompts_for_spec(spec, "tsk-dict-local", fetch_images=True)
+
+    assert len(entry.images) == 1
+    assert entry.images[0] is not None
+    assert entry.images[0].size == (2, 2)
+
+
+def test_collect_prompts_dict_origin_url_sends_auth_headers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A dict item whose 'url' targets this worker's own FlowMesh server
+    must go through the auth-aware resolve_artifact path, same as the
+    equivalent bare-string item."""
+    monkeypatch.setenv("FLOWMESH_API_KEY", "s3cr3t-token")
+    monkeypatch.setenv("FLOWMESH_BASE_URL", "https://worker-b.internal")
+
+    png_bytes = _png_bytes("purple")
+    captured_calls: list[dict[str, Any]] = []
+
+    class _FakeResponse:
+        def __enter__(self) -> "_FakeResponse":
+            return self
+
+        def __exit__(self, *exc_info: object) -> None:
+            return None
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def iter_content(self, chunk_size: int = 8192) -> Iterator[bytes]:
+            yield png_bytes
+
+    def _fake_get(
+        url: str, headers: dict[str, str], stream: bool, timeout: float
+    ) -> _FakeResponse:
+        captured_calls.append({"url": url, "headers": headers})
+        return _FakeResponse()
+
+    monkeypatch.setattr(artifacts.requests, "get", _fake_get)
+
+    mixin = _Mixin()
+    spec = cast(
+        Any,
+        SimpleNamespace(
+            data={
+                "type": "list",
+                "items": [
+                    {
+                        "url": (
+                            "https://worker-b.internal/api/v1/results/tsk-1/files/img.png"
+                        )
+                    }
+                ],
+            },
+            inference={},
+        ),
+    )
+
+    entry = mixin._collect_prompts_for_spec(spec, "tsk-dict-origin", fetch_images=True)
+
+    assert len(captured_calls) == 1
+    assert captured_calls[0]["headers"].get("Authorization") == "Bearer s3cr3t-token"
+    assert len(entry.images) == 1
+    assert entry.images[0] is not None
+    assert entry.images[0].size == (2, 2)

@@ -19,6 +19,7 @@ from shared.utils.http import add_auth_headers
 from shared.utils.parsing import parse_bool_env
 
 from ..base_executor import ExecutionError, TaskReference
+from .artifacts import is_flowmesh_origin_url
 
 
 @dataclass(slots=True)
@@ -141,7 +142,8 @@ def download_and_unpack(load_cfg: dict[str, Any], out_dir: Path) -> Path:
         raise ExecutionError("checkpoint.load.url is required for HTTP checkpoints")
 
     headers = {str(k): str(v) for k, v in (load_cfg.get("headers") or {}).items()}
-    add_auth_headers(headers)
+    if is_flowmesh_origin_url(url):
+        add_auth_headers(headers)
     timeout = float(load_cfg.get("timeoutSec", 60))
     dest_root = out_dir / "imported_checkpoint"
     if dest_root.exists():
@@ -354,7 +356,8 @@ def get_http_destination(spec: TaskSpecStrictBase) -> HTTPDestination | None:
             url = base_url.rstrip("/") + "/api/v1/results"
         else:
             return None
-    add_auth_headers(headers)
+    if is_flowmesh_origin_url(url):
+        add_auth_headers(headers)
     return HTTPDestination(
         method=method,
         url=url,

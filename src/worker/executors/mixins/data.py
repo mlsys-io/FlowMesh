@@ -103,6 +103,13 @@ class DataMixin(GovernanceMixin):
             except Exception:
                 logger.debug("Failed to remove temporary artifact file: %s", local_path)
 
+    @staticmethod
+    def _load_image_from_external_url(source: str) -> Image.Image:
+        """Fetch an external image URL with a bounded, unauthenticated request."""
+        response = requests.get(source, timeout=_EXTERNAL_IMAGE_FETCH_TIMEOUT_SEC)
+        response.raise_for_status()
+        return Image.open(io.BytesIO(response.content)).convert("RGB")
+
     def _normalize_s3_cfg(self, s3_cfg: Any) -> tuple[str, str | None, str]:
         if not isinstance(s3_cfg, dict):
             raise ExecutionError("s3_cfg must be an object")
@@ -458,14 +465,7 @@ class DataMixin(GovernanceMixin):
                         if is_flowmesh_origin_url(item):
                             images.append(self._load_image_from_artifact(item))
                         else:
-                            response = requests.get(
-                                item, timeout=_EXTERNAL_IMAGE_FETCH_TIMEOUT_SEC
-                            )
-                            response.raise_for_status()
-                            image = Image.open(io.BytesIO(response.content)).convert(
-                                "RGB"
-                            )
-                            images.append(image)
+                            images.append(self._load_image_from_external_url(item))
                     elif isinstance(item, dict):
                         artifact_url = item.get("url")
                         if not isinstance(artifact_url, str) or not artifact_url:
@@ -475,7 +475,16 @@ class DataMixin(GovernanceMixin):
                                 "expression (e.g. ${stage.images}) so "
                                 "artifact refs are substituted to URL strings."
                             )
-                        images.append(self._load_image_from_artifact(artifact_url))
+                        parsed_artifact_url = urlparse(artifact_url)
+                        if parsed_artifact_url.scheme in (
+                            "http",
+                            "https",
+                        ) and not is_flowmesh_origin_url(artifact_url):
+                            images.append(
+                                self._load_image_from_external_url(artifact_url)
+                            )
+                        else:
+                            images.append(self._load_image_from_artifact(artifact_url))
                     else:
                         raise ExecutionError(
                             "When fetch_images is True, items must be Image.Image, "

@@ -11,6 +11,7 @@ import requests
 from shared.utils.http import add_auth_headers
 
 from ..base_executor import ExecutionError
+from .artifacts import is_flowmesh_origin_url
 
 
 def resolve_jsonl_path(
@@ -39,7 +40,8 @@ def resolve_jsonl_path(
         filename = Path(parsed.path).name or "dataset.jsonl"
         target_path = (target_dir / filename).resolve()
         request_headers = {str(k): str(v) for k, v in (headers or {}).items()}
-        add_auth_headers(request_headers)
+        if is_flowmesh_origin_url(value):
+            add_auth_headers(request_headers)
         try:
             with requests.get(
                 value, headers=request_headers, timeout=timeout, stream=True
