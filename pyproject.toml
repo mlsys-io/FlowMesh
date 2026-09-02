@@ -57,7 +57,7 @@ runtime-inference = [
     "diffusers>=0.38.0",
     "pillow>=12.3.0",
     "torch>=2.11.0",
-    "transformers>=5.5.1,<5.9.0",
+    "transformers>=5.10.0",
 ]
 runtime-training = [
     "peft>=0.18.0",
