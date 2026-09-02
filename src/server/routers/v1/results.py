@@ -19,7 +19,7 @@ from fastapi.responses import FileResponse
 from pydantic import ValidationError
 
 from shared.schemas.result import (
-    BaseExecutorResult,
+    AnyExecutorResult,
     ResultEnvelope,
     read_result,
     result_file_path,
@@ -119,7 +119,7 @@ async def get_result(
     principal: PrincipalContext = Depends(authenticate_connection),
     results_dir: Path = Depends(get_results_dir),
     logger: logging.Logger = Depends(get_logger),
-) -> BaseExecutorResult:
+) -> AnyExecutorResult:
     task_id = (task_id or "").strip()
     if not task_id:
         raise HTTPException(

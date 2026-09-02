@@ -19,7 +19,7 @@ from trl.trainer.sft_config import SFTConfig
 from trl.trainer.sft_trainer import SFTTrainer
 
 from shared.schemas.artifact import ArtifactRef
-from shared.schemas.result import BaseExecutorResult
+from shared.schemas.result import LoRAResult
 from shared.tasks.specs import LoRASFTSpecStrict
 from shared.tasks.task_type import TaskType
 
@@ -51,18 +51,6 @@ except ImportError:
         PeftModel = None
 
 logger = logging.getLogger("worker.sft.lora")
-
-
-class LoRAResult(BaseExecutorResult):
-    training_time_seconds: float | None = None
-    error_message: str | None = None
-    model_name: str | None = None
-    dataset_size: int = 0
-    output_dir: str | None = None
-    checkpoints_dir: ArtifactRef | None = None
-    resume_from_path: str | None = None
-    final_lora: ArtifactRef | None = None
-    final_lora_archive: ArtifactRef | None = None
 
 
 class LoRASFTExecutor(TrainingMixin, Executor):

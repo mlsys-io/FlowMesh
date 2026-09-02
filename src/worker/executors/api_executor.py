@@ -5,9 +5,8 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 import httpx
-from pydantic import Field
 
-from shared.schemas.result import BaseExecutorResult
+from shared.schemas.result import APIResult
 from shared.tasks.specs import ApiSpecStrict
 from shared.tasks.task_type import TaskType
 
@@ -17,18 +16,6 @@ logger = logging.getLogger(__name__)
 
 # Cache key: (base_url, timeout_seconds, verify_tls, follow_redirects)
 _ClientKey = tuple[str, float, bool, bool]
-
-
-class APIResult(BaseExecutorResult):
-    executor: str
-    method: str
-    url: str
-    status_code: int
-    truncated: bool = False
-    headers: dict[str, str] | None = None
-    response_json: Any = Field(default=None, alias="json")
-    usage: dict[str, Any] | None = None
-    text: str | None = None
 
 
 class APIExecutor(Executor):

@@ -72,6 +72,46 @@ def assert_fields_match(
             )
 
 
+def assert_field_aliases_match(
+    server_model: type[BaseModel],
+    sdk_model: type[BaseModel],
+) -> None:
+    """Assert SDK and server field aliases agree for every shared field.
+
+    A field's wire key is its alias; a divergence between the SDK and server
+    alias (e.g. ``APIResult.response_json`` <-> ``json``) passes the
+    name/optionality check yet breaks deserialization at the boundary.
+    """
+    server_fields = server_model.model_fields
+    sdk_fields = sdk_model.model_fields
+    for name, info in server_fields.items():
+        if info.exclude or name not in sdk_fields:
+            continue
+        sdk_alias = sdk_fields[name].alias
+        assert info.alias == sdk_alias, (
+            f"{sdk_model.__name__}.{name}: alias mismatch "
+            f"(server={info.alias!r}, sdk={sdk_alias!r})"
+        )
+
+
+def assert_extra_policy_matches(
+    server_model: type[BaseModel],
+    sdk_model: type[BaseModel],
+) -> None:
+    """Assert SDK and server models share the same ``extra`` policy.
+
+    The discriminated union relies on concrete subclasses being
+    ``extra="forbid"`` and the base staying permissive; a mismatch between the
+    two mirrors would let one side silently accept payloads the other rejects.
+    """
+    server_extra = server_model.model_config.get("extra")
+    sdk_extra = sdk_model.model_config.get("extra")
+    assert server_extra == sdk_extra, (
+        f"{sdk_model.__name__}: extra policy mismatch "
+        f"(server={server_extra!r}, sdk={sdk_extra!r})"
+    )
+
+
 def assert_enum_members_match(
     server_enum: type[enum.Enum], sdk_enum: type[enum.Enum]
 ) -> None:

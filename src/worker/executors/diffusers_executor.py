@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any
 from PIL import Image
 
 from shared.schemas.artifact import ArtifactRef
-from shared.schemas.result import BaseExecutorResult
+from shared.schemas.result import DiffusionResult
 from shared.tasks.specs import DiffusionSpecStrict
 from shared.tasks.task_type import TaskType
 
@@ -43,12 +43,6 @@ except Exception:
         _HAS_DIFFUSERS = False
 
 logger = logging.getLogger(__name__)
-
-
-class DiffusersResult(BaseExecutorResult):
-    ok: bool = True
-    model: str | None = None
-    images: list[ArtifactRef] = []
 
 
 class DiffusersExecutor(DataMixin, Executor):
@@ -256,7 +250,7 @@ class DiffusersExecutor(DataMixin, Executor):
 
         return combined_pos, combined_neg, user_pos_pooled, user_neg_pooled
 
-    def run(self, task: ExecutorTask, out_dir: Path) -> DiffusersResult:
+    def run(self, task: ExecutorTask, out_dir: Path) -> DiffusionResult:
         configure_hf_library_logging()
         spec = self.require_spec(task, DiffusionSpecStrict)
         task_id = task.task_id.strip()
@@ -273,7 +267,7 @@ class DiffusersExecutor(DataMixin, Executor):
         spec: DiffusionSpecStrict,
         task_id: str,
         out_dir: Path,
-    ) -> DiffusersResult:
+    ) -> DiffusionResult:
         self._ensure_pipeline(spec)
         assert self._pipe is not None
 
@@ -357,7 +351,7 @@ class DiffusersExecutor(DataMixin, Executor):
             img.save(image_dir / f"image_{idx}.png", format="PNG")
             generated_images.append(ArtifactRef(path=f"images/image_{idx}.png"))
 
-        result = DiffusersResult(model=self._model_name, images=generated_images)
+        result = DiffusionResult(model=self._model_name, images=generated_images)
         self._dump_to_governance(
             task_id=task_id,
             result=result,

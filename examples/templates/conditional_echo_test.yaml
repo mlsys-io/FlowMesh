@@ -62,8 +62,8 @@ spec:
             node: echo-upstream
             field: items.0.output
             equals: run-me
-          # Note: condition.field uses _dig_path (dot-separated, int coercion)
-          # while data.items path uses _evaluate_expr (bracket notation)
+          # Note: condition.field is a dot-separated path into the result
+          # payload (int-coerced indices), while data.items uses bracket notation
           data:
             type: list
             items:

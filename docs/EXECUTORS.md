@@ -27,19 +27,22 @@ Helper utilities live in `src/worker/executors/utils/` (`artifacts`,
 
 ## Result schema
 
-Every executor's `run()` returns a subclass of `BaseExecutorResult`
-(`src/shared/schemas/result.py`). The base class carries two
-cross-cutting fields:
+Every executor's `run()` returns an exact per-task-type subclass of
+`BaseExecutorResult`, all defined in the shared `src/shared/schemas/result`
+package. The base class carries two cross-cutting fields:
 
 - `children: dict[str, BaseExecutorResult]` — per-child results when
   merged tasks share a dispatch.
 - `artifacts: ArtifactContext | None` (wire key `_artifacts`) —
   resolution context for relative artifact refs.
 
-Per-executor subclasses live next to the executor they describe — e.g.
-`VLLMResult` in `src/worker/executors/vllm_executor.py`, `LoRAResult` in
-`src/worker/executors/lora_sft_executor.py`. They add executor-specific
-fields (`items`, `usage`, `final_lora`, `command`, …).
+Each subclass declares its exact fields (typed nested payloads) and tags itself
+with a `task_type` discriminator — e.g. `InferenceResult`, `LoRAResult`,
+`AgentResult`, `SSHResult`. The `AnyExecutorResult` discriminated union in
+the same package deserializes a `results.json` back into its exact subclass
+end-to-end (worker envelope → server ingest and `GET /results/{id}` → SDK).
+Results without a `task_type` (legacy files, condition-skips) fall back to
+the permissive base.
 
 Artifact-bearing fields use `ArtifactRef` (`{"path": rel_path}`);
 relative paths resolve against the producer's `_artifacts` context via

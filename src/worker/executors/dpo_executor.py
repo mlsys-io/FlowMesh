@@ -26,7 +26,7 @@ from trl.trainer.dpo_config import DPOConfig
 from trl.trainer.dpo_trainer import DPOTrainer
 
 from shared.schemas.artifact import ArtifactRef
-from shared.schemas.result import BaseExecutorResult
+from shared.schemas.result import DPOResult
 from shared.tasks.specs import DPOSpecStrict
 from shared.tasks.task_type import TaskType
 from shared.utils.manifest import scratch_dir
@@ -45,18 +45,6 @@ from .utils.distributed import run_torchrun
 from .utils.huggingface import build_hf_load_kwargs, pick_torch_dtype
 
 logger = logging.getLogger("worker.dpo")
-
-
-class DPOResult(BaseExecutorResult):
-    training_time_seconds: float | None = None
-    error_message: str | None = None
-    model_name: str | None = None
-    dataset_size: int = 0
-    output_dir: str | None = None
-    checkpoints_dir: ArtifactRef | None = None
-    final_model: ArtifactRef | None = None
-    final_model_archive: ArtifactRef | None = None
-    spawned_torchrun: bool = False
 
 
 class DPOExecutor(TrainingMixin, Executor):

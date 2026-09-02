@@ -8,7 +8,7 @@ import random
 from pathlib import Path
 from typing import Any
 
-from shared.schemas.result import BaseExecutorResult
+from shared.schemas.result import CostEstimates, DataProfilingResult
 from shared.tasks.specs import DataProfilingSpecStrict
 from shared.tasks.task_type import TaskType
 from shared.utils.json import to_json_serializable, validate_keys
@@ -19,13 +19,6 @@ from .mixins.data import DataMixin
 from .utils.graph_templates import _render_template, _resolve_columns
 
 logger = logging.getLogger(__name__)
-
-
-class DataProfilingResult(BaseExecutorResult):
-    ok: bool = True
-    type: str = "sql"
-    template: str | None = None
-    cost_estimates: dict[str, Any] | None = None
 
 
 class DataProfilingExecutor(DataMixin, Executor):
@@ -270,7 +263,7 @@ class DataProfilingExecutor(DataMixin, Executor):
         connection_string: str,
         queries: list[str],
         params_rows: list[dict[str, Any]] | None = None,
-    ) -> dict[str, Any]:
+    ) -> CostEstimates:
         results: list[dict[str, Any]] = []
         query_costs: list[float] = []
         query_rows: list[int] = []
@@ -306,13 +299,13 @@ class DataProfilingExecutor(DataMixin, Executor):
         min_rows = min(query_rows)
         max_rows = max(query_rows)
 
-        return {
-            "ok": True,
-            "num_queries": len(queries),
-            "avg_estimated_cost": avg_cost,
-            "min_estimated_cost": min_cost,
-            "max_estimated_cost": max_cost,
-            "avg_estimated_rows": avg_rows,
-            "min_estimated_rows": min_rows,
-            "max_estimated_rows": max_rows,
-        }
+        return CostEstimates(
+            ok=True,
+            num_queries=len(queries),
+            avg_estimated_cost=avg_cost,
+            min_estimated_cost=min_cost,
+            max_estimated_cost=max_cost,
+            avg_estimated_rows=avg_rows,
+            min_estimated_rows=min_rows,
+            max_estimated_rows=max_rows,
+        )

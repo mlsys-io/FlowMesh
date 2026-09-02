@@ -17,7 +17,13 @@ from typing import Any
 from datasets import load_dataset
 
 from shared.schemas.artifact import ArtifactRef
-from shared.schemas.result import BaseExecutorResult
+from shared.schemas.result import (
+    AgentBatchSummary,
+    AgentItem,
+    AgentMetadata,
+    AgentResult,
+    AgentUsage,
+)
 from shared.tasks.specs import AgentSpecStrict
 from shared.tasks.task_type import TaskType
 
@@ -51,16 +57,6 @@ def _resolve_task_timeout(agent: dict[str, Any] | None) -> int:
 
 
 logger = logging.getLogger("worker.agent")
-
-
-class AgentResult(BaseExecutorResult):
-    ok: bool = True
-    model: str
-    items: list[dict[str, Any]] = []
-    usage: dict[str, Any] | None = None
-    metadata: dict[str, Any] | None = None
-    agent_output: ArtifactRef | None = None
-    batch_summary_file: ArtifactRef | None = None
 
 
 class AgentExecutor(Executor):
@@ -263,23 +259,23 @@ class AgentExecutor(Executor):
                 output = AgentResult(
                     model=agent_config_name,
                     items=[
-                        {
-                            "index": 0,
-                            "output": result.get("output", ""),
-                            "finish_reason": "completed",
-                        }
+                        AgentItem(
+                            index=0,
+                            output=result.get("output", ""),
+                            finish_reason="completed",
+                        )
                     ],
-                    usage={
-                        "execution_time_sec": result.get("usage", {}).get(
+                    usage=AgentUsage(
+                        execution_time_sec=result.get("usage", {}).get(
                             "execution_time_sec", 0
                         ),
-                        "num_requests": 1,
-                        "agent_config": agent_config_name,
-                    },
-                    metadata={
-                        "task": self._tasks[0],
-                        "execution_log": result.get("log", []),
-                    },
+                        num_requests=1,
+                        agent_config=agent_config_name,
+                    ),
+                    metadata=AgentMetadata(
+                        task=self._tasks[0],
+                        execution_log=result.get("log", []),
+                    ),
                     agent_output=(
                         None
                         if agent_output_ref is None
@@ -295,36 +291,38 @@ class AgentExecutor(Executor):
                 )
 
                 # Transform batch results to standard format
-                items = []
+                items: list[AgentItem] = []
                 for item in results.get("items", []):
                     items.append(
-                        {
-                            "index": item["index"],
-                            "output": item["response"],
-                            "finish_reason": (
+                        AgentItem(
+                            index=item["index"],
+                            output=item["response"],
+                            finish_reason=(
                                 "completed"
                                 if item["status"] == "completed"
                                 else "failed"
                             ),
-                        }
+                        )
                     )
 
                 batch_summary_ref = results.get("_batch_summary_ref")
                 output = AgentResult(
                     model=agent_config_name,
                     items=items,
-                    usage={
-                        "execution_time_sec": results.get("usage", {}).get(
+                    usage=AgentUsage(
+                        execution_time_sec=results.get("usage", {}).get(
                             "execution_time_sec", 0
                         ),
-                        "num_requests": len(self._tasks),
-                        "agent_config": agent_config_name,
-                    },
-                    metadata={
-                        "tasks_count": len(self._tasks),
-                        "execution_log": results.get("log", []),
-                        "batch_summary": results.get("batch_summary", {}),
-                    },
+                        num_requests=len(self._tasks),
+                        agent_config=agent_config_name,
+                    ),
+                    metadata=AgentMetadata(
+                        tasks_count=len(self._tasks),
+                        execution_log=results.get("log", []),
+                        batch_summary=AgentBatchSummary(
+                            **results.get("batch_summary", {})
+                        ),
+                    ),
                     batch_summary_file=(
                         None
                         if batch_summary_ref is None
@@ -345,16 +343,16 @@ class AgentExecutor(Executor):
                 ok=False,
                 model=agent_config_name,
                 items=[],
-                usage={
-                    "execution_time_sec": 0,
-                    "num_requests": len(self._tasks),
-                    "agent_config": agent_config_name,
-                },
-                metadata={
-                    "tasks_count": len(self._tasks),
-                    "error": str(e),
-                    "execution_log": [],
-                },
+                usage=AgentUsage(
+                    execution_time_sec=0,
+                    num_requests=len(self._tasks),
+                    agent_config=agent_config_name,
+                ),
+                metadata=AgentMetadata(
+                    tasks_count=len(self._tasks),
+                    error=str(e),
+                    execution_log=[],
+                ),
             )
             write_executor_result(
                 out_dir / "results.json", task.task_id, task.spec, error_output

@@ -141,6 +141,29 @@ def test_dump_to_governance_with_merged_children(tmp_path: Path) -> None:
     }
 
 
+def test_extract_source_data_ids_from_upstream_artifacts(tmp_path: Path) -> None:
+    """Upstream task IDs are recovered from each result's _artifacts.base_dir
+    (the producer's output dir), since the payload carries no ID itself."""
+    mixin = _Mixin()
+    upstream_a = BaseExecutorResult.model_validate(
+        {"_artifacts": {"base_dir": (tmp_path / "results" / "tsk-up-a").as_posix()}}
+    )
+    upstream_b = BaseExecutorResult.model_validate(
+        {"_artifacts": {"base_dir": (tmp_path / "results" / "tsk-up-b").as_posix()}}
+    )
+    no_ctx = BaseExecutorResult()
+    spec = cast(
+        Any,
+        SimpleNamespace(
+            upstreamResults={"a": upstream_a, "b": upstream_b, "skipped": no_ctx}
+        ),
+    )
+
+    ids = mixin._extract_source_data_ids(spec)
+
+    assert ids == ["tsk-up-a", "tsk-up-b"]
+
+
 def test_collect_prompts_resolves_grouped_image_artifact_refs_after_flatten(
     tmp_path: Path,
 ) -> None:

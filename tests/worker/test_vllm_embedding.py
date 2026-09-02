@@ -20,15 +20,13 @@ pytest.importorskip("datasets", reason="datasets not installed (needs worker run
 import torch
 from safetensors.torch import load_file
 
+from shared.schemas.result import EmbeddingResult
 from shared.tasks.components.model import ModelConfig, ModelSource
 from shared.tasks.specs import EmbeddingSpecStrict
 from shared.tasks.task_type import TaskType
 from tests.worker.factories import DEFAULT_WORKER_CONFIG, make_worker_task_message
 from worker.executors.base_executor import ExecutionError
-from worker.executors.vllm_embedding_executor import (
-    VLLMEmbeddingExecutor,
-    VLLMEmbeddingResult,
-)
+from worker.executors.vllm_embedding_executor import VLLMEmbeddingExecutor
 from worker.runner import Runner
 
 
@@ -93,7 +91,7 @@ def test_embedding_writes_tensor_artifact_and_metadata(tmp_path: Path) -> None:
         result = executor.run(task, tmp_path)
     mock_ensure.assert_called_once()
 
-    assert isinstance(result, VLLMEmbeddingResult)
+    assert isinstance(result, EmbeddingResult)
     assert fake.encoded == [["hello world", "second input"]]
     assert fake.pooling_tasks == ["embed"]
 
@@ -103,7 +101,10 @@ def test_embedding_writes_tensor_artifact_and_metadata(tmp_path: Path) -> None:
     assert result.embedding_file.path == "embeddings.safetensors"
     dumped = result.model_dump()
     assert "items" not in dumped
+    # count / image_group_sizes belong to the unified EmbeddingResult but the
+    # vLLM embedding path does not populate them, so they drop from the payload.
     assert "count" not in dumped
+    assert "image_group_sizes" not in dumped
     assert "dim" not in dumped
     assert "prompts_file" not in dumped
     assert not any(
@@ -111,10 +112,10 @@ def test_embedding_writes_tensor_artifact_and_metadata(tmp_path: Path) -> None:
         for value in dumped.values()
     )
     assert result.usage is not None
-    assert result.usage["num_requests"] == 2
-    assert result.usage["prompt_tokens"] == 8
-    assert result.usage["embedding_dim"] == 3
-    assert "latency_sec" in result.usage
+    assert result.usage.num_requests == 2
+    assert result.usage.prompt_tokens == 8
+    assert result.usage.embedding_dim == 3
+    assert result.usage.latency_sec >= 0.0
 
     # The embedding matrix is written as a [count, dim] float32 tensor.
     artifacts_dir = tmp_path / "artifacts"

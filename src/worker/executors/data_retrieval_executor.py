@@ -17,7 +17,11 @@ import pandas as pd
 from PIL import Image
 
 from shared.schemas.artifact import ArtifactRef
-from shared.schemas.result import BaseExecutorResult
+from shared.schemas.result import (
+    BaseExecutorResult,
+    DataRetrievalItem,
+    DataRetrievalResult,
+)
 from shared.tasks.specs import DataRetrievalSpecStrict
 from shared.tasks.task_type import TaskType
 from shared.utils.json import validate_keys
@@ -30,13 +34,6 @@ from .utils.checkpoints import maybe_upload_artifacts, maybe_upload_traces
 from .utils.graph_templates import _render_template, _resolve_columns
 
 logger = logging.getLogger(__name__)
-
-
-class DataRetrievalResult(BaseExecutorResult):
-    type: str | None = None
-    items: list[dict[str, Any]] = []
-    count: int | None = None
-    metadata: dict[str, Any] | None = None
 
 
 class DataRetrievalExecutor(DataMixin, Executor):
@@ -124,7 +121,7 @@ class DataRetrievalExecutor(DataMixin, Executor):
             raise ExecutionError("Rendered SQL template did not produce text output.")
         queries: list[str] = list(rendered)  # type: ignore
 
-        items: list[dict[str, Any]] = []
+        items: list[DataRetrievalItem] = []
         with PostgreSQLConnector(connection_string) as connector:
             for idx, (query, params_row) in enumerate(zip(queries, params_rows)):
                 sql_result = connector.execute(query)
@@ -147,13 +144,13 @@ class DataRetrievalExecutor(DataMixin, Executor):
                         f"(query_index={idx}, query={query!r}, params={params_row!r})"
                     )
                 items.append(
-                    {
-                        "index": idx,
-                        "query": query,
-                        "params": params_row,
-                        "table": serialize_dataframe(df),
-                        "rows": len(df),
-                    }
+                    DataRetrievalItem(
+                        index=idx,
+                        query=query,
+                        params=params_row,
+                        table=serialize_dataframe(df),
+                        rows=len(df),
+                    )
                 )
 
         return DataRetrievalResult(
@@ -191,7 +188,7 @@ class DataRetrievalExecutor(DataMixin, Executor):
         if not isinstance(encoding, str):
             raise ExecutionError("spec.data.encoding must be a string.")
 
-        items: list[dict[str, Any]] = []
+        items: list[DataRetrievalItem] = []
         with S3Connector(connection_string, cert_data=cert_data) as connector:
             for group_params in param_groups:
                 columns_dict, params_rows = self._normalize_params(group_params)  # type: ignore
@@ -218,7 +215,7 @@ class DataRetrievalExecutor(DataMixin, Executor):
                 }
                 if params_rows:
                     item["params"] = params_rows
-                items.append(item)
+                items.append(DataRetrievalItem.model_validate(item))
 
         return DataRetrievalResult(
             type="s3",
@@ -259,7 +256,7 @@ class DataRetrievalExecutor(DataMixin, Executor):
         artifact_dir = out_dir / "artifacts" / "lumid_retrievals"
         artifact_dir.mkdir(parents=True, exist_ok=True)
 
-        items: list[dict[str, Any]] = []
+        items: list[DataRetrievalItem] = []
         with LumidDataConnector(
             base_url=base_url, token=token, verify=verify_raw
         ) as conn:
@@ -324,17 +321,17 @@ class DataRetrievalExecutor(DataMixin, Executor):
                             f"params={params_row!r})"
                         )
                     items.append(
-                        {
-                            "index": idx,
-                            "query": query,
-                            "params": params_row,
-                            "table": serialize_dataframe(df),
-                            "rows": len(df),
-                            "run_id": outcome["data"]["run_id"],
-                            "access_chain": outcome["data"]["access_chain"],
-                            "materialized_uri": outcome["data"]["materialized_uri"],
-                            "size_bytes": outcome["data"]["size_bytes"],
-                        }
+                        DataRetrievalItem(
+                            index=idx,
+                            query=query,
+                            params=params_row,
+                            table=serialize_dataframe(df),
+                            rows=len(df),
+                            run_id=outcome["data"]["run_id"],
+                            access_chain=outcome["data"]["access_chain"],
+                            materialized_uri=outcome["data"]["materialized_uri"],
+                            size_bytes=outcome["data"]["size_bytes"],
+                        )
                     )
 
             elif mode == "agent":
@@ -400,21 +397,21 @@ class DataRetrievalExecutor(DataMixin, Executor):
                     df = self._load_table(out_path, output_format)
                     outcome_data = outcome["data"]
                     items.append(
-                        {
-                            "index": idx,
-                            "description": description,
-                            "params": params_row,
-                            "table": serialize_dataframe(df),
-                            "rows": len(df),
-                            "access_chain": outcome_data["access_chain"],
-                            "run_id": outcome_data["run_id"],
-                            "transcript_url": outcome_data["transcript_url"],
-                            "tokens_in": outcome_data["tokens_in"],
-                            "tokens_out": outcome_data["tokens_out"],
-                            "steps_taken": outcome_data["steps_taken"],
-                            "replay_latency_ms": outcome_data["replay_latency_ms"],
-                            "materialized_uri": outcome_data["materialized_uri"],
-                        }
+                        DataRetrievalItem(
+                            index=idx,
+                            description=description,
+                            params=params_row,
+                            table=serialize_dataframe(df),
+                            rows=len(df),
+                            access_chain=outcome_data["access_chain"],
+                            run_id=outcome_data["run_id"],
+                            transcript_url=outcome_data["transcript_url"],
+                            tokens_in=outcome_data["tokens_in"],
+                            tokens_out=outcome_data["tokens_out"],
+                            steps_taken=outcome_data["steps_taken"],
+                            replay_latency_ms=outcome_data["replay_latency_ms"],
+                            materialized_uri=outcome_data["materialized_uri"],
+                        )
                     )
 
             else:
@@ -466,7 +463,7 @@ class DataRetrievalExecutor(DataMixin, Executor):
                     }
                     if params_rows_s3:
                         item["params"] = params_rows_s3
-                    items.append(item)
+                    items.append(DataRetrievalItem.model_validate(item))
 
         return DataRetrievalResult(
             type="lumid",

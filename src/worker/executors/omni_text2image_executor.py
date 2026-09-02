@@ -9,6 +9,7 @@ from PIL import Image
 
 from shared.schemas.artifact import ArtifactRef
 from shared.schemas.governance import SpanType
+from shared.schemas.result import OmniImageItem, OmniText2ImageResult
 from shared.tasks.specs import TaskSpecStrictBase
 from shared.tasks.specs.omni import OmniText2ImageSpecStrict
 from shared.tasks.task_type import TaskType
@@ -19,17 +20,10 @@ from .omni_executor_base import (
     Omni,
     OmniExecutorBase,
     OmniRequestOutput,
-    OmniResult,
 )
 
 logger = logging.getLogger(__name__)
 EXECUTOR_NAME = "omni_text2image"
-
-
-class OmniText2ImageResult(OmniResult):
-    executor: str = EXECUTOR_NAME
-    mode: str = "image"
-    image: ArtifactRef | None
 
 
 class OmniText2ImageExecutor(OmniExecutorBase):
@@ -65,7 +59,7 @@ class OmniText2ImageExecutor(OmniExecutorBase):
         fmt = str(cfg.get("output_format") or "").strip().lower() or "png"
 
         artifacts_dir = out_dir / "artifacts"
-        items: list[dict[str, Any]] = []
+        items: list[OmniImageItem] = []
         with self._span(
             "generation",
             span_type=SpanType.COMPUTE,
@@ -89,18 +83,18 @@ class OmniText2ImageExecutor(OmniExecutorBase):
                 save_path.parent.mkdir(parents=True, exist_ok=True)
                 image.save(save_path.as_posix())
                 items.append(
-                    {
-                        "index": idx,
-                        "prompt": prompt,
-                        "image": ArtifactRef(
+                    OmniImageItem(
+                        index=idx,
+                        prompt=prompt,
+                        image=ArtifactRef(
                             path=self.relative_to(save_path, artifacts_dir)
                         ),
-                    }
+                    )
                 )
 
         return OmniText2ImageResult(
-            model=self._model_name,
-            image=items[0]["image"] if items else None,
+            model=self.model_name,
+            image=items[0].image if items else None,
             items=items,
         )
 

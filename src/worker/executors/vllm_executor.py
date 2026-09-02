@@ -67,7 +67,12 @@ except Exception:
         StructuredOutputsParams = None  # type: ignore
 
 from shared.schemas.governance import SpanType
-from shared.schemas.result import BaseExecutorResult
+from shared.schemas.result import (
+    BaseExecutorResult,
+    GenerationUsage,
+    InferenceItem,
+    InferenceResult,
+)
 from shared.tasks.specs import InferenceSpecStrict
 from shared.tasks.specs.common import ModelSpecStrict
 from shared.tasks.task_type import TaskType
@@ -82,13 +87,6 @@ from .utils.checkpoints import (
 )
 
 logger = logging.getLogger(__name__)
-
-
-class VLLMResult(BaseExecutorResult):
-    ok: bool = True
-    model: str | None = None
-    items: list[dict[str, Any]] = []
-    usage: dict[str, Any] | None = None
 
 
 class _RawJsonSchema:
@@ -1113,20 +1111,10 @@ Summary:"""
 
                 out_outputs = getattr(out, "outputs", None)
                 if not out_outputs:
-                    payload = {
-                        "index": local_index,
-                        "prompt": prompt_text,
-                        "output": "",
-                        "finish_reason": None,
-                    }
-                    if metadata_entry:
-                        payload["metadata"] = metadata_entry
-                    owner_items.append(payload)
-                    usage_by_task.setdefault(
-                        owner, {"prompt_tokens": 0, "completion_tokens": 0}
+                    raise ExecutionError(
+                        "vLLM returned a request output carrying no completion "
+                        f"(task={owner}, prompt_index={idx})."
                     )
-                    counts_by_task[owner] = counts_by_task.get(owner, 0) + 1
-                    continue
 
                 best = out_outputs[0]
                 text = getattr(best, "text", "") or ""
@@ -1207,33 +1195,35 @@ Summary:"""
             }
 
             items = per_task_items.get(task_id, [])
-            child_results: dict[str, VLLMResult] = {}
+            if parent_tables := parent_entry.tables:
+                items = self._populate_table(items, parent_tables)
+
+            child_results: dict[str, BaseExecutorResult] = {}
             for child in merge_children:
                 child_id = child.task_id.strip()
                 if not child_id:
                     continue
                 child_items = per_task_items.get(child_id, [])
+                if (child_entry := entry_by_task_id.get(child_id)) and (
+                    child_tables := child_entry.tables
+                ):
+                    child_items = self._populate_table(child_items, child_tables)
                 maybe_usage = usage_by_task.get(child_id)
-                child_results[child_id] = VLLMResult(
-                    model=self._model_name, items=child_items, usage=maybe_usage
+                child_results[child_id] = InferenceResult(
+                    model=self._model_name,
+                    items=[InferenceItem.model_validate(it) for it in child_items],
+                    usage=(
+                        GenerationUsage.model_validate(maybe_usage)
+                        if maybe_usage
+                        else None
+                    ),
                 )
 
-            if parent_tables := parent_entry.tables:
-                items = self._populate_table(items, parent_tables)
-            if child_results:
-                for child_id, child_payload in child_results.items():
-                    if (child_entry := entry_by_task_id.get(child_id)) and (
-                        child_tables := child_entry.tables
-                    ):
-                        child_results[child_id].items = self._populate_table(
-                            child_payload.items, child_tables
-                        )
-
-        result = VLLMResult(
-            children=cast(dict[str, BaseExecutorResult], child_results),
+        result = InferenceResult(
+            children=child_results,
             model=self._model_name,
-            items=items,
-            usage=parent_usage,
+            items=[InferenceItem.model_validate(it) for it in items],
+            usage=GenerationUsage.model_validate(parent_usage),
         )
 
         with self._span(
@@ -1241,7 +1231,7 @@ Summary:"""
             span_type=SpanType.COMPUTE,
             attributes={"task_ids": task_ids},
         ):
-            self._maybe_export_jsonl(spec, task_id, result.items, out_dir)
+            self._maybe_export_jsonl(spec, task_id, items, out_dir)
 
         self._dump_to_governance(
             task_id=task_id, result=result, dependencies_by_task=dependencies_by_task

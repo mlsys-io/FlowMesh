@@ -58,7 +58,12 @@ from typing import TYPE_CHECKING, Any
 
 from shared.schemas.artifact import ArtifactRef
 from shared.schemas.governance import SpanType
-from shared.schemas.result import BaseExecutorResult
+from shared.schemas.result import (
+    EmbeddingResult,
+    GenerationUsage,
+    InferenceItem,
+    InferenceResult,
+)
 from shared.tasks.specs import (
     EmbeddingSpecStrict,
     InferenceSpecStrict,
@@ -134,16 +139,6 @@ def _select_vision_features(
     if select_strategy == "default":
         pool = [layer[:, 1:] for layer in pool]
     return torch.cat(pool, dim=-1)
-
-
-class TransformersResult(BaseExecutorResult):
-    ok: bool = True
-    model: str | None = None
-    items: list[dict[str, Any]] = []
-    usage: dict[str, Any] | None = None
-    count: int | None = None
-    embedding_file: ArtifactRef | None = None
-    image_group_sizes: list[int] | None = None
 
 
 class HFTransformersExecutor(InferenceMixin, Executor):
@@ -416,7 +411,9 @@ class HFTransformersExecutor(InferenceMixin, Executor):
             return "length"
         return None
 
-    def run(self, task: ExecutorTask, out_dir: Path) -> TransformersResult:
+    def run(
+        self, task: ExecutorTask, out_dir: Path
+    ) -> InferenceResult | EmbeddingResult:
         configure_hf_library_logging()
         spec = task.spec
         if not isinstance(spec, (InferenceSpecStrict, EmbeddingSpecStrict)):
@@ -438,7 +435,7 @@ class HFTransformersExecutor(InferenceMixin, Executor):
         spec: "InferenceSpecStrict | EmbeddingSpecStrict",
         task_id: str,
         out_dir: Path,
-    ) -> TransformersResult:
+    ) -> InferenceResult | EmbeddingResult:
         with self._span("model load", span_type=SpanType.COMPUTE):
             self._ensure_model(spec)
 
@@ -513,9 +510,8 @@ class HFTransformersExecutor(InferenceMixin, Executor):
             emb_path = artifacts_dir / "visual_embeddings.pt"
             torch.save(grouped_visual_embeddings, emb_path)
 
-            result = TransformersResult(
+            embedding_result = EmbeddingResult(
                 model=self._model_name,
-                items=[],
                 count=len(grouped_visual_embeddings),
                 embedding_file=ArtifactRef(path="visual_embeddings.pt"),
                 image_group_sizes=image_group_sizes,
@@ -523,11 +519,11 @@ class HFTransformersExecutor(InferenceMixin, Executor):
 
             self._dump_to_governance(
                 task_id=task_id,
-                result=result,
+                result=embedding_result,
                 dependencies_by_task=dependencies_by_task,
             )
 
-            return result
+            return embedding_result
 
         assert self._tok is not None
         prepared = self._prepare_inference_entry(raw_entry)
@@ -581,7 +577,8 @@ class HFTransformersExecutor(InferenceMixin, Executor):
                     )
         latency = time.time() - t0
 
-        items: list[dict[str, Any]] = []
+        items: list[InferenceItem] = []
+        export_items: list[dict[str, Any]] = []
         prompt_tokens = 0
         completion_tokens = 0
 
@@ -608,38 +605,48 @@ class HFTransformersExecutor(InferenceMixin, Executor):
                         cut = min(cut, idx)
                 text = text[:cut]
 
-            payload = {
+            finish_reason = self._detect_finish_reason(
+                raw_text=raw_text,
+                final_text=text,
+                gen_ids=gen_part,
+                max_new_tokens=max_new_tokens,
+                stop_strings=stops,
+            )
+            items.append(
+                InferenceItem(
+                    index=i,
+                    prompt=prompt_text,
+                    output=text,
+                    finish_reason=finish_reason,
+                    metadata=metadata_entry or None,
+                )
+            )
+            payload: dict[str, Any] = {
                 "index": i,
                 "prompt": prompt_text,
                 "output": text,
-                "finish_reason": self._detect_finish_reason(
-                    raw_text=raw_text,
-                    final_text=text,
-                    gen_ids=gen_part,
-                    max_new_tokens=max_new_tokens,
-                    stop_strings=stops,
-                ),
+                "finish_reason": finish_reason,
             }
             if metadata_entry:
                 payload["metadata"] = metadata_entry
-            items.append(payload)
-            prompt_tokens += int(input_len)
+            export_items.append(payload)
+            prompt_tokens += input_len
             completion_tokens += int(gen_part.shape[0])
 
-        result = TransformersResult(
+        result = InferenceResult(
             model=self._model_name,
             items=items,
-            usage={
-                "prompt_tokens": int(prompt_tokens),
-                "completion_tokens": int(completion_tokens),
-                "total_tokens": int(prompt_tokens + completion_tokens),
-                "num_requests": len(self._prompts),
-                "latency_sec": latency,
-            },
+            usage=GenerationUsage(
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                total_tokens=prompt_tokens + completion_tokens,
+                num_requests=len(self._prompts),
+                latency_sec=latency,
+            ),
         )
 
         if isinstance(spec, InferenceSpecStrict):
-            self._maybe_export_jsonl(spec, task_id, items, out_dir)
+            self._maybe_export_jsonl(spec, task_id, export_items, out_dir)
 
         self._dump_to_governance(
             task_id=task_id,

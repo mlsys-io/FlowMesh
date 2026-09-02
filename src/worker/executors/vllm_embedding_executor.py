@@ -25,7 +25,7 @@ except Exception:
 
 from shared.schemas.artifact import ArtifactRef
 from shared.schemas.governance import SpanType
-from shared.schemas.result import BaseExecutorResult
+from shared.schemas.result import EmbeddingResult, EmbeddingUsage
 from shared.tasks.specs import EmbeddingSpecStrict
 from shared.tasks.task_type import TaskType
 
@@ -33,13 +33,6 @@ from .base_executor import ExecutionError, ExecutorTask
 from .vllm_executor import VLLMExecutor
 
 logger = logging.getLogger(__name__)
-
-
-class VLLMEmbeddingResult(BaseExecutorResult):
-    ok: bool = True
-    model: str | None = None
-    embedding_file: ArtifactRef | None = None
-    usage: dict[str, Any] | None = None
 
 
 class VLLMEmbeddingExecutor(VLLMExecutor):
@@ -74,7 +67,7 @@ class VLLMEmbeddingExecutor(VLLMExecutor):
             task_ids=task_ids,
         )
 
-    def _run_inner(self, task: ExecutorTask, out_dir: Path) -> VLLMEmbeddingResult:
+    def _run_inner(self, task: ExecutorTask, out_dir: Path) -> EmbeddingResult:
         task_id = task.task_id.strip()
         spec = self.require_spec(task, EmbeddingSpecStrict)
 
@@ -114,16 +107,16 @@ class VLLMEmbeddingExecutor(VLLMExecutor):
         embedding_file = self._write_embedding_artifact(matrix=matrix, out_dir=out_dir)
 
         count, dim = matrix.shape
-        result = VLLMEmbeddingResult(
+        result = EmbeddingResult(
             model=self._model_name,
             embedding_file=embedding_file,
-            usage={
-                "prompt_tokens": total_prompt_tokens,
-                "total_tokens": total_prompt_tokens,
-                "num_requests": count,
-                "latency_sec": latency,
-                "embedding_dim": dim,
-            },
+            usage=EmbeddingUsage(
+                prompt_tokens=total_prompt_tokens,
+                total_tokens=total_prompt_tokens,
+                num_requests=count,
+                latency_sec=latency,
+                embedding_dim=dim,
+            ),
         )
         self._dump_to_governance(
             task_id=task_id,

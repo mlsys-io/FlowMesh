@@ -289,9 +289,9 @@ class TestDataRetrievalExecutorLumidBranch:
         assert result.type == "lumid"
         assert result.count == 1
         item = result.items[0]
-        assert "table" in item
-        assert item["run_id"] == "run-abc"
-        assert item["rows"] == 5
+        assert item.table is not None
+        assert item.run_id == "run-abc"
+        assert item.rows == 5
 
     @respx.mock
     def test_agent_mode_renders_description_and_yields_table_item(
@@ -330,10 +330,11 @@ class TestDataRetrievalExecutorLumidBranch:
         assert result.type == "lumid"
         assert result.count == 1
         item = result.items[0]
-        assert "NVDA" in item["description"]
-        assert item["run_id"] == "run-abc"
-        assert item["transcript_url"].endswith("transcript")
-        assert "table" in item
+        assert item.description is not None and "NVDA" in item.description
+        assert item.run_id == "run-abc"
+        assert item.transcript_url is not None
+        assert item.transcript_url.endswith("transcript")
+        assert item.table is not None
 
     @respx.mock
     def test_s3_mode_serializes_content(self, tmp_path: Path) -> None:
@@ -357,7 +358,7 @@ class TestDataRetrievalExecutorLumidBranch:
 
         assert result.type == "lumid"
         assert result.count == 1
-        assert result.items[0]["keys"] == ["demo/unstructured/news-html/doc1.html"]
+        assert result.items[0].keys == ["demo/unstructured/news-html/doc1.html"]
 
     def test_bad_mode_raises_execution_error(self, tmp_path: Path) -> None:
         executor = _make_executor()
@@ -435,7 +436,7 @@ class TestDataRetrievalExecutorLumidBranch:
         result = executor._run_lumid(data_cfg, {}, out_dir)
 
         item = result.items[0]
-        assert item["materialized_uri"] == _RETRIEVAL_RESULT["materialized_uri"]
+        assert item.materialized_uri == _RETRIEVAL_RESULT["materialized_uri"]
 
     @respx.mock
     def test_sql_mode_access_chain_round_trip(self, tmp_path: Path) -> None:
@@ -462,8 +463,8 @@ class TestDataRetrievalExecutorLumidBranch:
         result = executor._run_lumid(data_cfg, {}, out_dir)
 
         item = result.items[0]
-        assert item["access_chain"] == _RETRIEVAL_RESULT["access_chain"]
-        assert result.items[0]["access_chain"][0]["op"] == "sql"
+        assert item.access_chain == _RETRIEVAL_RESULT["access_chain"]
+        assert result.items[0].access_chain[0]["op"] == "sql"
 
     @respx.mock
     def test_sql_mode_zero_rows_raises_when_required(self, tmp_path: Path) -> None:
@@ -518,7 +519,7 @@ class TestDataRetrievalExecutorLumidBranch:
 
         result = executor._run_lumid(data_cfg, {}, out_dir)
         assert result.count == 1
-        assert result.items[0]["rows"] == 0
+        assert result.items[0].rows == 0
 
 
 class TestLumidDataConnectorAgentSseEdgeCases:

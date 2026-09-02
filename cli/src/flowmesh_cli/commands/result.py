@@ -1,4 +1,3 @@
-import json
 from pathlib import Path
 
 import typer
@@ -32,11 +31,11 @@ def fetch(
         return
 
     try:
-        payload = client.results.retrieve(task_id)
+        result = client.results.retrieve(task_id)
     except FlowMeshError as exc:
         logging.error(str(exc))
         raise typer.Exit(code=1)
-    logging.log(json.dumps(payload, indent=2))
+    logging.log(result.model_dump_json(indent=2))
 
 
 @app.command("download")

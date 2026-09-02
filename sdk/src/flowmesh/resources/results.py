@@ -7,20 +7,25 @@ from collections.abc import AsyncIterable, Iterable
 from pathlib import Path
 from typing import Any, Literal
 
-from ..models.results import ResultEnvelope
+from pydantic import TypeAdapter
+
+from ..models.result import AnyExecutorResult, ResultEnvelope
 from ._base import AsyncResource, SyncResource
 
 type BundleSection = Literal["results", "artifacts", "logs", "all"]
 
 _DEFAULT_INCLUDE: tuple[BundleSection, ...] = ("results", "artifacts")
 
+_RESULT_ADAPTER: TypeAdapter[AnyExecutorResult] = TypeAdapter(AnyExecutorResult)
+
 
 class Results(SyncResource):
     """Synchronous result operations."""
 
-    def retrieve(self, task_id: str) -> dict[str, Any]:
-        """Retrieve the JSON result for a completed task."""
-        return self._client._request("GET", f"/results/{task_id}")
+    def retrieve(self, task_id: str) -> AnyExecutorResult:
+        """Retrieve the result for a completed task."""
+        data = self._client._request("GET", f"/results/{task_id}")
+        return _RESULT_ADAPTER.validate_python(data)
 
     def get_bundle(
         self,
@@ -89,9 +94,10 @@ class Results(SyncResource):
 class AsyncResults(AsyncResource):
     """Asynchronous result operations."""
 
-    async def retrieve(self, task_id: str) -> dict[str, Any]:
-        """Retrieve the JSON result for a completed task."""
-        return await self._client._request("GET", f"/results/{task_id}")
+    async def retrieve(self, task_id: str) -> AnyExecutorResult:
+        """Retrieve the result for a completed task."""
+        data = await self._client._request("GET", f"/results/{task_id}")
+        return _RESULT_ADAPTER.validate_python(data)
 
     async def get_bundle(
         self,

@@ -30,6 +30,7 @@ except Exception:
 
 from shared.schemas.artifact import ArtifactRef
 from shared.schemas.governance import SpanType
+from shared.schemas.result import OmniAudioItem, OmniText2AudioResult
 from shared.tasks.specs import TaskSpecStrictBase
 from shared.tasks.specs.omni import OmniText2AudioSpecStrict
 from shared.tasks.task_type import TaskType
@@ -41,22 +42,11 @@ from .omni_executor_base import (
     Omni,
     OmniExecutorBase,
     OmniRequestOutput,
-    OmniResult,
     extract_multimodal_output,
 )
 
 logger = logging.getLogger(__name__)
 EXECUTOR_NAME = "omni_text2audio"
-
-
-class OmniText2AudioResult(OmniResult):
-    executor: str = EXECUTOR_NAME
-    mode: str = "bgm"
-    audio: ArtifactRef | None
-    sample_rate: int
-    num_waveforms: int
-    audio_length: float
-    storyboard: dict[str, Any] | None = None
 
 
 class OmniText2AudioExecutor(OmniExecutorBase):
@@ -158,7 +148,7 @@ class OmniText2AudioExecutor(OmniExecutorBase):
                 per_prompt_outputs.append((prompt_idx, prompt, outputs))
 
         artifacts_dir = out_dir / "artifacts"
-        items: list[dict[str, Any]] = []
+        items: list[OmniAudioItem] = []
         global_index = 0
         with self._span(
             "output postprocessing",
@@ -186,15 +176,15 @@ class OmniText2AudioExecutor(OmniExecutorBase):
                         audio_entry["waveform"], save_path, sample_rate=sample_rate
                     )
                     items.append(
-                        {
-                            "index": global_index,
-                            "prompt_index": prompt_idx,
-                            "waveform_index": local_idx,
-                            "prompt": prompt,
-                            "audio": ArtifactRef(
+                        OmniAudioItem(
+                            index=global_index,
+                            prompt_index=prompt_idx,
+                            waveform_index=local_idx,
+                            prompt=prompt,
+                            audio=ArtifactRef(
                                 path=self.relative_to(save_path, artifacts_dir)
                             ),
-                        }
+                        )
                     )
                     global_index += 1
 
@@ -202,8 +192,8 @@ class OmniText2AudioExecutor(OmniExecutorBase):
             raise ExecutionError("omni_text2audio produced no savable waveforms.")
 
         return OmniText2AudioResult(
-            model=self._model_name,
-            audio=items[0]["audio"] if items else None,
+            model=self.model_name,
+            audio=items[0].audio if items else None,
             items=items,
             sample_rate=sample_rate,
             num_waveforms=len(items),

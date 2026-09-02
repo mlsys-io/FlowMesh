@@ -1,6 +1,6 @@
 from typing import Any
 
-from pydantic import Field, model_validator
+from pydantic import Field, SerializeAsAny, model_validator
 
 from ...schemas.result import BaseExecutorResult
 from .._base import StrictBaseModel, TemplateBaseModel
@@ -39,8 +39,8 @@ class ConditionSpec(StrictBaseModel):
 
     node: str = Field(description="Upstream task ID whose result to check.")
     field: str = Field(
-        description="Dot-separated path into the upstream result "
-        "(e.g. ``result.verdict``)."
+        description="Dot-separated path into the upstream result payload "
+        "(e.g. ``items.0.output``)."
     )
     equals: str = Field(
         description="Expected value. Task only dispatches if ``actual == equals``."
@@ -73,7 +73,7 @@ class TaskSpecStrictBase(StrictBaseModel):
     shard: ShardSpec | None = None
 
     # Server-injected stage context (reserve the user-facing key `_upstreamResults`)
-    upstreamResults: dict[str, BaseExecutorResult] | None = Field(
+    upstreamResults: dict[str, SerializeAsAny[BaseExecutorResult]] | None = Field(
         default=None, alias="_upstreamResults"
     )
 
@@ -107,7 +107,7 @@ class TaskSpecTemplateBase(TemplateBaseModel):
     condition: ConditionSpec | None = None
     shard: ShardSpecTemplate | None = None
 
-    upstreamResults: dict[str, BaseExecutorResult] | None = Field(
+    upstreamResults: dict[str, SerializeAsAny[BaseExecutorResult]] | None = Field(
         default=None, alias="_upstreamResults"
     )
 

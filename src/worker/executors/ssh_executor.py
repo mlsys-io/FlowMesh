@@ -29,7 +29,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import requests
 
-from shared.schemas.result import BaseExecutorResult
+from shared.schemas.result import SSHResult
 from shared.tasks.components.resources import GPURequirements
 from shared.tasks.specs.ssh import (
     SSHInputSpec,
@@ -61,14 +61,6 @@ from .base_executor import (
     ExecutorTask,
     TaskCancelledError,
 )
-
-
-class SSHResult(BaseExecutorResult):
-    session_id: str
-    exit_code: int
-    command: list[str] | None = None
-    entrypoint: list[str] | None = None
-
 
 try:
     from docker import DockerClient

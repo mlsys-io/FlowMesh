@@ -220,17 +220,17 @@ class GovernanceMixin:
         return context
 
     def _extract_source_data_ids(self, spec: TaskSpecStrictBase) -> list[str]:
-        """Extract upstream task/data IDs from ``_upstreamResults`` for lineage."""
+        """Upstream task IDs for lineage, one per ``_upstreamResults`` entry."""
         seen: set[str] = set()
         ids: list[str] = []
         for upstream in self._spec_upstream_results(spec).values():
-            if not isinstance(upstream, dict):
+            # The result payload carries no ID; the producing task ID is the
+            # final segment of its ``_artifacts.base_dir`` (the producer's dir).
+            context = upstream.artifacts_
+            if context is None or not context.base_dir:
                 continue
-            candidate = upstream.get("task_id") or upstream.get("data_id")
-            if candidate is None:
-                continue
-            sid = str(candidate)
-            if sid in seen:
+            sid = Path(context.base_dir).name
+            if not sid or sid in seen:
                 continue
             seen.add(sid)
             ids.append(sid)

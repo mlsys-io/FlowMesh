@@ -12,6 +12,7 @@ from pydantic import ValidationError
 
 from server.dispatcher.base import Dispatcher
 from server.task.parser import parse_workflow
+from shared.schemas.result import BaseExecutorResult
 from shared.tasks.specs import (
     DataRetrievalSpecStrict,
     InferenceSpecStrict,
@@ -55,7 +56,7 @@ class TestConditionEvaluation:
 
     @staticmethod
     def _evaluate(
-        upstream_result: dict[str, Any],
+        result_payload: dict[str, Any],
         condition: ConditionSpec,
     ) -> bool:
         """Simplified condition evaluator matching dispatcher logic.
@@ -63,8 +64,9 @@ class TestConditionEvaluation:
         Returns True if the condition is met (task should proceed).
         """
         dispatcher_instance = object.__new__(Dispatcher)
-        actual = dispatcher_instance._dig_path(
-            upstream_result, condition.field.split(".")
+        result = BaseExecutorResult.model_validate(result_payload)
+        actual = dispatcher_instance._dig_result_path(
+            result, condition.field.split(".")
         )
         return str(actual) == condition.equals
 

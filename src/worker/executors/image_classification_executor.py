@@ -29,7 +29,7 @@ from transformers import (
 )
 
 from shared.schemas.artifact import ArtifactRef
-from shared.schemas.result import BaseExecutorResult
+from shared.schemas.result import ImageClassificationTrainingResult
 from shared.tasks.specs import ImageClassificationTrainingSpecStrict
 from shared.tasks.task_type import TaskType
 
@@ -46,21 +46,6 @@ from .utils.checkpoints import (
 from .utils.huggingface import pick_torch_dtype
 
 logger = logging.getLogger("worker.image_classification")
-
-
-class ImageClassificationTrainingResult(BaseExecutorResult):
-    training_time_seconds: float | None = None
-    error_message: str | None = None
-    model_name: str | None = None
-    dataset_size: int = 0
-    num_labels: int = 0
-    eval_accuracy: float | None = None
-    train_losses: list[float] = []
-    output_dir: str | None = None
-    checkpoints_dir: ArtifactRef | None = None
-    resume_from_path: str | None = None
-    final_model: ArtifactRef | None = None
-    final_model_archive: ArtifactRef | None = None
 
 
 class ImageClassificationTrainingExecutor(TrainingMixin, Executor):
@@ -201,8 +186,7 @@ class ImageClassificationTrainingExecutor(TrainingMixin, Executor):
                 learning_rate=float(training_cfg.get("learning_rate", 5e-5)),
                 optim=_resolve_optim(training_cfg.get("optimizer")),
                 weight_decay=float(training_cfg.get("weight_decay", 0.0)),
-                warmup_steps=int(training_cfg.get("warmup_steps", 0)),
-                warmup_ratio=float(training_cfg.get("warmup_ratio", 0.0)),
+                warmup_steps=_resolve_warmup(training_cfg),
                 logging_steps=int(training_cfg.get("logging_steps", 10)),
                 save_steps=int(training_cfg.get("save_steps", 100)),
                 save_strategy=str(training_cfg.get("save_strategy", "steps")),
@@ -486,6 +470,18 @@ def _resolve_optim(optimizer: Any) -> str:
         return "adamw_torch"
     name = str(optimizer).lower()
     return _OPTIM_ALIASES.get(name, name)
+
+
+def _resolve_warmup(training_cfg: dict[str, Any]) -> float:
+    """Map spec ``warmup_steps`` / ``warmup_ratio`` onto a single warmup value.
+
+    ``TrainingArguments.warmup_steps`` reads an integer >= 1 as an exact step
+    count and a float in [0, 1) as a fraction of total training steps.
+    """
+    steps = int(training_cfg.get("warmup_steps", 0))
+    if steps > 0:
+        return float(steps)
+    return float(training_cfg.get("warmup_ratio", 0.0))
 
 
 def _augment_image(img: Image.Image) -> Image.Image:

@@ -20,7 +20,7 @@ from typing import Any, NoReturn
 
 import requests
 
-from shared.schemas.result import BaseExecutorResult
+from shared.schemas.result import ServeResult
 from shared.tasks.specs.serve import ServeSpecStrict
 from shared.tasks.task_type import TaskType
 from shared.utils.parsing import parse_float_env
@@ -83,11 +83,6 @@ def _resolve_port(requested: int | None, bind_host: str) -> int:
                 "to auto-select a free port."
             ) from exc
         return probe.getsockname()[1]
-
-
-class ServeResult(BaseExecutorResult):
-    model: str
-    port: int
 
 
 class VLLMServeExecutor(Executor):

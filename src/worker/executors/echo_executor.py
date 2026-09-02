@@ -3,6 +3,8 @@ from pathlib import Path
 from typing import Any
 
 from shared.schemas.result import BaseExecutorResult
+from shared.schemas.result import EchoItem as EchoResultItem
+from shared.schemas.result import EchoResult
 from shared.tasks.specs import EchoSpecStrict
 from shared.tasks.task_type import TaskType
 
@@ -16,21 +18,16 @@ logger = logging.getLogger(__name__)
 type EchoItem = str | dict[str, str]
 
 
-class EchoResult(BaseExecutorResult):
-    items: list[dict[str, Any]] = []
-    count: int = 0
-
-
 class EchoExecutor(DataMixin, Executor):
     name = "echo"
     supported_task_types = frozenset({TaskType.ECHO})
 
-    def _append_outputs(self, out_items: list[dict[str, Any]], value: Any) -> None:
+    def _append_outputs(self, out_items: list[EchoResultItem], value: Any) -> None:
         if isinstance(value, list):
             for item in value:
                 self._append_outputs(out_items, item)
             return
-        out_items.append({"output": value})
+        out_items.append(EchoResultItem(output=value))
 
     @staticmethod
     def _resolve_expr_item(
@@ -88,12 +85,15 @@ class EchoExecutor(DataMixin, Executor):
                     "echo executor requires spec._upstreamResults to be a mapping"
                 )
 
-            merged_items: list[dict[str, Any]] = []
+            merged_items: list[EchoResultItem] = []
             for item in items_cfg:
                 resolved = self._resolve_item(item, context)
                 self._append_outputs(merged_items, resolved)
 
-            result = EchoResult(items=merged_items, count=len(merged_items))
+            result = EchoResult(
+                items=merged_items,
+                count=len(merged_items),
+            )
             deps = self._extract_source_data_ids(spec)
             dependencies_by_task = {task_id: deps}
 

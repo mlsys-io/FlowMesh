@@ -7,6 +7,7 @@ from typing import Any
 
 from shared.schemas.artifact import ArtifactRef
 from shared.schemas.governance import SpanType
+from shared.schemas.result import OmniSpeechItem, OmniText2SpeechResult
 from shared.tasks.specs import TaskSpecStrictBase
 from shared.tasks.specs.omni import OmniText2SpeechSpecStrict
 from shared.tasks.task_type import TaskType
@@ -19,7 +20,6 @@ from .omni_executor_base import (
     Omni,
     OmniExecutorBase,
     OmniRequestOutput,
-    OmniResult,
     extract_audio_from_mm,
     extract_multimodal_output,
     save_audio,
@@ -27,14 +27,6 @@ from .omni_executor_base import (
 
 logger = logging.getLogger(__name__)
 EXECUTOR_NAME = "omni_text2speech"
-
-
-class OmniText2SpeechResult(OmniResult):
-    executor: str = EXECUTOR_NAME
-    mode: str = "tts"
-    audio: ArtifactRef | None
-    sample_rate: int
-    storyboard: dict[str, Any] | None = None
 
 
 class OmniText2SpeechExecutor(OmniExecutorBase):
@@ -79,7 +71,7 @@ class OmniText2SpeechExecutor(OmniExecutorBase):
                 self._generate_single(t, spec_dict=spec_dict) for t in texts
             ]
         artifacts_dir = out_dir / "artifacts"
-        items: list[dict[str, Any]] = []
+        items: list[OmniSpeechItem] = []
         with self._span(
             "output postprocessing",
             span_type=SpanType.COMPUTE,
@@ -97,19 +89,19 @@ class OmniText2SpeechExecutor(OmniExecutorBase):
                 save_path.parent.mkdir(parents=True, exist_ok=True)
                 save_audio(audio_obj, save_path, sample_rate=sample_rate)
                 items.append(
-                    {
-                        "index": idx,
-                        "text": text,
-                        "audio": ArtifactRef(
+                    OmniSpeechItem(
+                        index=idx,
+                        text=text,
+                        audio=ArtifactRef(
                             path=self.relative_to(save_path, artifacts_dir)
                         ),
-                    }
+                    )
                 )
 
         return OmniText2SpeechResult(
-            model=self._model_name,
+            model=self.model_name,
             items=items,
-            audio=items[0]["audio"] if items else None,
+            audio=items[0].audio if items else None,
             sample_rate=sample_rate,
             storyboard=spec_dict.get("storyboard"),
         )
