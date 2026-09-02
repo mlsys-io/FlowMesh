@@ -217,7 +217,7 @@ follow_untyped_imports = true
 
 [tool.codespell]
 skip = "*.lock,*.csv,*.tsv,*.jsonl"
-ignore-words-list = "pre-select"
+ignore-words-list = "pre-select,protol"
 
 [tool.bandit]
 skips = [
