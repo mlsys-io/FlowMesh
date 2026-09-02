@@ -186,8 +186,7 @@ class ImageClassificationTrainingExecutor(TrainingMixin, Executor):
                 learning_rate=float(training_cfg.get("learning_rate", 5e-5)),
                 optim=_resolve_optim(training_cfg.get("optimizer")),
                 weight_decay=float(training_cfg.get("weight_decay", 0.0)),
-                warmup_steps=int(training_cfg.get("warmup_steps", 0)),
-                warmup_ratio=float(training_cfg.get("warmup_ratio", 0.0)),
+                warmup_steps=_resolve_warmup(training_cfg),
                 logging_steps=int(training_cfg.get("logging_steps", 10)),
                 save_steps=int(training_cfg.get("save_steps", 100)),
                 save_strategy=str(training_cfg.get("save_strategy", "steps")),
@@ -471,6 +470,18 @@ def _resolve_optim(optimizer: Any) -> str:
         return "adamw_torch"
     name = str(optimizer).lower()
     return _OPTIM_ALIASES.get(name, name)
+
+
+def _resolve_warmup(training_cfg: dict[str, Any]) -> float:
+    """Map spec ``warmup_steps`` / ``warmup_ratio`` onto a single warmup value.
+
+    ``TrainingArguments.warmup_steps`` reads an integer >= 1 as an exact step
+    count and a float in [0, 1) as a fraction of total training steps.
+    """
+    steps = int(training_cfg.get("warmup_steps", 0))
+    if steps > 0:
+        return float(steps)
+    return float(training_cfg.get("warmup_ratio", 0.0))
 
 
 def _augment_image(img: Image.Image) -> Image.Image:
