@@ -98,22 +98,15 @@ The worker GPU `vllm` is pinned to the `+cu129` release wheel (the PyPI
 wheel is built for CUDA 13, incompatible with the CUDA 12.9 worker). Its
 local version is not on PyPI, so pip-audit skips it — like
 `flashinfer-jit-cache` — which is why the GPU run omits `--strict`. vLLM
-CVE exposure tracks PyPI `vllm 0.24.0` regardless of the build variant.
+CVE exposure tracks PyPI `vllm 0.28.0` regardless of the build variant.
 
 | Advisory | Package | Fix version | Why ignored |
 |----------|---------|-------------|-------------|
-| GHSA-rrmf-rvhw-rf47 | torch | (none) | no fix version published |
-| PYSEC-2026-87 | lxml | 6.1.0 | crawl4ai 0.8.6 caps lxml<6 |
-| GHSA-w8v5-vhqr-4h9v | diskcache | (none) | upstream unmaintained, no fixed version published |
-| PYSEC-2026-597 | nltk | (none) | latest 3.9.4 is last_affected, no fixed release; transitive via crawl4ai and not reachable |
-| PYSEC-2026-3447 | setuptools | 83.0.0 | vllm 0.24.0 pins setuptools<81 for py>=3.12, so the fixed >=83.0.0 is unsatisfiable; no reachable fix |
+| PYSEC-2026-3447 | setuptools | 83.0.0 | vllm 0.28.0 pins setuptools<81 for py>=3.12, so the fixed >=83.0.0 is unsatisfiable; no reachable fix |
 
-The worker GPU audit ignores `GHSA-rrmf-rvhw-rf47`,
-`GHSA-w8v5-vhqr-4h9v`, and `PYSEC-2026-3447`; the worker CPU audit
-ignores `GHSA-rrmf-rvhw-rf47`, `PYSEC-2026-87`, `PYSEC-2026-597`, and
-`PYSEC-2026-3447`; the server audit ignores nothing.
+The worker GPU audit ignores `PYSEC-2026-3447`; the server and worker
+CPU audits ignore nothing.
 
-When a blocker lifts (e.g. crawl4ai unpins lxml, or a fixed torch
-release ships), drop the corresponding `--ignore-vuln` flag from the
-workflow and the row from this table — don't extend the rationale to
+When a blocker lifts, drop the corresponding `--ignore-vuln` flag from
+the workflow and the row from this table — don't extend the rationale to
 unrelated packages.
