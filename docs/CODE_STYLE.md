@@ -103,9 +103,10 @@ CVE exposure tracks PyPI `vllm 0.28.0` regardless of the build variant.
 | Advisory | Package | Fix version | Why ignored |
 |----------|---------|-------------|-------------|
 | PYSEC-2026-3447 | setuptools | 83.0.0 | vllm 0.28.0 pins setuptools<81 for py>=3.12, so the fixed >=83.0.0 is unsatisfiable; no reachable fix |
+| PYSEC-2026-3740 | nltk | — | path traversal affecting nltk through 3.10.3 (its latest release), with no fixed version published; pulled in transitively by crawl4ai |
 
-The worker GPU audit ignores `PYSEC-2026-3447`; the server and worker
-CPU audits ignore nothing.
+The worker GPU audit ignores `PYSEC-2026-3447`; the worker CPU audit
+ignores `PYSEC-2026-3740`; the server audit ignores nothing.
 
 When a blocker lifts, drop the corresponding `--ignore-vuln` flag from
 the workflow and the row from this table — don't extend the rationale to
