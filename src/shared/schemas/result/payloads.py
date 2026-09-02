@@ -37,9 +37,9 @@ class InferenceItem(StrictModel):
     image modes). ``metadata`` is open dataset/user passthrough.
     """
 
-    index: int | None = None
-    prompt: str | None = None
-    output: JsonValue = None
+    index: int
+    prompt: str
+    output: JsonValue
     finish_reason: str | list[str | None] | None = None
     metadata: dict[str, Any] | None = None
 
