@@ -1111,20 +1111,10 @@ Summary:"""
 
                 out_outputs = getattr(out, "outputs", None)
                 if not out_outputs:
-                    payload = {
-                        "index": local_index,
-                        "prompt": prompt_text,
-                        "output": "",
-                        "finish_reason": None,
-                    }
-                    if metadata_entry:
-                        payload["metadata"] = metadata_entry
-                    owner_items.append(payload)
-                    usage_by_task.setdefault(
-                        owner, {"prompt_tokens": 0, "completion_tokens": 0}
+                    raise ExecutionError(
+                        "vLLM returned a request output carrying no completion "
+                        f"(task={owner}, prompt_index={idx})."
                     )
-                    counts_by_task[owner] = counts_by_task.get(owner, 0) + 1
-                    continue
 
                 best = out_outputs[0]
                 text = getattr(best, "text", "") or ""

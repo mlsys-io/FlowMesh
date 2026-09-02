@@ -33,7 +33,7 @@ class InferenceItem(StrictModel):
     index: int
     prompt: str
     output: JsonValue
-    finish_reason: str | list[str | None] | None = None
+    finish_reason: str | list[str | None] | None
     metadata: dict[str, Any] | None = None
 
 

@@ -138,15 +138,17 @@ def test_required_nullable_fields_survive_serialization() -> None:
     assert reloaded == result
 
 
-def test_inference_item_requires_index_prompt_and_output() -> None:
-    """``index``, ``prompt``, and ``output`` are unconditionally emitted by every
-    producer, so the item rejects a payload that omits any of them."""
-    item = InferenceItem(index=0, prompt="hi", output="hello")
-    assert item.finish_reason is None
+def test_inference_item_requires_every_field_but_metadata() -> None:
+    """Every producer emits ``index``, ``prompt``, ``output``, and
+    ``finish_reason`` unconditionally, so the item rejects a payload that omits
+    any of them. ``output`` and ``finish_reason`` stay nullable — the value may
+    be undetermined — and only ``metadata`` may be absent entirely."""
+    item = InferenceItem(index=0, prompt="hi", output="hello", finish_reason=None)
     assert item.metadata is None
 
-    for missing in ("index", "prompt", "output"):
-        payload = {"index": 0, "prompt": "hi", "output": "hello"}
+    complete = {"index": 0, "prompt": "hi", "output": "hello", "finish_reason": "stop"}
+    for missing in complete:
+        payload = dict(complete)
         del payload[missing]
         with pytest.raises(ValidationError):
             InferenceItem.model_validate(payload)
@@ -155,10 +157,10 @@ def test_inference_item_requires_index_prompt_and_output() -> None:
 def test_inference_item_output_keeps_explicit_null() -> None:
     """``output`` is required but nullable: a structured-output task whose model
     returns ``null`` keeps the key instead of dropping it."""
-    item = InferenceItem(index=0, prompt="hi", output=None)
+    item = InferenceItem(index=0, prompt="hi", output=None, finish_reason="stop")
     dumped = item.model_dump(by_alias=True)
     assert dumped["output"] is None
-    assert "finish_reason" not in dumped
+    assert "metadata" not in dumped
 
 
 def test_drop_none_round_trip_is_lossless() -> None:
