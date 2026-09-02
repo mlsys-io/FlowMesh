@@ -114,6 +114,7 @@ class OmniText2GeneralExecutor(OmniExecutorBase):
 
         audio_results: list[dict[str, Any]] = []
         text_results: dict[str, str] = {}
+        stage_errors: list[str] = []
         with self._span(
             "generation",
             span_type=SpanType.COMPUTE,
@@ -136,14 +137,14 @@ class OmniText2GeneralExecutor(OmniExecutorBase):
                 ) from exc
 
             for stage_output in generator:
-                final_type = stage_output.final_output_type
-                request_output = stage_output.request_output
-                if not request_output:
+                if stage_output.error:
+                    stage_errors.append(stage_output.error)
                     continue
+                final_type = stage_output.final_output_type
                 if final_type == "text":
-                    text_out = _extract_text_output(request_output)
+                    text_out = _extract_text_output(stage_output)
                     if text_out is not None:
-                        text_results[request_output.request_id] = text_out
+                        text_results[stage_output.request_id] = text_out
                     continue
                 if final_type == "audio":
                     audio_obj = extract_audio_from_mm(
@@ -152,14 +153,17 @@ class OmniText2GeneralExecutor(OmniExecutorBase):
                     if audio_obj is not None:
                         audio_results.append(
                             {
-                                "request_id": request_output.request_id,
+                                "request_id": stage_output.request_id,
                                 "audio": audio_obj,
                             }
                         )
 
         if not audio_results:
+            detail = (
+                f" Engine reported: {'; '.join(stage_errors)}" if stage_errors else ""
+            )
             raise ExecutionError(
-                "omni_text2general completed but returned no audio output."
+                f"omni_text2general completed but returned no audio output.{detail}"
             )
 
         artifacts_dir = out_dir / "artifacts"
