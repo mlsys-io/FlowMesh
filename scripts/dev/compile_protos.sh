@@ -11,12 +11,20 @@ out_dir="${repo_root}/src/shared/grpc"
 
 mkdir -p "${out_dir}"
 
+# protoletariat runs as an ephemeral uvx tool: it caps protobuf below 6, while
+# the GPU inference runtime requires 6.30+, so the two cannot share a resolution.
+# The protoc wrapper therefore names this project's interpreter explicitly —
+# inside uvx, a bare `python` would resolve to the tool's own environment, which
+# has no grpc_tools.
+PROTOLETARIAT_VERSION="3.3.10"
+project_python="$(python -c 'import sys; print(sys.executable)')"
+
 # Create a temporary protoc wrapper script
 temp_dir=$(mktemp -d)
 protoc_wrapper="${temp_dir}/protoc"
-cat > "${protoc_wrapper}" << 'EOF'
+cat > "${protoc_wrapper}" << EOF
 #!/usr/bin/env bash
-exec python -m grpc_tools.protoc "$@"
+exec "${project_python}" -m grpc_tools.protoc "\$@"
 EOF
 chmod +x "${protoc_wrapper}"
 
@@ -36,7 +44,7 @@ python -m grpc_tools.protoc \
   --grpc_python_out="${out_dir}" \
   "${proto_file}"
 
-python -m protoletariat \
+uvx --from "protoletariat==${PROTOLETARIAT_VERSION}" protol \
   --python-out "${out_dir}" \
   --in-place \
   --create-package \
