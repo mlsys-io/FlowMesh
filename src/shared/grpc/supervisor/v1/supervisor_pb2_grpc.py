@@ -7,7 +7,7 @@ from google.protobuf import empty_pb2 as google_dot_protobuf_dot_empty__pb2
 
 from ...supervisor.v1 import supervisor_pb2 as supervisor_dot_v1_dot_supervisor__pb2
 
-GRPC_GENERATED_VERSION = "1.71.2"
+GRPC_GENERATED_VERSION = "1.81.1"
 GRPC_VERSION = grpc.__version__
 _version_not_supported = False
 try:
@@ -21,14 +21,14 @@ except ImportError:
 if _version_not_supported:
     raise RuntimeError(
         f"The grpc package installed is at version {GRPC_VERSION},"
-        + f" but the generated code in supervisor/v1/supervisor_pb2_grpc.py depends on"
+        + " but the generated code in supervisor/v1/supervisor_pb2_grpc.py depends on"
         + f" grpcio>={GRPC_GENERATED_VERSION}."
         + f" Please upgrade your grpc module to grpcio>={GRPC_GENERATED_VERSION}"
         + f" or downgrade your generated code using grpcio-tools<={GRPC_VERSION}."
     )
 
 
-class SupervisorStub(object):
+class SupervisorStub:
     """Supervisor streams tasks to workers and accepts events from them."""
 
     def __init__(self, channel):
@@ -63,7 +63,7 @@ class SupervisorStub(object):
         )
 
 
-class SupervisorServicer(object):
+class SupervisorServicer:
     """Supervisor streams tasks to workers and accepts events from them."""
 
     def RegisterWorker(self, request, context):
@@ -123,7 +123,7 @@ def add_SupervisorServicer_to_server(servicer, server):
     )
 
 
-class Supervisor(object):
+class Supervisor:
     """Supervisor streams tasks to workers and accepts events from them."""
 
     @staticmethod
