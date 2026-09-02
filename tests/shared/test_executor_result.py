@@ -129,9 +129,8 @@ def test_extra_passthrough_nulls_survive_but_declared_none_drops() -> None:
 def test_required_nullable_fields_survive_serialization() -> None:
     """Required-but-nullable fields (declared without a default, e.g. the Omni
     modality outputs) keep their ``null`` so the payload still re-validates."""
-    result = OmniText2ImageResult(model=None, image=None, items=[])
+    result = OmniText2ImageResult(model="Qwen/Qwen3-Omni-30B-A3B", image=None, items=[])
     dumped = result.model_dump(by_alias=True)
-    assert dumped["model"] is None
     assert dumped["image"] is None
     reloaded = OmniText2ImageResult.model_validate_json(result.model_dump_json())
     assert reloaded == result

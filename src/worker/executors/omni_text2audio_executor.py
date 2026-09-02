@@ -192,7 +192,7 @@ class OmniText2AudioExecutor(OmniExecutorBase):
             raise ExecutionError("omni_text2audio produced no savable waveforms.")
 
         return OmniText2AudioResult(
-            model=self._model_name,
+            model=self.model_name,
             audio=items[0].audio if items else None,
             items=items,
             sample_rate=sample_rate,

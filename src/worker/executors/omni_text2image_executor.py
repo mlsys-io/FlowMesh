@@ -93,7 +93,7 @@ class OmniText2ImageExecutor(OmniExecutorBase):
                 )
 
         return OmniText2ImageResult(
-            model=self._model_name,
+            model=self.model_name,
             image=items[0].image if items else None,
             items=items,
         )

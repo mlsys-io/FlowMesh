@@ -109,6 +109,13 @@ class OmniExecutorBase(InferenceMixin, Executor):
 
     # ── model lifecycle ──────────────────────────────────────────────────
 
+    @property
+    def model_name(self) -> str:
+        """Identifier of the loaded model; raises when no model is loaded."""
+        if self._model_name is None:
+            raise ExecutionError("Omni model not initialized.")
+        return self._model_name
+
     def _close_omni(self) -> None:
         """Release the Omni model handle and free GPU memory."""
         omni = self._omni

@@ -141,7 +141,7 @@ class OmniResult(StrictExecutorResult):
 
     executor: str
     mode: str
-    model: str | None
+    model: str
 
 
 class OmniText2ImageResult(OmniResult):

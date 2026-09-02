@@ -99,7 +99,7 @@ class OmniText2SpeechExecutor(OmniExecutorBase):
                 )
 
         return OmniText2SpeechResult(
-            model=self._model_name,
+            model=self.model_name,
             items=items,
             audio=items[0].audio if items else None,
             sample_rate=sample_rate,
