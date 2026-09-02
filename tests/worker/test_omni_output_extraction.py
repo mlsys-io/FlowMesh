@@ -35,37 +35,31 @@ class FakeCompletion:
         self.text = text
 
 
-class FakeRequestOutput:
-    def __init__(self, *, outputs: list[FakeCompletion]) -> None:
-        self.outputs = outputs
-
-
 class FakeOmniRequestOutput:
-    """Mirror of vllm_omni 0.24 OmniRequestOutput's output-access contract.
+    """Mirror of OmniRequestOutput's output-access contract.
 
-    ``multimodal_output`` is a property that surfaces the payload attached to
-    the first completion output, then falls back to the request output itself.
+    The completion outputs hang off the request output itself, and
+    ``multimodal_output`` surfaces the payload attached to the first completion
+    before falling back to the request-level payload.
     """
 
     def __init__(
         self,
         *,
         request_id: str = "req",
-        request_output: FakeRequestOutput | None = None,
+        outputs: list[FakeCompletion] | None = None,
+        multimodal_output: Any = None,
     ) -> None:
         self.request_id = request_id
-        self.request_output = request_output
-
-    @property
-    def outputs(self) -> list[FakeCompletion]:
-        return self.request_output.outputs if self.request_output else []
+        self.outputs = outputs or []
+        self._multimodal_output = multimodal_output
 
     @property
     def multimodal_output(self) -> Any:
         for completion in self.outputs:
             if mm := completion.multimodal_output:
                 return mm
-        return getattr(self.request_output, "multimodal_output", None)
+        return self._multimodal_output
 
     def as_omni_request_output(self) -> OmniRequestOutput:
         return cast(OmniRequestOutput, self)
@@ -101,9 +95,7 @@ def test_extract_audio_from_mm_accepts_mapping_payload() -> None:
 def test_extract_multimodal_output_returns_completion_mapping_payload() -> None:
     payload = MappingPayload({"model_outputs": [[0.1, -0.1]], "sr": [24000]})
     output = FakeOmniRequestOutput(
-        request_output=FakeRequestOutput(
-            outputs=[FakeCompletion(multimodal_output=payload)]
-        )
+        outputs=[FakeCompletion(multimodal_output=payload)]
     ).as_omni_request_output()
 
     assert extract_multimodal_output(output) is payload
@@ -111,9 +103,7 @@ def test_extract_multimodal_output_returns_completion_mapping_payload() -> None:
 
 def test_extract_multimodal_output_rejects_non_mapping_payload() -> None:
     output = FakeOmniRequestOutput(
-        request_output=FakeRequestOutput(
-            outputs=[FakeCompletion(multimodal_output=[0.1, -0.1])]
-        )
+        outputs=[FakeCompletion(multimodal_output=[0.1, -0.1])]
     ).as_omni_request_output()
 
     assert extract_multimodal_output(output) is None
@@ -123,9 +113,7 @@ def test_text2audio_extracts_mapping_payload_audio() -> None:
     payload = MappingPayload({"audio": [0.1, -0.1]})
     output = FakeOmniRequestOutput(
         request_id="req-1",
-        request_output=FakeRequestOutput(
-            outputs=[FakeCompletion(multimodal_output=payload)]
-        ),
+        outputs=[FakeCompletion(multimodal_output=payload)],
     ).as_omni_request_output()
 
     extracted = _extract_audio_waveforms([output])
@@ -139,9 +127,7 @@ def test_text2audio_extracts_model_outputs_fallback() -> None:
     payload = MappingPayload({"model_outputs": [0.1, -0.1]})
     output = FakeOmniRequestOutput(
         request_id="req-2",
-        request_output=FakeRequestOutput(
-            outputs=[FakeCompletion(multimodal_output=payload)]
-        ),
+        outputs=[FakeCompletion(multimodal_output=payload)],
     ).as_omni_request_output()
 
     extracted = _extract_audio_waveforms([output])
@@ -154,9 +140,7 @@ def test_text2audio_extracts_model_outputs_fallback() -> None:
 def test_text2general_extracts_mapping_payload_model_outputs() -> None:
     payload = MappingPayload({"model_outputs": [[0.1, -0.1]], "sr": [24000]})
     output = FakeOmniRequestOutput(
-        request_output=FakeRequestOutput(
-            outputs=[FakeCompletion(multimodal_output=payload)]
-        )
+        outputs=[FakeCompletion(multimodal_output=payload)]
     ).as_omni_request_output()
 
     assert extract_audio_from_mm(extract_multimodal_output(output)) == {
