@@ -7,7 +7,7 @@ from google.protobuf import symbol_database as _symbol_database
 from google.protobuf.internal import builder as _builder
 
 _runtime_version.ValidateProtobufRuntimeVersion(
-    _runtime_version.Domain.PUBLIC, 5, 29, 0, "", "supervisor/v1/supervisor.proto"
+    _runtime_version.Domain.PUBLIC, 6, 33, 5, "", "supervisor/v1/supervisor.proto"
 )
 _sym_db = _symbol_database.Default()
 from google.protobuf import empty_pb2 as google_dot_protobuf_dot_empty__pb2

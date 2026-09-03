@@ -12,14 +12,14 @@ boto3==1.41.5
 chunkr-ai==0.3.7
 colorama==0.4.6
 colorlog==6.9.0
-crawl4ai==0.9.0
+crawl4ai==0.9.3
 datasets==5.0.1
 ddgs==9.10.0
-diffusers==0.38.0
+diffusers==0.40.0
 docker==7.1.0
 fastembed==0.8.0
 google-genai==1.47.0
-grpcio==1.76.0
+grpcio==1.83.1
 httpx==0.28.1
 hydra-core==1.3.5
 ipython==9.5.0
@@ -28,7 +28,7 @@ matplotlib==3.10.6
 mcp==1.28.1
 nvidia-ml-py==13.580.82
 openai-agents==0.7.0
-openai==2.9.0
+openai==2.54.0
 opencv-python-headless==4.13.0.92
 openinference-instrumentation-openai-agents==1.3.0
 openinference-instrumentation-openai==0.1.39
@@ -42,7 +42,7 @@ peft==0.19.1
 pexpect==4.9.0
 pillow==12.3.0
 prompt-toolkit==3.0.52
-protobuf==5.29.6
+protobuf==6.33.6
 psycopg[binary]==3.2.12
 pymupdf==1.27.2.3
 python-dotenv==1.2.2
@@ -52,8 +52,8 @@ sqlalchemy==2.0.44
 sqlmodel==0.0.27
 tiktoken==0.12.0
 toml==0.10.2
-torch==2.11.0
-transformers==5.16.1
+torch==2.13.0
+transformers==5.14.1
 trl==1.6.0
 websocket-client==1.9.0
 wikipedia-api==0.8.1

@@ -23,7 +23,7 @@ spec:
       identifier: google/vit-base-patch16-224
 
   data:
-    dataset_name: cifar10
+    dataset_name: uoft-cs/cifar10
     split: "train[:5%]"
     eval_split: "test[:5%]"
     image_column: img
