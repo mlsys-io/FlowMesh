@@ -11,6 +11,7 @@ from typing import Any
 
 import pytest
 
+pytest.importorskip("vllm", reason="vllm not installed")
 pytest.importorskip("vllm_omni", reason="vllm-omni not installed")
 
 from vllm.outputs import CompletionOutput, RequestOutput  # noqa: E402
