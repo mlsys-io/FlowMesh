@@ -176,6 +176,7 @@ class OmniText2GeneralExecutor(OmniExecutorBase):
         ):
             for idx, entry in enumerate(audio_results):
                 rid = str(entry.get("request_id") or f"req_{idx + 1}")
+                prompt_index = _prompt_index_from_request_id(rid)
                 audio_obj = entry.get("audio")
                 save_path = self.resolve_save_path(
                     cfg,
@@ -187,11 +188,16 @@ class OmniText2GeneralExecutor(OmniExecutorBase):
                 )
                 save_path.parent.mkdir(parents=True, exist_ok=True)
                 save_audio(audio_obj, save_path, sample_rate=sample_rate)
+                prompt = (
+                    texts[prompt_index]
+                    if prompt_index is not None and prompt_index < len(texts)
+                    else None
+                )
                 items.append(
                     OmniGeneralItem(
                         index=idx,
                         request_id=rid,
-                        prompt=texts[idx] if idx < len(texts) else None,
+                        prompt=prompt,
                         audio=ArtifactRef(
                             path=self.relative_to(save_path, artifacts_dir)
                         ),
@@ -251,6 +257,17 @@ class OmniText2GeneralExecutor(OmniExecutorBase):
 
 def _narration_cfg(spec_dict: dict[str, Any]) -> dict[str, Any]:
     return OmniExecutorBase.omni_cfg(spec_dict, "omni:narration", "omni_text2general")
+
+
+def _prompt_index_from_request_id(request_id: str) -> int | None:
+    """Recover the source prompt index from a vllm_omni request id.
+
+    Request ids are built as ``f"{prompt_index}_{uuid4}"``, so the input prompt
+    is correlated by id rather than by output position — one request can emit
+    multiple audio chunks, breaking any positional pairing.
+    """
+    head = request_id.split("_", 1)[0]
+    return int(head) if head.isdigit() else None
 
 
 def _parse_modalities(value: Any) -> list[str]:

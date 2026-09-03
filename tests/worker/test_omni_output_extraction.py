@@ -11,6 +11,7 @@ from worker.executors.omni_executor_base import (
     extract_multimodal_output,
 )
 from worker.executors.omni_text2audio_executor import _extract_audio_waveforms
+from worker.executors.omni_text2general_executor import _prompt_index_from_request_id
 
 
 class MappingPayload(Mapping[str, Any]):
@@ -147,3 +148,26 @@ def test_text2general_extracts_mapping_payload_model_outputs() -> None:
         "audio": [[0.1, -0.1]],
         "sample_rate": 24000,
     }
+
+
+def test_prompt_index_parses_leading_segment() -> None:
+    assert _prompt_index_from_request_id("0_f47ac10b-58cc") == 0
+    assert _prompt_index_from_request_id("3_deadbeef") == 3
+
+
+def test_prompt_index_is_none_for_unindexed_request_id() -> None:
+    assert _prompt_index_from_request_id("req_1") is None
+    assert _prompt_index_from_request_id("f47ac10b") is None
+    assert _prompt_index_from_request_id("") is None
+
+
+def test_prompt_index_correlates_chunks_to_source_prompt() -> None:
+    texts = ["first prompt", "second prompt"]
+    request_ids = ["0_uuidA", "0_uuidA", "1_uuidB"]
+
+    prompts = [
+        texts[idx] if (idx := _prompt_index_from_request_id(rid)) is not None else None
+        for rid in request_ids
+    ]
+
+    assert prompts == ["first prompt", "first prompt", "second prompt"]
