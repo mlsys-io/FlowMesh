@@ -176,7 +176,6 @@ class OmniText2GeneralExecutor(OmniExecutorBase):
         ):
             for idx, entry in enumerate(audio_results):
                 rid = str(entry.get("request_id") or f"req_{idx + 1}")
-                prompt_index = _prompt_index_from_request_id(rid)
                 audio_obj = entry.get("audio")
                 save_path = self.resolve_save_path(
                     cfg,
@@ -188,16 +187,11 @@ class OmniText2GeneralExecutor(OmniExecutorBase):
                 )
                 save_path.parent.mkdir(parents=True, exist_ok=True)
                 save_audio(audio_obj, save_path, sample_rate=sample_rate)
-                prompt = (
-                    texts[prompt_index]
-                    if prompt_index is not None and prompt_index < len(texts)
-                    else None
-                )
                 items.append(
                     OmniGeneralItem(
                         index=idx,
                         request_id=rid,
-                        prompt=prompt,
+                        prompt=_prompt_for_request_id(rid, texts),
                         audio=ArtifactRef(
                             path=self.relative_to(save_path, artifacts_dir)
                         ),
@@ -267,7 +261,15 @@ def _prompt_index_from_request_id(request_id: str) -> int | None:
     multiple audio chunks, breaking any positional pairing.
     """
     head = request_id.split("_", 1)[0]
-    return int(head) if head.isdigit() else None
+    return int(head) if head.isdecimal() else None
+
+
+def _prompt_for_request_id(request_id: str, texts: list[str]) -> str | None:
+    """Return the input prompt that produced ``request_id``, or ``None``."""
+    idx = _prompt_index_from_request_id(request_id)
+    if idx is None or idx >= len(texts):
+        return None
+    return texts[idx]
 
 
 def _parse_modalities(value: Any) -> list[str]:

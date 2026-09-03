@@ -11,7 +11,10 @@ from worker.executors.omni_executor_base import (
     extract_multimodal_output,
 )
 from worker.executors.omni_text2audio_executor import _extract_audio_waveforms
-from worker.executors.omni_text2general_executor import _prompt_index_from_request_id
+from worker.executors.omni_text2general_executor import (
+    _prompt_for_request_id,
+    _prompt_index_from_request_id,
+)
 
 
 class MappingPayload(Mapping[str, Any]):
@@ -161,13 +164,17 @@ def test_prompt_index_is_none_for_unindexed_request_id() -> None:
     assert _prompt_index_from_request_id("") is None
 
 
-def test_prompt_index_correlates_chunks_to_source_prompt() -> None:
+def test_prompt_for_request_id_correlates_chunks_to_source_prompt() -> None:
     texts = ["first prompt", "second prompt"]
     request_ids = ["0_uuidA", "0_uuidA", "1_uuidB"]
 
-    prompts = [
-        texts[idx] if (idx := _prompt_index_from_request_id(rid)) is not None else None
-        for rid in request_ids
-    ]
+    prompts = [_prompt_for_request_id(rid, texts) for rid in request_ids]
 
     assert prompts == ["first prompt", "first prompt", "second prompt"]
+
+
+def test_prompt_for_request_id_is_none_when_uncorrelated() -> None:
+    texts = ["only prompt"]
+
+    assert _prompt_for_request_id("5_uuid", texts) is None
+    assert _prompt_for_request_id("req_1", texts) is None
