@@ -264,11 +264,28 @@ def _prompt_index_from_request_id(request_id: str) -> int | None:
     return int(head) if head.isdecimal() else None
 
 
-def _prompt_for_request_id(request_id: str, texts: list[str]) -> str | None:
-    """Return the input prompt that produced ``request_id``, or ``None``."""
+def _prompt_for_request_id(request_id: str, texts: list[str]) -> str:
+    """Return the input prompt that produced ``request_id``.
+
+    vllm_omni tags each request id as ``f"{prompt_index}_{uuid4}"``, so the
+    leading segment indexes ``texts``. The index is guaranteed present and in
+    range by construction (ids span ``range(len(prompts))``); a violation means
+    an upstream contract change, which fails the task rather than emitting a
+    mislabeled prompt.
+    """
     idx = _prompt_index_from_request_id(request_id)
     if idx is None or idx >= len(texts):
-        return None
+        logger.error(
+            "omni_text2general could not correlate an audio output to a prompt: "
+            "request id %r has no valid prompt index in [0, %d)",
+            request_id,
+            len(texts),
+        )
+        raise ExecutionError(
+            f"omni_text2general could not correlate an audio output to its "
+            f"prompt: request id {request_id!r} carries no valid prompt index "
+            f"(expected '<i>_<uuid>' with 0 <= i < {len(texts)})."
+        )
     return texts[idx]
 
 

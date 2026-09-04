@@ -75,7 +75,7 @@ class OmniGeneralItem(StrictModel):
 
     index: int
     request_id: str
-    prompt: str | None = None
+    prompt: str
     audio: ArtifactRef
     text: str | None = None
 

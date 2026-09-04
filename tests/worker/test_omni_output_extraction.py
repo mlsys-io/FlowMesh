@@ -5,6 +5,7 @@ from typing import Any, cast
 
 import pytest
 
+from worker.executors.base_executor import ExecutionError
 from worker.executors.omni_executor_base import (
     OmniRequestOutput,
     extract_audio_from_mm,
@@ -173,8 +174,10 @@ def test_prompt_for_request_id_correlates_chunks_to_source_prompt() -> None:
     assert prompts == ["first prompt", "first prompt", "second prompt"]
 
 
-def test_prompt_for_request_id_is_none_when_uncorrelated() -> None:
+def test_prompt_for_request_id_raises_when_uncorrelated() -> None:
     texts = ["only prompt"]
 
-    assert _prompt_for_request_id("5_uuid", texts) is None
-    assert _prompt_for_request_id("req_1", texts) is None
+    with pytest.raises(ExecutionError):
+        _prompt_for_request_id("5_uuid", texts)  # index out of range
+    with pytest.raises(ExecutionError):
+        _prompt_for_request_id("req_1", texts)  # no leading index
