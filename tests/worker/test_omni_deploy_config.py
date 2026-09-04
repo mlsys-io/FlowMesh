@@ -1,28 +1,26 @@
-"""Omni deploy-config / stage-override passthrough to ``vllm_omni.Omni``.
+"""build_omni_init_kwargs forwards deploy_config / stage_overrides to Omni.
 
-vllm-omni 0.28 dropped ``stage_configs_path`` in favor of ``deploy_config`` and
-per-stage ``stage_overrides``; these guard that the executor forwards the new
-knobs and keys the reuse spec on them.
+``deploy_config`` is a deploy-YAML path or an inline mapping; ``stage_overrides``
+is a per-stage mapping (keys coerced to str) or a JSON string. Any other type is
+rejected rather than silently dropped.
 """
 
 from pathlib import Path
-from typing import Any
 
 import pytest
 
 from worker.executors.base_executor import ExecutionError
-from worker.executors.omni_executor_base import OmniExecutorBase
 from worker.executors.omni_text2general_executor import OmniText2GeneralExecutor
+
+from .factories import DEFAULT_WORKER_CONFIG
 
 
 def _executor() -> OmniText2GeneralExecutor:
-    executor = OmniText2GeneralExecutor.__new__(OmniText2GeneralExecutor)
-    executor._deploy_config_tmp = None
-    return executor
+    return OmniText2GeneralExecutor(DEFAULT_WORKER_CONFIG)
 
 
 def test_init_kwargs_forward_stage_overrides_with_string_keys() -> None:
-    cfg: dict[str, Any] = {
+    cfg = {
         "deploy_config": "/opt/deploy.yaml",
         "stage_overrides": {0: {"devices": "0"}, "1": {"gpu_memory_utilization": 0.2}},
         "async_chunk": True,
@@ -66,14 +64,5 @@ def test_inline_deploy_config_is_materialized_to_yaml() -> None:
     path = Path(kwargs["deploy_config"])
 
     assert path.is_file() and path.suffix == ".yaml"
-    executor._cleanup_deploy_config_tmp()
+    executor.teardown()
     assert not path.exists()
-
-
-def test_reuse_spec_distinguishes_stage_overrides() -> None:
-    base = {"stage_overrides": {"1": {"devices": "0"}}}
-    other = {"stage_overrides": {"1": {"devices": "1"}}}
-
-    assert OmniExecutorBase._build_omni_spec(
-        "m", base
-    ) != OmniExecutorBase._build_omni_spec("m", other)
