@@ -260,7 +260,7 @@ def _prompt_index_from_request_id(request_id: str) -> int | None:
 
 
 def _prompt_for_request_id(request_id: str, texts: list[str]) -> str:
-    """Return the prompt at ``request_id``'s index, correlating by id not position."""
+    """Return the input prompt named by ``request_id``'s leading index."""
     idx = _prompt_index_from_request_id(request_id)
     if idx is None or idx >= len(texts):
         raise ExecutionError(
