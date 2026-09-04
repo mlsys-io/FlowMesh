@@ -254,37 +254,18 @@ def _narration_cfg(spec_dict: dict[str, Any]) -> dict[str, Any]:
 
 
 def _prompt_index_from_request_id(request_id: str) -> int | None:
-    """Recover the source prompt index from a vllm_omni request id.
-
-    Request ids are built as ``f"{prompt_index}_{uuid4}"``, so the input prompt
-    is correlated by id rather than by output position — one request can emit
-    multiple audio chunks, breaking any positional pairing.
-    """
+    """Parse the prompt index from a vllm_omni ``{index}_{uuid}`` request id."""
     head = request_id.split("_", 1)[0]
     return int(head) if head.isdecimal() else None
 
 
 def _prompt_for_request_id(request_id: str, texts: list[str]) -> str:
-    """Return the input prompt that produced ``request_id``.
-
-    vllm_omni tags each request id as ``f"{prompt_index}_{uuid4}"``, so the
-    leading segment indexes ``texts``. The index is guaranteed present and in
-    range by construction (ids span ``range(len(prompts))``); a violation means
-    an upstream contract change, which fails the task rather than emitting a
-    mislabeled prompt.
-    """
+    """Return the prompt at ``request_id``'s index, correlating by id not position."""
     idx = _prompt_index_from_request_id(request_id)
     if idx is None or idx >= len(texts):
-        logger.error(
-            "omni_text2general could not correlate an audio output to a prompt: "
-            "request id %r has no valid prompt index in [0, %d)",
-            request_id,
-            len(texts),
-        )
         raise ExecutionError(
-            f"omni_text2general could not correlate an audio output to its "
-            f"prompt: request id {request_id!r} carries no valid prompt index "
-            f"(expected '<i>_<uuid>' with 0 <= i < {len(texts)})."
+            f"omni_text2general cannot correlate audio output to a prompt: "
+            f"request id {request_id!r} has no valid prompt index."
         )
     return texts[idx]
 
