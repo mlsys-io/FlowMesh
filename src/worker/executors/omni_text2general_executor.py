@@ -191,7 +191,7 @@ class OmniText2GeneralExecutor(OmniExecutorBase):
                     OmniGeneralItem(
                         index=idx,
                         request_id=rid,
-                        prompt=texts[idx] if idx < len(texts) else None,
+                        prompt=_prompt_for_request_id(rid, texts),
                         audio=ArtifactRef(
                             path=self.relative_to(save_path, artifacts_dir)
                         ),
@@ -251,6 +251,23 @@ class OmniText2GeneralExecutor(OmniExecutorBase):
 
 def _narration_cfg(spec_dict: dict[str, Any]) -> dict[str, Any]:
     return OmniExecutorBase.omni_cfg(spec_dict, "omni:narration", "omni_text2general")
+
+
+def _prompt_index_from_request_id(request_id: str) -> int | None:
+    """Parse the prompt index from a vllm_omni ``{index}_{uuid}`` request id."""
+    head = request_id.split("_", 1)[0]
+    return int(head) if head.isdecimal() else None
+
+
+def _prompt_for_request_id(request_id: str, texts: list[str]) -> str:
+    """Return the input prompt named by ``request_id``'s leading index."""
+    idx = _prompt_index_from_request_id(request_id)
+    if idx is None or idx >= len(texts):
+        raise ExecutionError(
+            f"omni_text2general cannot correlate audio output to a prompt: "
+            f"request id {request_id!r} has no valid prompt index."
+        )
+    return texts[idx]
 
 
 def _parse_modalities(value: Any) -> list[str]:
