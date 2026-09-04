@@ -77,7 +77,7 @@ class OmniExecutorBase(InferenceMixin, Executor):
         self._omni: Omni | None = None
         self._model_name: str | None = None
         self._omni_spec: tuple[Any, ...] | None = None
-        self._stage_configs_tmp: Path | None = None
+        self._deploy_config_tmp: Path | None = None
 
     @classmethod
     def is_available(cls, config: WorkerConfig) -> bool:
@@ -131,7 +131,7 @@ class OmniExecutorBase(InferenceMixin, Executor):
                 )
                 pass
             release_gpu_memory()
-        self._cleanup_stage_configs_tmp()
+        self._cleanup_deploy_config_tmp()
 
     @staticmethod
     def _build_omni_spec(model_name: str, cfg: dict[str, Any]) -> tuple[Any, ...]:
@@ -139,40 +139,54 @@ class OmniExecutorBase(InferenceMixin, Executor):
 
         Two tasks with matching specs can safely share an ``Omni`` instance.
         """
-        stage_configs = cfg.get("stage_configs")
-        stage_configs_key = (
-            json.dumps(stage_configs, sort_keys=True)
-            if isinstance(stage_configs, dict)
-            else None
+        deploy_config = cfg.get("deploy_config")
+        deploy_config_key = (
+            json.dumps(deploy_config, sort_keys=True)
+            if isinstance(deploy_config, dict)
+            else deploy_config
+        )
+        stage_overrides = cfg.get("stage_overrides")
+        stage_overrides_key = (
+            json.dumps(stage_overrides, sort_keys=True)
+            if isinstance(stage_overrides, dict)
+            else stage_overrides
         )
         return (
             model_name,
-            stage_configs_key,
+            deploy_config_key,
+            stage_overrides_key,
             cfg.get("log_stats"),
             cfg.get("stage_init_timeout"),
             cfg.get("init_timeout"),
             cfg.get("async_chunk"),
         )
 
-    def _materialize_stage_configs(self, cfg: dict[str, Any]) -> str | None:
-        """Write inline ``stage_configs`` dict to a temp YAML file."""
-        self._cleanup_stage_configs_tmp()
-        stage_configs = cfg.get("stage_configs")
-        if not isinstance(stage_configs, dict):
+    def _materialize_deploy_config(self, cfg: dict[str, Any]) -> str | None:
+        """Resolve ``deploy_config`` to a path.
+
+        A string is treated as an existing deploy-YAML path; an inline dict is
+        written to a temp YAML so a workflow can carry a custom pipeline layout
+        without shipping a file into the worker.
+        """
+        self._cleanup_deploy_config_tmp()
+        deploy_config = cfg.get("deploy_config")
+        if isinstance(deploy_config, str):
+            return deploy_config or None
+        if not isinstance(deploy_config, dict):
             return None
-        fd, path = tempfile.mkstemp(prefix="omni_stage_configs_", suffix=".yaml")
+        fd, path = tempfile.mkstemp(prefix="omni_deploy_config_", suffix=".yaml")
         try:
             with os.fdopen(fd, "w") as f:
-                yaml.safe_dump(stage_configs, f)
+                yaml.safe_dump(deploy_config, f)
         except Exception:
             Path(path).unlink(missing_ok=True)
             raise
-        self._stage_configs_tmp = Path(path)
+        self._deploy_config_tmp = Path(path)
         return path
 
-    def _cleanup_stage_configs_tmp(self) -> None:
-        path = self._stage_configs_tmp
-        self._stage_configs_tmp = None
+    def _cleanup_deploy_config_tmp(self) -> None:
+        path = self._deploy_config_tmp
+        self._deploy_config_tmp = None
         if path is not None:
             path.unlink(missing_ok=True)
 
@@ -271,9 +285,17 @@ class OmniExecutorBase(InferenceMixin, Executor):
     ) -> dict[str, Any]:
         """Build kwargs for instantiating ``vllm_omni.Omni``."""
         init_kwargs: dict[str, Any] = {"model": model_name}
-        stage_configs_path = self._materialize_stage_configs(cfg)
-        if stage_configs_path is not None:
-            init_kwargs["stage_configs_path"] = stage_configs_path
+        deploy_config_path = self._materialize_deploy_config(cfg)
+        if deploy_config_path is not None:
+            init_kwargs["deploy_config"] = deploy_config_path
+        stage_overrides = cfg.get("stage_overrides")
+        if isinstance(stage_overrides, dict) and stage_overrides:
+            init_kwargs["stage_overrides"] = {
+                str(stage_id): overrides
+                for stage_id, overrides in stage_overrides.items()
+            }
+        elif isinstance(stage_overrides, str) and stage_overrides:
+            init_kwargs["stage_overrides"] = stage_overrides
         if cfg.get("log_stats") is not None:
             init_kwargs["log_stats"] = to_bool(cfg.get("log_stats"), default=False)
         if cfg.get("async_chunk") is not None:
