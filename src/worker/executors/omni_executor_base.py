@@ -170,10 +170,15 @@ class OmniExecutorBase(InferenceMixin, Executor):
         """
         self._cleanup_deploy_config_tmp()
         deploy_config = cfg.get("deploy_config")
+        if deploy_config is None:
+            return None
         if isinstance(deploy_config, str):
             return deploy_config or None
         if not isinstance(deploy_config, dict):
-            return None
+            raise ExecutionError(
+                "omni deploy_config must be a deploy-YAML path or an inline "
+                f"mapping, got {type(deploy_config).__name__}."
+            )
         fd, path = tempfile.mkstemp(prefix="omni_deploy_config_", suffix=".yaml")
         try:
             with os.fdopen(fd, "w") as f:
@@ -189,6 +194,22 @@ class OmniExecutorBase(InferenceMixin, Executor):
         self._deploy_config_tmp = None
         if path is not None:
             path.unlink(missing_ok=True)
+
+    @staticmethod
+    def _resolve_stage_overrides(cfg: dict[str, Any]) -> dict[str, Any] | str | None:
+        """Normalize ``stage_overrides`` to the mapping or JSON string that
+        ``vllm_omni``'s ``parse_stage_overrides`` accepts (mapping keys to str)."""
+        stage_overrides = cfg.get("stage_overrides")
+        if stage_overrides is None:
+            return None
+        if isinstance(stage_overrides, str):
+            return stage_overrides or None
+        if isinstance(stage_overrides, dict):
+            return {str(k): v for k, v in stage_overrides.items()} or None
+        raise ExecutionError(
+            "omni stage_overrides must be a per-stage mapping or JSON string, "
+            f"got {type(stage_overrides).__name__}."
+        )
 
     def teardown(self) -> None:
         self._close_omni()
@@ -288,13 +309,8 @@ class OmniExecutorBase(InferenceMixin, Executor):
         deploy_config_path = self._materialize_deploy_config(cfg)
         if deploy_config_path is not None:
             init_kwargs["deploy_config"] = deploy_config_path
-        stage_overrides = cfg.get("stage_overrides")
-        if isinstance(stage_overrides, dict) and stage_overrides:
-            init_kwargs["stage_overrides"] = {
-                str(stage_id): overrides
-                for stage_id, overrides in stage_overrides.items()
-            }
-        elif isinstance(stage_overrides, str) and stage_overrides:
+        stage_overrides = self._resolve_stage_overrides(cfg)
+        if stage_overrides is not None:
             init_kwargs["stage_overrides"] = stage_overrides
         if cfg.get("log_stats") is not None:
             init_kwargs["log_stats"] = to_bool(cfg.get("log_stats"), default=False)

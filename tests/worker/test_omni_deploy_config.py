@@ -8,6 +8,9 @@ knobs and keys the reuse spec on them.
 from pathlib import Path
 from typing import Any
 
+import pytest
+
+from worker.executors.base_executor import ExecutionError
 from worker.executors.omni_executor_base import OmniExecutorBase
 from worker.executors.omni_text2general_executor import OmniText2GeneralExecutor
 
@@ -44,6 +47,15 @@ def test_init_kwargs_omit_absent_knobs() -> None:
     kwargs = _executor().build_omni_init_kwargs("Qwen/Qwen3-Omni", {})
 
     assert kwargs == {"model": "Qwen/Qwen3-Omni"}
+
+
+def test_ill_typed_knobs_fail_fast_rather_than_silently_drop() -> None:
+    executor = _executor()
+
+    with pytest.raises(ExecutionError):
+        executor.build_omni_init_kwargs("m", {"deploy_config": ["not", "a", "path"]})
+    with pytest.raises(ExecutionError):
+        executor.build_omni_init_kwargs("m", {"stage_overrides": 3})
 
 
 def test_inline_deploy_config_is_materialized_to_yaml() -> None:
