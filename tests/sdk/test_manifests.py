@@ -312,6 +312,15 @@ class TestShippedAssets:
         ]
         assert claim["spec"]["storageClassName"] == "fast"
 
+    def test_redis_volumes_are_labelled_for_cleanup(self) -> None:
+        """`clean` selects volumes by label; controller-made claims need it too."""
+        for name in ("flowmesh-redis-control", "flowmesh-redis-telemetry"):
+            statefulset = _by_kind(self._documents())[("StatefulSet", name)]
+            claim = statefulset["spec"]["volumeClaimTemplates"][0]
+            assert (
+                claim["metadata"]["labels"]["app.kubernetes.io/part-of"] == "flowmesh"
+            )
+
     def test_redis_keeps_the_pubsub_buffer_limit(self) -> None:
         statefulset = _by_kind(self._documents())[
             ("StatefulSet", "flowmesh-redis-control")

@@ -119,6 +119,8 @@ spec:
   volumeClaimTemplates:
     - metadata:
         name: data
+        labels:
+          app.kubernetes.io/part-of: flowmesh
       spec:
         accessModes: ["ReadWriteOnce"]
         storageClassName:
@@ -191,6 +193,8 @@ spec:
   volumeClaimTemplates:
     - metadata:
         name: data
+        labels:
+          app.kubernetes.io/part-of: flowmesh
       spec:
         accessModes: ["ReadWriteOnce"]
         storageClassName:
