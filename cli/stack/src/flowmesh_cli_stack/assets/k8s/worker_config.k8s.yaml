@@ -1,0 +1,26 @@
+# Worker configuration for the Kubernetes backend. Point SERVER_WORKER_CONFIG
+# at a copy of this file and adjust the pools to match your cluster.
+default_worker_config:
+  image_pull_policy: IfNotPresent
+
+workers:
+  - provider: kubernetes
+    init_on_start: true
+    worker_config:
+      worker_type: cpu
+      cpu_request: "2"
+      memory_request: 8Gi
+
+  - provider: kubernetes
+    init_on_start: false
+    worker_config:
+      worker_type: gpu
+      gpu_count: 1
+      # Torch dataloaders need more than the 64Mi default /dev/shm.
+      shm_size: 8Gi
+      node_selector:
+        nvidia.com/gpu.present: "true"
+      tolerations:
+        - key: nvidia.com/gpu
+          operator: Exists
+          effect: NoSchedule
