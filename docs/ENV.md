@@ -109,3 +109,28 @@ cap)`. A task that requests more than the worker cap is dispatched to
 another worker if one has a larger cap; otherwise the dispatcher
 follows its standard requeue/retry behavior. The worker logs a startup
 warning if SSH is enabled with no cap configured.
+
+## Kubernetes backend
+
+Used when `STACK_BACKEND=k8s`. See [`KUBERNETES.md`](KUBERNETES.md).
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `STACK_BACKEND` | `compose` | Stack backend: `compose` or `k8s`. |
+| `K8S_NAMESPACE` | `flowmesh` | Namespace the stack is deployed into. |
+| `K8S_WORKER_NAMESPACE` | `K8S_NAMESPACE` | Namespace for worker pods. |
+| `K8S_CONTEXT` | current | kubectl context to target. |
+| `K8S_KUBECONFIG` | default | kubeconfig file to use. |
+| `K8S_SUPERVISOR_SERVICE` | `flowmesh-supervisor` | Headless Service workers dial for gRPC. |
+| `K8S_SERVER_SERVICE` | `flowmesh-server` | Service workers use for artifact transfer. |
+| `K8S_CLUSTER_DOMAIN` | `cluster.local` | Cluster DNS domain. |
+| `K8S_GPU_RESOURCE_NAME` | `nvidia.com/gpu` | Extended resource requested for GPU workers. |
+| `K8S_SERVER_SERVICE_TYPE` | `ClusterIP` | `ClusterIP`, `NodePort`, or `LoadBalancer`. |
+| `K8S_IMAGE_PULL_POLICY` | `IfNotPresent` | Pull policy for the server image. |
+| `K8S_STORAGE_CLASS` | cluster default | Storage class for stack volumes. |
+| `K8S_REDIS_STORAGE_SIZE` | `8Gi` | Size of each Redis volume. |
+| `K8S_RESULTS_STORAGE_SIZE` | `20Gi` | Size of the server results volume. |
+| `K8S_RESULTS_ACCESS_MODE` | `ReadWriteOnce` | Access mode for the results volume. |
+| `K8S_ENABLE_NODE_RBAC` | `false` | Grant cluster-scoped node reads for pre-start hardware reporting. |
+| `SERVER_GRPC_TLS_SECRET` | — | Secret holding the server gRPC TLS files. |
+| `REDIS_TLS_SECRET` | — | Secret holding the Redis TLS files. |

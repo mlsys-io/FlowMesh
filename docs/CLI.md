@@ -95,6 +95,21 @@ flowmesh stack worker up cpu 2 --name-template '{slug}-run-{idx}'  # {slug}-run-
 The template must keep names unique within one `up` invocation — include
 `{idx}` or `{gpu}` when creating more than one worker.
 
+### Kubernetes backend
+
+`--backend k8s` targets a Kubernetes cluster instead of the local Docker
+daemon; `STACK_BACKEND=k8s` in the env file makes the flag unnecessary. It
+applies to `up`, `down`, `restart`, `logs`, `ps`, and `clean`.
+
+```bash
+flowmesh stack up --backend k8s      # apply manifests, wait for rollout
+flowmesh stack ps --backend k8s      # stack pods and worker pods
+flowmesh stack down --backend k8s
+```
+
+`build`, `push`, `pull`, and `pullall` remain Docker-only — each node's kubelet
+pulls images itself. See [`KUBERNETES.md`](KUBERNETES.md).
+
 `flowmesh stack up` reads `NODE_ROLE` from the env file (default `root`). On a
 root node, both local Redis services are deployed alongside the server. On a
 worker node (`NODE_ROLE=worker`), Redis services are skipped — the worker
