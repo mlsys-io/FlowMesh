@@ -107,6 +107,21 @@ SERVER_CUDA_PROBE_IMAGE: str = os.getenv(
 )
 DOCKER_GPU_RUNTIME: str | None = os.getenv("DOCKER_GPU_RUNTIME", "").strip() or None
 
+K8S_NAMESPACE: str = (
+    os.getenv("K8S_NAMESPACE") or os.getenv("POD_NAMESPACE") or "default"
+).strip()
+K8S_WORKER_NAMESPACE: str = (
+    os.getenv("K8S_WORKER_NAMESPACE") or ""
+).strip() or K8S_NAMESPACE
+K8S_SUPERVISOR_SERVICE: str = (
+    os.getenv("K8S_SUPERVISOR_SERVICE") or "flowmesh-supervisor"
+).strip()
+K8S_SERVER_SERVICE: str = (os.getenv("K8S_SERVER_SERVICE") or "flowmesh-server").strip()
+K8S_CLUSTER_DOMAIN: str = (os.getenv("K8S_CLUSTER_DOMAIN") or "cluster.local").strip()
+K8S_GPU_RESOURCE_NAME: str = (
+    os.getenv("K8S_GPU_RESOURCE_NAME") or "nvidia.com/gpu"
+).strip()
+
 WORKER_CONFIG_PATH: str = os.getenv("WORKER_CONFIG_PATH", "configs/worker_config.yaml")
 CUDA_VISIBLE_DEVICES: str | None = os.getenv("CUDA_VISIBLE_DEVICES")
 if CUDA_VISIBLE_DEVICES is not None:
