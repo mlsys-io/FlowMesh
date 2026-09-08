@@ -6,11 +6,12 @@ docker==7.1.0
 fastapi==0.136.1
 grpcio==1.83.1
 httpx==0.28.1
+kubernetes==36.0.3
 lumid-hooks==0.2.0
 protobuf==6.33.6
 pydantic==2.12.3
 python-multipart==0.0.32
-pyyaml==6.0.2
+pyyaml==6.0.3
 redis==7.0.1
 requests==2.33.1
 uvicorn[standard]==0.32.1
