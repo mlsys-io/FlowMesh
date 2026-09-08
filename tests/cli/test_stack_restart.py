@@ -14,15 +14,20 @@ def _restart(
     env_file: Path = Path(".env"),
     image_tag: str | None = None,
     pull: bool = True,
+    backend: str | None = None,
 ) -> None:
     stack_module.restart(
-        services=services, env_file=env_file, image_tag=image_tag, pull=pull
+        services=services,
+        env_file=env_file,
+        image_tag=image_tag,
+        pull=pull,
+        backend=backend,
     )
 
 
 def test_restart_server_drains_then_recreates_only_server() -> None:
     with (
-        patch.object(stack_module, "_drain_workers") as drain,
+        patch.object(stack_module, "drain_workers") as drain,
         patch.object(stack_module, "_compose") as compose,
         patch.object(stack_module, "_node_role", return_value=NodeRole.ROOT),
         patch.object(stack_module, "image_env_overrides", return_value={}),
@@ -38,7 +43,7 @@ def test_restart_server_drains_then_recreates_only_server() -> None:
 
 def test_restart_multiple_services_drains_once_and_recreates_all() -> None:
     with (
-        patch.object(stack_module, "_drain_workers") as drain,
+        patch.object(stack_module, "drain_workers") as drain,
         patch.object(stack_module, "_compose") as compose,
         patch.object(stack_module, "_node_role", return_value=NodeRole.ROOT),
         patch.object(stack_module, "image_env_overrides", return_value={}),
@@ -56,7 +61,7 @@ def test_restart_multiple_services_drains_once_and_recreates_all() -> None:
 
 def test_restart_dedupes_repeated_services() -> None:
     with (
-        patch.object(stack_module, "_drain_workers"),
+        patch.object(stack_module, "drain_workers"),
         patch.object(stack_module, "_compose") as compose,
         patch.object(stack_module, "_node_role", return_value=NodeRole.ROOT),
         patch.object(stack_module, "image_env_overrides", return_value={}),
@@ -69,7 +74,7 @@ def test_restart_dedupes_repeated_services() -> None:
 
 def test_restart_no_pull_omits_pull_flag() -> None:
     with (
-        patch.object(stack_module, "_drain_workers"),
+        patch.object(stack_module, "drain_workers"),
         patch.object(stack_module, "_compose") as compose,
         patch.object(stack_module, "_node_role", return_value=NodeRole.ROOT),
         patch.object(stack_module, "image_env_overrides", return_value={}),
@@ -81,7 +86,7 @@ def test_restart_no_pull_omits_pull_flag() -> None:
 
 def test_restart_redis_service_does_not_drain_workers() -> None:
     with (
-        patch.object(stack_module, "_drain_workers") as drain,
+        patch.object(stack_module, "drain_workers") as drain,
         patch.object(stack_module, "_compose"),
         patch.object(stack_module, "_node_role", return_value=NodeRole.ROOT),
         patch.object(stack_module, "image_env_overrides", return_value={}),
@@ -93,7 +98,7 @@ def test_restart_redis_service_does_not_drain_workers() -> None:
 
 def test_restart_unknown_service_exits_without_acting() -> None:
     with (
-        patch.object(stack_module, "_drain_workers") as drain,
+        patch.object(stack_module, "drain_workers") as drain,
         patch.object(stack_module, "_compose") as compose,
     ):
         with pytest.raises(typer.Exit):
@@ -105,7 +110,7 @@ def test_restart_unknown_service_exits_without_acting() -> None:
 
 def test_restart_unknown_in_a_set_exits_without_acting() -> None:
     with (
-        patch.object(stack_module, "_drain_workers") as drain,
+        patch.object(stack_module, "drain_workers") as drain,
         patch.object(stack_module, "_compose") as compose,
     ):
         with pytest.raises(typer.Exit):

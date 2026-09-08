@@ -98,6 +98,15 @@ def stack_node_client(
     return NodeClient(resolved_base, token=resolved_token)
 
 
+def drain_workers(env_file: Path) -> None:
+    """Destroy all dynamically spawned workers before stopping the server."""
+    try:
+        client = stack_node_client(env_file, base_url=None, token=None)
+        client.destroy_all_workers()
+    except Exception as exc:
+        logging.warning(f"Unable to drain workers; continuing shutdown. {exc}")
+
+
 def flowmesh_client(
     env_file: Path, base_url: str | None, api_key: str | None
 ) -> FlowMesh:

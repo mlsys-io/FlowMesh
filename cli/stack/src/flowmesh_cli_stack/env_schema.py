@@ -126,6 +126,74 @@ STACK_ENV_SCHEMA = EnvSchema(
             ],
         ),
         EnvSection(
+            title="Kubernetes Backend",
+            description=[
+                "Used when STACK_BACKEND=k8s. The stack is deployed into one",
+                "namespace; the Kubernetes scheduler places workers across nodes.",
+                "A gRPC TLS certificate must carry the supervisor Service name",
+                "as a SAN, since workers dial the Service, not a host.",
+            ],
+            vars=[
+                EnvVar(
+                    "STACK_BACKEND",
+                    "compose",
+                    var_type=EnvVarType.ENUM,
+                    choices=("compose", "k8s"),
+                ),
+                EnvVar("K8S_NAMESPACE", "flowmesh"),
+                EnvVar(
+                    "K8S_WORKER_NAMESPACE",
+                    description=[
+                        "Namespace for worker pods; defaults to K8S_NAMESPACE."
+                    ],
+                ),
+                EnvVar(
+                    "K8S_CONTEXT", description=["kubectl context; empty uses current."]
+                ),
+                EnvVar(
+                    "K8S_KUBECONFIG",
+                    description=["kubeconfig path; empty uses default."],
+                ),
+                EnvVar("K8S_SUPERVISOR_SERVICE", "flowmesh-supervisor"),
+                EnvVar("K8S_SERVER_SERVICE", "flowmesh-server"),
+                EnvVar("K8S_CLUSTER_DOMAIN", "cluster.local"),
+                EnvVar("K8S_GPU_RESOURCE_NAME", "nvidia.com/gpu"),
+                EnvVar(
+                    "K8S_SERVER_SERVICE_TYPE",
+                    "ClusterIP",
+                    var_type=EnvVarType.ENUM,
+                    choices=("ClusterIP", "NodePort", "LoadBalancer"),
+                ),
+                EnvVar("K8S_IMAGE_PULL_POLICY", "IfNotPresent"),
+                EnvVar(
+                    "K8S_STORAGE_CLASS",
+                    description=[
+                        "Storage class for stack volumes; empty uses default."
+                    ],
+                ),
+                EnvVar("K8S_REDIS_STORAGE_SIZE", "8Gi"),
+                EnvVar("K8S_RESULTS_STORAGE_SIZE", "20Gi"),
+                EnvVar("K8S_RESULTS_ACCESS_MODE", "ReadWriteOnce"),
+                EnvVar(
+                    "K8S_ENABLE_NODE_RBAC",
+                    "false",
+                    var_type=EnvVarType.BOOL,
+                    description=[
+                        "Grant cluster-scoped node read access so worker hardware",
+                        "can be reported before a worker starts.",
+                    ],
+                ),
+                EnvVar(
+                    "SERVER_GRPC_TLS_SECRET",
+                    description=["Secret holding the server gRPC TLS files."],
+                ),
+                EnvVar(
+                    "REDIS_TLS_SECRET",
+                    description=["Secret holding the Redis TLS files."],
+                ),
+            ],
+        ),
+        EnvSection(
             title="Supervisor gRPC",
             description=[
                 "Tuning for the supervisor's gRPC server and worker connections.",
