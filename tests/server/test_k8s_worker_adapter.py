@@ -8,6 +8,7 @@ import pytest
 from kubernetes.client.exceptions import ApiException
 
 from server.hooks import PrincipalContext
+from server.supervisor.adapters import kubernetes as k8s_adapter
 from server.supervisor.adapters.base import WorkerTokenType, WorkerType
 from server.supervisor.adapters.kubernetes import (
     MANAGED_LABEL,
@@ -168,6 +169,13 @@ class TestPodManifest:
         assert labels[NODE_ALIAS_LABEL] == "flowmesh_node"
         assert labels[WORKER_NAME_LABEL] == "worker-1"
 
+    def test_reaping_selector_matches_the_pod_labels(self) -> None:
+        """The reaper keys on the node alias, which survives a restart."""
+        labels = _adapter().build_pod_manifest()["metadata"]["labels"]
+
+        assert labels[MANAGED_LABEL] == "true"
+        assert NODE_ALIAS_LABEL in labels
+
     def test_pod_restarts_in_place(self) -> None:
         manifest = _adapter().build_pod_manifest()
         assert manifest["spec"]["restartPolicy"] == "Always"
@@ -296,12 +304,47 @@ class TestLifecycle:
 
     def test_start_replaces_a_terminal_pod(self) -> None:
         core = MagicMock()
-        core.read_namespaced_pod.return_value.status.phase = "Failed"
+        terminal = MagicMock()
+        terminal.status.phase = "Failed"
+        core.read_namespaced_pod.side_effect = [terminal, _api_error(404)]
         adapter = _adapter(core)
 
         assert asyncio.run(adapter.start()) is True
         core.delete_namespaced_pod.assert_called_once()
         core.create_namespaced_pod.assert_called_once()
+
+    def test_replacing_a_pod_waits_for_the_name_to_free(self) -> None:
+        """Deletion is asynchronous; reusing the name too early collides."""
+        core = MagicMock()
+        terminal = MagicMock()
+        terminal.status.phase = "Failed"
+        terminating = MagicMock()
+        terminating.status.phase = "Failed"
+        core.read_namespaced_pod.side_effect = [
+            terminal,
+            terminating,
+            _api_error(404),
+        ]
+        adapter = _adapter(core)
+
+        with patch.object(k8s_adapter, "_DELETE_POLL_SEC", 0):
+            assert asyncio.run(adapter.start()) is True
+
+        assert core.read_namespaced_pod.call_count == 3
+        core.create_namespaced_pod.assert_called_once()
+        assert core.delete_namespaced_pod.call_args.kwargs["grace_period_seconds"] == 0
+
+    def test_replacement_gives_up_when_the_pod_never_goes_away(self) -> None:
+        core = MagicMock()
+        terminal = MagicMock()
+        terminal.status.phase = "Failed"
+        core.read_namespaced_pod.return_value = terminal
+        adapter = _adapter(core)
+
+        with patch.object(k8s_adapter, "_DELETE_TIMEOUT_SEC", 0):
+            assert asyncio.run(adapter.start()) is False
+
+        core.create_namespaced_pod.assert_not_called()
 
     def test_failed_pod_creation_removes_the_orphaned_secret(self) -> None:
         core = MagicMock()

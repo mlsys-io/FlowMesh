@@ -2,6 +2,7 @@ import asyncio
 import hashlib
 import logging
 import re
+import time
 from collections import Counter
 from pathlib import PurePosixPath
 from typing import Any, get_args
@@ -31,7 +32,6 @@ PROVIDER_NAME = "kubernetes"
 
 MANAGED_LABEL = "flowmesh.io/managed"
 NODE_ALIAS_LABEL = "flowmesh.io/node-alias"
-NODE_ID_LABEL = "flowmesh.io/node-id"
 WORKER_NAME_LABEL = "flowmesh.io/worker-name"
 
 _GPU_PRODUCT_LABEL = "nvidia.com/gpu.product"
@@ -40,6 +40,8 @@ _RFC1123_INVALID_RE = re.compile(r"[^a-z0-9-]+")
 _LABEL_VALUE_INVALID_RE = re.compile(r"[^A-Za-z0-9_.-]+")
 _LABEL_VALUE_MAX_LEN = 63
 _CPU_MILLI_RE = re.compile(r"^([0-9]+)m$")
+_DELETE_TIMEOUT_SEC = 120.0
+_DELETE_POLL_SEC = 0.5
 
 logger = logging.getLogger("supervisor")
 
@@ -306,8 +308,6 @@ class KubernetesWorkerAdapter(WorkerAdapter):
             NODE_ALIAS_LABEL: sanitize_label_value(self.node_alias),
             WORKER_NAME_LABEL: sanitize_label_value(self.name),
         }
-        if worker_id := self.worker_id:
-            labels[NODE_ID_LABEL] = sanitize_label_value(worker_id)
         if self.config.pod_labels:
             labels.update(self.config.pod_labels)
         return labels
@@ -432,7 +432,9 @@ class KubernetesWorkerAdapter(WorkerAdapter):
                 self._is_started = True
                 logger.warning("Pod %s is already running.", self.pod_name)
                 return True
-            if not self._delete_pod():
+            if not self._delete_pod(grace_period_seconds=0):
+                return False
+            if not self._await_pod_deletion():
                 return False
 
         if not self._apply_secret():
@@ -497,12 +499,28 @@ class KubernetesWorkerAdapter(WorkerAdapter):
             logger.error("Failed to update secret %s: %s", self.secret_name, repr(exc))
             return False
 
-    def _delete_pod(self) -> bool:
+    def _await_pod_deletion(self) -> bool:
+        """Block until the pod name is free again.
+
+        Deletion is accepted asynchronously and the object outlives the call
+        while it terminates, so reusing the name immediately would collide.
+        """
+        deadline = time.monotonic() + _DELETE_TIMEOUT_SEC
+        while time.monotonic() < deadline:
+            if self._read_pod() is None:
+                return True
+            time.sleep(_DELETE_POLL_SEC)
+        logger.error("Pod %s was still terminating after deletion", self.pod_name)
+        return False
+
+    def _delete_pod(self, grace_period_seconds: int | None = None) -> bool:
+        if grace_period_seconds is None:
+            grace_period_seconds = self.config.stop_grace_period_sec
         try:
             self._core.delete_namespaced_pod(
                 name=self.pod_name,
                 namespace=self.config.namespace,
-                grace_period_seconds=self.config.stop_grace_period_sec,
+                grace_period_seconds=grace_period_seconds,
             )
             return True
         except ApiException as exc:
