@@ -7,6 +7,8 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import yaml
+
 from .env import parse_env_file
 from .manifests import render_manifests
 
@@ -17,6 +19,9 @@ STACK_LABEL = "app.kubernetes.io/part-of"
 """Label carried by every stack resource."""
 
 STACK_LABEL_VALUE = "flowmesh"
+
+DATA_KINDS = frozenset({"Namespace", "PersistentVolumeClaim"})
+"""Kinds a stack teardown leaves in place, so results and Redis state survive it."""
 
 
 class KubectlError(RuntimeError):
@@ -112,13 +117,24 @@ class KubernetesStack:
         return self._run(["apply", "-f", "-"], stdin=self.render(env_file))
 
     def delete(
-        self, env_file: Path, ignore_not_found: bool = True
+        self, env_file: Path, keep_data: bool = True
     ) -> subprocess.CompletedProcess[str]:
-        """Delete the resources described by the rendered stack manifests."""
-        args = ["delete", "-f", "-"]
-        if ignore_not_found:
-            args.append("--ignore-not-found")
-        return self._run(args, stdin=self.render(env_file))
+        """Delete the resources described by the rendered stack manifests.
+
+        The namespace and persistent volume claims are kept by default:
+        deleting the namespace cascades to every claim in it, which would make
+        a teardown destroy task results and Redis state. Removing them is
+        ``clean``'s job, matching what compose volumes do.
+        """
+        stream = self.render(env_file)
+        if keep_data:
+            kept = [
+                document
+                for document in yaml.safe_load_all(stream)
+                if document and document.get("kind") not in DATA_KINDS
+            ]
+            stream = yaml.safe_dump_all(kept, sort_keys=False)
+        return self._run(["delete", "-f", "-", "--ignore-not-found"], stdin=stream)
 
     def rollout_status(self, target: str, timeout: str) -> subprocess.CompletedProcess:
         """Wait for a workload to finish rolling out."""

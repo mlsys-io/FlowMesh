@@ -75,12 +75,17 @@ def apply_k8s_env(base_dir: Path) -> None:
 
     ``K8S_WORKER_NAMESPACE`` defaults to the stack namespace and
     ``SERVER_WORKER_CONFIG`` to the path the compose backend bind-mounts,
-    because manifest substitution has no nested defaults.
+    because manifest substitution has no nested defaults. The distinctness of
+    the worker namespace is precomputed for the same reason: the manifest
+    conditionals compare against a value, not against another variable.
     """
     namespace = os.environ.get("K8S_NAMESPACE", "").strip() or DEFAULT_NAMESPACE
     os.environ["K8S_NAMESPACE"] = namespace
-    if not os.environ.get("K8S_WORKER_NAMESPACE", "").strip():
-        os.environ["K8S_WORKER_NAMESPACE"] = namespace
+    worker_namespace = os.environ.get("K8S_WORKER_NAMESPACE", "").strip() or namespace
+    os.environ["K8S_WORKER_NAMESPACE"] = worker_namespace
+    os.environ["K8S_WORKER_NAMESPACE_DISTINCT"] = (
+        "true" if worker_namespace != namespace else "false"
+    )
     os.environ["SERVER_WORKER_CONFIG"] = resolve_path(
         os.environ.get("SERVER_WORKER_CONFIG", ""),
         default=DEFAULT_WORKER_CONFIG,

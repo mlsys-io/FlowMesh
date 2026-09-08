@@ -28,8 +28,12 @@ flowmesh stack down --backend k8s
 call. The same `.env` drives both backends.
 
 `flowmesh stack up` applies the namespace, RBAC, Redis, and server manifests in
-that order, then waits on each workload's rollout. `down` drains workers before
-deleting the stack; `clean` also removes its persistent volume claims.
+that order, then waits on each workload's rollout.
+
+`down` drains workers and deletes the workloads, leaving the namespace and the
+persistent volume claims in place, so task results and Redis state survive a
+teardown. `clean` does that and then removes the claims — the same split
+compose has between `down` and `down -v`.
 
 `restart` rolls the workloads in place. With `--image-tag` it applies instead,
 because a rollout restart does not change the pod template's image.
@@ -51,6 +55,10 @@ Two Services front the Deployment:
 |---------|---------|
 | `flowmesh-server` | REST API on `SERVER_HTTP_PORT`. `K8S_SERVER_SERVICE_TYPE` selects `ClusterIP`, `NodePort`, or `LoadBalancer`. |
 | `flowmesh-supervisor` | Headless; worker pods dial it for gRPC on `SERVER_GRPC_PORT`. |
+
+Setting `K8S_WORKER_NAMESPACE` to something other than `K8S_NAMESPACE` puts
+worker pods in their own namespace; that namespace and the Role binding the
+server needs in it are created alongside the stack.
 
 The whole env file is carried into the pod as the `flowmesh-server-env` Secret,
 which is the Kubernetes equivalent of compose's `env_file`. Values come from

@@ -228,6 +228,17 @@ class TestKubernetesLifecycle:
         drain.assert_not_called()
         target.rollout_restart.assert_not_called()
 
+    def test_clean_removes_volumes_after_teardown(self) -> None:
+        target = _stack()
+        with (
+            patch.object(k8s_module, "stack", return_value=target),
+            patch.object(k8s_module, "drain_workers"),
+        ):
+            k8s_module.clean(ENV_FILE)
+
+        target.delete.assert_called_once()
+        target.delete_volumes.assert_called_once()
+
     def test_ps_lists_stack_and_worker_pods(self) -> None:
         target = _stack()
         with patch.object(k8s_module, "stack", return_value=target):
@@ -275,6 +286,26 @@ class TestEnvDerivation:
         k8s_module.apply_k8s_env(tmp_path)
 
         assert k8s_module.os.environ["K8S_WORKER_NAMESPACE"] == "gpu-pool"
+
+    def test_distinct_worker_namespace_is_flagged(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        monkeypatch.setenv("K8S_NAMESPACE", "flowmesh")
+        monkeypatch.setenv("K8S_WORKER_NAMESPACE", "gpu-pool")
+
+        k8s_module.apply_k8s_env(tmp_path)
+
+        assert k8s_module.os.environ["K8S_WORKER_NAMESPACE_DISTINCT"] == "true"
+
+    def test_shared_worker_namespace_is_not_flagged(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        monkeypatch.setenv("K8S_NAMESPACE", "flowmesh")
+        monkeypatch.delenv("K8S_WORKER_NAMESPACE", raising=False)
+
+        k8s_module.apply_k8s_env(tmp_path)
+
+        assert k8s_module.os.environ["K8S_WORKER_NAMESPACE_DISTINCT"] == "false"
 
     def test_worker_config_resolves_to_an_absolute_path(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path

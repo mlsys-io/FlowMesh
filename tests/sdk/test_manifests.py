@@ -251,6 +251,26 @@ class TestShippedAssets:
     def test_namespace_is_applied_first(self) -> None:
         assert self._documents()[0]["kind"] == "Namespace"
 
+    def test_only_one_namespace_when_workers_share_it(self) -> None:
+        namespaces = [
+            doc["metadata"]["name"]
+            for doc in self._documents()
+            if doc["kind"] == "Namespace"
+        ]
+        assert namespaces == ["flowmesh"]
+
+    def test_a_separate_worker_namespace_is_created(self) -> None:
+        """RBAC is bound in the worker namespace, so it has to exist."""
+        namespaces = [
+            doc["metadata"]["name"]
+            for doc in self._documents(
+                K8S_WORKER_NAMESPACE="gpu-pool",
+                K8S_WORKER_NAMESPACE_DISTINCT="true",
+            )
+            if doc["kind"] == "Namespace"
+        ]
+        assert namespaces == ["flowmesh", "gpu-pool"]
+
     def test_root_node_ships_both_redis_workloads(self) -> None:
         names = {
             doc["metadata"]["name"]
