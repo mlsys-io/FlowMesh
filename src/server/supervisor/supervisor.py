@@ -360,6 +360,7 @@ def _run_supervisor(
         task_listener=task_listener,
         relay_service=relay_service,
         logger=logger,
+        system_principal=system_principal,
     )
 
     def _on_reregister(new_node_id: str) -> None:

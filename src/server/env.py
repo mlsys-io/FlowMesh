@@ -111,6 +111,29 @@ WORKER_HB_DIR: str = os.getenv("WORKER_HB_DIR") or os.path.join(
     tempfile.gettempdir(), "flowmesh_worker_health"
 )
 WORKER_UPLOAD_RESULTS: bool = parse_bool_env("WORKER_UPLOAD_RESULTS", False)
+
+
+# Shared secret admitting `external` provider workers -- ones this supervisor
+# does not launch (Kubernetes, systemd, nomad). Unset by default: with no secret
+# configured the external provider admits nobody, so this changes no existing
+# deployment. _FILE takes precedence and is the form to use for a mounted k8s
+# Secret, where putting the value in an env var would leak it into `kubectl
+# describe pod` and into every child process's environment.
+def _read_external_worker_token() -> str:
+    path = os.getenv("EXTERNAL_WORKER_TOKEN_FILE", "").strip()
+    if path:
+        try:
+            with open(path, encoding="utf-8") as fh:
+                return fh.read().strip()
+        except OSError:
+            # Fail CLOSED and quiet: an unreadable secret file must leave the
+            # feature off, never fall back to a weaker source.
+            return ""
+    return os.getenv("EXTERNAL_WORKER_TOKEN", "").strip()
+
+
+EXTERNAL_WORKER_TOKEN: str = _read_external_worker_token()
+
 WORKER_EXECUTOR_IDLE_CLEANUP_SEC: float = parse_float_env(
     "WORKER_EXECUTOR_IDLE_CLEANUP_SEC", 60
 )

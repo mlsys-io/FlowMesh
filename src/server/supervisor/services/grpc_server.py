@@ -17,6 +17,7 @@ from shared.grpc.supervisor.v1 import (
 from shared.utils import new_worker_id
 
 from ... import env
+from ...hooks import PrincipalContext
 from ...clients.redis import (
     WORKER_ID_SEQ_KEY,
     WORKERS_SET_KEY,
@@ -24,6 +25,11 @@ from ...clients.redis import (
     worker_key,
 )
 from ..adapters.base import WorkerAdapter, WorkerTokenType
+from ..adapters.external import (
+    ExternalWorkerConfig,
+    ExternalWorkerFactory,
+    verify_external_token,
+)
 from ..registry import WorkerRegistry
 from ..schemas import WorkerStatus
 from ..services.relay_service import RelayService
@@ -97,6 +103,7 @@ class SupervisorServicer(supervisor_pb2_grpc.SupervisorServicer):
         task_listener: TaskListener,
         relay_service: RelayService,
         logger: logging.Logger,
+        system_principal: PrincipalContext,
     ) -> None:
         self._registry = registry
         self._task_listener = task_listener
@@ -108,6 +115,11 @@ class SupervisorServicer(supervisor_pb2_grpc.SupervisorServicer):
         # Guards _node_id and the registry-vs-rehome window against concurrent
         # RegisterWorker (grpc loop thread) and rebind_node (heartbeat thread).
         self._lock = Lock()
+        #: Builds adapters for workers admitted by the external shared secret.
+        #: Constructed unconditionally because it holds no resource and touches
+        #: no daemon -- unlike the docker factory, whose constructor acquires a
+        #: client and therefore cannot exist on a dockerless host.
+        self._external_factory = ExternalWorkerFactory(system_principal)
 
     def rebind_node(self, node_id: str) -> None:
         """Re-home this node's workers under a new node id.
@@ -266,9 +278,55 @@ class SupervisorServicer(supervisor_pb2_grpc.SupervisorServicer):
     def _get_worker_from_context(
         self, context: grpc.aio.ServicerContext
     ) -> WorkerAdapter | None:
-        if token := _token_from_context(context):
+        token = _token_from_context(context)
+        if not token:
+            return None
+        if worker := self._registry.try_get(token):
+            return worker
+        #: Registry miss. Before rejecting, see whether the token proves its own
+        #: identity against the configured external shared secret.
+        #:
+        #: THIS IS THE RESTART-SURVIVAL PATH, and it is why the check lives here
+        #: rather than only in RegisterWorker. The in-process registry is the
+        #: sole record of a runtime-minted token, so a supervisor restart drops
+        #: every live worker's entry; their StreamTasks/PushEvents calls then
+        #: fail UNAUTHENTICATED forever, and because the worker's stream loops
+        #: retry RpcError unconditionally they neither recover nor exit. An
+        #: external token is verified from configuration instead, so the same
+        #: worker is re-admitted on its next call and re-attached to its
+        #: streams, with no restart and no human.
+        #:
+        #: Returns None when no secret is configured, so this is inert for
+        #: every existing deployment.
+        return self._admit_external_worker(token)
+
+    def _admit_external_worker(self, token: WorkerTokenType) -> WorkerAdapter | None:
+        """Admit a worker whose token verifies against the external secret."""
+        name = verify_external_token(token)
+        if name is None:
+            return None
+        #: A name collision means a DIFFERENT adapter already owns this name --
+        #: e.g. a docker-spawned worker called the same thing. Re-admitting over
+        #: it would hand one name two identities, so refuse and let the caller
+        #: report UNAUTHENTICATED.
+        if self._registry.exists_by_name(name):
+            self._logger.warning(
+                "Refusing external admission for %r: name already registered "
+                "under a different token",
+                name,
+            )
+            return None
+        worker = self._external_factory.create_worker(
+            token, ExternalWorkerConfig(worker_alias=name), name=name
+        )
+        try:
+            self._registry.add(worker)
+        except ValueError:
+            #: Lost a race with a concurrent admission of the same token; the
+            #: winner's adapter is the right one to use.
             return self._registry.try_get(token)
-        return None
+        self._logger.info("Admitted external worker %r by shared secret", name)
+        return worker
 
     def _get_worker_id_from_context(
         self, context: grpc.aio.ServicerContext
@@ -293,11 +351,19 @@ class GrpcServer:
         task_listener: TaskListener,
         relay_service: RelayService,
         logger: logging.Logger,
+        system_principal: PrincipalContext,
     ) -> None:
         self._logger = logger
         self._server: grpc.aio.Server | None = None
         self._servicer = SupervisorServicer(
-            registry, redis, node_id, node_alias, task_listener, relay_service, logger
+            registry,
+            redis,
+            node_id,
+            node_alias,
+            task_listener,
+            relay_service,
+            logger,
+            system_principal,
         )
         self._listen_addr = f"{host}:{port}"
 
