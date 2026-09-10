@@ -10,6 +10,8 @@ from pydantic import BaseModel, ConfigDict, Field
 from ..hooks import PrincipalContext
 from .adapters.base import ProviderSpec, WorkerAdapter, WorkerTokenType
 from .adapters.docker import get_provider_spec as docker_provider_spec
+from .adapters.external import get_provider_spec as external_provider_spec
+from .adapters.external import verify_external_token
 from .adapters.vastai import get_provider_spec as vastai_provider_spec
 from .registry import WorkerRegistry
 from .schemas import WorkerInfo, WorkerStatus
@@ -68,10 +70,20 @@ class WorkerManager:
         self._default_worker_config: dict[str, Any] | None = None
         self._is_started: bool = False
         self._capacity_change_callback = capacity_change_callback
-        specs = [
-            docker_provider_spec(system_principal),
-            vastai_provider_spec(system_principal),
-        ]
+        # External provider is always available.
+        specs = [external_provider_spec(system_principal)]
+        try:
+            specs.append(docker_provider_spec(system_principal))
+        except Exception as exc:
+            logger.warning(
+                "Docker worker provider unavailable, continuing without it: %s", exc
+            )
+        try:
+            specs.append(vastai_provider_spec(system_principal))
+        except Exception as exc:
+            logger.warning(
+                "Vast.ai worker provider unavailable, continuing without it: %s", exc
+            )
         self._providers: dict[str, ProviderSpec] = {spec.name: spec for spec in specs}
 
     @property
@@ -189,6 +201,25 @@ class WorkerManager:
                 raise RuntimeError(f"Failed to start worker '{worker.name}'")
         self._report_capacity_change()
         return worker.get_info()
+
+    async def admit_worker(self, token: WorkerTokenType) -> WorkerInfo | None:
+        if not self.is_started:
+            raise RuntimeError("WorkerManager not started")
+
+        if verify_external_token(token) is None:
+            return None
+        try:
+            # init_on_start=False: an external worker is already running, so the
+            # supervisor must not run its start lifecycle on it (that path gates
+            # on STOPPED and would reject a worker born RUNNING).
+            return await self.create_worker(
+                WorkerInitConfig(
+                    provider="external", worker_token=token, init_on_start=False
+                )
+            )
+        except ValueError as exc:
+            self.logger.warning("Failed to admit worker: %s", exc)
+            return None
 
     def list_workers(self) -> list[WorkerInfo]:
         if not self.is_started:

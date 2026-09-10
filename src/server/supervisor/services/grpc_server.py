@@ -24,6 +24,7 @@ from ...clients.redis import (
     worker_key,
 )
 from ..adapters.base import WorkerAdapter, WorkerTokenType
+from ..manager import WorkerManager
 from ..registry import WorkerRegistry
 from ..schemas import WorkerStatus
 from ..services.relay_service import RelayService
@@ -96,6 +97,7 @@ class SupervisorServicer(supervisor_pb2_grpc.SupervisorServicer):
         node_alias: str,
         task_listener: TaskListener,
         relay_service: RelayService,
+        worker_manager: WorkerManager,
         logger: logging.Logger,
     ) -> None:
         self._registry = registry
@@ -104,6 +106,7 @@ class SupervisorServicer(supervisor_pb2_grpc.SupervisorServicer):
         self._redis = redis
         self._node_id = node_id
         self._node_alias = node_alias
+        self._worker_manager = worker_manager
         self._logger = logger
         # Guards _node_id and the registry-vs-rehome window against concurrent
         # RegisterWorker (grpc loop thread) and rebind_node (heartbeat thread).
@@ -152,21 +155,28 @@ class SupervisorServicer(supervisor_pb2_grpc.SupervisorServicer):
         request: supervisor_pb2.RegisterRequest,
         context: grpc.aio.ServicerContext,
     ) -> supervisor_pb2.RegisterResponse:
-        worker = self._get_worker_from_context(context)
+        token = _token_from_context(context)
+        if not token:
+            await context.abort(grpc.StatusCode.UNAUTHENTICATED, "Invalid worker token")
+        worker = self._registry.try_get(token)
+        if worker is None:
+            # Unknown token: try admitting an external worker.
+            await self._worker_manager.admit_worker(token)
+            worker = self._registry.try_get(token)
         if worker is None:
             await context.abort(grpc.StatusCode.UNAUTHENTICATED, "Invalid worker token")
         worker_meta = _payload_from_struct(request.meta)
-        worker_id = new_worker_id(self._redis.incr(WORKER_ID_SEQ_KEY))
-        worker_meta["id"] = worker_id
-        worker_meta["node_alias"] = self._node_alias
-        # Stamp node_id, persist the record, and insert into the registry as one unit so
-        # a concurrent rebind_node either sees this worker in its snapshot or stamps it
-        # with the new id.
+        # Stamp node_id, persist the record and set the worker id as one unit so a
+        # concurrent rebind_node either sees this worker in its snapshot or stamps
+        # it with the new id.
         with self._lock:
+            worker_id = new_worker_id(self._redis.incr(WORKER_ID_SEQ_KEY))
+            worker_meta["id"] = worker_id
+            worker_meta["node_alias"] = self._node_alias
             worker_meta["node_id"] = self._node_id
             self._redis.sadd(WORKERS_SET_KEY, worker_id)
             self._redis.hash_set(worker_key(worker_id), worker_meta)
-            self._registry.set_worker_id(worker.token, worker_id)
+            self._registry.set_worker_id(token, worker_id)
         self._task_listener.add_worker(worker_id)
         try:
             worker.set_worker_id(worker_id)
@@ -292,12 +302,20 @@ class GrpcServer:
         node_alias: str,
         task_listener: TaskListener,
         relay_service: RelayService,
+        worker_manager: WorkerManager,
         logger: logging.Logger,
     ) -> None:
         self._logger = logger
         self._server: grpc.aio.Server | None = None
         self._servicer = SupervisorServicer(
-            registry, redis, node_id, node_alias, task_listener, relay_service, logger
+            registry,
+            redis,
+            node_id,
+            node_alias,
+            task_listener,
+            relay_service,
+            worker_manager,
+            logger,
         )
         self._listen_addr = f"{host}:{port}"
 
