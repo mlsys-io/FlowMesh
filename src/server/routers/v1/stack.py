@@ -6,7 +6,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 
-from shared.schemas.command import CommandErrorCode, CommandMessage, CommandType
+from shared.schemas.command import CommandMessage, CommandType
 
 from ...app_state import get_logger, get_node_id, get_supervisor
 from ...auth.security import (
@@ -19,6 +19,7 @@ from ...supervisor import WorkerSupervisor
 from ...supervisor.manager import WorkerInitConfig
 from ...supervisor.schemas import WorkerInfo
 from ...utils.misc import filter_models_by_queries
+from ._command import command_error
 
 router = APIRouter(prefix="/stack/workers", tags=["Stack"])
 
@@ -39,16 +40,7 @@ async def _exec(
             status_code=status.HTTP_504_GATEWAY_TIMEOUT, detail=str(exc)
         )
     if not resp.success:
-        if resp.error_code == CommandErrorCode.PROVIDER_UNAVAILABLE:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=resp.message
-                or "Requested worker provider is not available on this node",
-            )
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=resp.message or "Command failed",
-        )
+        raise command_error(resp)
     return resp.data or {}
 
 
