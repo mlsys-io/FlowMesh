@@ -123,7 +123,15 @@ class WorkerRegistry:
             await pipe.execute()
         return worker_id
 
+    def worker_is_registered(self, worker_id: str) -> bool:
+        return self._rds.sync.sismember(WORKERS_SET_KEY, worker_id)
+
+    async def worker_is_registered_async(self, worker_id: str) -> bool:
+        return await self._rds.asyncio.sismember(WORKERS_SET_KEY, worker_id)
+
     def update_worker_hb(self, worker_id: str, ts: str, ttl_sec: int) -> None:
+        if not self.worker_is_registered(worker_id):
+            return
         with self._rds.sync.control_pipeline() as pipe:
             pipe.setex(worker_hb_key(worker_id), ttl_sec, ts)
             pipe.hset(worker_key(worker_id), mapping={"last_seen": ts})
@@ -132,6 +140,8 @@ class WorkerRegistry:
     async def update_worker_hb_async(
         self, worker_id: str, ts: str, ttl_sec: int
     ) -> None:
+        if not await self.worker_is_registered_async(worker_id):
+            return
         async with self._rds.asyncio.control_pipeline() as pipe:
             pipe.setex(worker_hb_key(worker_id), ttl_sec, ts)
             pipe.hset(worker_key(worker_id), mapping={"last_seen": ts})
@@ -144,6 +154,8 @@ class WorkerRegistry:
         ts: str,
         extra: dict[str, Any] | None,
     ) -> None:
+        if not self.worker_is_registered(worker_id):
+            return
         mapping = {"status": status.value, "last_seen": ts}
         if extra:
             mapping.update({f"extra_{k}": str(v) for k, v in extra.items()})
@@ -158,6 +170,8 @@ class WorkerRegistry:
         ts: str,
         extra: dict[str, Any] | None = None,
     ) -> None:
+        if not await self.worker_is_registered_async(worker_id):
+            return
         mapping = {"status": status.value, "last_seen": ts}
         if extra:
             mapping.update({f"extra_{k}": str(v) for k, v in extra.items()})
@@ -238,6 +252,8 @@ class WorkerRegistry:
         return await self._rds.asyncio.exists(worker_key(worker_id))
 
     def update_worker_status(self, worker_id: str, status: WorkerStatus) -> None:
+        if not self.worker_is_registered(worker_id):
+            return
         ts = now_iso()
         payload = {
             "type": "STATUS",
@@ -255,6 +271,8 @@ class WorkerRegistry:
     async def update_worker_status_async(
         self, worker_id: str, status: WorkerStatus
     ) -> None:
+        if not await self.worker_is_registered_async(worker_id):
+            return
         ts = now_iso()
         payload = {
             "type": "STATUS",

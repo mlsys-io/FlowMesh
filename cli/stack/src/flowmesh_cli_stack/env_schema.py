@@ -438,6 +438,17 @@ STACK_ENV_SCHEMA = EnvSchema(
                     var_type=EnvVarType.INT,
                     min_value=0,
                 ),
+                EnvVar(
+                    "ENABLE_WORKER_REAPER",
+                    "true",
+                    var_type=EnvVarType.BOOL,
+                ),
+                EnvVar(
+                    "WORKER_REAP_GRACE_SEC",
+                    "900",
+                    var_type=EnvVarType.INT,
+                    min_value=0,
+                ),
             ],
         ),
         EnvSection(
