@@ -63,7 +63,7 @@ if external_worker_token_file:
         with open(external_worker_token_file, encoding="utf-8") as f:
             EXTERNAL_WORKER_TOKEN = f.read().strip()
     except OSError:
-        EXTERNAL_WORKER_TOKEN = ""
+        EXTERNAL_WORKER_TOKEN = ""  # nosec B105 empty default, not a secret
 else:
     EXTERNAL_WORKER_TOKEN = os.getenv("EXTERNAL_WORKER_TOKEN", "").strip()
 
