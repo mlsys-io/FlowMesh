@@ -91,9 +91,7 @@ class ExternalWorkerAdapter(WorkerAdapter):
             name=self.name,
             provider=_PROVIDER_NAME,
             status=self._status,
-            # The worker reports its own hardware in the register payload;
-            # inventing a profile here would feed the scheduler an unmeasured
-            # number.
+            # Externally managed workers' hardware is not known to the supervisor.
             hardware=None,
         )
 

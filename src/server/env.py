@@ -54,6 +54,19 @@ if SERVER_GRPC_TLS_CERT_FILE or SERVER_GRPC_TLS_KEY_FILE:
 else:
     SERVER_GRPC_TLS_CA_B64 = ""
 
+# `_FILE` takes precedence over the plain env var and fails closed on an
+# unreadable file. Empty or unset means the external provider admits nobody.
+EXTERNAL_WORKER_TOKEN: str
+external_worker_token_file = os.getenv("EXTERNAL_WORKER_TOKEN_FILE", "").strip()
+if external_worker_token_file:
+    try:
+        with open(external_worker_token_file, encoding="utf-8") as f:
+            EXTERNAL_WORKER_TOKEN = f.read().strip()
+    except OSError:
+        EXTERNAL_WORKER_TOKEN = ""
+else:
+    EXTERNAL_WORKER_TOKEN = os.getenv("EXTERNAL_WORKER_TOKEN", "").strip()
+
 FLOWMESH_BASE_URL: str = os.getenv("FLOWMESH_BASE_URL", "http://localhost:8000")
 FLOWMESH_API_KEY: str = os.getenv("FLOWMESH_API_KEY", "")
 
@@ -111,21 +124,6 @@ WORKER_HB_DIR: str = os.getenv("WORKER_HB_DIR") or os.path.join(
     tempfile.gettempdir(), "flowmesh_worker_health"
 )
 WORKER_UPLOAD_RESULTS: bool = parse_bool_env("WORKER_UPLOAD_RESULTS", False)
-
-
-# `_FILE` takes precedence over the plain env var and fails closed on an
-# unreadable file. Empty or unset means the external provider admits nobody.
-EXTERNAL_WORKER_TOKEN: str
-external_worker_token_file = os.getenv("EXTERNAL_WORKER_TOKEN_FILE", "").strip()
-if external_worker_token_file:
-    try:
-        with open(external_worker_token_file, encoding="utf-8") as f:
-            EXTERNAL_WORKER_TOKEN = f.read().strip()
-    except OSError:
-        EXTERNAL_WORKER_TOKEN = ""
-else:
-    EXTERNAL_WORKER_TOKEN = os.getenv("EXTERNAL_WORKER_TOKEN", "").strip()
-
 WORKER_EXECUTOR_IDLE_CLEANUP_SEC: float = parse_float_env(
     "WORKER_EXECUTOR_IDLE_CLEANUP_SEC", 60
 )
