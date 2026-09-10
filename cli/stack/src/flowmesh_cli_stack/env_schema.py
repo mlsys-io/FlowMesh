@@ -147,6 +147,17 @@ STACK_ENV_SCHEMA = EnvSchema(
                     var_type=EnvVarType.INT,
                     min_value=0,
                 ),
+                EnvVar(
+                    "EXTERNAL_WORKER_TOKEN",
+                    description="Shared secret admitting `external` workers "
+                    "(empty disables them).",
+                ),
+                EnvVar(
+                    "EXTERNAL_WORKER_TOKEN_FILE",
+                    description="File holding the secret; wins over "
+                    "EXTERNAL_WORKER_TOKEN.",
+                    var_type=EnvVarType.FILE_PATH,
+                ),
             ],
         ),
         EnvSection(
