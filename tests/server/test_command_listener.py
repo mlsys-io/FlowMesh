@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from server.supervisor.manager import ProviderUnavailableError
 from server.supervisor.services.command_listener import CommandListener
 from shared.schemas.command import (
     CommandMessage,
@@ -78,6 +79,38 @@ class TestHandleCreateWorkerCmd:
     def test_invalid_payload_returns_error(self) -> None:
         resp = self._handle(None)
         assert not resp.success
+
+    def test_provider_unavailable_sets_error_code(self) -> None:
+        self.cl._wm.create_worker = AsyncMock(  # type: ignore[method-assign]
+            side_effect=ProviderUnavailableError(
+                "Worker provider 'docker' is not available on this node; "
+                "available providers: external"
+            )
+        )
+        resp = self._handle({"provider": "docker"})
+        assert not resp.success
+        assert resp.error_code == "provider_unavailable"
+        assert "docker" in (resp.message or "")
+        assert "external" in (resp.message or "")
+
+
+# ------------------------------------------------------------------ #
+# GET_PROVIDERS
+# ------------------------------------------------------------------ #
+
+
+class TestHandleGetProvidersCmd:
+    def setup_method(self) -> None:
+        self.cl = _listener()
+
+    def test_returns_providers(self) -> None:
+        self.cl._wm.available_providers = MagicMock(  # type: ignore[method-assign]
+            return_value=["docker", "external"]
+        )
+        cmd = _cmd(CommandType.GET_PROVIDERS)
+        resp = self.cl._handle_get_providers_cmd(cmd)
+        assert resp.success
+        assert resp.data == {"providers": ["docker", "external"]}
 
 
 # ------------------------------------------------------------------ #

@@ -19,7 +19,7 @@ from shared.schemas.command import (
 from ...clients.redis import NODE_RESPONSE_CHANNEL, SyncRedisClient, node_cmd_channel
 from ...utils.concurrent import Sentinel, TaskReceiver
 from ..adapters.docker import DockerWorkerConfig
-from ..manager import WorkerInitConfig, WorkerManager
+from ..manager import ProviderUnavailableError, WorkerInitConfig, WorkerManager
 from .pubsub_reader import RebindableReader
 from .relay_uplink import RelayUplinkService
 
@@ -347,6 +347,8 @@ class CommandListener:
                 return await self._handle_create_worker_on_node_cmd(cmd)
             case CommandType.GET_WORKERS:
                 return self._handle_get_workers_cmd(cmd)
+            case CommandType.GET_PROVIDERS:
+                return self._handle_get_providers_cmd(cmd)
             case CommandType.STOP_WORKER:
                 return await self._handle_stop_worker_cmd(cmd)
             case CommandType.DESTROY_WORKER:
@@ -420,6 +422,14 @@ class CommandListener:
         except Exception as exc:
             return CommandResponse.error(cmd, f"Failed to get workers: {exc}")
 
+    def _handle_get_providers_cmd(self, cmd: CommandMessage) -> CommandResponse:
+        try:
+            return CommandResponse.ok(
+                cmd, data={"providers": self._wm.available_providers()}
+            )
+        except Exception as exc:
+            return CommandResponse.error(cmd, f"Failed to get providers: {exc}")
+
     def _handle_start_relay_cmd(self, cmd: CommandMessage) -> CommandResponse:
         if self._relay_uplink is None:
             return CommandResponse.error(cmd, "Relay uplink service not available")
@@ -455,6 +465,10 @@ class CommandListener:
                 self._wm.create_worker(init_config), timeout=_CREATE_WORKER_TIMEOUT
             )
             return CommandResponse.ok(cmd, data=info.model_dump())
+        except ProviderUnavailableError as exc:
+            return CommandResponse.error(
+                cmd, str(exc), error_code="provider_unavailable"
+            )
         except Exception as exc:
             return CommandResponse.error(cmd, f"Failed to create worker: {exc}")
 
@@ -504,6 +518,10 @@ class CommandListener:
                 self._wm.create_worker(init_config), timeout=_CREATE_WORKER_TIMEOUT
             )
             return CommandResponse.ok(cmd, data={"worker_name": info.name})
+        except ProviderUnavailableError as exc:
+            return CommandResponse.error(
+                cmd, str(exc), error_code="provider_unavailable"
+            )
         except Exception as exc:
             return CommandResponse.error(cmd, f"Failed to create worker: {exc}")
 

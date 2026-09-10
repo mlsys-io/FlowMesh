@@ -13,6 +13,7 @@ class CommandType(StrEnum):
         "CREATE_WORKER_ON_NODE"  # payload: DockerWorkerConfig + gpu_count hint
     )
     GET_WORKERS = "GET_WORKERS"
+    GET_PROVIDERS = "GET_PROVIDERS"
     STOP_WORKER = "STOP_WORKER"
     DESTROY_WORKER = "DESTROY_WORKER"  # payload: {worker_name: str}
     DESTROY_WORKERS = "DESTROY_WORKERS"  # payload: {worker_names: [str]} or null
@@ -30,6 +31,7 @@ class CommandResponse(BaseModel):
     success: bool
     message: str | None = None
     data: dict[str, Any] | None = None
+    error_code: str | None = None
 
     @classmethod
     def ok(
@@ -38,8 +40,18 @@ class CommandResponse(BaseModel):
         return cls(command_id=cmd.command_id, success=True, data=data)
 
     @classmethod
-    def error(cls, cmd: CommandMessage, message: str) -> "CommandResponse":
-        return cls(command_id=cmd.command_id, success=False, message=message)
+    def error(
+        cls,
+        cmd: CommandMessage,
+        message: str,
+        error_code: str | None = None,
+    ) -> "CommandResponse":
+        return cls(
+            command_id=cmd.command_id,
+            success=False,
+            message=message,
+            error_code=error_code,
+        )
 
 
 class InterruptMessage(BaseModel):

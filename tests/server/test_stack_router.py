@@ -17,8 +17,10 @@ def _ok(data: dict | None = None) -> CommandResponse:
     return CommandResponse(command_id="test", success=True, data=data)
 
 
-def _error(message: str = "fail") -> CommandResponse:
-    return CommandResponse(command_id="test", success=False, message=message)
+def _error(message: str = "fail", error_code: str | None = None) -> CommandResponse:
+    return CommandResponse(
+        command_id="test", success=False, message=message, error_code=error_code
+    )
 
 
 def _make_app(supervisor: MagicMock) -> FastAPI:
@@ -124,6 +126,37 @@ async def test_create_worker_fails() -> None:
         resp = await ac.post(f"{PREFIX}/stack/workers", json={"provider": "docker"})
     assert resp.status_code == 500
     assert "bad config" in resp.json()["detail"]
+
+
+@pytest.mark.anyio
+async def test_create_worker_provider_unavailable() -> None:
+    sv = _mock_supervisor(
+        _error(
+            "Worker provider 'docker' is not available on this node; "
+            "available providers: external",
+            error_code="provider_unavailable",
+        )
+    )
+    async with AsyncClient(
+        transport=ASGITransport(app=_make_app(sv)), base_url="http://t"
+    ) as ac:
+        resp = await ac.post(f"{PREFIX}/stack/workers", json={"provider": "docker"})
+    assert resp.status_code == 409
+    assert "docker" in resp.json()["detail"]
+    assert "external" in resp.json()["detail"]
+
+
+@pytest.mark.anyio
+async def test_get_providers() -> None:
+    sv = _mock_supervisor(_ok(data={"providers": ["docker", "external"]}))
+    async with AsyncClient(
+        transport=ASGITransport(app=_make_app(sv)), base_url="http://t"
+    ) as ac:
+        resp = await ac.get(f"{PREFIX}/stack/workers/providers")
+    assert resp.status_code == 200
+    assert resp.json() == {"providers": ["docker", "external"]}
+    cmd = sv.exec_cmd.call_args[0][0]
+    assert cmd.command.value == "GET_PROVIDERS"
 
 
 # ------------------------------------------------------------------ #

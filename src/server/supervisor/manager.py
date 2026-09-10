@@ -19,6 +19,10 @@ from .schemas import WorkerInfo, WorkerStatus
 _MAX_PARALLELISM: int = 16
 
 
+class ProviderUnavailableError(ValueError):
+    """Raised when a create request names a provider this node does not have."""
+
+
 class WorkerInitConfig(BaseModel):
     model_config = ConfigDict(extra="allow")
 
@@ -221,6 +225,9 @@ class WorkerManager:
             self.logger.warning("Failed to admit worker: %s", exc)
             return None
 
+    def available_providers(self) -> list[str]:
+        return sorted(self._providers)
+
     def list_workers(self) -> list[WorkerInfo]:
         if not self.is_started:
             return []
@@ -297,7 +304,10 @@ class WorkerManager:
 
         spec = self._providers.get(provider)
         if spec is None:
-            raise ValueError(f"Unsupported worker provider: {provider}")
+            raise ProviderUnavailableError(
+                f"Worker provider '{provider}' is not available on this node; "
+                f"available providers: {', '.join(sorted(self._providers))}"
+            )
         config = spec.config_cls.model_validate(worker_config)
         worker = spec.factory.create_worker(token, config)
 

@@ -41,6 +41,7 @@ class TestCommandMessage:
             "CREATE_WORKER",
             "CREATE_WORKER_ON_NODE",
             "GET_WORKERS",
+            "GET_PROVIDERS",
             "STOP_WORKER",
             "DESTROY_WORKER",
             "DESTROY_WORKERS",

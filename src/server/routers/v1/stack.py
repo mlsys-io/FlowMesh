@@ -39,6 +39,12 @@ async def _exec(
             status_code=status.HTTP_504_GATEWAY_TIMEOUT, detail=str(exc)
         )
     if not resp.success:
+        if resp.error_code == "provider_unavailable":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=resp.message
+                or "Requested worker provider is not available on this node",
+            )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=resp.message or "Command failed",
@@ -79,6 +85,21 @@ async def create_worker(
     )
     data = await _exec(supervisor, cmd, timeout=_WORKER_CREATE_TIMEOUT)
     return WorkerInfo(**data)
+
+
+@router.get("/providers")
+async def get_providers(
+    principal: PrincipalContext = Depends(authenticate_connection),
+    supervisor: WorkerSupervisor = Depends(get_supervisor),
+    node_id: str = Depends(get_node_id),
+    logger: logging.Logger = Depends(get_logger),
+) -> dict[str, list[str]]:
+    await require_permission(
+        principal, ResourceKind.NODE, node_id, ResourceAction.READ, logger
+    )
+    cmd = CommandMessage(command=CommandType.GET_PROVIDERS)
+    data = await _exec(supervisor, cmd)
+    return {"providers": data.get("providers", [])}
 
 
 @router.get("/{name}")
