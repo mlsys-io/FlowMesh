@@ -69,28 +69,17 @@ class WorkerManager:
         self._default_worker_config: dict[str, Any] | None = None
         self._is_started: bool = False
         self._capacity_change_callback = capacity_change_callback
-        #: The external provider first, and unconditionally: its factory holds
-        #: no resource and talks to no daemon, so it can always be built.
+        # External provider is always available.
         specs = [external_provider_spec(system_principal)]
-        #: The docker provider's factory acquires a Docker client IN ITS
-        #: CONSTRUCTOR, so on a host with no daemon this raises and takes the
-        #: whole supervisor with it. Measured: the supervisor child died on an
-        #: unconditional docker.from_env() while the FastAPI parent stayed up
-        #: answering /healthz, so the process read Running/Ready for 16h with
-        #: its entire worker plane dead, :50051 never bound, and
-        #: /api/v1/stack/workers hanging forever without reaching the access
-        #: log. Degrading to "docker is unavailable here" keeps every other
-        #: provider -- notably `external`, whose whole purpose is hosts like
-        #: this one -- usable.
         try:
             specs.append(docker_provider_spec(system_principal))
-        except Exception as exc:  # noqa: BLE001 - any client failure is fatal to docker only
+        except Exception as exc:
             logger.warning(
                 "Docker worker provider unavailable, continuing without it: %s", exc
             )
         try:
             specs.append(vastai_provider_spec(system_principal))
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.warning(
                 "Vast.ai worker provider unavailable, continuing without it: %s", exc
             )

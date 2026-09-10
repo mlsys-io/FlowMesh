@@ -17,13 +17,13 @@ from shared.grpc.supervisor.v1 import (
 from shared.utils import new_worker_id
 
 from ... import env
-from ...hooks import PrincipalContext
 from ...clients.redis import (
     WORKER_ID_SEQ_KEY,
     WORKERS_SET_KEY,
     SyncRedisClient,
     worker_key,
 )
+from ...hooks import PrincipalContext
 from ..adapters.base import WorkerAdapter, WorkerTokenType
 from ..adapters.external import (
     ExternalWorkerConfig,
@@ -115,10 +115,8 @@ class SupervisorServicer(supervisor_pb2_grpc.SupervisorServicer):
         # Guards _node_id and the registry-vs-rehome window against concurrent
         # RegisterWorker (grpc loop thread) and rebind_node (heartbeat thread).
         self._lock = Lock()
-        #: Builds adapters for workers admitted by the external shared secret.
-        #: Constructed unconditionally because it holds no resource and touches
-        #: no daemon -- unlike the docker factory, whose constructor acquires a
-        #: client and therefore cannot exist on a dockerless host.
+        # External-secret admission holds no resource, so unlike the docker
+        # factory it can always be constructed.
         self._external_factory = ExternalWorkerFactory(system_principal)
 
     def rebind_node(self, node_id: str) -> None:
@@ -283,21 +281,10 @@ class SupervisorServicer(supervisor_pb2_grpc.SupervisorServicer):
             return None
         if worker := self._registry.try_get(token):
             return worker
-        #: Registry miss. Before rejecting, see whether the token proves its own
-        #: identity against the configured external shared secret.
-        #:
-        #: THIS IS THE RESTART-SURVIVAL PATH, and it is why the check lives here
-        #: rather than only in RegisterWorker. The in-process registry is the
-        #: sole record of a runtime-minted token, so a supervisor restart drops
-        #: every live worker's entry; their StreamTasks/PushEvents calls then
-        #: fail UNAUTHENTICATED forever, and because the worker's stream loops
-        #: retry RpcError unconditionally they neither recover nor exit. An
-        #: external token is verified from configuration instead, so the same
-        #: worker is re-admitted on its next call and re-attached to its
-        #: streams, with no restart and no human.
-        #:
-        #: Returns None when no secret is configured, so this is inert for
-        #: every existing deployment.
+        # Registry miss: fall back to stateless external-secret verification.
+        # This lives here, not only in RegisterWorker, so a worker re-admits
+        # itself after a supervisor restart drops the in-process registry.
+        # Returns None when no secret is configured, so it is inert by default.
         return self._admit_external_worker(token)
 
     def _admit_external_worker(self, token: WorkerTokenType) -> WorkerAdapter | None:
@@ -305,10 +292,8 @@ class SupervisorServicer(supervisor_pb2_grpc.SupervisorServicer):
         name = verify_external_token(token)
         if name is None:
             return None
-        #: A name collision means a DIFFERENT adapter already owns this name --
-        #: e.g. a docker-spawned worker called the same thing. Re-admitting over
-        #: it would hand one name two identities, so refuse and let the caller
-        #: report UNAUTHENTICATED.
+        # A name already in the registry belongs to a different adapter (e.g. a
+        # docker-spawned worker); refuse rather than hand one name two identities.
         if self._registry.exists_by_name(name):
             self._logger.warning(
                 "Refusing external admission for %r: name already registered "
@@ -322,8 +307,7 @@ class SupervisorServicer(supervisor_pb2_grpc.SupervisorServicer):
         try:
             self._registry.add(worker)
         except ValueError:
-            #: Lost a race with a concurrent admission of the same token; the
-            #: winner's adapter is the right one to use.
+            # Lost a race with a concurrent admission of the same token.
             return self._registry.try_get(token)
         self._logger.info("Admitted external worker %r by shared secret", name)
         return worker
