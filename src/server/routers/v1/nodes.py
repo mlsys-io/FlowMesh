@@ -28,6 +28,7 @@ from ...schemas.node import (
     WorkerRegisterResponse,
 )
 from ...utils.misc import filter_models_by_queries
+from ._command import command_error
 
 router = APIRouter(prefix="/nodes", tags=["Nodes"])
 
@@ -214,12 +215,9 @@ async def start_node_worker(
             status_code=status.HTTP_504_GATEWAY_TIMEOUT, detail=str(exc)
         )
 
-    if not resp.success or resp.data is None:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=resp.message
-        )
-    success = resp.data["success"]
-    if not success:
+    if not resp.success:
+        raise command_error(resp, "Failed to start worker")
+    if resp.data is None or not resp.data.get("success"):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to start worker",
@@ -254,12 +252,9 @@ async def stop_node_worker(
             status_code=status.HTTP_504_GATEWAY_TIMEOUT, detail=str(exc)
         )
 
-    if not resp.success or resp.data is None:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=resp.message
-        )
-    success = resp.data["success"]
-    if not success:
+    if not resp.success:
+        raise command_error(resp, "Failed to stop worker")
+    if resp.data is None or not resp.data.get("success"):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to stop worker",
@@ -306,9 +301,7 @@ async def _fetch_node_workers(
         )
 
     if not resp.success:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=resp.message
-        )
+        raise command_error(resp, "Failed to list node workers")
     if resp.data is None or "workers" not in resp.data:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

@@ -6,6 +6,7 @@ import pytest
 from pydantic import TypeAdapter, ValidationError
 
 from shared.schemas.command import (
+    CommandErrorCode,
     CommandMessage,
     CommandResponse,
     CommandType,
@@ -41,6 +42,7 @@ class TestCommandMessage:
             "CREATE_WORKER",
             "CREATE_WORKER_ON_NODE",
             "GET_WORKERS",
+            "GET_PROVIDERS",
             "STOP_WORKER",
             "DESTROY_WORKER",
             "DESTROY_WORKERS",
@@ -59,10 +61,13 @@ class TestCommandResponse:
 
     def test_error_factory(self) -> None:
         cmd = CommandMessage(command=CommandType.START_WORKER)
-        resp = CommandResponse.error(cmd, message="worker not found")
+        resp = CommandResponse.error(
+            cmd, message="worker not found", error_code=CommandErrorCode.INTERNAL
+        )
         assert resp.success is False
         assert resp.message == "worker not found"
         assert resp.command_id == cmd.command_id
+        assert resp.error_code == CommandErrorCode.INTERNAL
 
 
 class TestDispatchMessages:

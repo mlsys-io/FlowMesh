@@ -24,7 +24,11 @@ from server.supervisor.adapters.external import (
     mint_external_token,
     verify_external_token,
 )
-from server.supervisor.manager import WorkerManager
+from server.supervisor.manager import (
+    ProviderUnavailableError,
+    WorkerInitConfig,
+    WorkerManager,
+)
 from server.supervisor.registry import WorkerRegistry
 from server.supervisor.schemas import WorkerStatus
 from server.supervisor.services.grpc_server import SupervisorServicer
@@ -166,6 +170,43 @@ class TestDockerlessHost:
         #: exactly the provider a dockerless host needs.
         assert "external" in mgr._providers
         assert "docker" not in mgr._providers
+
+    def test_unavailable_provider_raises_typed_error_and_external_still_works(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path
+    ) -> None:
+        from server.supervisor import manager as manager_mod
+
+        def _explode(_principal):
+            raise RuntimeError("Error while fetching server API version")
+
+        monkeypatch.setattr(manager_mod, "docker_provider_spec", _explode)
+        monkeypatch.setattr(manager_mod, "vastai_provider_spec", _explode)
+        monkeypatch.setattr("server.env.EXTERNAL_WORKER_TOKEN", SECRET)
+
+        mgr = manager_mod.WorkerManager(
+            system_principal=None,  # type: ignore[arg-type]
+            config_path=str(tmp_path / "absent.yaml"),
+            registry=WorkerRegistry(),
+            logger=logging.getLogger("test"),
+        )
+        mgr._is_started = True
+        mgr._default_worker_config = {}
+
+        assert mgr.available_providers() == ["external"]
+
+        with pytest.raises(ProviderUnavailableError) as excinfo:
+            mgr._create_worker(WorkerInitConfig(provider="docker"))
+        assert "docker" in str(excinfo.value)
+        assert "external" in str(excinfo.value)
+
+        # The external provider must still work on the same dockerless host.
+        token = mint_external_token(SECRET, "fm-worker-0")
+        worker = mgr._create_worker(
+            WorkerInitConfig(
+                provider="external", worker_token=token, init_on_start=False
+            )
+        )
+        assert worker.name == "fm-worker-0"
 
 
 class _Aborted(Exception):

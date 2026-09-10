@@ -19,6 +19,7 @@ from ...supervisor import WorkerSupervisor
 from ...supervisor.manager import WorkerInitConfig
 from ...supervisor.schemas import WorkerInfo
 from ...utils.misc import filter_models_by_queries
+from ._command import command_error
 
 router = APIRouter(prefix="/stack/workers", tags=["Stack"])
 
@@ -39,10 +40,7 @@ async def _exec(
             status_code=status.HTTP_504_GATEWAY_TIMEOUT, detail=str(exc)
         )
     if not resp.success:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=resp.message or "Command failed",
-        )
+        raise command_error(resp)
     return resp.data or {}
 
 
@@ -79,6 +77,21 @@ async def create_worker(
     )
     data = await _exec(supervisor, cmd, timeout=_WORKER_CREATE_TIMEOUT)
     return WorkerInfo(**data)
+
+
+@router.get("/providers")
+async def get_providers(
+    principal: PrincipalContext = Depends(authenticate_connection),
+    supervisor: WorkerSupervisor = Depends(get_supervisor),
+    node_id: str = Depends(get_node_id),
+    logger: logging.Logger = Depends(get_logger),
+) -> dict[str, list[str]]:
+    await require_permission(
+        principal, ResourceKind.NODE, node_id, ResourceAction.READ, logger
+    )
+    cmd = CommandMessage(command=CommandType.GET_PROVIDERS)
+    data = await _exec(supervisor, cmd)
+    return {"providers": data.get("providers") or []}
 
 
 @router.get("/{name}")

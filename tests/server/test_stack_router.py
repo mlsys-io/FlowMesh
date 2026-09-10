@@ -8,7 +8,8 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 from server.routers.v1 import stack as stack_router
-from shared.schemas.command import CommandResponse
+from server.routers.v1._command import _STATUS_BY_ERROR_CODE
+from shared.schemas.command import CommandErrorCode, CommandResponse
 
 PREFIX = "/api/v1"
 
@@ -17,8 +18,12 @@ def _ok(data: dict | None = None) -> CommandResponse:
     return CommandResponse(command_id="test", success=True, data=data)
 
 
-def _error(message: str = "fail") -> CommandResponse:
-    return CommandResponse(command_id="test", success=False, message=message)
+def _error(
+    message: str = "fail", error_code: CommandErrorCode | None = None
+) -> CommandResponse:
+    return CommandResponse(
+        command_id="test", success=False, message=message, error_code=error_code
+    )
 
 
 def _make_app(supervisor: MagicMock) -> FastAPI:
@@ -124,6 +129,66 @@ async def test_create_worker_fails() -> None:
         resp = await ac.post(f"{PREFIX}/stack/workers", json={"provider": "docker"})
     assert resp.status_code == 500
     assert "bad config" in resp.json()["detail"]
+
+
+@pytest.mark.anyio
+async def test_create_worker_provider_unavailable() -> None:
+    sv = _mock_supervisor(
+        _error(
+            "Worker provider 'docker' is not available on this node; "
+            "available providers: external",
+            error_code=CommandErrorCode.PROVIDER_UNAVAILABLE,
+        )
+    )
+    async with AsyncClient(
+        transport=ASGITransport(app=_make_app(sv)), base_url="http://t"
+    ) as ac:
+        resp = await ac.post(f"{PREFIX}/stack/workers", json={"provider": "docker"})
+    assert resp.status_code == 409
+    assert "docker" in resp.json()["detail"]
+    assert "external" in resp.json()["detail"]
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("error_code", "expected_status"),
+    [
+        (CommandErrorCode.INVALID_PAYLOAD, 400),
+        (CommandErrorCode.PROVIDER_UNAVAILABLE, 409),
+        (CommandErrorCode.NOT_READY, 503),
+        (CommandErrorCode.CANCELLED, 503),
+        (CommandErrorCode.UNKNOWN_COMMAND, 501),
+        (CommandErrorCode.INTERNAL, 500),
+        (None, 500),
+    ],
+)
+async def test_error_code_maps_to_http_status(
+    error_code: CommandErrorCode | None, expected_status: int
+) -> None:
+    sv = _mock_supervisor(_error("boom", error_code=error_code))
+    async with AsyncClient(
+        transport=ASGITransport(app=_make_app(sv)), base_url="http://t"
+    ) as ac:
+        resp = await ac.post(f"{PREFIX}/stack/workers", json={"provider": "docker"})
+    assert resp.status_code == expected_status
+    assert resp.json()["detail"] == "boom"
+
+
+def test_every_error_code_has_a_status() -> None:
+    assert set(_STATUS_BY_ERROR_CODE) == set(CommandErrorCode)
+
+
+@pytest.mark.anyio
+async def test_get_providers() -> None:
+    sv = _mock_supervisor(_ok(data={"providers": ["docker", "external"]}))
+    async with AsyncClient(
+        transport=ASGITransport(app=_make_app(sv)), base_url="http://t"
+    ) as ac:
+        resp = await ac.get(f"{PREFIX}/stack/workers/providers")
+    assert resp.status_code == 200
+    assert resp.json() == {"providers": ["docker", "external"]}
+    cmd = sv.exec_cmd.call_args[0][0]
+    assert cmd.command.value == "GET_PROVIDERS"
 
 
 # ------------------------------------------------------------------ #
