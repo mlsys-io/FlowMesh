@@ -8,7 +8,7 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 from server.routers.v1 import stack as stack_router
-from shared.schemas.command import CommandResponse
+from shared.schemas.command import CommandErrorCode, CommandResponse
 
 PREFIX = "/api/v1"
 
@@ -17,7 +17,9 @@ def _ok(data: dict | None = None) -> CommandResponse:
     return CommandResponse(command_id="test", success=True, data=data)
 
 
-def _error(message: str = "fail", error_code: str | None = None) -> CommandResponse:
+def _error(
+    message: str = "fail", error_code: CommandErrorCode | None = None
+) -> CommandResponse:
     return CommandResponse(
         command_id="test", success=False, message=message, error_code=error_code
     )
@@ -134,7 +136,7 @@ async def test_create_worker_provider_unavailable() -> None:
         _error(
             "Worker provider 'docker' is not available on this node; "
             "available providers: external",
-            error_code="provider_unavailable",
+            error_code=CommandErrorCode.PROVIDER_UNAVAILABLE,
         )
     )
     async with AsyncClient(

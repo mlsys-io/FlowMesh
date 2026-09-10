@@ -6,7 +6,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 
-from shared.schemas.command import CommandMessage, CommandType
+from shared.schemas.command import CommandErrorCode, CommandMessage, CommandType
 
 from ...app_state import get_logger, get_node_id, get_supervisor
 from ...auth.security import (
@@ -39,7 +39,7 @@ async def _exec(
             status_code=status.HTTP_504_GATEWAY_TIMEOUT, detail=str(exc)
         )
     if not resp.success:
-        if resp.error_code == "provider_unavailable":
+        if resp.error_code == CommandErrorCode.PROVIDER_UNAVAILABLE:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=resp.message
@@ -99,7 +99,7 @@ async def get_providers(
     )
     cmd = CommandMessage(command=CommandType.GET_PROVIDERS)
     data = await _exec(supervisor, cmd)
-    return {"providers": data.get("providers", [])}
+    return {"providers": data.get("providers") or []}
 
 
 @router.get("/{name}")

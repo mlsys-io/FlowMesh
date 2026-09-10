@@ -26,12 +26,23 @@ class CommandMessage(BaseModel):
     payload: dict[str, Any] | None = None
 
 
+class CommandErrorCode(StrEnum):
+    """Structured error codes carried on a failed CommandResponse."""
+
+    INTERNAL = "internal"
+    INVALID_PAYLOAD = "invalid_payload"
+    NOT_READY = "not_ready"
+    UNKNOWN_COMMAND = "unknown_command"
+    CANCELLED = "cancelled"
+    PROVIDER_UNAVAILABLE = "provider_unavailable"
+
+
 class CommandResponse(BaseModel):
     command_id: str
     success: bool
     message: str | None = None
     data: dict[str, Any] | None = None
-    error_code: str | None = None
+    error_code: CommandErrorCode | None = None
 
     @classmethod
     def ok(
@@ -44,7 +55,7 @@ class CommandResponse(BaseModel):
         cls,
         cmd: CommandMessage,
         message: str,
-        error_code: str | None = None,
+        error_code: CommandErrorCode,
     ) -> "CommandResponse":
         return cls(
             command_id=cmd.command_id,
@@ -80,6 +91,7 @@ type DispatchMessage = TaskMessage | InterruptMessage | StopMessage
 __all__ = [
     "CommandMessage",
     "CommandResponse",
+    "CommandErrorCode",
     "CommandType",
     "DispatchMessage",
     "TaskMessage",

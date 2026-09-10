@@ -14,6 +14,7 @@ import pytest
 from server.supervisor.manager import ProviderUnavailableError
 from server.supervisor.services.command_listener import CommandListener
 from shared.schemas.command import (
+    CommandErrorCode,
     CommandMessage,
     CommandResponse,
     CommandType,
@@ -89,7 +90,7 @@ class TestHandleCreateWorkerCmd:
         )
         resp = self._handle({"provider": "docker"})
         assert not resp.success
-        assert resp.error_code == "provider_unavailable"
+        assert resp.error_code == CommandErrorCode.PROVIDER_UNAVAILABLE
         assert "docker" in (resp.message or "")
         assert "external" in (resp.message or "")
 
