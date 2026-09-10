@@ -187,6 +187,25 @@ def test_reaped_worker_is_deleted_once_more_next_pass() -> None:
     assert "wkr-1" not in state.reaped
 
 
+def test_reap_publish_failure_is_retried() -> None:
+    registry = _stale_registry({"wkr-1"})
+    wd = _watchdog(worker_registry=registry, grace_seconds=60, reap_grace_seconds=900)
+    state = _WatchdogState()
+
+    wd._scan({"wkr-1"}, state, 0.0)
+    wd._scan({"wkr-1"}, state, 60.0)  # declared
+    # Publish fails on the reap pass: the id stays in reaped for retry.
+    wd._redis.publish_telemetry.side_effect = RuntimeError("redis down")
+    wd._scan({"wkr-1"}, state, 60.0 + 900.0)
+    assert "wkr-1" in state.reaped
+
+    # Next pass re-deletes and re-publishes; success drops the id.
+    wd._redis.publish_telemetry.side_effect = None
+    wd._scan(set(), state, 60.0 + 900.0 + 30.0)
+    assert "wkr-1" not in state.reaped
+    assert wd._redis.publish_telemetry.call_count == 2
+
+
 def test_dead_mark_survives_reap() -> None:
     registry: Any = _stale_registry({"wkr-1"})
     wd: Any = _watchdog(

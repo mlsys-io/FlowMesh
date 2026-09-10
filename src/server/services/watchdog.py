@@ -117,7 +117,8 @@ class WorkerWatchdog:
                     exc,
                 )
                 continue
-            state.reaped.discard(worker_id)
+            if self._publish_reap_event(worker_id):
+                state.reaped.discard(worker_id)
         for worker_id in worker_ids:
             if not worker_id:
                 continue
@@ -194,22 +195,6 @@ class WorkerWatchdog:
                 "Worker watchdog failed to reap worker %s: %s", worker_id, exc
             )
             return
-        try:
-            event = WorkerEvent(
-                type="UNREGISTER",
-                worker_id=worker_id,
-                payload={"reason": "reaped", "synthetic": True},
-            )
-            self._redis.publish_telemetry(
-                WORKER_EVENT_CHANNEL,
-                json.dumps(serialize_event(event), ensure_ascii=False),
-            )
-        except Exception as exc:
-            self._logger.warning(
-                "Worker watchdog reaped %s but failed to publish UNREGISTER: %s",
-                worker_id,
-                exc,
-            )
 
         state.dead_since.pop(worker_id, None)
         state.declared_dead.discard(worker_id)
@@ -220,6 +205,32 @@ class WorkerWatchdog:
             worker_id,
             now - first,
         )
+        if not self._publish_reap_event(worker_id):
+            self._logger.warning(
+                "Worker watchdog reaped %s but failed to publish UNREGISTER; "
+                "will retry",
+                worker_id,
+            )
+
+    def _publish_reap_event(self, worker_id: str) -> bool:
+        try:
+            event = WorkerEvent(
+                type="UNREGISTER",
+                worker_id=worker_id,
+                payload={"reason": "reaped", "synthetic": True},
+            )
+            self._redis.publish_telemetry(
+                WORKER_EVENT_CHANNEL,
+                json.dumps(serialize_event(event), ensure_ascii=False),
+            )
+            return True
+        except Exception as exc:
+            self._logger.warning(
+                "Worker watchdog failed to publish UNREGISTER for %s: %s",
+                worker_id,
+                exc,
+            )
+            return False
 
     def _handle_worker_expired(self, worker_id: str) -> None:
         recovered = self._runtime.recover_tasks_for_worker(worker_id)
