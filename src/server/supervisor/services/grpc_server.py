@@ -23,13 +23,8 @@ from ...clients.redis import (
     SyncRedisClient,
     worker_key,
 )
-from ...hooks import PrincipalContext
 from ..adapters.base import WorkerAdapter, WorkerTokenType
-from ..adapters.external import (
-    ExternalWorkerConfig,
-    ExternalWorkerFactory,
-    verify_external_token,
-)
+from ..manager import WorkerManager
 from ..registry import WorkerRegistry
 from ..schemas import WorkerStatus
 from ..services.relay_service import RelayService
@@ -102,8 +97,8 @@ class SupervisorServicer(supervisor_pb2_grpc.SupervisorServicer):
         node_alias: str,
         task_listener: TaskListener,
         relay_service: RelayService,
+        worker_manager: WorkerManager,
         logger: logging.Logger,
-        system_principal: PrincipalContext,
     ) -> None:
         self._registry = registry
         self._task_listener = task_listener
@@ -111,13 +106,11 @@ class SupervisorServicer(supervisor_pb2_grpc.SupervisorServicer):
         self._redis = redis
         self._node_id = node_id
         self._node_alias = node_alias
+        self._worker_manager = worker_manager
         self._logger = logger
         # Guards _node_id and the registry-vs-rehome window against concurrent
         # RegisterWorker (grpc loop thread) and rebind_node (heartbeat thread).
         self._lock = Lock()
-        # External-secret admission holds no resource, so unlike the docker
-        # factory it can always be constructed.
-        self._external_factory = ExternalWorkerFactory(system_principal)
 
     def rebind_node(self, node_id: str) -> None:
         """Re-home this node's workers under a new node id.
@@ -162,21 +155,28 @@ class SupervisorServicer(supervisor_pb2_grpc.SupervisorServicer):
         request: supervisor_pb2.RegisterRequest,
         context: grpc.aio.ServicerContext,
     ) -> supervisor_pb2.RegisterResponse:
-        worker = self._get_worker_from_context(context)
+        token = _token_from_context(context)
+        if not token:
+            await context.abort(grpc.StatusCode.UNAUTHENTICATED, "Invalid worker token")
+        worker = self._registry.try_get(token)
+        if worker is None:
+            # Unknown token: try admitting an external worker.
+            await self._worker_manager.admit_worker(token)
+            worker = self._registry.try_get(token)
         if worker is None:
             await context.abort(grpc.StatusCode.UNAUTHENTICATED, "Invalid worker token")
         worker_meta = _payload_from_struct(request.meta)
-        worker_id = new_worker_id(self._redis.incr(WORKER_ID_SEQ_KEY))
-        worker_meta["id"] = worker_id
-        worker_meta["node_alias"] = self._node_alias
-        # Stamp node_id, persist the record, and insert into the registry as one unit so
-        # a concurrent rebind_node either sees this worker in its snapshot or stamps it
-        # with the new id.
+        # Stamp node_id, persist the record and set the worker id as one unit so a
+        # concurrent rebind_node either sees this worker in its snapshot or stamps
+        # it with the new id.
         with self._lock:
+            worker_id = new_worker_id(self._redis.incr(WORKER_ID_SEQ_KEY))
+            worker_meta["id"] = worker_id
+            worker_meta["node_alias"] = self._node_alias
             worker_meta["node_id"] = self._node_id
             self._redis.sadd(WORKERS_SET_KEY, worker_id)
             self._redis.hash_set(worker_key(worker_id), worker_meta)
-            self._registry.set_worker_id(worker.token, worker_id)
+            self._registry.set_worker_id(token, worker_id)
         self._task_listener.add_worker(worker_id)
         try:
             worker.set_worker_id(worker_id)
@@ -276,41 +276,9 @@ class SupervisorServicer(supervisor_pb2_grpc.SupervisorServicer):
     def _get_worker_from_context(
         self, context: grpc.aio.ServicerContext
     ) -> WorkerAdapter | None:
-        token = _token_from_context(context)
-        if not token:
-            return None
-        if worker := self._registry.try_get(token):
-            return worker
-        # Registry miss: fall back to stateless external-secret verification.
-        # This lives here, not only in RegisterWorker, so a worker re-admits
-        # itself after a supervisor restart drops the in-process registry.
-        # Returns None when no secret is configured, so it is inert by default.
-        return self._admit_external_worker(token)
-
-    def _admit_external_worker(self, token: WorkerTokenType) -> WorkerAdapter | None:
-        """Admit a worker whose token verifies against the external secret."""
-        name = verify_external_token(token)
-        if name is None:
-            return None
-        # A name already in the registry belongs to a different adapter (e.g. a
-        # docker-spawned worker); refuse rather than hand one name two identities.
-        if self._registry.exists_by_name(name):
-            self._logger.warning(
-                "Refusing external admission for %r: name already registered "
-                "under a different token",
-                name,
-            )
-            return None
-        worker = self._external_factory.create_worker(
-            token, ExternalWorkerConfig(worker_alias=name), name=name
-        )
-        try:
-            self._registry.add(worker)
-        except ValueError:
-            # Lost a race with a concurrent admission of the same token.
+        if token := _token_from_context(context):
             return self._registry.try_get(token)
-        self._logger.info("Admitted external worker %r by shared secret", name)
-        return worker
+        return None
 
     def _get_worker_id_from_context(
         self, context: grpc.aio.ServicerContext
@@ -334,8 +302,8 @@ class GrpcServer:
         node_alias: str,
         task_listener: TaskListener,
         relay_service: RelayService,
+        worker_manager: WorkerManager,
         logger: logging.Logger,
-        system_principal: PrincipalContext,
     ) -> None:
         self._logger = logger
         self._server: grpc.aio.Server | None = None
@@ -346,8 +314,8 @@ class GrpcServer:
             node_alias,
             task_listener,
             relay_service,
+            worker_manager,
             logger,
-            system_principal,
         )
         self._listen_addr = f"{host}:{port}"
 

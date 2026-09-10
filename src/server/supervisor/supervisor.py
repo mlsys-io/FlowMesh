@@ -359,8 +359,8 @@ def _run_supervisor(
         node_alias=identity.alias,
         task_listener=task_listener,
         relay_service=relay_service,
+        worker_manager=worker_manager,
         logger=logger,
-        system_principal=system_principal,
     )
 
     def _on_reregister(new_node_id: str) -> None:

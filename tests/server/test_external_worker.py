@@ -5,8 +5,18 @@ CONFIGURATION verifies after the supervisor has forgotten everything, whereas a
 runtime-minted `uuid4()` token cannot.
 """
 
+import logging
+from threading import Lock
+from typing import Any, cast
+
+import grpc
 import pytest
 
+from server.clients.redis import (
+    WORKERS_SET_KEY,
+    SyncRedisClient,
+    worker_key,
+)
 from server.supervisor.adapters.external import (
     ExternalWorkerAdapter,
     ExternalWorkerConfig,
@@ -14,8 +24,12 @@ from server.supervisor.adapters.external import (
     mint_external_token,
     verify_external_token,
 )
+from server.supervisor.manager import WorkerManager
 from server.supervisor.registry import WorkerRegistry
 from server.supervisor.schemas import WorkerStatus
+from server.supervisor.services.grpc_server import SupervisorServicer
+from server.supervisor.services.task_listener import TaskListener
+from shared.grpc.supervisor.v1 import supervisor_pb2
 
 SECRET = "s3cret-shared-across-the-fleet"
 
@@ -114,7 +128,7 @@ class TestExternalAdapter:
         """Forgetting an external worker is accounting, not termination."""
         factory = ExternalWorkerFactory(system_principal=None)  # type: ignore[arg-type]
         adapter = self._adapter()
-        assert factory.destroy_worker(adapter) is None
+        factory.destroy_worker(adapter)
         assert adapter.status is WorkerStatus.RUNNING
 
 
@@ -152,3 +166,228 @@ class TestDockerlessHost:
         #: exactly the provider a dockerless host needs.
         assert "external" in mgr._providers
         assert "docker" not in mgr._providers
+
+
+class _Aborted(Exception):
+    """Stand-in for what grpc's ServicerContext.abort raises."""
+
+    def __init__(self, code: grpc.StatusCode) -> None:
+        self.code = code
+
+
+class _FakeContext:
+    """Minimal async ServicerContext carrying one x-worker-token."""
+
+    def __init__(self, token: str | None) -> None:
+        self._token = token
+
+    def invocation_metadata(self) -> tuple[tuple[str, str], ...]:
+        return () if self._token is None else (("x-worker-token", self._token),)
+
+    async def abort(self, code: grpc.StatusCode, details: str) -> None:
+        raise _Aborted(code)
+
+
+class _FakeRedis:
+    """Records the writes RegisterWorker performs."""
+
+    def __init__(self) -> None:
+        self._seq = 0
+        self.hashes: dict[str, dict[str, Any]] = {}
+        self.worker_ids: set[str] = set()
+
+    def incr(self, key: str) -> int:
+        self._seq += 1
+        return self._seq
+
+    def sadd(self, key: str, *members: str) -> None:
+        if key == WORKERS_SET_KEY:
+            self.worker_ids.update(members)
+
+    def hash_set(self, key: str, mapping: dict[str, Any]) -> None:
+        self.hashes[key] = dict(mapping)
+
+
+class _FakeTaskListener:
+    def __init__(self) -> None:
+        self.added: list[str] = []
+
+    def add_worker(self, worker_id: str) -> None:
+        self.added.append(worker_id)
+
+
+def _build_servicer(
+    redis: _FakeRedis | None = None,
+    node_alias: str = "node-a",
+    node_id: str = "nde-1",
+) -> tuple[SupervisorServicer, _FakeRedis]:
+    redis = redis or _FakeRedis()
+    registry = WorkerRegistry()
+    manager = WorkerManager(
+        cast(Any, None),
+        "/nonexistent-worker-config.yaml",
+        registry,
+        logging.getLogger("test.wm"),
+    )
+    manager._is_started = True
+    manager._default_worker_config = {}
+    servicer = SupervisorServicer.__new__(SupervisorServicer)
+    servicer._registry = registry
+    servicer._redis = cast(SyncRedisClient, redis)
+    servicer._node_id = node_id
+    servicer._node_alias = node_alias
+    servicer._logger = logging.getLogger("test.external.enroll")
+    servicer._lock = Lock()
+    servicer._task_listener = cast(TaskListener, _FakeTaskListener())
+    servicer._worker_manager = manager
+    return servicer, redis
+
+
+async def _register(servicer: SupervisorServicer, token: str) -> str:
+    resp = await servicer.RegisterWorker(
+        supervisor_pb2.RegisterRequest(), cast(Any, _FakeContext(token))
+    )
+    return resp.worker_id
+
+
+class TestRegisterWorkerExternalEnrollment:
+    """RegisterWorker is the create+register point for self-enrolling workers."""
+
+    @pytest.mark.asyncio
+    async def test_register_enrolls_external_worker(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("server.env.EXTERNAL_WORKER_TOKEN", SECRET)
+        servicer, redis = _build_servicer()
+        token = mint_external_token(SECRET, "fm-worker-0")
+
+        worker_id = await _register(servicer, token)
+
+        assert worker_id in redis.worker_ids
+        assert redis.hashes[worker_key(worker_id)]["node_id"] == "nde-1"
+        assert redis.hashes[worker_key(worker_id)]["node_alias"] == "node-a"
+        assert servicer._registry.get_worker_id(cast(Any, token)) == worker_id
+        assert cast(_FakeTaskListener, servicer._task_listener).added == [worker_id]
+
+    @pytest.mark.asyncio
+    async def test_admit_worker_returns_info_without_starting(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The manager must NOT run its start lifecycle on an external worker
+        (it is already running); admit_worker returns the worker's info rather
+        than tripping _start_worker's STOPPED precondition."""
+        monkeypatch.setattr("server.env.EXTERNAL_WORKER_TOKEN", SECRET)
+        servicer, _ = _build_servicer()
+        token = mint_external_token(SECRET, "fm-worker-0")
+
+        info = await servicer._worker_manager.admit_worker(cast(Any, token))
+
+        assert info is not None
+        assert info.name == "fm-worker-0"
+        assert info.provider == "external"
+        assert info.status is WorkerStatus.RUNNING
+
+    @pytest.mark.asyncio
+    async def test_admit_worker_returns_none_for_non_external_token(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("server.env.EXTERNAL_WORKER_TOKEN", SECRET)
+        servicer, _ = _build_servicer()
+        info = await servicer._worker_manager.admit_worker(
+            servicer._registry.new_token()
+        )
+        assert info is None
+
+    @pytest.mark.asyncio
+    async def test_register_refuses_name_collision(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("server.env.EXTERNAL_WORKER_TOKEN", SECRET)
+        servicer, redis = _build_servicer()
+        # A different adapter already owns the name under a different token.
+        squatter = ExternalWorkerFactory(system_principal=None).create_worker(  # type: ignore[arg-type]
+            mint_external_token("other-secret", "fm-worker-0"),
+            ExternalWorkerConfig(),
+            name="fm-worker-0",
+        )
+        servicer._registry.add(squatter)
+
+        token = mint_external_token(SECRET, "fm-worker-0")
+        with pytest.raises(_Aborted) as exc:
+            await _register(servicer, token)
+
+        assert exc.value.code is grpc.StatusCode.UNAUTHENTICATED
+        assert redis.worker_ids == set()
+
+    @pytest.mark.asyncio
+    async def test_register_rejects_when_no_secret(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("server.env.EXTERNAL_WORKER_TOKEN", "")
+        servicer, _ = _build_servicer()
+        token = mint_external_token(SECRET, "fm-worker-0")
+        with pytest.raises(_Aborted) as exc:
+            await _register(servicer, token)
+        assert exc.value.code is grpc.StatusCode.UNAUTHENTICATED
+
+    @pytest.mark.asyncio
+    async def test_register_rejects_forged_token(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("server.env.EXTERNAL_WORKER_TOKEN", SECRET)
+        servicer, _ = _build_servicer()
+        good = mint_external_token(SECRET, "fm-worker-0")
+        _, _, digest = good.rpartition(".")
+        with pytest.raises(_Aborted):
+            await _register(servicer, f"fm-worker-99.{digest}")
+
+    @pytest.mark.asyncio
+    async def test_streams_reject_before_registration(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """After the revert, auth is pure lookup: an external token that has not
+        registered resolves to nothing, so every stream RPC aborts."""
+        monkeypatch.setattr("server.env.EXTERNAL_WORKER_TOKEN", SECRET)
+        servicer, _ = _build_servicer()
+        ctx = cast(Any, _FakeContext(mint_external_token(SECRET, "fm-worker-0")))
+        assert servicer._get_worker_from_context(ctx) is None
+        assert servicer._get_worker_id_from_context(ctx) is None
+
+    @pytest.mark.asyncio
+    async def test_restart_survival_reenrolls_under_a_new_id(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("server.env.EXTERNAL_WORKER_TOKEN", SECRET)
+        redis = _FakeRedis()
+        token = mint_external_token(SECRET, "fm-worker-0")
+
+        before, _ = _build_servicer(redis=redis)
+        id1 = await _register(before, token)
+
+        # A supervisor restart: fresh in-process registry, same Redis.
+        after, _ = _build_servicer(redis=redis)
+        ctx = cast(Any, _FakeContext(token))
+        assert after._get_worker_id_from_context(ctx) is None  # forgotten
+
+        id2 = await _register(after, token)
+        assert id2 != id1
+        assert after._get_worker_id_from_context(ctx) == id2
+
+    @pytest.mark.asyncio
+    async def test_docker_token_path_is_unchanged(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A pre-registered adapter (docker/vastai) registers via try_get and
+        never enrolls."""
+        monkeypatch.setattr("server.env.EXTERNAL_WORKER_TOKEN", SECRET)
+        servicer, redis = _build_servicer()
+        token = servicer._registry.new_token()
+        # Simulate WorkerManager having created + registered the adapter already.
+        adapter = ExternalWorkerFactory(system_principal=None).create_worker(  # type: ignore[arg-type]
+            token, ExternalWorkerConfig(), name="docker-worker-0"
+        )
+        servicer._registry.add(adapter)
+
+        worker_id = await _register(servicer, cast(str, token))
+
+        assert worker_id in redis.worker_ids

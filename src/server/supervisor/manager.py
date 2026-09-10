@@ -11,6 +11,7 @@ from ..hooks import PrincipalContext
 from .adapters.base import ProviderSpec, WorkerAdapter, WorkerTokenType
 from .adapters.docker import get_provider_spec as docker_provider_spec
 from .adapters.external import get_provider_spec as external_provider_spec
+from .adapters.external import verify_external_token
 from .adapters.vastai import get_provider_spec as vastai_provider_spec
 from .registry import WorkerRegistry
 from .schemas import WorkerInfo, WorkerStatus
@@ -200,6 +201,25 @@ class WorkerManager:
                 raise RuntimeError(f"Failed to start worker '{worker.name}'")
         self._report_capacity_change()
         return worker.get_info()
+
+    async def admit_worker(self, token: WorkerTokenType) -> WorkerInfo | None:
+        if not self.is_started:
+            raise RuntimeError("WorkerManager not started")
+
+        if verify_external_token(token) is None:
+            return None
+        try:
+            # init_on_start=False: an external worker is already running, so the
+            # supervisor must not run its start lifecycle on it (that path gates
+            # on STOPPED and would reject a worker born RUNNING).
+            return await self.create_worker(
+                WorkerInitConfig(
+                    provider="external", worker_token=token, init_on_start=False
+                )
+            )
+        except ValueError as exc:
+            self.logger.warning("Failed to admit worker: %s", exc)
+            return None
 
     def list_workers(self) -> list[WorkerInfo]:
         if not self.is_started:
