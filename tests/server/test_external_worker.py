@@ -24,7 +24,11 @@ from server.supervisor.adapters.external import (
     mint_external_token,
     verify_external_token,
 )
-from server.supervisor.manager import WorkerManager
+from server.supervisor.manager import (
+    ProviderUnavailableError,
+    WorkerInitConfig,
+    WorkerManager,
+)
 from server.supervisor.registry import WorkerRegistry
 from server.supervisor.schemas import WorkerStatus
 from server.supervisor.services.grpc_server import SupervisorServicer
@@ -170,12 +174,7 @@ class TestDockerlessHost:
     def test_unavailable_provider_raises_typed_error_and_external_still_works(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path
     ) -> None:
-        import logging
-
         from server.supervisor import manager as manager_mod
-        from server.supervisor.adapters.external import mint_external_token
-        from server.supervisor.manager import ProviderUnavailableError, WorkerInitConfig
-        from server.supervisor.registry import WorkerRegistry
 
         def _explode(_principal):
             raise RuntimeError("Error while fetching server API version")

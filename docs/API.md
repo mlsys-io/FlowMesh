@@ -75,6 +75,16 @@ self-authenticate the same way, sending `FLOWMESH_API_KEY` as the bearer.
 container lifecycle and is what `flowmesh stack worker {up,down,...}`
 calls.
 
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/v1/stack/workers/providers` | Worker providers available on this node (e.g. `docker`, `external`, `vastai`). |
+| POST | `/api/v1/stack/workers` | Create a worker on this node. |
+
+`POST /api/v1/stack/workers` returns `409 Conflict` when the requested
+`provider` is not available on this node (e.g. `docker` on a host with no
+Docker daemon); the `detail` names the provider and lists the available
+ones. Query `/api/v1/stack/workers/providers` first to avoid the request.
+
 ## SSH
 
 | Method | Path | Description |
