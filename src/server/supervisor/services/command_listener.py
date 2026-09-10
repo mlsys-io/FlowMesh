@@ -20,7 +20,12 @@ from shared.schemas.command import (
 from ...clients.redis import NODE_RESPONSE_CHANNEL, SyncRedisClient, node_cmd_channel
 from ...utils.concurrent import Sentinel, TaskReceiver
 from ..adapters.docker import DockerWorkerConfig
-from ..manager import ProviderUnavailableError, WorkerInitConfig, WorkerManager
+from ..manager import (
+    ManagerNotStartedError,
+    ProviderUnavailableError,
+    WorkerInitConfig,
+    WorkerManager,
+)
 from .pubsub_reader import RebindableReader
 from .relay_uplink import RelayUplinkService
 
@@ -382,7 +387,7 @@ class CommandListener:
             return CommandResponse.error(
                 cmd,
                 "Missing payload for START_WORKER command",
-                CommandErrorCode.INVALID_PAYLOAD,
+                CommandErrorCode.INTERNAL,
             )
 
         worker_name = cmd.payload.get("worker_name")
@@ -390,7 +395,7 @@ class CommandListener:
             return CommandResponse.error(
                 cmd,
                 "Missing worker_name in payload for START_WORKER command",
-                CommandErrorCode.INVALID_PAYLOAD,
+                CommandErrorCode.INTERNAL,
             )
 
         try:
@@ -398,6 +403,8 @@ class CommandListener:
                 self._wm.start_worker(worker_name), timeout=_START_WORKER_TIMEOUT
             )
             return CommandResponse.ok(cmd, data={"success": result})
+        except ManagerNotStartedError as exc:
+            return CommandResponse.error(cmd, str(exc), CommandErrorCode.NOT_READY)
         except Exception as exc:
             return CommandResponse.error(
                 cmd, f"Failed to start worker: {exc}", CommandErrorCode.INTERNAL
@@ -408,7 +415,7 @@ class CommandListener:
             return CommandResponse.error(
                 cmd,
                 "Missing payload for STOP_WORKER command",
-                CommandErrorCode.INVALID_PAYLOAD,
+                CommandErrorCode.INTERNAL,
             )
 
         worker_name = cmd.payload.get("worker_name")
@@ -416,7 +423,7 @@ class CommandListener:
             return CommandResponse.error(
                 cmd,
                 "Missing worker_name in payload for STOP_WORKER command",
-                CommandErrorCode.INVALID_PAYLOAD,
+                CommandErrorCode.INTERNAL,
             )
 
         try:
@@ -424,6 +431,8 @@ class CommandListener:
                 self._wm.stop_worker(worker_name), timeout=_STOP_WORKER_TIMEOUT
             )
             return CommandResponse.ok(cmd, data={"success": result})
+        except ManagerNotStartedError as exc:
+            return CommandResponse.error(cmd, str(exc), CommandErrorCode.NOT_READY)
         except Exception as exc:
             return CommandResponse.error(
                 cmd, f"Failed to stop worker: {exc}", CommandErrorCode.INTERNAL
@@ -436,7 +445,7 @@ class CommandListener:
                     return CommandResponse.error(
                         cmd,
                         "Missing worker_name in payload for GET_WORKERS command",
-                        CommandErrorCode.INVALID_PAYLOAD,
+                        CommandErrorCode.INTERNAL,
                     )
                 workers = (
                     [worker]
@@ -472,7 +481,7 @@ class CommandListener:
             return CommandResponse.error(
                 cmd,
                 "Missing payload for START_RELAY command",
-                CommandErrorCode.INVALID_PAYLOAD,
+                CommandErrorCode.INTERNAL,
             )
         relay_token = cmd.payload.get("relay_token")
         target_host = cmd.payload.get("target_host")
@@ -483,7 +492,7 @@ class CommandListener:
                 cmd,
                 "Missing relay_token, target_host, target_port, or session_id "
                 "for START_RELAY command",
-                CommandErrorCode.INVALID_PAYLOAD,
+                CommandErrorCode.INTERNAL,
             )
         try:
             self._relay_uplink.start_uplink(
@@ -513,6 +522,12 @@ class CommandListener:
                 str(exc),
                 error_code=CommandErrorCode.PROVIDER_UNAVAILABLE,
             )
+        except ManagerNotStartedError as exc:
+            return CommandResponse.error(cmd, str(exc), CommandErrorCode.NOT_READY)
+        except ValidationError as exc:
+            return CommandResponse.error(
+                cmd, f"Invalid worker config: {exc}", CommandErrorCode.INVALID_PAYLOAD
+            )
         except Exception as exc:
             return CommandResponse.error(
                 cmd, f"Failed to create worker: {exc}", CommandErrorCode.INTERNAL
@@ -536,7 +551,7 @@ class CommandListener:
                         cmd,
                         f"Invalid worker_type {worker_type} for gpu_count > 0; "
                         "must be 'gpu'",
-                        CommandErrorCode.INVALID_PAYLOAD,
+                        CommandErrorCode.INTERNAL,
                     )
                 cuda_devices = payload.get("cuda_devices")
                 if cuda_devices is None:
@@ -546,7 +561,7 @@ class CommandListener:
                         cmd,
                         f"Length of cuda_devices list must match gpu_count; got "
                         f"{len(cuda_devices)} devices for gpu_count {gpu_count}",
-                        CommandErrorCode.INVALID_PAYLOAD,
+                        CommandErrorCode.INTERNAL,
                     )
 
             if not payload.get("worker_alias"):
@@ -572,6 +587,8 @@ class CommandListener:
                 str(exc),
                 error_code=CommandErrorCode.PROVIDER_UNAVAILABLE,
             )
+        except ManagerNotStartedError as exc:
+            return CommandResponse.error(cmd, str(exc), CommandErrorCode.NOT_READY)
         except Exception as exc:
             return CommandResponse.error(
                 cmd, f"Failed to create worker: {exc}", CommandErrorCode.INTERNAL
@@ -581,7 +598,7 @@ class CommandListener:
         worker_name = (cmd.payload or {}).get("worker_name")
         if not worker_name:
             return CommandResponse.error(
-                cmd, "Missing worker_name", CommandErrorCode.INVALID_PAYLOAD
+                cmd, "Missing worker_name", CommandErrorCode.INTERNAL
             )
         try:
             success = await asyncio.wait_for(
@@ -589,6 +606,8 @@ class CommandListener:
             )
             self._worker_locks.pop(worker_name, None)
             return CommandResponse.ok(cmd, data={"success": success})
+        except ManagerNotStartedError as exc:
+            return CommandResponse.error(cmd, str(exc), CommandErrorCode.NOT_READY)
         except Exception as exc:
             return CommandResponse.error(
                 cmd, f"Failed to destroy worker: {exc}", CommandErrorCode.INTERNAL
@@ -607,6 +626,8 @@ class CommandListener:
             else:
                 self._worker_locks.clear()
             return CommandResponse.ok(cmd)
+        except ManagerNotStartedError as exc:
+            return CommandResponse.error(cmd, str(exc), CommandErrorCode.NOT_READY)
         except Exception as exc:
             return CommandResponse.error(
                 cmd, f"Failed to destroy workers: {exc}", CommandErrorCode.INTERNAL

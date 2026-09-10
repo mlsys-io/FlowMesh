@@ -19,6 +19,13 @@ from .schemas import WorkerInfo, WorkerStatus
 _MAX_PARALLELISM: int = 16
 
 
+class ManagerNotStartedError(RuntimeError):
+    """Raised when an operation arrives before the manager has started."""
+
+    def __init__(self, message: str = "WorkerManager not started") -> None:
+        super().__init__(message)
+
+
 class ProviderUnavailableError(ValueError):
     """Raised when a create request names a provider this node does not have."""
 
@@ -196,7 +203,7 @@ class WorkerManager:
 
     async def create_worker(self, init_config: WorkerInitConfig) -> WorkerInfo:
         if not self.is_started:
-            raise RuntimeError("WorkerManager not started")
+            raise ManagerNotStartedError()
 
         worker = self._create_worker(init_config)
         if init_config.init_on_start:
@@ -208,7 +215,7 @@ class WorkerManager:
 
     async def admit_worker(self, token: WorkerTokenType) -> WorkerInfo | None:
         if not self.is_started:
-            raise RuntimeError("WorkerManager not started")
+            raise ManagerNotStartedError()
 
         if verify_external_token(token) is None:
             return None
@@ -241,7 +248,7 @@ class WorkerManager:
 
     async def start_worker(self, name: str) -> bool:
         if not self.is_started:
-            raise RuntimeError("WorkerManager not started")
+            raise ManagerNotStartedError()
         worker = self._registry.try_get_by_name(name)
         if worker is None:
             raise ValueError(f"Worker '{name}' does not exist")
@@ -250,7 +257,7 @@ class WorkerManager:
 
     async def stop_worker(self, name: str) -> bool:
         if not self.is_started:
-            raise RuntimeError("WorkerManager not started")
+            raise ManagerNotStartedError()
         worker = self._registry.try_get_by_name(name)
         if worker is None:
             raise ValueError(f"Worker '{name}' does not exist")
@@ -261,7 +268,7 @@ class WorkerManager:
 
     async def destroy_worker(self, name: str) -> bool:
         if not self.is_started:
-            raise RuntimeError("WorkerManager not started")
+            raise ManagerNotStartedError()
         worker = self._registry.try_get_by_name(name)
         if worker is None:
             return False
@@ -273,7 +280,7 @@ class WorkerManager:
 
     async def destroy_workers(self, names: set[str] | None = None) -> None:
         if not self.is_started:
-            raise RuntimeError("WorkerManager not started")
+            raise ManagerNotStartedError()
 
         workers: list[WorkerAdapter]
         if names is None:
@@ -296,7 +303,7 @@ class WorkerManager:
 
     def _create_worker(self, init_config: WorkerInitConfig) -> WorkerAdapter:
         if not self.is_started:
-            raise RuntimeError("WorkerManager not started")
+            raise ManagerNotStartedError()
 
         token = init_config.worker_token or self._registry.new_token()
         provider = init_config.provider.strip().lower()
@@ -320,7 +327,7 @@ class WorkerManager:
 
     async def _start_worker(self, worker: WorkerAdapter) -> bool:
         if not self.is_started:
-            raise RuntimeError("WorkerManager not started")
+            raise ManagerNotStartedError()
         if worker.status is not WorkerStatus.STOPPED:
             raise ValueError(f"Worker '{worker.name}' is already started")
 

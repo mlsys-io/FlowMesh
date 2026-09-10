@@ -10,8 +10,10 @@ import threading
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from pydantic import ValidationError
 
-from server.supervisor.manager import ProviderUnavailableError
+from server.supervisor.adapters.docker import DockerWorkerConfig
+from server.supervisor.manager import ManagerNotStartedError, ProviderUnavailableError
 from server.supervisor.services.command_listener import CommandListener
 from shared.schemas.command import (
     CommandErrorCode,
@@ -80,6 +82,29 @@ class TestHandleCreateWorkerCmd:
     def test_invalid_payload_returns_error(self) -> None:
         resp = self._handle(None)
         assert not resp.success
+        assert resp.error_code == CommandErrorCode.INVALID_PAYLOAD
+
+    def test_invalid_worker_config_sets_invalid_payload(self) -> None:
+        """CREATE_WORKER is the one command whose payload the API caller
+        supplies, so a config that fails validation is the caller's error."""
+        with pytest.raises(ValidationError) as excinfo:
+            DockerWorkerConfig.model_validate({"worker_type": "banana"})
+        self.cl._wm.create_worker = AsyncMock(  # type: ignore[method-assign]
+            side_effect=excinfo.value
+        )
+        resp = self._handle(
+            {"provider": "docker", "worker_config": {"worker_type": "banana"}}
+        )
+        assert not resp.success
+        assert resp.error_code == CommandErrorCode.INVALID_PAYLOAD
+
+    def test_manager_not_started_sets_not_ready(self) -> None:
+        self.cl._wm.create_worker = AsyncMock(  # type: ignore[method-assign]
+            side_effect=ManagerNotStartedError("WorkerManager not started")
+        )
+        resp = self._handle({"provider": "docker"})
+        assert not resp.success
+        assert resp.error_code == CommandErrorCode.NOT_READY
 
     def test_provider_unavailable_sets_error_code(self) -> None:
         self.cl._wm.create_worker = AsyncMock(  # type: ignore[method-assign]
