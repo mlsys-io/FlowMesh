@@ -36,6 +36,36 @@ from ..clients.redis import (
     worker_key,
 )
 
+# A write for a worker that is no longer a set member must not recreate a partial
+# record. A read-then-write cannot promise that, since the watchdog can reap
+# between the two calls; these run the membership test and the write as one
+# atomic Redis call and report whether the write landed.
+_HEARTBEAT_IF_REGISTERED = """
+if redis.call('SISMEMBER', KEYS[1], ARGV[1]) == 0 then
+    return 0
+end
+redis.call('SETEX', KEYS[2], ARGV[2], ARGV[3])
+redis.call('HSET', KEYS[3], 'last_seen', ARGV[3])
+return 1
+"""
+
+_SET_FIELDS_IF_REGISTERED = """
+if redis.call('SISMEMBER', KEYS[1], ARGV[1]) == 0 then
+    return 0
+end
+redis.call('HSET', KEYS[2], unpack(ARGV, 2))
+return 1
+"""
+
+
+def _flatten_fields(mapping: dict[str, str]) -> list[str]:
+    """Flatten a hash mapping into the field/value ARGV tail HSET expects."""
+    flat: list[str] = []
+    for field, value in mapping.items():
+        flat.append(field)
+        flat.append(value)
+    return flat
+
 
 class Worker(BaseModel):
     id: str = Field(description="Worker identifier.")
@@ -124,24 +154,32 @@ class WorkerRegistry:
         return worker_id
 
     def update_worker_hb(self, worker_id: str, ts: str, ttl_sec: int) -> bool:
-        if not self.is_worker_registered(worker_id):
-            return False
-        with self._rds.sync.control_pipeline() as pipe:
-            pipe.setex(worker_hb_key(worker_id), ttl_sec, ts)
-            pipe.hset(worker_key(worker_id), mapping={"last_seen": ts})
-            pipe.execute()
-        return True
+        wrote = self._rds.sync.eval(
+            _HEARTBEAT_IF_REGISTERED,
+            3,
+            WORKERS_SET_KEY,
+            worker_hb_key(worker_id),
+            worker_key(worker_id),
+            worker_id,
+            str(ttl_sec),
+            ts,
+        )
+        return bool(int(wrote))
 
     async def update_worker_hb_async(
         self, worker_id: str, ts: str, ttl_sec: int
     ) -> bool:
-        if not await self.is_worker_registered_async(worker_id):
-            return False
-        async with self._rds.asyncio.control_pipeline() as pipe:
-            pipe.setex(worker_hb_key(worker_id), ttl_sec, ts)
-            pipe.hset(worker_key(worker_id), mapping={"last_seen": ts})
-            await pipe.execute()
-        return True
+        wrote = await self._rds.asyncio.eval(
+            _HEARTBEAT_IF_REGISTERED,
+            3,
+            WORKERS_SET_KEY,
+            worker_hb_key(worker_id),
+            worker_key(worker_id),
+            worker_id,
+            str(ttl_sec),
+            ts,
+        )
+        return bool(int(wrote))
 
     def set_worker_status(
         self,
@@ -150,15 +188,10 @@ class WorkerRegistry:
         ts: str,
         extra: dict[str, Any] | None,
     ) -> bool:
-        if not self.is_worker_registered(worker_id):
-            return False
         mapping = {"status": status.value, "last_seen": ts}
         if extra:
             mapping.update({f"extra_{k}": str(v) for k, v in extra.items()})
-        with self._rds.sync.control_pipeline() as pipe:
-            pipe.hset(worker_key(worker_id), mapping=mapping)
-            pipe.execute()
-        return True
+        return self._set_worker_fields(worker_id, mapping)
 
     async def set_worker_status_async(
         self,
@@ -167,15 +200,10 @@ class WorkerRegistry:
         ts: str,
         extra: dict[str, Any] | None = None,
     ) -> bool:
-        if not await self.is_worker_registered_async(worker_id):
-            return False
         mapping = {"status": status.value, "last_seen": ts}
         if extra:
             mapping.update({f"extra_{k}": str(v) for k, v in extra.items()})
-        async with self._rds.asyncio.control_pipeline() as pipe:
-            pipe.hset(worker_key(worker_id), mapping=mapping)
-            await pipe.execute()
-        return True
+        return await self._set_worker_fields_async(worker_id, mapping)
 
     def unregister_workers(self, *worker_ids: str) -> None:
         with self._rds.sync.control_pipeline() as pipe:
@@ -200,12 +228,6 @@ class WorkerRegistry:
 
     async def get_worker_ids_async(self) -> set[str]:
         return await self._rds.asyncio.set_members(WORKERS_SET_KEY)
-
-    def is_worker_registered(self, worker_id: str) -> bool:
-        return self._rds.sync.sismember(WORKERS_SET_KEY, worker_id)
-
-    async def is_worker_registered_async(self, worker_id: str) -> bool:
-        return await self._rds.asyncio.sismember(WORKERS_SET_KEY, worker_id)
 
     def get_worker(self, worker_id: str) -> Worker | None:
         raw = self._rds.sync.hash_getall(worker_key(worker_id))
@@ -256,18 +278,17 @@ class WorkerRegistry:
         return await self._rds.asyncio.exists(worker_key(worker_id))
 
     def update_worker_status(self, worker_id: str, status: WorkerStatus) -> bool:
-        if not self.is_worker_registered(worker_id):
-            return False
         ts = now_iso()
+        if not self._set_worker_fields(
+            worker_id, {"status": status.value, "last_seen": ts}
+        ):
+            return False
         payload = {
             "type": "STATUS",
             "worker_id": worker_id,
             "status": status.value,
             "ts": ts,
         }
-        self._rds.sync.hash_set(
-            worker_key(worker_id), {"status": status.value, "last_seen": ts}
-        )
         self._rds.sync.publish_telemetry(
             WORKER_EVENT_CHANNEL, json.dumps(payload, ensure_ascii=False)
         )
@@ -276,19 +297,17 @@ class WorkerRegistry:
     async def update_worker_status_async(
         self, worker_id: str, status: WorkerStatus
     ) -> bool:
-        if not await self.is_worker_registered_async(worker_id):
-            return False
         ts = now_iso()
+        if not await self._set_worker_fields_async(
+            worker_id, {"status": status.value, "last_seen": ts}
+        ):
+            return False
         payload = {
             "type": "STATUS",
             "worker_id": worker_id,
             "status": status.value,
             "ts": ts,
         }
-        await self._rds.asyncio.hash_set(
-            worker_key(worker_id),
-            {"status": status.value, "last_seen": ts},
-        )
         await self._rds.asyncio.publish_telemetry(
             WORKER_EVENT_CHANNEL, json.dumps(payload, ensure_ascii=False)
         )
@@ -488,6 +507,30 @@ class WorkerRegistry:
     async def _allocate_worker_id_async(self) -> str:
         seq = await self._rds.asyncio.incr(WORKER_ID_SEQ_KEY)
         return new_worker_id(seq)
+
+    def _set_worker_fields(self, worker_id: str, mapping: dict[str, str]) -> bool:
+        wrote = self._rds.sync.eval(
+            _SET_FIELDS_IF_REGISTERED,
+            2,
+            WORKERS_SET_KEY,
+            worker_key(worker_id),
+            worker_id,
+            *_flatten_fields(mapping),
+        )
+        return bool(int(wrote))
+
+    async def _set_worker_fields_async(
+        self, worker_id: str, mapping: dict[str, str]
+    ) -> bool:
+        wrote = await self._rds.asyncio.eval(
+            _SET_FIELDS_IF_REGISTERED,
+            2,
+            WORKERS_SET_KEY,
+            worker_key(worker_id),
+            worker_id,
+            *_flatten_fields(mapping),
+        )
+        return bool(int(wrote))
 
 
 # --- Helper functions --- #

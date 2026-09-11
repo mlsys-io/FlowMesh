@@ -22,7 +22,7 @@ class _WatchdogState:
     stale_since: dict[str, float] = field(default_factory=dict)
     declared_dead: set[str] = field(default_factory=set)
     dead_since: dict[str, float] = field(default_factory=dict)
-    reaped: set[str] = field(default_factory=set)
+    unpublished: set[str] = field(default_factory=set)
 
 
 class WorkerWatchdog:
@@ -106,20 +106,9 @@ class WorkerWatchdog:
             stop_event.wait(self._check_interval)
 
     def _scan(self, worker_ids: set[str], state: _WatchdogState, now: float) -> None:
-        active_workers = worker_ids
-
-        for worker_id in list(state.reaped):
-            try:
-                self._worker_registry.unregister_workers(worker_id)
-            except Exception as exc:
-                self._logger.warning(
-                    "Worker watchdog failed to re-delete reaped worker %s: %s",
-                    worker_id,
-                    exc,
-                )
-                continue
+        for worker_id in list(state.unpublished):
             if self._publish_reap_event(worker_id):
-                state.reaped.discard(worker_id)
+                state.unpublished.discard(worker_id)
 
         for worker_id in worker_ids:
             if not worker_id:
@@ -163,14 +152,14 @@ class WorkerWatchdog:
             self._handle_worker_expired(worker_id)
 
         for worker_id in list(state.stale_since):
-            if worker_id not in active_workers:
+            if worker_id not in worker_ids:
                 state.stale_since.pop(worker_id, None)
-        state.declared_dead.intersection_update(active_workers)
+        state.declared_dead.intersection_update(worker_ids)
         for worker_id in list(state.dead_since):
-            if worker_id not in active_workers:
+            if worker_id not in worker_ids:
                 state.dead_since.pop(worker_id, None)
         for worker_id in list(self._snapshot_dead_marks()):
-            if worker_id not in active_workers:
+            if worker_id not in worker_ids:
                 self.clear_dead_mark(worker_id)
 
     def _maybe_reap(self, worker_id: str, state: _WatchdogState, now: float) -> None:
@@ -201,13 +190,13 @@ class WorkerWatchdog:
         state.dead_since.pop(worker_id, None)
         state.declared_dead.discard(worker_id)
         state.stale_since.pop(worker_id, None)
-        state.reaped.add(worker_id)
         self._logger.warning(
             "Reaped stale worker %s (dead for %.0fs)",
             worker_id,
             now - first,
         )
         if not self._publish_reap_event(worker_id):
+            state.unpublished.add(worker_id)
             self._logger.warning(
                 "Worker watchdog reaped %s but failed to publish UNREGISTER; "
                 "will retry",
