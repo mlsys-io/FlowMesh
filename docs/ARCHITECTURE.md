@@ -150,9 +150,10 @@ scripts/dev/            compile_protos, sync_requirements, check_env_examples
   than `WORKER_CACHE_TTL_SEC` are ignored.
 - **Worker providers.** A worker is created through the provider named in
   `worker_config.yaml`: `docker` (containers on the node's own daemon),
-  `kubernetes` (pods through the cluster API), or `vastai` (rented
-  instances). Provider backends are contacted only when a provider is used,
-  so a deployment needs just its own backend to be reachable.
+  `kubernetes` (pods through the cluster API), `vastai` (rented instances), or
+  `external` (workers this supervisor does not launch, admitted by a shared
+  secret). A spawning provider whose backend is unreachable at startup is
+  dropped, so a node advertises only what it can actually serve.
 - **Worker capabilities.** Beyond hardware fit, each worker advertises the set
   of task types it can service, and the dispatcher routes a task only to workers
   that advertise its type. A worker advertises a type only when its executor came

@@ -149,9 +149,23 @@ A cluster can also run as a worker node against a root node deployed elsewhere.
 Set `NODE_ROLE=worker` and point `REDIS_CONTROL_URL` and `REDIS_TELEMETRY_URL`
 at the root node's Redis; the Redis StatefulSets are then not deployed.
 
-## Not yet supported
+## Choosing a worker provider
 
-Workers deployed directly with `kubectl` — a Deployment or DaemonSet that
-enrolls itself rather than being created by the supervisor — need an enrollment
-flow that mints a token at registration rather than at spawn. Today every
-worker's token is minted by the supervisor before it starts the pod.
+Two providers serve Kubernetes, differing in who owns the pod lifecycle.
+
+| | `external` | `kubernetes` |
+|---|---|---|
+| Creates workers | you, via your own Deployment or controller | the supervisor, through the cluster API |
+| Scaling | `kubectl scale`, HPA, your controller | `flowmesh worker create` / `destroy` |
+| Pod spec | your manifest, the full API | this provider's config fields plus `pod_overrides` |
+| Server RBAC | none | pods and secrets in the worker namespace |
+| Survives a supervisor restart | yes — tokens re-derive from the shared secret | no — supervisor-minted tokens are lost and the pods are reaped |
+
+Use `external` when the cluster or your own controller owns worker lifecycle
+and the pool is stable. Use `kubernetes` when FlowMesh should create and destroy
+workers itself — bursty workloads, or per-workflow GPU shapes that would
+otherwise need a Deployment each.
+
+A `kubernetes` worker is a bare Pod, so it restarts in place but is not
+rescheduled if its node is lost. Pools on preemptible or frequently drained
+nodes are better served by `external`.
