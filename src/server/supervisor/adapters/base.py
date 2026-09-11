@@ -1,6 +1,7 @@
 import os
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from enum import StrEnum
 from typing import NewType
 
 from pydantic import BaseModel, ConfigDict, SecretStr
@@ -9,6 +10,11 @@ from ... import env
 from ...hooks import PrincipalContext
 from ..schemas import WorkerInfo, WorkerStatus
 from .utils import env_to_secret_str, to_env_str
+
+
+class WorkerType(StrEnum):
+    CPU = "cpu"
+    GPU = "gpu"
 
 
 class WorkerConfig(BaseModel):

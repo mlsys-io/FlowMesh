@@ -5,7 +5,6 @@ import os
 import re
 import threading
 from collections import Counter
-from enum import StrEnum
 from typing import Any
 
 from docker import DockerClient
@@ -29,6 +28,7 @@ from .base import (
     WorkerConfig,
     WorkerFactory,
     WorkerTokenType,
+    WorkerType,
 )
 from .utils import get_worker_image_name, to_env_str
 
@@ -93,11 +93,6 @@ class _VolumeInitializer:
                 volume_name,
                 repr(exc),
             )
-
-
-class WorkerType(StrEnum):
-    CPU = "cpu"
-    GPU = "gpu"
 
 
 class SSHConfig(BaseModel):
