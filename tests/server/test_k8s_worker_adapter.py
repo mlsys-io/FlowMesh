@@ -493,9 +493,29 @@ class TestImageSelection:
 
 class TestFactory:
     def _factory(self, core: MagicMock) -> KubernetesWorkerFactory:
-        factory = KubernetesWorkerFactory(_principal())
-        factory._core = core
-        return factory
+        with (
+            patch.object(k8s_adapter.config, "load_incluster_config"),
+            patch.object(k8s_adapter.client, "ApiClient"),
+            patch.object(k8s_adapter.client, "CoreV1Api", return_value=core),
+        ):
+            return KubernetesWorkerFactory(_principal())
+
+    def test_construction_without_a_cluster_raises(self) -> None:
+        """An unreachable cluster must make the node report the provider absent."""
+        with (
+            patch.object(
+                k8s_adapter.config,
+                "load_incluster_config",
+                side_effect=k8s_adapter.config.ConfigException("not in cluster"),
+            ),
+            patch.object(
+                k8s_adapter.config,
+                "load_kube_config",
+                side_effect=k8s_adapter.config.ConfigException("no kubeconfig"),
+            ),
+        ):
+            with pytest.raises(k8s_adapter.config.ConfigException):
+                KubernetesWorkerFactory(_principal())
 
     def test_orphaned_pods_are_reaped_once(self) -> None:
         core = MagicMock()
@@ -553,34 +573,34 @@ class TestFactory:
         assert first.name != second.name
 
     def test_cleanup_closes_the_api_client(self) -> None:
-        factory = KubernetesWorkerFactory(_principal())
         api_client = MagicMock()
-        factory._api_client = api_client
-        factory._core = MagicMock()
+        with (
+            patch.object(k8s_adapter.config, "load_incluster_config"),
+            patch.object(k8s_adapter.client, "ApiClient", return_value=api_client),
+            patch.object(k8s_adapter.client, "CoreV1Api"),
+        ):
+            factory = KubernetesWorkerFactory(_principal())
 
         factory.cleanup()
 
         api_client.close.assert_called_once_with()
-        assert factory._core is None
 
     def test_client_falls_back_to_kubeconfig_outside_a_cluster(self) -> None:
-        from kubernetes import config as k8s_config
-
-        factory = KubernetesWorkerFactory(_principal())
         with (
             patch.object(
-                k8s_config,
+                k8s_adapter.config,
                 "load_incluster_config",
-                side_effect=k8s_config.ConfigException("not in cluster"),
+                side_effect=k8s_adapter.config.ConfigException("not in cluster"),
             ),
-            patch.object(k8s_config, "load_kube_config") as load_kube_config,
+            patch.object(k8s_adapter.config, "load_kube_config") as load_kube_config,
+            patch.object(k8s_adapter.client, "ApiClient"),
+            patch.object(k8s_adapter.client, "CoreV1Api"),
         ):
-            factory.core_api()
+            KubernetesWorkerFactory(_principal())
 
         load_kube_config.assert_called_once()
-        factory.cleanup()
 
     def test_destroy_rejects_a_foreign_worker(self) -> None:
-        factory = KubernetesWorkerFactory(_principal())
+        factory = self._factory(MagicMock())
         with pytest.raises(ValueError, match="Invalid worker type"):
             factory.destroy_worker(MagicMock())

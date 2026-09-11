@@ -594,16 +594,27 @@ class KubernetesWorkerAdapter(WorkerAdapter):
 
 class KubernetesWorkerFactory(WorkerFactory):
     def __init__(self, system_principal: PrincipalContext) -> None:
+        """Resolve cluster access up front.
+
+        Construction is what decides whether this node reports the provider as
+        available, so an unreachable cluster has to fail here rather than at
+        first use — otherwise the node would advertise a provider it cannot
+        serve and reject the create only once a worker was requested.
+        """
         super().__init__(system_principal)
-        self._api_client: client.ApiClient | None = None
-        self._core: client.CoreV1Api | None = None
+        try:
+            config.load_incluster_config()
+        except config.ConfigException:
+            config.load_kube_config()
+        self._api_client = client.ApiClient()
+        self._core = client.CoreV1Api(self._api_client)
         self._worker_id_registry: Counter[str] = Counter()
         self._reaped = False
 
     def create_worker(
         self, token: WorkerTokenType, config: KubernetesWorkerConfig
     ) -> KubernetesWorkerAdapter:
-        core = self.core_api()
+        core = self._core
         self._reap_orphans(core, config.namespace)
 
         name = config.worker_alias or self._next_worker_name(config.worker_type)
@@ -623,20 +634,7 @@ class KubernetesWorkerFactory(WorkerFactory):
             raise ValueError("Invalid worker type")
 
     def cleanup(self) -> None:
-        if self._api_client is not None:
-            self._api_client.close()
-        self._api_client = None
-        self._core = None
-
-    def core_api(self) -> client.CoreV1Api:
-        if self._core is None:
-            try:
-                config.load_incluster_config()
-            except config.ConfigException:
-                config.load_kube_config()
-            self._api_client = client.ApiClient()
-            self._core = client.CoreV1Api(self._api_client)
-        return self._core
+        self._api_client.close()
 
     def _next_worker_name(self, worker_type: WorkerType) -> str:
         match worker_type:
