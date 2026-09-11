@@ -157,6 +157,7 @@ class TestDockerlessHost:
             raise RuntimeError("Error while fetching server API version")
 
         monkeypatch.setattr(manager_mod, "docker_provider_spec", _explode)
+        monkeypatch.setattr(manager_mod, "kubernetes_provider_spec", _explode)
         monkeypatch.setattr(manager_mod, "vastai_provider_spec", _explode)
 
         mgr = manager_mod.WorkerManager(

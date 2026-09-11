@@ -40,10 +40,31 @@ The runtime is two top-level processes:
    workflow / task / dispatch logic and the **Supervisor subsystem**
    (`src/server/supervisor/`), which manages per-node worker lifecycle,
    runs the worker-facing gRPC server (`:50051`), and drives the
-   Docker / Vast.ai worker adapters.
+   Docker / Kubernetes / Vast.ai worker adapters.
 2. **Worker** (`src/worker/`) — stateless executor. Connects to a
    supervisor via gRPC, receives tasks, runs the matching executor,
    reports results.
+
+### Kubernetes
+
+On Kubernetes one namespace is one FlowMesh node: a single server Deployment
+runs `NODE_ROLE=root` with its supervisor, and the cluster scheduler places
+workers across machines.
+
+```
+Client ──▶ Service flowmesh-server ──▶ Deployment flowmesh-server (replicas: 1)
+                                          │  ServiceAccount flowmesh-server
+                                          ├─▶ StatefulSet redis-control / redis-telemetry
+                                          └─▶ Pod flowmesh-worker-* (nvidia.com/gpu: N)
+```
+
+The server runs as a single replica with the `Recreate` strategy. A worker's
+token lives in the registry of the supervisor that minted it, so a second
+replica behind the Service would reject those registrations. Workers dial the
+supervisor through a headless Service, which a gRPC TLS certificate must name
+as a SAN.
+
+See [`KUBERNETES.md`](KUBERNETES.md).
 
 ## Communication
 
@@ -127,6 +148,12 @@ scripts/dev/            compile_protos, sync_requirements, check_env_examples
   `WorkerHardware`. The dispatcher's `_cached_worker_candidates` filters
   to workers whose cache covers the task's references; entries older
   than `WORKER_CACHE_TTL_SEC` are ignored.
+- **Worker providers.** A worker is created through the provider named in
+  `worker_config.yaml`: `docker` (containers on the node's own daemon),
+  `kubernetes` (pods through the cluster API), `vastai` (rented instances), or
+  `external` (workers this supervisor does not launch, admitted by a shared
+  secret). A spawning provider whose backend is unreachable at startup is
+  dropped, so a node advertises only what it can actually serve.
 - **Worker capabilities.** Beyond hardware fit, each worker advertises the set
   of task types it can service, and the dispatcher routes a task only to workers
   that advertise its type. A worker advertises a type only when its executor came

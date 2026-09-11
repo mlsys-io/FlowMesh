@@ -12,6 +12,7 @@ from .adapters.base import ProviderSpec, WorkerAdapter, WorkerTokenType
 from .adapters.docker import get_provider_spec as docker_provider_spec
 from .adapters.external import get_provider_spec as external_provider_spec
 from .adapters.external import verify_external_token
+from .adapters.kubernetes import get_provider_spec as kubernetes_provider_spec
 from .adapters.vastai import get_provider_spec as vastai_provider_spec
 from .registry import WorkerRegistry
 from .schemas import WorkerInfo, WorkerStatus
@@ -88,6 +89,12 @@ class WorkerManager:
         except Exception as exc:
             logger.warning(
                 "Docker worker provider unavailable, continuing without it: %s", exc
+            )
+        try:
+            specs.append(kubernetes_provider_spec(system_principal))
+        except Exception as exc:
+            logger.warning(
+                "Kubernetes worker provider unavailable, continuing without it: %s", exc
             )
         try:
             specs.append(vastai_provider_spec(system_principal))

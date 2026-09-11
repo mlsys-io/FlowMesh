@@ -28,4 +28,5 @@ where = ["src"]
 "flowmesh_cli_stack" = [
     "assets/**",
     "assets/.env.example",
+    "assets/k8s/**",
 ]

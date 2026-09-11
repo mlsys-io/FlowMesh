@@ -1,0 +1,181 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: flowmesh-server-env
+  namespace: ${K8S_NAMESPACE:-flowmesh}
+  labels:
+    app.kubernetes.io/part-of: flowmesh
+type: Opaque
+stringData:
+  x-flowmesh-env-values: true
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: flowmesh-worker-config
+  namespace: ${K8S_NAMESPACE:-flowmesh}
+  labels:
+    app.kubernetes.io/part-of: flowmesh
+data:
+  worker_config.yaml:
+    x-flowmesh-file: SERVER_WORKER_CONFIG
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: flowmesh-results
+  namespace: ${K8S_NAMESPACE:-flowmesh}
+  labels:
+    app.kubernetes.io/part-of: flowmesh
+spec:
+  accessModes:
+    - ${K8S_RESULTS_ACCESS_MODE:-ReadWriteOnce}
+  storageClassName:
+    x-flowmesh-when: K8S_STORAGE_CLASS
+    x-flowmesh-value: ${K8S_STORAGE_CLASS:-}
+  resources:
+    requests:
+      storage: ${K8S_RESULTS_STORAGE_SIZE:-20Gi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: flowmesh-server
+  namespace: ${K8S_NAMESPACE:-flowmesh}
+  labels:
+    app.kubernetes.io/part-of: flowmesh
+    app.kubernetes.io/component: server
+spec:
+  type: ${K8S_SERVER_SERVICE_TYPE:-ClusterIP}
+  selector:
+    app.kubernetes.io/part-of: flowmesh
+    app.kubernetes.io/component: server
+  ports:
+    - name: http
+      port:
+        x-flowmesh-int: ${SERVER_HTTP_PORT:-8000}
+      targetPort: http
+---
+# Workers dial this name. A gRPC TLS certificate must carry it as a SAN.
+apiVersion: v1
+kind: Service
+metadata:
+  name: ${K8S_SUPERVISOR_SERVICE:-flowmesh-supervisor}
+  namespace: ${K8S_NAMESPACE:-flowmesh}
+  labels:
+    app.kubernetes.io/part-of: flowmesh
+    app.kubernetes.io/component: supervisor
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/part-of: flowmesh
+    app.kubernetes.io/component: server
+  ports:
+    - name: grpc
+      port:
+        x-flowmesh-int: ${SERVER_GRPC_PORT:-50051}
+      targetPort: grpc
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: flowmesh-server
+  namespace: ${K8S_NAMESPACE:-flowmesh}
+  labels:
+    app.kubernetes.io/part-of: flowmesh
+    app.kubernetes.io/component: server
+spec:
+  # A worker's token lives in the registry of the supervisor that minted it, so
+  # a second replica behind the Service would reject those registrations.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/part-of: flowmesh
+      app.kubernetes.io/component: server
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: flowmesh
+        app.kubernetes.io/component: server
+    spec:
+      serviceAccountName: flowmesh-server
+      containers:
+        - name: server
+          image: ${FLOWMESH_REGISTRY:-ghcr.io/mlsys-io}/flowmesh_server:${FLOWMESH_VERSION:-dev}
+          imagePullPolicy: ${K8S_IMAGE_PULL_POLICY:-IfNotPresent}
+          envFrom:
+            - secretRef:
+                name: flowmesh-server-env
+          env:
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: SERVER_APP_PORT
+              value: "${SERVER_HTTP_PORT:-8000}"
+            - name: WORKER_CONFIG_PATH
+              value: /etc/flowmesh/worker_config.yaml
+            - name: RESULTS_DIR
+              value: /mnt/flowmesh-results
+            - name: SERVER_METRICS_DIR
+              value: /mnt/flowmesh-metrics
+            - name: LOG_FILE
+              value: /var/log/flowmesh-server/server.log
+          ports:
+            - name: http
+              containerPort:
+                x-flowmesh-int: ${SERVER_HTTP_PORT:-8000}
+            - name: grpc
+              containerPort:
+                x-flowmesh-int: ${SERVER_GRPC_PORT:-50051}
+          volumeMounts:
+            - name: worker-config
+              mountPath: /etc/flowmesh
+              readOnly: true
+            - name: results
+              mountPath: /mnt/flowmesh-results
+            - name: metrics
+              mountPath: /mnt/flowmesh-metrics
+            - name: logs
+              mountPath: /var/log/flowmesh-server
+            - x-flowmesh-when: SERVER_GRPC_TLS_SECRET
+              name: server-tls
+              mountPath: /etc/ssl/server
+              readOnly: true
+            - x-flowmesh-when: REDIS_TLS_SECRET
+              name: redis-tls
+              mountPath: /etc/ssl/redis
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 40
+            periodSeconds: 30
+      volumes:
+        - name: worker-config
+          configMap:
+            name: flowmesh-worker-config
+        - name: results
+          persistentVolumeClaim:
+            claimName: flowmesh-results
+        - name: metrics
+          emptyDir: {}
+        - name: logs
+          emptyDir: {}
+        - x-flowmesh-when: SERVER_GRPC_TLS_SECRET
+          name: server-tls
+          secret:
+            secretName: ${SERVER_GRPC_TLS_SECRET:-}
+        - x-flowmesh-when: REDIS_TLS_SECRET
+          name: redis-tls
+          secret:
+            secretName: ${REDIS_TLS_SECRET:-}

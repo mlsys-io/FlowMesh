@@ -28,19 +28,21 @@ from flowmesh_stack.images import (
     get_push_platforms,
 )
 
+from . import k8s
 from .env_schema import STACK_ENV_SCHEMA, deploy_overrides, role_overrides
+from .k8s import StackBackend, resolve_backend
 from .utils import (
     DEFAULT_ENV_FILE,
     STACK_PATH_KEYS,
     apply_plugin_data_env,
     apply_stack_resource_env,
+    drain_workers,
     ensure_deploy_paths,
     parse_node_role,
     resolve_package_version,
     stack_bake_file,
     stack_compose_file,
     stack_env_example,
-    stack_node_client,
 )
 from .worker import worker_pull
 
@@ -478,6 +480,9 @@ def up(
     image_tag: str | None = typer.Option(
         None, "--image-tag", help="Override FLOWMESH_VERSION"
     ),
+    backend: str | None = typer.Option(
+        None, "--backend", help="Stack backend to target (compose|k8s)"
+    ),
 ) -> None:
     """Start the stack.
 
@@ -486,6 +491,10 @@ def up(
     services are skipped — the worker is expected to connect to the root
     node's Redis via REDIS_CONTROL_URL / REDIS_TELEMETRY_URL.
     """
+    if resolve_backend(backend, env_file) is StackBackend.K8S:
+        k8s.up(env_file=env_file, image_tag=image_tag)
+        return
+
     profile = "root" if _node_role(env_file) == NodeRole.ROOT else None
     _compose(
         ["up", "-d", "--wait"],
@@ -497,15 +506,6 @@ def up(
     logging.success("FlowMesh stack is up.")
 
 
-def _drain_workers(env_file: Path) -> None:
-    """Destroy all dynamically spawned workers before stopping the server."""
-    try:
-        client = stack_node_client(env_file, base_url=None, token=None)
-        client.destroy_all_workers()
-    except Exception as exc:
-        logging.warning(f"Unable to drain workers; continuing shutdown. {exc}")
-
-
 @app.command()
 def down(
     env_file: Path = typer.Option(
@@ -514,10 +514,17 @@ def down(
     image_tag: str | None = typer.Option(
         None, "--image-tag", help="Override FLOWMESH_VERSION"
     ),
+    backend: str | None = typer.Option(
+        None, "--backend", help="Stack backend to target (compose|k8s)"
+    ),
 ) -> None:
     """Drain workers and stop the stack."""
+    if resolve_backend(backend, env_file) is StackBackend.K8S:
+        k8s.down(env_file=env_file, image_tag=image_tag)
+        return
+
     logging.info("Draining workers...")
-    _drain_workers(env_file)
+    drain_workers(env_file)
     logging.info("Shutting down the FlowMesh stack...")
     _compose(
         ["down"],
@@ -554,6 +561,9 @@ def restart(
     pull: bool = typer.Option(
         True, "--pull/--no-pull", help="Pull the target image before recreating."
     ),
+    backend: str | None = typer.Option(
+        None, "--backend", help="Stack backend to target (compose|k8s)"
+    ),
 ) -> None:
     """Drain workers and restart the stack, or recreate specific services in place.
 
@@ -561,9 +571,13 @@ def restart(
     are recreated; when any of them manages workers (the server / supervisor) its
     workers are drained first so their in-flight tasks requeue onto other nodes.
     """
+    if resolve_backend(backend, env_file) is StackBackend.K8S:
+        k8s.restart(services=services, env_file=env_file, image_tag=image_tag)
+        return
+
     if not services:
         logging.info("Draining workers...")
-        _drain_workers(env_file)
+        drain_workers(env_file)
         _compose(
             ["down"],
             env_file=env_file,
@@ -592,7 +606,7 @@ def restart(
 
     if any(svc in WORKER_MANAGING_SERVICES for svc in requested):
         logging.info("Draining workers...")
-        _drain_workers(env_file)
+        drain_workers(env_file)
 
     profile = "root" if _node_role(env_file) == NodeRole.ROOT else None
     up_args = ["up", "-d", "--no-deps", "--force-recreate", "--wait"]
@@ -617,8 +631,15 @@ def logs(
     env_file: Path = typer.Option(
         DEFAULT_ENV_FILE, "--env-file", help="Env file for compose"
     ),
+    backend: str | None = typer.Option(
+        None, "--backend", help="Stack backend to target (compose|k8s)"
+    ),
 ) -> None:
     """Stream logs from stack services or a specific service container."""
+    if resolve_backend(backend, env_file) is StackBackend.K8S:
+        k8s.logs(service=service, env_file=env_file)
+        return
+
     code = _stack().stream_logs(env_file=env_file, service=service, profile="root")
     if code != 0:
         raise typer.Exit(code=code)
@@ -629,8 +650,15 @@ def ps(
     env_file: Path = typer.Option(
         DEFAULT_ENV_FILE, "--env-file", help="Env file for compose"
     ),
+    backend: str | None = typer.Option(
+        None, "--backend", help="Stack backend to target (compose|k8s)"
+    ),
 ) -> None:
     """Display running status of stack containers and worker containers."""
+    if resolve_backend(backend, env_file) is StackBackend.K8S:
+        k8s.ps(env_file=env_file)
+        return
+
     _compose(["ps"], env_file=env_file, env=None, profile="root")
     logging.log("\nWorkers:")
     docker_bin = _require_bin("docker")
@@ -653,9 +681,12 @@ def status_cmd(
     env_file: Path = typer.Option(
         DEFAULT_ENV_FILE, "--env-file", help="Env file for compose"
     ),
+    backend: str | None = typer.Option(
+        None, "--backend", help="Stack backend to target (compose|k8s)"
+    ),
 ) -> None:
     """Display running status of stack containers (alias for ps)."""
-    ps(env_file=env_file)
+    ps(env_file=env_file, backend=backend)
 
 
 @app.command()
@@ -666,10 +697,17 @@ def clean(
     image_tag: str | None = typer.Option(
         None, "--image-tag", help="Override FLOWMESH_VERSION"
     ),
+    backend: str | None = typer.Option(
+        None, "--backend", help="Stack backend to target (compose|k8s)"
+    ),
 ) -> None:
     """Drain workers, stop the stack, and remove all containers and volumes."""
+    if resolve_backend(backend, env_file) is StackBackend.K8S:
+        k8s.clean(env_file=env_file, image_tag=image_tag)
+        return
+
     logging.info("Draining workers...")
-    _drain_workers(env_file)
+    drain_workers(env_file)
     logging.info("Removing stack containers and volumes...")
     _compose(
         ["down", "-v"],

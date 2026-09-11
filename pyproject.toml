@@ -29,6 +29,7 @@ runtime-server = [
     "flowmesh-hook",
     "grpcio>=1.76.0",
     "httpx>=0.28.1",
+    "kubernetes>=31.0.0",
     "lumid-hooks>=0.2.0",
     "protobuf>=5.29.6",
     "pydantic>=2.12.3",
@@ -212,7 +213,7 @@ module = [
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
-module = ["pynvml", "vllm_omni.*", "deepspeed.*"]
+module = ["pynvml", "vllm_omni.*", "deepspeed.*", "kubernetes.*"]
 follow_untyped_imports = true
 
 [tool.codespell]

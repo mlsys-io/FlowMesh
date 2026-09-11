@@ -1,0 +1,205 @@
+# Redis runs on root nodes only. A worker node connects to the root node's
+# Redis through REDIS_CONTROL_URL / REDIS_TELEMETRY_URL.
+x-flowmesh-when: NODE_ROLE==root
+apiVersion: v1
+kind: Secret
+metadata:
+  name: flowmesh-redis-acl
+  namespace: ${K8S_NAMESPACE:-flowmesh}
+  labels:
+    app.kubernetes.io/part-of: flowmesh
+type: Opaque
+stringData:
+  users.acl: |
+    user default off
+    user ${REDIS_USERNAME:-admin} on >${REDIS_PASSWORD:-} ~* &* +@all
+---
+x-flowmesh-when: NODE_ROLE==root
+apiVersion: v1
+kind: Service
+metadata:
+  name: flowmesh-redis-control
+  namespace: ${K8S_NAMESPACE:-flowmesh}
+  labels:
+    app.kubernetes.io/part-of: flowmesh
+    app.kubernetes.io/component: redis-control
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/part-of: flowmesh
+    app.kubernetes.io/component: redis-control
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: 6379
+---
+x-flowmesh-when: NODE_ROLE==root
+apiVersion: v1
+kind: Service
+metadata:
+  name: flowmesh-redis-telemetry
+  namespace: ${K8S_NAMESPACE:-flowmesh}
+  labels:
+    app.kubernetes.io/part-of: flowmesh
+    app.kubernetes.io/component: redis-telemetry
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/part-of: flowmesh
+    app.kubernetes.io/component: redis-telemetry
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: 6379
+---
+x-flowmesh-when: NODE_ROLE==root
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: flowmesh-redis-control
+  namespace: ${K8S_NAMESPACE:-flowmesh}
+  labels:
+    app.kubernetes.io/part-of: flowmesh
+    app.kubernetes.io/component: redis-control
+spec:
+  serviceName: flowmesh-redis-control
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/part-of: flowmesh
+      app.kubernetes.io/component: redis-control
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: flowmesh
+        app.kubernetes.io/component: redis-control
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          args:
+            - redis-server
+            - --save
+            - "60 1"
+            - --loglevel
+            - warning
+            # Control-plane pubsub clients are dropped under load without a
+            # raised output buffer limit.
+            - --client-output-buffer-limit
+            - pubsub 1gb 512mb 60
+            - x-flowmesh-when: REDIS_ACL_ENABLED
+              x-flowmesh-value: --aclfile
+            - x-flowmesh-when: REDIS_ACL_ENABLED
+              x-flowmesh-value: /etc/redis/acl/users.acl
+          ports:
+            - name: redis
+              containerPort: 6379
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - x-flowmesh-when: REDIS_ACL_ENABLED
+              name: acl
+              mountPath: /etc/redis/acl
+              readOnly: true
+          readinessProbe:
+            exec:
+              command: ["redis-cli", "-p", "6379", "ping"]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command: ["redis-cli", "-p", "6379", "ping"]
+            initialDelaySeconds: 15
+            periodSeconds: 20
+      volumes:
+        - x-flowmesh-when: REDIS_ACL_ENABLED
+          name: acl
+          secret:
+            secretName: flowmesh-redis-acl
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels:
+          app.kubernetes.io/part-of: flowmesh
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName:
+          x-flowmesh-when: K8S_STORAGE_CLASS
+          x-flowmesh-value: ${K8S_STORAGE_CLASS:-}
+        resources:
+          requests:
+            storage: ${K8S_REDIS_STORAGE_SIZE:-8Gi}
+---
+x-flowmesh-when: NODE_ROLE==root
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: flowmesh-redis-telemetry
+  namespace: ${K8S_NAMESPACE:-flowmesh}
+  labels:
+    app.kubernetes.io/part-of: flowmesh
+    app.kubernetes.io/component: redis-telemetry
+spec:
+  serviceName: flowmesh-redis-telemetry
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/part-of: flowmesh
+      app.kubernetes.io/component: redis-telemetry
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: flowmesh
+        app.kubernetes.io/component: redis-telemetry
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          args:
+            - redis-server
+            - --save
+            - "300 1"
+            - --loglevel
+            - warning
+            - x-flowmesh-when: REDIS_ACL_ENABLED
+              x-flowmesh-value: --aclfile
+            - x-flowmesh-when: REDIS_ACL_ENABLED
+              x-flowmesh-value: /etc/redis/acl/users.acl
+          ports:
+            - name: redis
+              containerPort: 6379
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - x-flowmesh-when: REDIS_ACL_ENABLED
+              name: acl
+              mountPath: /etc/redis/acl
+              readOnly: true
+          readinessProbe:
+            exec:
+              command: ["redis-cli", "-p", "6379", "ping"]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command: ["redis-cli", "-p", "6379", "ping"]
+            initialDelaySeconds: 15
+            periodSeconds: 20
+      volumes:
+        - x-flowmesh-when: REDIS_ACL_ENABLED
+          name: acl
+          secret:
+            secretName: flowmesh-redis-acl
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels:
+          app.kubernetes.io/part-of: flowmesh
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName:
+          x-flowmesh-when: K8S_STORAGE_CLASS
+          x-flowmesh-value: ${K8S_STORAGE_CLASS:-}
+        resources:
+          requests:
+            storage: ${K8S_REDIS_STORAGE_SIZE:-8Gi}

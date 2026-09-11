@@ -39,6 +39,9 @@ and artifacts.
 - **[`docs/ENV.md`](docs/ENV.md)** — curated server / worker /
   supervisor env var tables (the knobs you actually tune). Full schema
   in `cli/stack/src/flowmesh_cli_stack/env_schema.py`.
+- **[`docs/KUBERNETES.md`](docs/KUBERNETES.md)** — deploying the stack on
+  Kubernetes: `--backend k8s`, the `kubernetes` worker provider, RBAC, TLS,
+  and the single-replica server constraint.
 - **[`docs/PLUGINS.md`](docs/PLUGINS.md)** — plugin extension contract,
   loader semantics (`FLOWMESH_PLUGINS`), and a worked example.
 

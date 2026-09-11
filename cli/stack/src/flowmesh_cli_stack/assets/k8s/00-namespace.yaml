@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ${K8S_NAMESPACE:-flowmesh}
+  labels:
+    app.kubernetes.io/part-of: flowmesh
+---
+# Only when worker pods live outside the stack namespace; the RBAC below is
+# bound there and would otherwise apply into a namespace that does not exist.
+x-flowmesh-when: K8S_WORKER_NAMESPACE_DISTINCT
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ${K8S_WORKER_NAMESPACE:-flowmesh}
+  labels:
+    app.kubernetes.io/part-of: flowmesh
