@@ -722,9 +722,13 @@ class EventMonitor:
             case "STATUS":
                 worker_id = (event.worker_id or "").strip()
                 status = event.status or WorkerStatus.UNKNOWN
-                self._worker_registry.set_worker_status(
+                success = self._worker_registry.set_worker_status(
                     worker_id, status, event.ts, event.payload
                 )
+                if not success:
+                    self._logger.warning(
+                        "Status update from unknown worker %s; ignoring", worker_id
+                    )
             case "UNREGISTER":
                 worker_id = (event.worker_id or "").strip()
                 self._worker_registry.unregister_workers(worker_id)
