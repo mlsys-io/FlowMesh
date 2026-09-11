@@ -200,6 +200,8 @@ class WatchdogConfig:
     check_interval: int = 30
     grace_sec: int = 60
     rehydration_grace_sec: int = 120
+    reap_enabled: bool = True
+    reap_grace_sec: int = 900
 
     @classmethod
     def from_env(cls) -> "WatchdogConfig":
@@ -210,6 +212,8 @@ class WatchdogConfig:
             rehydration_grace_sec=max(
                 0, parse_int_env("WORKER_REHYDRATION_GRACE_SEC", 120)
             ),
+            reap_enabled=parse_bool_env("ENABLE_WORKER_REAPER", True),
+            reap_grace_sec=max(0, parse_int_env("WORKER_REAP_GRACE_SEC", 900)),
         )
 
 

@@ -36,6 +36,8 @@ listed here is in `.env.example`.
 | `ENABLE_WORKER_WATCHDOG` | `true` | Worker death detection |
 | `WORKER_DEATH_GRACE_SEC` | `60` | Grace period before marking dead |
 | `WORKER_REHYDRATION_GRACE_SEC` | `120` | Extra grace for a worker's rehydrated in-flight tasks after the root restarts, before the watchdog may reclaim them |
+| `ENABLE_WORKER_REAPER` | `true` | Delete a worker's registry record once it has been dead past the reap grace; requires `ENABLE_WORKER_WATCHDOG` |
+| `WORKER_REAP_GRACE_SEC` | `900` | Grace after a worker is marked dead before its registry record is deleted. Lowering it below a few minutes removes the margin that protects an idle worker across a root restart |
 | `FLOWMESH_PLUGINS` | – | Comma-separated plugin module names |
 | `FLOWMESH_PLUGIN_DATA_DIR` | `./plugin-data` | Writable mount at `/app/plugin-data` for plugin state. A path -> host bind-mount (auto-created); a bare name -> external Docker volume of that name. |
 | `SERVER_CUDA_PROBE_IMAGE` | `nvidia/cuda:12.9.1-base-ubuntu24.04` | CUDA image the server runs briefly to query local GPU names/indices |

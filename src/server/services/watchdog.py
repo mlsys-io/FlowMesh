@@ -2,17 +2,27 @@ import json
 import logging
 import threading
 import time
+from dataclasses import dataclass, field
 
-from shared.schemas.event import TaskEvent, serialize_event
+from shared.schemas.event import TaskEvent, WorkerEvent, serialize_event
 
 from ..clients.redis import (
     TASK_EVENT_STREAM_KEY,
     TASK_EVENT_STREAM_MAXLEN,
+    WORKER_EVENT_CHANNEL,
     SyncRedisClient,
 )
 from ..dispatcher import Dispatcher
 from ..registries.worker import WorkerRegistry
 from ..task.runtime import TaskRuntime
+
+
+@dataclass
+class _WatchdogState:
+    stale_since: dict[str, float] = field(default_factory=dict)
+    declared_dead: set[str] = field(default_factory=set)
+    dead_since: dict[str, float] = field(default_factory=dict)
+    unpublished: set[str] = field(default_factory=set)
 
 
 class WorkerWatchdog:
@@ -29,6 +39,8 @@ class WorkerWatchdog:
         check_interval: int,
         grace_seconds: int,
         rehydration_grace_seconds: int = 0,
+        reap_enabled: bool = False,
+        reap_grace_seconds: int = 0,
     ) -> None:
         self._redis = redis_client
         self._worker_registry = worker_registry
@@ -39,6 +51,8 @@ class WorkerWatchdog:
         self._check_interval = max(1, check_interval)
         self._grace_seconds = max(0, grace_seconds)
         self._rehydration_grace_seconds = max(0, rehydration_grace_seconds)
+        self._reap_enabled = reap_enabled
+        self._reap_grace_seconds = max(0, reap_grace_seconds)
         self._lock = threading.RLock()
         self._dead_marks: set[str] = set()
         self._thread: threading.Thread | None = None
@@ -76,8 +90,7 @@ class WorkerWatchdog:
             return thread
 
     def _watchdog_loop(self, stop_event: threading.Event) -> None:
-        stale_since: dict[str, float] = {}
-        declared_dead: set[str] = set()
+        state = _WatchdogState()
         while not stop_event.is_set():
             now = time.time()
             try:
@@ -89,52 +102,126 @@ class WorkerWatchdog:
                 stop_event.wait(self._check_interval)
                 continue
 
-            active_workers = worker_ids
-            for worker_id in worker_ids:
-                if not worker_id:
-                    continue
-                try:
-                    stale = self._worker_registry.is_worker_stale(worker_id)
-                except Exception as exc:
-                    self._logger.debug(
-                        "Worker watchdog failed to check %s staleness: %s",
-                        worker_id,
-                        exc,
-                    )
-                    continue
-
-                if not stale:
-                    stale_since.pop(worker_id, None)
-                    declared_dead.discard(worker_id)
-                    self.clear_dead_mark(worker_id)
-                    continue
-
-                first_seen = stale_since.setdefault(worker_id, now)
-                grace = self._grace_seconds
-                if self._rehydration_grace_seconds > grace and (
-                    self._runtime.has_rehydrated_in_flight(
-                        worker_id, self._rehydration_grace_seconds
-                    )
-                ):
-                    grace = self._rehydration_grace_seconds
-                if now - first_seen < grace:
-                    continue
-                if worker_id in declared_dead:
-                    continue
-
-                declared_dead.add(worker_id)
-                self._mark_dead(worker_id)
-                stale_since.pop(worker_id, None)
-                self._handle_worker_expired(worker_id)
-
-            for worker_id in list(stale_since):
-                if worker_id not in active_workers:
-                    stale_since.pop(worker_id, None)
-            declared_dead.intersection_update(active_workers)
-            for worker_id in list(self._snapshot_dead_marks()):
-                if worker_id not in active_workers:
-                    self.clear_dead_mark(worker_id)
+            self._scan(worker_ids, state, now)
             stop_event.wait(self._check_interval)
+
+    def _scan(self, worker_ids: set[str], state: _WatchdogState, now: float) -> None:
+        for worker_id in list(state.unpublished):
+            if self._publish_reap_event(worker_id):
+                state.unpublished.discard(worker_id)
+
+        for worker_id in worker_ids:
+            if not worker_id:
+                continue
+            try:
+                stale = self._worker_registry.is_worker_stale(worker_id)
+            except Exception as exc:
+                self._logger.debug(
+                    "Worker watchdog failed to check %s staleness: %s",
+                    worker_id,
+                    exc,
+                )
+                continue
+
+            if not stale:
+                state.stale_since.pop(worker_id, None)
+                state.declared_dead.discard(worker_id)
+                state.dead_since.pop(worker_id, None)
+                self.clear_dead_mark(worker_id)
+                continue
+
+            if worker_id in state.declared_dead:
+                self._maybe_reap(worker_id, state, now)
+                continue
+
+            first_seen = state.stale_since.setdefault(worker_id, now)
+            grace = self._grace_seconds
+            if self._rehydration_grace_seconds > grace and (
+                self._runtime.has_rehydrated_in_flight(
+                    worker_id, self._rehydration_grace_seconds
+                )
+            ):
+                grace = self._rehydration_grace_seconds
+            if now - first_seen < grace:
+                continue
+
+            state.declared_dead.add(worker_id)
+            state.dead_since[worker_id] = now
+            self._mark_dead(worker_id)
+            state.stale_since.pop(worker_id, None)
+            self._handle_worker_expired(worker_id)
+
+        for worker_id in list(state.stale_since):
+            if worker_id not in worker_ids:
+                state.stale_since.pop(worker_id, None)
+        state.declared_dead.intersection_update(worker_ids)
+        for worker_id in list(state.dead_since):
+            if worker_id not in worker_ids:
+                state.dead_since.pop(worker_id, None)
+        for worker_id in list(self._snapshot_dead_marks()):
+            if worker_id not in worker_ids:
+                self.clear_dead_mark(worker_id)
+
+    def _maybe_reap(self, worker_id: str, state: _WatchdogState, now: float) -> None:
+        if not self._reap_enabled:
+            return
+        first = state.dead_since.get(worker_id)
+        if first is None or now - first < self._reap_grace_seconds:
+            return
+        try:
+            if not self._worker_registry.is_worker_stale(worker_id):
+                return
+        except Exception as exc:
+            self._logger.debug(
+                "Worker watchdog failed to re-check %s staleness before reap: %s",
+                worker_id,
+                exc,
+            )
+            return
+
+        try:
+            self._worker_registry.unregister_workers(worker_id)
+        except Exception as exc:
+            self._logger.warning(
+                "Worker watchdog failed to reap worker %s: %s", worker_id, exc
+            )
+            return
+
+        state.dead_since.pop(worker_id, None)
+        state.declared_dead.discard(worker_id)
+        state.stale_since.pop(worker_id, None)
+        self._logger.warning(
+            "Reaped stale worker %s (dead for %.0fs)",
+            worker_id,
+            now - first,
+        )
+        if not self._publish_reap_event(worker_id):
+            state.unpublished.add(worker_id)
+            self._logger.warning(
+                "Worker watchdog reaped %s but failed to publish UNREGISTER; "
+                "will retry",
+                worker_id,
+            )
+
+    def _publish_reap_event(self, worker_id: str) -> bool:
+        try:
+            event = WorkerEvent(
+                type="UNREGISTER",
+                worker_id=worker_id,
+                payload={"reason": "reaped", "synthetic": True},
+            )
+            self._redis.publish_telemetry(
+                WORKER_EVENT_CHANNEL,
+                json.dumps(serialize_event(event), ensure_ascii=False),
+            )
+            return True
+        except Exception as exc:
+            self._logger.warning(
+                "Worker watchdog failed to publish UNREGISTER for %s: %s",
+                worker_id,
+                exc,
+            )
+            return False
 
     def _handle_worker_expired(self, worker_id: str) -> None:
         recovered = self._runtime.recover_tasks_for_worker(worker_id)
