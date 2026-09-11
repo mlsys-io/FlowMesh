@@ -26,15 +26,15 @@ def _heartbeat(worker_id: str) -> WorkerEvent:
 
 def test_heartbeat_from_unregistered_worker_ignored() -> None:
     registry = MagicMock()
-    registry.worker_is_registered.return_value = False
+    registry.update_worker_hb.return_value = False
     monitor = _monitor(registry)
     monitor._handle_worker_event(_heartbeat("wkr-1"))
-    registry.update_worker_hb.assert_not_called()
+    registry.update_worker_hb.assert_called_once()
 
 
 def test_heartbeat_from_registered_worker_updates() -> None:
     registry = MagicMock()
-    registry.worker_is_registered.return_value = True
+    registry.update_worker_hb.return_value = True
     monitor = _monitor(registry)
     monitor._handle_worker_event(_heartbeat("wkr-1"))
     registry.update_worker_hb.assert_called_once()

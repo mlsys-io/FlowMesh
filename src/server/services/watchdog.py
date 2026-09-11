@@ -107,6 +107,7 @@ class WorkerWatchdog:
 
     def _scan(self, worker_ids: set[str], state: _WatchdogState, now: float) -> None:
         active_workers = worker_ids
+
         for worker_id in list(state.reaped):
             try:
                 self._worker_registry.unregister_workers(worker_id)
@@ -119,6 +120,7 @@ class WorkerWatchdog:
                 continue
             if self._publish_reap_event(worker_id):
                 state.reaped.discard(worker_id)
+
         for worker_id in worker_ids:
             if not worker_id:
                 continue

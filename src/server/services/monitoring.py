@@ -712,15 +712,13 @@ class EventMonitor:
                     )
             case "HEARTBEAT":
                 worker_id = (event.worker_id or "").strip()
-                if worker_id and not self._worker_registry.worker_is_registered(
-                    worker_id
-                ):
+                success = self._worker_registry.update_worker_hb(
+                    worker_id, event.ts, event.payload.get("ttl_sec", 120)
+                )
+                if not success:
                     self._logger.warning(
-                        "Heartbeat from unregistered worker %s; ignoring", worker_id
+                        "Heartbeat from unknown worker %s; ignoring", worker_id
                     )
-                else:
-                    ttl_sec = event.payload.get("ttl_sec", 120)
-                    self._worker_registry.update_worker_hb(worker_id, event.ts, ttl_sec)
             case "STATUS":
                 worker_id = (event.worker_id or "").strip()
                 status = event.status or WorkerStatus.UNKNOWN

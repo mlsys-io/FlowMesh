@@ -123,29 +123,25 @@ class WorkerRegistry:
             await pipe.execute()
         return worker_id
 
-    def worker_is_registered(self, worker_id: str) -> bool:
-        return self._rds.sync.sismember(WORKERS_SET_KEY, worker_id)
-
-    async def worker_is_registered_async(self, worker_id: str) -> bool:
-        return await self._rds.asyncio.sismember(WORKERS_SET_KEY, worker_id)
-
-    def update_worker_hb(self, worker_id: str, ts: str, ttl_sec: int) -> None:
-        if not self.worker_is_registered(worker_id):
-            return
+    def update_worker_hb(self, worker_id: str, ts: str, ttl_sec: int) -> bool:
+        if not self.is_worker_registered(worker_id):
+            return False
         with self._rds.sync.control_pipeline() as pipe:
             pipe.setex(worker_hb_key(worker_id), ttl_sec, ts)
             pipe.hset(worker_key(worker_id), mapping={"last_seen": ts})
             pipe.execute()
+        return True
 
     async def update_worker_hb_async(
         self, worker_id: str, ts: str, ttl_sec: int
-    ) -> None:
-        if not await self.worker_is_registered_async(worker_id):
-            return
+    ) -> bool:
+        if not await self.is_worker_registered_async(worker_id):
+            return False
         async with self._rds.asyncio.control_pipeline() as pipe:
             pipe.setex(worker_hb_key(worker_id), ttl_sec, ts)
             pipe.hset(worker_key(worker_id), mapping={"last_seen": ts})
             await pipe.execute()
+        return True
 
     def set_worker_status(
         self,
@@ -153,15 +149,16 @@ class WorkerRegistry:
         status: WorkerStatus,
         ts: str,
         extra: dict[str, Any] | None,
-    ) -> None:
-        if not self.worker_is_registered(worker_id):
-            return
+    ) -> bool:
+        if not self.is_worker_registered(worker_id):
+            return False
         mapping = {"status": status.value, "last_seen": ts}
         if extra:
             mapping.update({f"extra_{k}": str(v) for k, v in extra.items()})
         with self._rds.sync.control_pipeline() as pipe:
             pipe.hset(worker_key(worker_id), mapping=mapping)
             pipe.execute()
+        return True
 
     async def set_worker_status_async(
         self,
@@ -169,15 +166,16 @@ class WorkerRegistry:
         status: WorkerStatus,
         ts: str,
         extra: dict[str, Any] | None = None,
-    ) -> None:
-        if not await self.worker_is_registered_async(worker_id):
-            return
+    ) -> bool:
+        if not await self.is_worker_registered_async(worker_id):
+            return False
         mapping = {"status": status.value, "last_seen": ts}
         if extra:
             mapping.update({f"extra_{k}": str(v) for k, v in extra.items()})
         async with self._rds.asyncio.control_pipeline() as pipe:
             pipe.hset(worker_key(worker_id), mapping=mapping)
             await pipe.execute()
+        return True
 
     def unregister_workers(self, *worker_ids: str) -> None:
         with self._rds.sync.control_pipeline() as pipe:
@@ -202,6 +200,12 @@ class WorkerRegistry:
 
     async def get_worker_ids_async(self) -> set[str]:
         return await self._rds.asyncio.set_members(WORKERS_SET_KEY)
+
+    def is_worker_registered(self, worker_id: str) -> bool:
+        return self._rds.sync.sismember(WORKERS_SET_KEY, worker_id)
+
+    async def is_worker_registered_async(self, worker_id: str) -> bool:
+        return await self._rds.asyncio.sismember(WORKERS_SET_KEY, worker_id)
 
     def get_worker(self, worker_id: str) -> Worker | None:
         raw = self._rds.sync.hash_getall(worker_key(worker_id))
@@ -251,9 +255,9 @@ class WorkerRegistry:
     async def worker_exists_async(self, worker_id: str) -> bool:
         return await self._rds.asyncio.exists(worker_key(worker_id))
 
-    def update_worker_status(self, worker_id: str, status: WorkerStatus) -> None:
-        if not self.worker_is_registered(worker_id):
-            return
+    def update_worker_status(self, worker_id: str, status: WorkerStatus) -> bool:
+        if not self.is_worker_registered(worker_id):
+            return False
         ts = now_iso()
         payload = {
             "type": "STATUS",
@@ -267,12 +271,13 @@ class WorkerRegistry:
         self._rds.sync.publish_telemetry(
             WORKER_EVENT_CHANNEL, json.dumps(payload, ensure_ascii=False)
         )
+        return True
 
     async def update_worker_status_async(
         self, worker_id: str, status: WorkerStatus
-    ) -> None:
-        if not await self.worker_is_registered_async(worker_id):
-            return
+    ) -> bool:
+        if not await self.is_worker_registered_async(worker_id):
+            return False
         ts = now_iso()
         payload = {
             "type": "STATUS",
@@ -287,6 +292,7 @@ class WorkerRegistry:
         await self._rds.asyncio.publish_telemetry(
             WORKER_EVENT_CHANNEL, json.dumps(payload, ensure_ascii=False)
         )
+        return True
 
     def list_workers(self) -> list[WorkerInfo]:
         results: list[WorkerInfo] = []
