@@ -1,6 +1,7 @@
 """Stack env schema."""
 
 from flowmesh.models.nodes import NodeRole
+from flowmesh_stack.env import parse_bool
 from flowmesh_stack.env_schema import (
     EnvSchema,
     EnvSection,
@@ -9,6 +10,24 @@ from flowmesh_stack.env_schema import (
     require_all_or_none,
     require_if_true,
 )
+
+
+def _warn_reaper_without_watchdog(
+    env: dict[str, str], errors: list[str], warnings: list[str]
+) -> None:
+    """Warn when the stale-worker reaper is enabled while the watchdog is off.
+
+    The reaper runs on the watchdog thread, so it never fires without it. An
+    unset or unparsable ENABLE_WORKER_WATCHDOG keeps its own default and is
+    left alone, so only an explicit false value warns.
+    """
+    if parse_bool(env.get("ENABLE_WORKER_REAPER", "")) and (
+        parse_bool(env.get("ENABLE_WORKER_WATCHDOG", "")) is False
+    ):
+        warnings.append(
+            "ENABLE_WORKER_REAPER has no effect while ENABLE_WORKER_WATCHDOG is false"
+        )
+
 
 STACK_ENV_SCHEMA = EnvSchema(
     name="stack",
@@ -715,6 +734,7 @@ STACK_ENV_SCHEMA = EnvSchema(
             ],
             errors,
         ),
+        _warn_reaper_without_watchdog,
     ],
 )
 

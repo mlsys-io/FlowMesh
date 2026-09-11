@@ -320,6 +320,31 @@ def test_worker_role_render_passes_schema_validation() -> None:
     assert errors == []
 
 
+_REAPER_WARNING = (
+    "ENABLE_WORKER_REAPER has no effect while ENABLE_WORKER_WATCHDOG is false"
+)
+
+
+def test_reaper_without_watchdog_warns() -> None:
+    body = render_env_example(STACK_ENV_SCHEMA, overrides=role_overrides(NodeRole.ROOT))
+    env = _parse_env_body(body)
+    env["ENABLE_WORKER_WATCHDOG"] = "false"
+    errors, warnings = validate_env_values(STACK_ENV_SCHEMA, env)
+    assert errors == []
+    assert _REAPER_WARNING in warnings
+
+
+def test_reaper_with_watchdog_does_not_warn() -> None:
+    body = render_env_example(STACK_ENV_SCHEMA, overrides=role_overrides(NodeRole.ROOT))
+    env = _parse_env_body(body)
+    # An unset watchdog flag keeps its own true default and must stay quiet.
+    for watchdog, reaper in (("true", "true"), ("false", "false"), ("", "true")):
+        env["ENABLE_WORKER_WATCHDOG"] = watchdog
+        env["ENABLE_WORKER_REAPER"] = reaper
+        _, warnings = validate_env_values(STACK_ENV_SCHEMA, env)
+        assert _REAPER_WARNING not in warnings
+
+
 def test_stack_init_deploy_writes_resolved_version(tmp_path: Path, monkeypatch) -> None:
     from flowmesh_cli_stack import stack as stack_module
 
