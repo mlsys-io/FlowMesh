@@ -91,7 +91,9 @@ class RelayClient:
             logger.warning("Relay stream for %s failed: %s", endpoint_id, exc)
         except ValueError as exc:
             # Invoking on a channel shutdown() just closed raises this, not
-            # RpcError, and a relay racing worker shutdown lands here.
+            # RpcError. Scoped to shutdown so a genuine ValueError still surfaces.
+            if not self._closing.is_set():
+                raise
             logger.info("Relay for %s abandoned during shutdown: %s", endpoint_id, exc)
         except OSError as exc:
             logger.warning(

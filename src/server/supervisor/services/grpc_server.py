@@ -274,12 +274,17 @@ class SupervisorServicer(supervisor_pb2_grpc.SupervisorServicer):
                 send,
             )
         )
-        # put(), not put_nowait(): the queue is bounded. On the cancel path
-        # below nothing drains it again, so the sentinel is cancelled with it.
+        # The sentinel is put(), not put_nowait(), because the queue is
+        # bounded. Nothing drains it once teardown starts, so the callback must
+        # not schedule one then -- it can still fire after the finally, since a
+        # done-callback is always deferred to the next loop step.
         sentinel: asyncio.Task[None] | None = None
+        closing = False
 
         def _close_outbound(_: asyncio.Task[None]) -> None:
             nonlocal sentinel
+            if closing:
+                return
             sentinel = asyncio.ensure_future(outbound.put(None))
 
         bridge.add_done_callback(_close_outbound)
@@ -293,6 +298,7 @@ class SupervisorServicer(supervisor_pb2_grpc.SupervisorServicer):
             if isinstance(refusal, RelayRefused):
                 await context.abort(grpc.StatusCode.PERMISSION_DENIED, str(refusal))
         finally:
+            closing = True
             if not bridge.done():
                 bridge.cancel()
             if sentinel is not None and not sentinel.done():

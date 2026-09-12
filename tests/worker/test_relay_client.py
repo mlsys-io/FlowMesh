@@ -1,5 +1,6 @@
 """The worker end of a relay: what it connects to, and how it tears down."""
 
+import contextlib
 import queue
 import socket
 import threading
@@ -92,6 +93,24 @@ class _EchoServer:
             self._sock.close()
         except OSError:
             pass
+
+
+class _ClosedChannelStub:
+    """What grpc does when the channel was closed under a live call."""
+
+    def Relay(self, *_args: Any, **_kwargs: Any):  # noqa: N802
+        raise ValueError("Cannot invoke RPC: Channel closed!")
+
+
+@contextlib.contextmanager
+def _captured_thread_errors():
+    errors: list[BaseException | None] = []
+    hook = threading.excepthook
+    threading.excepthook = lambda args: errors.append(args.exc_value)
+    try:
+        yield errors
+    finally:
+        threading.excepthook = hook
 
 
 class _FakeClient:
@@ -309,30 +328,40 @@ class TestShutdown:
         """
         endpoints = EndpointRegistry()
         relay = RelayClient(_FakeClient(), endpoints)  # type: ignore[arg-type]
+        relay._stub = _ClosedChannelStub()  # type: ignore[assignment]
+        server = _EchoServer()
+        endpoints.publish("ssn-a", server.port)
+        # shutdown() sets this before closing the channel, so a thread that
+        # reaches the stub afterwards sees it set.
+        relay._closing.set()
 
-        class _ClosedStub:
-            def Relay(self, *_args, **_kwargs):  # noqa: N802
-                raise ValueError("Cannot invoke RPC: Channel closed!")
+        with _captured_thread_errors() as errors:
+            thread = threading.Thread(
+                target=relay._serve, args=("tok", "ssn-a"), daemon=True
+            )
+            thread.start()
+            thread.join(timeout=5)
 
-        relay._stub = _ClosedStub()  # type: ignore[assignment]
+        server.close()
+        assert errors == []
+
+    def test_a_value_error_outside_shutdown_is_not_swallowed(self) -> None:
+        """Only the shutdown race is benign; a real bug must still surface."""
+        endpoints = EndpointRegistry()
+        relay = RelayClient(_FakeClient(), endpoints)  # type: ignore[arg-type]
+        relay._stub = _ClosedChannelStub()  # type: ignore[assignment]
         server = _EchoServer()
         endpoints.publish("ssn-a", server.port)
 
-        errors: list[BaseException | None] = []
-        hook = threading.excepthook
-        threading.excepthook = lambda args: errors.append(args.exc_value)
-        try:
-            relay.handle_request("tok", "ssn-a")
-            assert _wait(
-                lambda: not any(
-                    t.name.startswith("flowmesh-relay-") for t in threading.enumerate()
-                )
+        with _captured_thread_errors() as errors:
+            thread = threading.Thread(
+                target=relay._serve, args=("tok", "ssn-a"), daemon=True
             )
-        finally:
-            threading.excepthook = hook
-            server.close()
+            thread.start()
+            thread.join(timeout=5)
 
-        assert errors == []
+        server.close()
+        assert [type(e) for e in errors] == [ValueError]
 
     def test_shutdown_closes_the_relay_channel(self) -> None:
         closed = threading.Event()
