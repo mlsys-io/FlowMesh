@@ -18,11 +18,24 @@ from worker.executors.ssh_session import process_backend as process_backend_modu
 from worker.executors.ssh_session import (
     select_backend_cls,
 )
-from worker.executors.ssh_session.docker_backend import DockerSessionBackend
+from worker.executors.ssh_session import session_identity as session_identity_module
+from worker.executors.ssh_session.docker_backend import (
+    DockerSession,
+    DockerSessionBackend,
+)
 from worker.executors.ssh_session.process_backend import (
+    ProcessSession,
     ProcessSessionBackend,
     _render_authorized_keys,
     _render_sshd_config,
+)
+from worker.executors.ssh_session.session_identity import (
+    ACCOUNT_NAME_RE,
+    ACCOUNT_PREFIX,
+    CurrentUser,
+    DedicatedAccount,
+    account_name_for,
+    resolve_identity,
 )
 
 _PROC_NET_TCP = """\
@@ -155,24 +168,41 @@ class TestSshdConfigRendering:
         )
 
     def test_authorized_keys_carry_session_environment(self) -> None:
-        rendered = _render_authorized_keys(
+        rendered, exported = _render_authorized_keys(
             ["ssh-ed25519 AAAA... user@host"],
             {"CUDA_VISIBLE_DEVICES": "2,3", "FLOWMESH_FINISH_SENTINEL": "/x/finish"},
         )
         assert 'environment="CUDA_VISIBLE_DEVICES=2,3"' in rendered
         assert rendered.rstrip().endswith("ssh-ed25519 AAAA... user@host")
+        assert "CUDA_VISIBLE_DEVICES" in exported
 
     def test_unsafe_environment_values_are_dropped(self) -> None:
-        rendered = _render_authorized_keys(
+        rendered, exported = _render_authorized_keys(
             ["ssh-ed25519 AAAA..."],
             {"OK": "fine", "BAD": 'has"quote', "also bad": "x"},
         )
         assert 'environment="OK=fine"' in rendered
         assert "BAD" not in rendered
         assert "also bad" not in rendered
+        assert exported == ["OK"]
+
+    def test_permit_user_environment_lists_only_exported_names(self) -> None:
+        """A fixed pattern list would silently drop task-spec env vars."""
+        _, exported = _render_authorized_keys(
+            ["ssh-ed25519 AAAA..."], {"MY_TASK_VAR": "v", "CUDA_VISIBLE_DEVICES": "0"}
+        )
+        rendered = _render_sshd_config(
+            port=2222,
+            session_dir=Path("/tmp/s"),
+            host_key=Path("/tmp/s/hk"),
+            authorized_keys=Path("/tmp/s/ak"),
+            login_user="fmssn1",
+            exported_env=exported,
+        )
+        assert "PermitUserEnvironment CUDA_VISIBLE_DEVICES,MY_TASK_VAR" in rendered
 
     def test_no_keys_renders_empty_file(self) -> None:
-        assert _render_authorized_keys([], {"OK": "fine"}) == ""
+        assert _render_authorized_keys([], {"OK": "fine"}) == ("", [])
 
 
 class TestConnectionCounting:
@@ -187,3 +217,95 @@ class TestConnectionCounting:
 
     def test_garbage_input_counts_zero(self) -> None:
         assert count_established_connections("not a table", 22) == 0
+
+
+class TestSessionAccountNaming:
+    def test_name_is_derived_from_the_session_id(self) -> None:
+        name = account_name_for("ssn-a1b2c3d4e5")
+        assert name.startswith(ACCOUNT_PREFIX)
+        assert ACCOUNT_NAME_RE.match(name)
+
+    def test_name_stays_within_the_linux_limit(self) -> None:
+        name = account_name_for("ssn-" + "f" * 200)
+        assert len(name) <= 31
+        assert ACCOUNT_NAME_RE.match(name)
+
+    def test_hostile_session_id_still_yields_a_safe_name(self) -> None:
+        """Nothing but [a-z0-9-] may reach useradd, whatever the id contains."""
+        name = account_name_for("ssn-;rm -rf /;$(id)")
+        assert ACCOUNT_NAME_RE.match(name)
+        assert not set(name) - set("abcdefghijklmnopqrstuvwxyz0123456789-")
+
+
+class TestReportedLoginUser:
+    """The reported username must be the one sshd will actually accept."""
+
+    def test_process_session_reports_its_own_account(self, tmp_path: Path) -> None:
+        identity = CurrentUser()
+        session = ProcessSession.__new__(ProcessSession)
+        session.identity = identity
+        assert session.login_user() == identity.name
+
+    def test_reported_user_matches_allowusers(self, tmp_path: Path) -> None:
+        identity = CurrentUser()
+        session = ProcessSession.__new__(ProcessSession)
+        session.identity = identity
+        rendered = _render_sshd_config(
+            port=2222,
+            session_dir=tmp_path,
+            host_key=tmp_path / "hk",
+            authorized_keys=tmp_path / "ak",
+            login_user=identity.name,
+        )
+        assert f"AllowUsers {session.login_user()}" in rendered
+
+    def test_docker_session_reports_the_spec_user(self) -> None:
+        session = DockerSession.__new__(DockerSession)
+        session._cfg = _interactive_cfg()
+        assert session.login_user() == session._cfg.user
+
+
+class TestIdentitySelection:
+    def test_non_root_worker_still_gets_a_session(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Process mode must never refuse just because the worker is not root."""
+        monkeypatch.setattr(session_identity_module.os, "getuid", lambda: 10001)
+        identity = resolve_identity("ssn-abcd1234", tmp_path)
+        assert isinstance(identity, CurrentUser)
+        assert identity.isolates_from_worker is False
+
+    def test_current_user_identity_reports_no_isolation(self) -> None:
+        assert CurrentUser().isolates_from_worker is False
+
+
+class TestFinishSentinelPlacement:
+    """The sentinel must never outlive its session, or the next one ends at once."""
+
+    def test_sentinel_lives_under_the_session_dir_without_isolation(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(session_identity_module.os, "getuid", lambda: 10001)
+        backend = ProcessSessionBackend(make_live_worker_config(tmp_path))
+        session_dir = tmp_path / "session"
+        session_dir.mkdir()
+        identity = resolve_identity("ssn-abcd1234", session_dir)
+        plan = backend._build_paths(  # noqa: SLF001
+            _request(_interactive_cfg(), tmp_path), session_dir, identity
+        )
+        assert plan.finish_sentinel.is_relative_to(session_dir)
+        assert not plan.finish_sentinel.is_relative_to(Path.home())
+
+
+class TestAccountRelease:
+    def test_process_scan_uses_a_valid_psutil_attr(self) -> None:
+        """A bad attr name only raises when release() actually runs."""
+        account = DedicatedAccount(
+            "fmssn-none", uid=4294967, gid=4294967, home=Path("/nonexistent")
+        )
+        account._kill_processes()  # noqa: SLF001
+
+    def test_current_user_release_never_deletes_the_worker_account(self) -> None:
+        before = CurrentUser().name
+        CurrentUser().release()
+        assert CurrentUser().name == before

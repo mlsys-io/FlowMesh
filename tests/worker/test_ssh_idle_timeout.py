@@ -33,6 +33,9 @@ class _FakeSession(SSHSession):
         self.stopped_with: float | None = None
         self.cleaned = False
 
+    def login_user(self) -> str:
+        return "flowmesh"
+
     def wait_ready(self, timeout_sec: float) -> int:
         return 2222
 

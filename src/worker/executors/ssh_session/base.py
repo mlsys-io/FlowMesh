@@ -77,6 +77,15 @@ class SSHSession(ABC):
         """Copy the session's output directory into ``destination``."""
 
     @abstractmethod
+    def login_user(self) -> str:
+        """Username this session accepts, as reported to the client.
+
+        Must match what the session's sshd will actually authenticate: a
+        backend that logs the user in as something other than the requested
+        ``spec.user`` reports the name it really created.
+        """
+
+    @abstractmethod
     def stop(self, timeout_sec: float) -> None:
         """Ask the session to terminate, escalating after ``timeout_sec``."""
 

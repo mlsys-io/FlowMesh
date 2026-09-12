@@ -1,27 +1,31 @@
-"""Process session backend: sshd as a process inside the worker itself.
+"""Process session backend: sshd as a process beside the worker.
 
 For deployments where the worker container *is* the machine the user rents —
 vast.ai instances have no Docker socket — and where the supervisor that dials
 the relay uplink lives somewhere else entirely, so loopback is not a reachable
 relay target.
 
-Two consequences follow from having no container around the session and are
+Three consequences follow from having no container around the session and are
 enforced here rather than assumed:
 
 * **One session per worker.** Sessions sharing a worker would share its
-  filesystem and process namespace, so isolation is by *rental*: a second
-  concurrent session is refused.
+  filesystem and process namespace, so a second concurrent session is refused.
 * **No worker-side resource cap.** ``SSH_MAX_CPU`` / ``SSH_MAX_MEMORY`` /
   ``SSH_MAX_PIDS`` need cgroup control the worker does not have over itself;
   the size of the rented box is the cap.
+* **Isolation depends on the worker's own privileges.** A root worker gives
+  each session its own account, so the session cannot reach the worker's
+  credentials. A non-root worker can only authenticate its own account, and
+  the session inherits everything that account can read.
 """
 
+import ctypes
 import logging
 import os
 import re
 import shutil
 import socket
-import subprocess  # nosec B404
+import subprocess
 import tempfile
 import threading
 import time
@@ -44,8 +48,14 @@ from .base import (
     read_local_proc_net_tcp,
     resolve_tailnet_address,
 )
-from .config import SSHConfig, normalize_mount_path, reserve_mount_path
+from .config import (
+    STOP_TIMEOUT_SEC,
+    SSHConfig,
+    normalize_mount_path,
+    reserve_mount_path,
+)
 from .inputs import stage_inputs_locally
+from .session_identity import SessionIdentity, reap_stale_accounts, resolve_identity
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +65,11 @@ _KEYGEN_TIMEOUT_SEC = 30.0
 _TERMINATE_GRACE_SEC = 5.0
 _ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _ENV_VALUE_FORBIDDEN = ('"', "\\", "\n", "\r")
+_PORT_ATTEMPTS = 3
+_READY_PROBE_SEC = 2.0
+_BIND_FAILURE_MARKERS = ("cannot bind", "address already in use", "bind to port")
+_PR_SET_DUMPABLE = 4
+_SPAWN_ENV_KEYS = ("PATH", "LANG", "LC_ALL", "TZ")
 
 
 def find_sshd() -> str | None:
@@ -98,10 +113,21 @@ class ProcessSessionBackend(SSHSessionBackend):
         return True
 
     def prepare(self) -> None:
+        reap_stale_accounts(keep=self._active_account_name())
         if self._config.ssh_limits is not None:
             logger.warning(
                 "SSH resource caps are configured but the process backend cannot "
                 "enforce them; the size of this worker is the cap"
+            )
+        if self._config.enable_ssh_gpu_limit:
+            logger.warning(
+                "ENABLE_SSH_GPU_LIMIT is set, but the process backend can only hand "
+                "the session a CUDA_VISIBLE_DEVICES value it is free to unset; the "
+                "GPU subset is advisory here, not enforced"
+            )
+        if os.getuid() != 0 and not _hide_worker_environ():
+            logger.warning(
+                "Could not restrict access to this worker's process environment"
             )
 
     def _default_relay_host(self) -> str:
@@ -144,14 +170,17 @@ class ProcessSessionBackend(SSHSessionBackend):
             session = self._active
         if session is None:
             return
-        stop_timeout_sec = parse_float_env("SSH_STOP_TIMEOUT_SEC", _TERMINATE_GRACE_SEC)
-        session.stop(stop_timeout_sec)
+        session.stop(parse_float_env("SSH_STOP_TIMEOUT_SEC", STOP_TIMEOUT_SEC))
         session.cleanup()
 
     def _release(self, session: "ProcessSession") -> None:
         with self._lock:
             if self._active is session:
                 self._active = None
+
+    def _active_account_name(self) -> str | None:
+        with self._lock:
+            return self._active.identity.name if self._active else None
 
     # ------------------------------------------------------------------ #
     # Session construction
@@ -177,14 +206,24 @@ class ProcessSessionBackend(SSHSessionBackend):
             tempfile.mkdtemp(prefix=f"flowmesh-ssh-{request.session_id[:8]}-")
         )
         session_dir.chmod(0o700)
+        identity: SessionIdentity | None = None
         plan: ProcessSessionPaths | None = None
         try:
-            plan = self._build_paths(request, session_dir)
+            identity = resolve_identity(request.session_id, session_dir)
+            if identity.isolates_from_worker:
+                # The session traverses into its home without being able to list
+                # the host key and sshd_config sitting beside it.
+                session_dir.chmod(0o711)
+                if cfg.user != identity.name:
+                    logger.info(
+                        "Ignoring SSH spec user %s: this session logs in as its own "
+                        "account %s",
+                        cfg.user,
+                        identity.name,
+                    )
+            plan = self._build_paths(request, session_dir, identity)
             host_key = session_dir / "ssh_host_ed25519_key"
             _generate_host_key(keygen_path, host_key)
-            # SSH_USER / AUTHORIZED_KEYS / SSH_UID bootstrap the Docker image's
-            # entrypoint; here sshd is configured directly, so the session sees
-            # only the variables a user would expect in their shell.
             environment = self._build_environment(
                 cfg.user,
                 cfg.authorized_keys,
@@ -196,28 +235,21 @@ class ProcessSessionBackend(SSHSessionBackend):
             )
             environment["FLOWMESH_FINISH_SENTINEL"] = plan.finish_sentinel.as_posix()
             authorized_keys = session_dir / "authorized_keys"
-            authorized_keys.write_text(
-                _render_authorized_keys(cfg.authorized_keys, environment),
-                encoding="utf-8",
+            rendered, exported = _render_authorized_keys(
+                cfg.authorized_keys, environment
             )
-            authorized_keys.chmod(0o600)
-            port = _pick_free_port()
-            config_path = session_dir / "sshd_config"
-            config_path.write_text(
-                _render_sshd_config(
-                    port=port,
-                    session_dir=session_dir,
-                    host_key=host_key,
-                    authorized_keys=authorized_keys,
-                    login_user=_current_username(),
-                ),
-                encoding="utf-8",
+            authorized_keys.write_text(rendered, encoding="utf-8")
+            # sshd opens this file as the session user, not as itself, so a
+            # root-owned 0600 would deny every login.
+            authorized_keys.chmod(0o644)
+            process, port, log_path = _start_sshd(
+                sshd_path, session_dir, host_key, authorized_keys, identity, exported
             )
-            log_path = session_dir / "sshd.log"
-            process = _spawn_sshd(sshd_path, config_path, log_path)
         except Exception:
             if plan is not None:
                 _discard_paths(plan)
+            if identity is not None:
+                identity.release()
             shutil.rmtree(session_dir, ignore_errors=True)
             raise
         return ProcessSession(
@@ -228,10 +260,11 @@ class ProcessSessionBackend(SSHSessionBackend):
             log_path=log_path,
             plan=plan,
             cfg=cfg,
+            identity=identity,
         )
 
     def _build_paths(
-        self, request: SessionRequest, session_dir: Path
+        self, request: SessionRequest, session_dir: Path, identity: SessionIdentity
     ) -> "ProcessSessionPaths":
         """Place inputs and the output directory at their requested paths.
 
@@ -249,6 +282,7 @@ class ProcessSessionBackend(SSHSessionBackend):
             staged_inputs_dir = stage_inputs_locally(
                 request.resolved_inputs, request.session_id
             )
+            identity.own(staged_inputs_dir, recursive=True)
             for resolved in request.resolved_inputs:
                 reserve_mount_path(used_mount_paths, resolved.mount_path)
                 target = Path(resolved.mount_path)
@@ -271,9 +305,13 @@ class ProcessSessionBackend(SSHSessionBackend):
             _ensure_parent_dir(output_path, "sshOutput.mountPath")
             output_created = not output_path.exists()
             output_path.mkdir(parents=True, exist_ok=True)
+            identity.own(output_path)
 
+        # The sentinel lives under session_dir either way, so it cannot survive
+        # into the next session and end it the moment it starts.
+        sentinel_dir = identity.home if identity.isolates_from_worker else session_dir
         return ProcessSessionPaths(
-            finish_sentinel=session_dir / "finish",
+            finish_sentinel=sentinel_dir / ".flowmesh_finish",
             staged_inputs_dir=staged_inputs_dir,
             input_links=input_links,
             output_path=output_path,
@@ -316,6 +354,7 @@ class ProcessSession(SSHSession):
         log_path: Path,
         plan: ProcessSessionPaths,
         cfg: SSHConfig,
+        identity: SessionIdentity,
     ) -> None:
         self._backend = backend
         self._process = process
@@ -324,6 +363,10 @@ class ProcessSession(SSHSession):
         self._log_path = log_path
         self._plan = plan
         self._cfg = cfg
+        self.identity = identity
+
+    def login_user(self) -> str:
+        return self.identity.name
 
     def wait_ready(self, timeout_sec: float = 30.0) -> int:
         deadline = time.time() + timeout_sec
@@ -380,10 +423,15 @@ class ProcessSession(SSHSession):
                 logger.warning("sshd did not exit after SIGKILL")
 
     def cleanup(self) -> None:
-        self.stop(_TERMINATE_GRACE_SEC)
-        _discard_paths(self._plan)
-        shutil.rmtree(self._session_dir, ignore_errors=True)
-        self._backend._release(self)
+        try:
+            self.stop(_TERMINATE_GRACE_SEC)
+            _discard_paths(self._plan)
+            self.identity.release()
+            shutil.rmtree(self._session_dir, ignore_errors=True)
+        finally:
+            # A failure above must not strand the worker refusing every later
+            # session; the stale-account sweep in prepare() is the backstop.
+            self._backend._release(self)
 
     def save_logs(self, out_dir: Path) -> None:
         try:
@@ -396,11 +444,58 @@ class ProcessSession(SSHSession):
             logger.debug("Failed to capture sshd logs", exc_info=True)
 
     def _log_tail(self, max_chars: int = 2000) -> str:
-        try:
-            text = self._log_path.read_text(encoding="utf-8", errors="replace").strip()
-        except OSError:
-            return ""
+        text = _read_log(self._log_path)
         return f"\nsshd output:\n{text[-max_chars:]}" if text else ""
+
+
+def _start_sshd(
+    sshd_path: str,
+    session_dir: Path,
+    host_key: Path,
+    authorized_keys: Path,
+    identity: SessionIdentity,
+    exported_env: list[str],
+) -> tuple[subprocess.Popen[bytes], int, Path]:
+    """Start sshd, retrying on another port when it loses the race to bind.
+
+    ``_pick_free_port`` has to release the port before sshd claims it, so the
+    kernel can hand it to something else in between.
+    """
+    log_path = session_dir / "sshd.log"
+    config_path = session_dir / "sshd_config"
+    detail = ""
+    for _ in range(_PORT_ATTEMPTS):
+        port = _pick_free_port()
+        config_path.write_text(
+            _render_sshd_config(
+                port=port,
+                session_dir=session_dir,
+                host_key=host_key,
+                authorized_keys=authorized_keys,
+                login_user=identity.name,
+                exported_env=exported_env,
+            ),
+            encoding="utf-8",
+        )
+        config_path.chmod(0o600)
+        process = _spawn_sshd(sshd_path, config_path, log_path)
+        deadline = time.time() + _READY_PROBE_SEC
+        while time.time() < deadline:
+            if process.poll() is not None:
+                break
+            if is_ssh_ready("127.0.0.1", port):
+                return process, port, log_path
+            time.sleep(0.05)
+        if process.poll() is None:
+            return process, port, log_path
+        detail = _read_log(log_path)
+        if not any(marker in detail.lower() for marker in _BIND_FAILURE_MARKERS):
+            raise ExecutionError(f"sshd exited immediately.\nsshd output:\n{detail}")
+        logger.info("sshd could not bind port %d; retrying on another port", port)
+    raise ExecutionError(
+        f"sshd could not bind a free port after {_PORT_ATTEMPTS} attempts."
+        f"\nsshd output:\n{detail}"
+    )
 
 
 def _spawn_sshd(
@@ -413,6 +508,7 @@ def _spawn_sshd(
             stdout=log_handle,
             stderr=subprocess.STDOUT,
             stdin=subprocess.DEVNULL,
+            env=_sanitized_spawn_env(),
             start_new_session=True,
         )
     except OSError as exc:
@@ -422,23 +518,41 @@ def _spawn_sshd(
 
 def _generate_host_key(keygen_path: str, host_key: Path) -> None:
     result = subprocess.run(  # nosec B603 - argv list, no shell=True, absolute path via shutil.which()
-        [
-            keygen_path,
-            "-q",
-            "-t",
-            "ed25519",
-            "-N",
-            "",
-            "-f",
-            host_key.as_posix(),
-        ],
+        [keygen_path, "-q", "-t", "ed25519", "-N", "", "-f", host_key.as_posix()],
         capture_output=True,
         timeout=_KEYGEN_TIMEOUT_SEC,
+        env=_sanitized_spawn_env(),
         check=False,
     )
     if result.returncode != 0 or not host_key.exists():
         detail = result.stderr.decode("utf-8", errors="replace").strip()
         raise ExecutionError(f"Failed to generate SSH host key: {detail}")
+
+
+def _sanitized_spawn_env() -> dict[str, str]:
+    """Environment for helper processes, carrying none of the worker's secrets.
+
+    sshd would otherwise inherit the worker's environment, and ``execve`` resets
+    the dumpable flag, so the session could read the task token and every API
+    key straight out of ``/proc/<sshd>/environ``.
+    """
+    env = {key: value for key in _SPAWN_ENV_KEYS if (value := os.environ.get(key))}
+    env.setdefault("PATH", os.defpath)
+    return env
+
+
+def _hide_worker_environ() -> bool:
+    """Make this process's ``/proc`` entry unreadable to its own uid.
+
+    Clearing the dumpable flag reassigns ``/proc/<pid>`` to root, which is what
+    stops a same-uid session from reading the worker's environment or attaching
+    to it.
+    """
+    try:
+        libc = ctypes.CDLL("libc.so.6", use_errno=True)
+        return bool(libc.prctl(_PR_SET_DUMPABLE, 0, 0, 0, 0) == 0)
+    except (OSError, AttributeError):
+        return False
 
 
 def _render_sshd_config(
@@ -447,7 +561,9 @@ def _render_sshd_config(
     host_key: Path,
     authorized_keys: Path,
     login_user: str,
+    exported_env: list[str] | None = None,
 ) -> str:
+    permit_env = ",".join(exported_env) if exported_env else "no"
     return "\n".join(
         (
             f"Port {port}",
@@ -460,7 +576,7 @@ def _render_sshd_config(
             "KbdInteractiveAuthentication no",
             "PubkeyAuthentication yes",
             "PermitRootLogin prohibit-password",
-            "PermitUserEnvironment yes",
+            f"PermitUserEnvironment {permit_env}",
             "StrictModes no",
             "UsePAM no",
             "PrintMotd no",
@@ -476,24 +592,26 @@ def _render_sshd_config(
 
 def _render_authorized_keys(
     authorized_keys: list[str], environment: dict[str, str]
-) -> str:
+) -> tuple[str, list[str]]:
     """Render authorized_keys, carrying session env as per-key options.
 
     sshd does not inherit the worker's environment into a login shell, so the
     values the session is supposed to see (``CUDA_VISIBLE_DEVICES`` above all)
-    travel as ``environment=`` options on each key.
+    travel as ``environment=`` options on each key. Returns the rendered file
+    and the names actually exported, which ``PermitUserEnvironment`` must list.
     """
-    options = ",".join(
-        f'environment="{name}={value}"'
+    exported = [
+        name
         for name, value in sorted(environment.items())
         if _is_safe_env_entry(name, value)
-    )
+    ]
+    options = ",".join(f'environment="{name}={environment[name]}"' for name in exported)
     lines = [
         f"{options} {key}" if options else key
         for raw_key in authorized_keys
         if (key := raw_key.strip())
     ]
-    return "\n".join(lines) + "\n" if lines else ""
+    return ("\n".join(lines) + "\n" if lines else "", exported if lines else [])
 
 
 def _is_safe_env_entry(name: str, value: str) -> bool:
@@ -512,13 +630,13 @@ def _pick_free_port() -> int:
         return int(sock.getsockname()[1])
 
 
-def _current_username() -> str:
+def _read_log(log_path: Path, max_chars: int = 4000) -> str:
     try:
-        import pwd
-
-        return pwd.getpwuid(os.getuid()).pw_name
-    except Exception:
-        return os.getenv("USER", "root")
+        return log_path.read_text(encoding="utf-8", errors="replace").strip()[
+            -max_chars:
+        ]
+    except OSError:
+        return ""
 
 
 def _ensure_parent_dir(path: Path, field_name: str) -> None:

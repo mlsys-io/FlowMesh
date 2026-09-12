@@ -54,11 +54,15 @@ def _task_message() -> WorkerTaskMessage:
 class _ReadySession:
     """Minimal session stand-in: ready on a fixed port, nothing else."""
 
-    def __init__(self, port: int = 2222) -> None:
+    def __init__(self, port: int = 2222, user: str = "flowmesh") -> None:
         self.port = port
+        self.user = user
 
     def wait_ready(self, timeout_sec: float) -> int:
         return self.port
+
+    def login_user(self) -> str:
+        return self.user
 
 
 class TestBackendRelayHost:

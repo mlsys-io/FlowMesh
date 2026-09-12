@@ -244,7 +244,7 @@ class SSHExecutor(Executor):
         ssh_info: dict[str, Any] = {
             "session_id": session_id,
             "mode": access_mode,
-            "username": cfg.user,
+            "username": session.login_user(),
             "expires_at": expires_at,
             "host": host_name,
             "port": host_port,

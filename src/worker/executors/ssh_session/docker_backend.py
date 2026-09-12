@@ -579,6 +579,9 @@ class DockerSession(SSHSession):
         self._mount_plan = mount_plan
         self._log_stream = log_stream
 
+    def login_user(self) -> str:
+        return self._cfg.user
+
     def wait_ready(self, timeout_sec: float = 30.0) -> int:
         """Wait until Docker assigns a host port and sshd accepts connections."""
         container = self._container
