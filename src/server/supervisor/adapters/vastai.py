@@ -25,8 +25,19 @@ from .ssh import SSHConfig
 from .utils import env_to_secret_str, get_worker_image_name, to_env_str
 
 _PROVIDER_NAME = "vastai"
+_GPULESS_NAMES = frozenset({"", "n/a", "none"})
 
 logger = logging.getLogger("supervisor")
+
+
+def offer_gpu_arch(gpu_name: str | None) -> GpuArch | None:
+    """Classify an offer's GPU, or ``None`` when it has none.
+
+    VastAI names a GPU-less offer ``"N/A"`` rather than omitting the field, so
+    a plain ``is None`` check sends a CPU-only machine the GPU image.
+    """
+    name = (gpu_name or "").strip()
+    return None if name.lower() in _GPULESS_NAMES else GpuArch.from_name(name)
 
 
 class VastAIWorkerConfig(WorkerConfig):
@@ -266,8 +277,7 @@ class VastAIWorkerAdapter(WorkerAdapter):
             logger.debug(
                 "Launching VastAI instance %s for worker %s.", instance_id, self.name
             )
-            gpu_name = instance_info.get("gpu_name")
-            gpu_arch = None if gpu_name is None else GpuArch.from_name(gpu_name)
+            gpu_arch = offer_gpu_arch(instance_info.get("gpu_name"))
             env = self._build_env_str()
             try:
                 resp = self._client.create_instance(

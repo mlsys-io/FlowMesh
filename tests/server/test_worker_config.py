@@ -4,8 +4,10 @@ import pytest
 from pydantic import ValidationError
 
 from server.supervisor.adapters.ssh import SSHConfig
-from server.supervisor.adapters.vastai import VastAIWorkerConfig
+from server.supervisor.adapters.utils import get_worker_image_name
+from server.supervisor.adapters.vastai import VastAIWorkerConfig, offer_gpu_arch
 from server.supervisor.manager import ServerWorkerConfig, WorkerInitConfig
+from server.supervisor.resource_manager import GpuArch
 from shared.schemas.worker import SSHBackendName
 
 
@@ -86,3 +88,28 @@ class TestVastAISessionBackend:
 
     def test_unset_backend_is_accepted(self) -> None:
         VastAIWorkerConfig(ssh=SSHConfig(session_backend=None))
+
+
+class TestVastAIImageSelection:
+    """VastAI names a GPU-less offer rather than omitting the field."""
+
+    @pytest.mark.parametrize("gpu_name", ["N/A", "n/a", " ", "", None, "None"])
+    def test_a_gpuless_offer_selects_the_cpu_image(self, gpu_name: str | None) -> None:
+        arch = offer_gpu_arch(gpu_name)
+        assert arch is None
+        assert get_worker_image_name("reg", "v1", arch).endswith("-cpu")
+
+    @pytest.mark.parametrize(
+        ("gpu_name", "expected"),
+        [
+            ("RTX 4090", GpuArch.UNKNOWN),
+            ("H100 SXM", GpuArch.HOPPER),
+            ("B200", GpuArch.BLACKWELL),
+        ],
+    )
+    def test_a_gpu_offer_selects_the_gpu_image(
+        self, gpu_name: str, expected: GpuArch
+    ) -> None:
+        arch = offer_gpu_arch(gpu_name)
+        assert arch is expected
+        assert get_worker_image_name("reg", "v1", arch).endswith("-gpu")
