@@ -112,7 +112,7 @@ def test_dispatcher_resolves_ssh_input_stage_names_from_local_stage_names() -> N
     )
 
     spec = SSHSpecStrict.model_validate(current.task.spec.model_dump())
-    resolved = dispatcher._resolve_upstream_task_ids(current, spec)  # noqa: SLF001
+    resolved = dispatcher._resolve_upstream_task_ids(current, spec)
 
     assert resolved == {"preprocess": "task-pre"}
 
@@ -153,7 +153,7 @@ def test_dispatcher_requeues_when_ssh_input_stage_not_done() -> None:
     spec = SSHSpecStrict.model_validate(current.task.spec.model_dump())
 
     with pytest.raises(StageReferenceNotReady):
-        dispatcher._resolve_upstream_task_ids(current, spec)  # noqa: SLF001
+        dispatcher._resolve_upstream_task_ids(current, spec)
 
 
 def test_build_stage_context_includes_only_transitive_dependencies() -> None:
@@ -221,7 +221,7 @@ def test_build_stage_context_includes_only_transitive_dependencies() -> None:
         logger=logging.getLogger("test-stage-context"),
     )
 
-    context = dispatcher._build_stage_context(current)  # noqa: SLF001
+    context = dispatcher._build_stage_context(current)
 
     assert set(context) == {"preprocess", "transform"}
 
@@ -300,10 +300,8 @@ def test_collect_upstream_results_excludes_unrelated_completed_stages(
         logger=logging.getLogger("test-stage-results"),
     )
 
-    context = dispatcher._build_stage_context(current)  # noqa: SLF001
-    upstream_results = dispatcher._collect_upstream_results(  # noqa: SLF001
-        context, current.task_id
-    )
+    context = dispatcher._build_stage_context(current)
+    upstream_results = dispatcher._collect_upstream_results(context, current.task_id)
 
     assert set(upstream_results) == {"preprocess"}
 
@@ -376,10 +374,10 @@ def test_stage_reference_uses_payload_root_for_local_and_http_results(
         logger=logging.getLogger("test-stage-reference-root"),
     )
 
-    local_value = dispatcher._resolve_reference(  # noqa: SLF001
+    local_value = dispatcher._resolve_reference(
         "local.final_lora_archive", {"local": local_record}
     )
-    http_value = dispatcher._resolve_reference(  # noqa: SLF001
+    http_value = dispatcher._resolve_reference(
         "http.final_lora_archive", {"http": http_record}
     )
 

@@ -121,9 +121,7 @@ class TestPublishedSessionInfo:
         )
         task = _task_message()
         cfg = SSHConfig.from_spec(cast(SSHSpecStrict, task.spec), DEFAULT_WORKER_CONFIG)
-        executor._wait_session_ready(  # noqa: SLF001
-            cast(Any, _ReadySession()), "ssn-1234", task, cfg
-        )
+        executor._wait_session_ready(cast(Any, _ReadySession()), "ssn-1234", task, cfg)
         return cast(dict[str, Any], emitted["ssh"])
 
     def test_docker_session_keeps_loopback_relay_target(
@@ -155,7 +153,5 @@ class TestPublishedSessionInfo:
         task = _task_message()
         cfg = SSHConfig.from_spec(cast(SSHSpecStrict, task.spec), DEFAULT_WORKER_CONFIG)
         cfg.access_mode = "direct"
-        executor._wait_session_ready(  # noqa: SLF001
-            cast(Any, _ReadySession()), "ssn-1234", task, cfg
-        )
+        executor._wait_session_ready(cast(Any, _ReadySession()), "ssn-1234", task, cfg)
         assert "_relay_target" not in emitted["ssh"]

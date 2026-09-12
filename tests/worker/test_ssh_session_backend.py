@@ -292,7 +292,7 @@ class TestFinishSentinelPlacement:
         session_dir = tmp_path / "session"
         session_dir.mkdir()
         identity = resolve_identity("ssn-abcd1234", session_dir)
-        plan = backend._build_paths(  # noqa: SLF001
+        plan = backend._build_paths(
             _request(_interactive_cfg(), tmp_path), session_dir, identity
         )
         assert plan.finish_sentinel.is_relative_to(session_dir)
@@ -305,7 +305,7 @@ class TestAccountRelease:
         account = DedicatedAccount(
             "fmssn-none", uid=4294967, gid=4294967, home=Path("/nonexistent")
         )
-        account._kill_processes()  # noqa: SLF001
+        account._kill_processes()
 
     def test_current_user_release_never_deletes_the_worker_account(self) -> None:
         before = CurrentUser().name

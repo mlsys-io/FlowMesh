@@ -77,7 +77,7 @@ def test_build_mount_plan_uses_worker_volume_view_in_container(
     fake_docker = MagicMock()
 
     resolved_inputs = inputs_module.resolve_inputs(task, cfg, worker_cfg.results_dir)
-    plan = backend._build_mount_plan(  # noqa: SLF001
+    plan = backend._build_mount_plan(
         fake_docker, out_dir, resolved_inputs, cfg, "session-1234", "worker-1"
     )
 
@@ -118,7 +118,7 @@ def test_build_mount_plan_uses_direct_binds_outside_container(
     fake_docker = MagicMock()
 
     resolved_inputs = inputs_module.resolve_inputs(task, cfg, worker_cfg.results_dir)
-    plan = backend._build_mount_plan(  # noqa: SLF001
+    plan = backend._build_mount_plan(
         fake_docker, out_dir, resolved_inputs, cfg, "session-1234", "worker-1"
     )
 
@@ -223,7 +223,7 @@ def test_stage_inputs_in_volume_downloads_missing_upstream_results(
 
     fake_client = _FakeClient()
 
-    volume_name = backend._stage_inputs_in_volume(  # noqa: SLF001
+    volume_name = backend._stage_inputs_in_volume(
         cast("DockerClient", fake_client),
         resolved_inputs,
         "flowmesh-results",
