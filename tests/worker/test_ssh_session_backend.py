@@ -1,5 +1,6 @@
 """Tests for the SSH session backend seam and the process backend."""
 
+import subprocess
 from pathlib import Path
 from typing import cast
 
@@ -26,6 +27,7 @@ from worker.executors.ssh_session.docker_backend import (
 from worker.executors.ssh_session.process_backend import (
     ProcessSession,
     ProcessSessionBackend,
+    _install_finish_helper,
     _render_authorized_keys,
     _render_sshd_config,
 )
@@ -309,3 +311,30 @@ class TestAccountRelease:
         before = CurrentUser().name
         CurrentUser().release()
         assert CurrentUser().name == before
+
+
+class TestFinishHelperParity:
+    """A process-mode session gets the same flowmesh-finish command Docker ships."""
+
+    def test_helper_is_installed_and_executable(self, tmp_path: Path) -> None:
+        sentinel = tmp_path / "home" / ".flowmesh_finish"
+        bin_dir = _install_finish_helper(tmp_path, sentinel)
+        helper = bin_dir / "flowmesh-finish"
+        assert helper.exists()
+        assert helper.stat().st_mode & 0o111
+        assert sentinel.as_posix() in helper.read_text()
+
+    def test_bin_dir_is_traversable_for_path_lookup(self, tmp_path: Path) -> None:
+        """0711 is enough: a PATH search stats candidates, it does not list."""
+        bin_dir = _install_finish_helper(tmp_path, tmp_path / "finish")
+        assert bin_dir.stat().st_mode & 0o111 == 0o111
+
+    def test_helper_creates_the_sentinel_the_session_loop_polls(
+        self, tmp_path: Path
+    ) -> None:
+        sentinel = tmp_path / "finish"
+        bin_dir = _install_finish_helper(tmp_path, sentinel)
+        subprocess.run(
+            [str(bin_dir / "flowmesh-finish")], check=True, capture_output=True
+        )
+        assert sentinel.exists()

@@ -70,6 +70,8 @@ _READY_PROBE_SEC = 2.0
 _BIND_FAILURE_MARKERS = ("cannot bind", "address already in use", "bind to port")
 _PR_SET_DUMPABLE = 4
 _SPAWN_ENV_KEYS = ("PATH", "LANG", "LC_ALL", "TZ")
+# sshd's own default; the session's PATH prepends the per-session bin dir.
+_DEFAULT_SESSION_PATH = "/usr/local/bin:/usr/bin:/bin:/usr/games"
 
 
 def find_sshd() -> str | None:
@@ -234,6 +236,8 @@ class ProcessSessionBackend(SSHSessionBackend):
                 gpu_device_ids=cfg.gpu_device_ids,
             )
             environment["FLOWMESH_FINISH_SENTINEL"] = plan.finish_sentinel.as_posix()
+            bin_dir = _install_finish_helper(session_dir, plan.finish_sentinel)
+            environment["PATH"] = f"{bin_dir.as_posix()}:{_DEFAULT_SESSION_PATH}"
             authorized_keys = session_dir / "authorized_keys"
             rendered, exported = _render_authorized_keys(
                 cfg.authorized_keys, environment
@@ -527,6 +531,29 @@ def _generate_host_key(keygen_path: str, host_key: Path) -> None:
     if result.returncode != 0 or not host_key.exists():
         detail = result.stderr.decode("utf-8", errors="replace").strip()
         raise ExecutionError(f"Failed to generate SSH host key: {detail}")
+
+
+def _install_finish_helper(session_dir: Path, sentinel: Path) -> Path:
+    """Give the session the ``flowmesh-finish`` command the Docker image ships.
+
+    It lives in a per-session directory rather than ``/usr/local/bin`` so that a
+    non-root worker can install it too, and so it leaves with the session.
+    ``0711`` is enough for a PATH lookup, which stats candidates rather than
+    listing the directory.
+    """
+    bin_dir = session_dir / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    helper = bin_dir / "flowmesh-finish"
+    helper.write_text(
+        "#!/bin/sh\n"
+        "set -e\n"
+        f'touch "{sentinel.as_posix()}"\n'
+        'echo "FlowMesh finish requested; the SSH session will close shortly."\n',
+        encoding="utf-8",
+    )
+    helper.chmod(0o755)
+    bin_dir.chmod(0o711)
+    return bin_dir
 
 
 def _sanitized_spawn_env() -> dict[str, str]:
