@@ -63,13 +63,13 @@ _HOP_BY_HOP_RESPONSE_HEADERS = {
 }
 
 
-def _resolve_serve_relay_target(
+def _resolve_serve_endpoint(
     runtime: TaskRuntime, task_id: str
 ) -> tuple[TaskRecord, str, int]:
-    """Resolve the serve task's relay endpoint.
+    """Resolve the serve task's upstream address for the request's Host header.
 
-    The target comes only from task state, so caller input cannot choose an arbitrary
-    upstream host or port.
+    The address comes only from task state, so caller input cannot choose an
+    arbitrary upstream.
     """
     record = runtime.get_record(task_id)
     if record is None or record.task_type != TaskType.SERVE:
@@ -85,16 +85,13 @@ def _resolve_serve_relay_target(
         raise HTTPException(
             status.HTTP_409_CONFLICT, "serve task is not in proxy access mode"
         )
-    relay_target = serve_info.get("_relay_target")
-    if not isinstance(relay_target, dict):
-        raise HTTPException(status.HTTP_409_CONFLICT, "serve task has no relay target")
-    target_host = relay_target.get("host")
-    target_port = relay_target.get("port")
-    if not target_host or not target_port:
+    host = serve_info.get("host")
+    port = serve_info.get("port")
+    if not host or not port:
         raise HTTPException(
-            status.HTTP_409_CONFLICT, "serve task relay target is incomplete"
+            status.HTTP_409_CONFLICT, "serve task endpoint is incomplete"
         )
-    return record, str(target_host), int(target_port)
+    return record, str(host), int(port)
 
 
 async def _start_serve_uplink(
@@ -102,8 +99,6 @@ async def _start_serve_uplink(
     node_registry: NodeRegistry,
     worker_registry: WorkerRegistry,
     relay_token: str,
-    target_host: str,
-    target_port: int,
 ) -> Worker:
     worker_id = record.assigned_worker
     if not worker_id:
@@ -115,9 +110,8 @@ async def _start_serve_uplink(
         command=CommandType.START_RELAY,
         payload={
             "relay_token": relay_token,
-            "target_host": target_host,
-            "target_port": target_port,
-            "session_id": record.task_id,
+            "worker_id": worker_id,
+            "endpoint_id": record.task_id,
         },
     )
     resp = await node_registry.exec_node_cmd(worker.node_id, cmd, timeout=5.0)
@@ -392,7 +386,7 @@ async def serve_proxy(
     if not proxy_enabled:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "proxy disabled")
 
-    record, target_host, target_port = _resolve_serve_relay_target(runtime, task_id)
+    record, upstream_host, upstream_port = _resolve_serve_endpoint(runtime, task_id)
 
     relay_token = secrets.token_hex(32)
     try:
@@ -401,8 +395,6 @@ async def serve_proxy(
             node_registry,
             worker_registry,
             relay_token,
-            target_host,
-            target_port,
         )
     except Exception as exc:
         logger.warning(
@@ -420,7 +412,7 @@ async def serve_proxy(
 
     try:
         request_bytes = await _serialize_request(
-            request, upstream_path, target_host, target_port
+            request, upstream_path, upstream_host, upstream_port
         )
         await _send_to_relay(redis_client, down, request_bytes)
 

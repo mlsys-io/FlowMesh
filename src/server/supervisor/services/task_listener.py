@@ -75,6 +75,28 @@ class TaskListener(RebindableReader):
         if worker_id in self._qs:
             del self._qs[worker_id]
 
+    def dispatch_relay(
+        self, worker_id: str, relay_token: str, endpoint_id: str
+    ) -> bool:
+        """Queue a relay request for a worker's dispatch stream.
+
+        Callable from any thread; returns whether the worker is connected.
+        """
+        loop = self._loop
+        if loop is None:
+            self.logger.warning("Task listener not started; dropping relay request")
+            return False
+        if worker_id not in self._qs:
+            self.logger.warning("Cannot relay for unregistered worker: %s", worker_id)
+            return False
+        payload = {
+            "kind": "relay",
+            "relay_token": relay_token,
+            "endpoint_id": endpoint_id,
+        }
+        asyncio.run_coroutine_threadsafe(self._qs[worker_id].put(payload), loop)
+        return True
+
     async def get_event(self, worker_id: str) -> dict[str, Any]:
         if worker_id not in self._qs:
             raise RuntimeError(f"Worker {worker_id} is not registered")

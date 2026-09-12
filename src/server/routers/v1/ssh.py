@@ -60,9 +60,6 @@ async def _start_server_uplink(
     ssh_info = safe_get(record.latest_update, "ssh")
     if not isinstance(ssh_info, dict):
         raise RuntimeError("Missing SSH info in latest_update")
-    relay_target = ssh_info.get("_relay_target")
-    if not isinstance(relay_target, dict):
-        raise RuntimeError("Missing relay target in latest_update")
     session_id = ssh_info.get("session_id")
     if not session_id:
         raise RuntimeError("Missing SSH session_id in latest_update")
@@ -71,9 +68,8 @@ async def _start_server_uplink(
         command=CommandType.START_RELAY,
         payload={
             "relay_token": relay_token,
-            "target_host": relay_target.get("host"),
-            "target_port": relay_target.get("port"),
-            "session_id": session_id,
+            "worker_id": worker_id,
+            "endpoint_id": session_id,
         },
     )
     resp = await node_registry.exec_node_cmd(worker.node_id, cmd, timeout=5.0)

@@ -658,9 +658,8 @@ class PortForwardService:
             command=CommandType.START_RELAY,
             payload={
                 "relay_token": relay_token,
-                "target_host": session.target_host,
-                "target_port": session.target_port,
-                "session_id": session.session_id,
+                "worker_id": session.audit.worker_id,
+                "endpoint_id": session.session_id,
             },
         )
         resp = await self._node_registry.exec_node_cmd(

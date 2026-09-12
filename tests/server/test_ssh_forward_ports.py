@@ -212,8 +212,8 @@ class TestSshForwardPersistentPorts:
             assert await asyncio.wait_for(reader.read(1), timeout=2.0) == b""
             node_id, command = dispatched_commands[0]
             assert node_id == "nde-old"
-            assert command.payload["session_id"] == "ssn-old"
-            assert command.payload["target_port"] == 2201
+            assert command.payload["endpoint_id"] == "ssn-old"
+            assert command.payload["worker_id"] == "wkr-a"
             writer.close()
             await writer.wait_closed()
         finally:

@@ -244,7 +244,8 @@ def _make_record(
         else {
             "serve": {
                 "mode": "proxy",
-                "_relay_target": {"host": "127.0.0.1", "port": 9001},
+                "host": "127.0.0.1",
+                "port": 9001,
                 "api_key": "vllm-secret-key",
                 "model": "Qwen/Qwen3-7B",
             }
@@ -395,7 +396,7 @@ async def test_non_proxy_mode_rejected() -> None:
 
 
 @pytest.mark.anyio
-async def test_missing_relay_target_rejected() -> None:
+async def test_incomplete_endpoint_rejected() -> None:
     record = _make_record(latest_update={"serve": {"mode": "proxy"}})
     app, _ = _make_app(record, b"")
 
