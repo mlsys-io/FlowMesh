@@ -9,9 +9,8 @@ idle timeout, or worker shutdown).
 **Non-interactive** (``interactive=false``): Runs a user-provided container
 image with an optional custom entrypoint/command.
 
-The sandbox a session runs in is chosen by a session backend
-(``worker.executors.ssh_session``); everything in this module is the same
-whichever backend is in use.
+A session backend (``worker.executors.ssh_session``) supplies the sandbox the
+session runs in, selected by ``SSH_SESSION_BACKEND``.
 """
 
 import logging

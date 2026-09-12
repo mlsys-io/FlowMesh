@@ -40,8 +40,8 @@ class SSHConfig(BaseModel):
     session_backend: SSHBackendName | None = env.SSH_SESSION_BACKEND
     """Session backend the worker should use (``auto``, ``docker``, ``process``).
 
-    ``process`` is for workers that are themselves the rented machine and have
-    no Docker socket; it runs one session per worker."""
+    ``process`` runs one interactive session per worker, for workers with no
+    Docker socket to create a sibling container with."""
     enable_unisolated_session: bool = env.ENABLE_UNISOLATED_SSH_SESSION
     """Whether a worker that cannot isolate a session may still serve one.
 

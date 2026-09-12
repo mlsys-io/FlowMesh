@@ -7,13 +7,7 @@ from ..schemas.ssh import SSHConnectionInfo
 
 
 class SshConnectionRegistry:
-    """Tracks the SSH connections a server is relaying right now.
-
-    A row exists for exactly as long as its connection does: it appears when a
-    proxy or forward connection opens and is deleted when that connection
-    closes. ``direct``-mode sessions are dialled worker-to-client and never
-    pass through the server, so they are not represented here at all.
-    """
+    """Tracks the SSH connections a server is relaying."""
 
     def __init__(self, redis_client: RedisClient) -> None:
         self._redis = redis_client

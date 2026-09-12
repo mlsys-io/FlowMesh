@@ -1,9 +1,7 @@
 """Process session backend: sshd as a process beside the worker.
 
-For deployments where the worker container *is* the machine the user rents —
-vast.ai instances have no Docker socket — and where the supervisor that dials
-the relay uplink lives somewhere else entirely, so loopback is not a reachable
-relay target.
+For workers with no Docker socket, which cannot create a sibling container to
+put a session in.
 
 Three consequences follow from having no container around the session and are
 enforced here rather than assumed:

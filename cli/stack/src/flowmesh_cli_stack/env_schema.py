@@ -380,9 +380,8 @@ STACK_ENV_SCHEMA = EnvSchema(
                     description=[
                         "Sandbox an SSH session runs in. 'docker' creates a",
                         "sibling container; 'process' runs sshd inside the",
-                        "worker itself, for workers that are the rented",
-                        "machine and have no Docker socket (one session per",
-                        "worker, interactive only). 'auto' means docker.",
+                        "worker. 'auto' picks docker, falling back to process",
+                        "on a root worker.",
                     ],
                 ),
                 EnvVar(

@@ -1,11 +1,10 @@
 """Session backend seam for the SSH executor.
 
 An SSH session is a sandbox running ``sshd`` plus the transport details needed
-to reach it. *How* that sandbox is created differs per deployment: on a worker
-with a Docker socket it is a sibling container; on a rented box that is itself
-the worker container it is a process. Everything above this seam — the task
-lifecycle, TTL and idle reaping, ``emit_update``, the ``accessMode`` enum — is
-the same either way and lives in the executor.
+to reach it. A worker with a Docker socket puts the session in a sibling
+container; a worker without one runs it as a process. The task lifecycle, TTL
+and idle reaping, ``emit_update`` and the ``accessMode`` enum sit above this
+seam, in the executor.
 """
 
 import ipaddress

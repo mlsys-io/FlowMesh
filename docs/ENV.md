@@ -95,50 +95,17 @@ Spark), set `DOCKER_GPU_RUNTIME=` in the stack env.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `SSH_SESSION_BACKEND` | `auto` | Sandbox a session runs in: `docker` (sibling container), `process` (sshd inside the worker), or `auto`. |
-| `SSH_RELAY_HOST` | – | Address at which this worker's session ports are reachable from the supervisor that dials the relay. |
+| `SSH_SESSION_BACKEND` | `auto` | Sandbox a session runs in: `docker` (sibling container), `process` (sshd inside the worker), or `auto` — `docker`, falling back to `process`. |
+| `ENABLE_UNISOLATED_SSH_SESSION` | `false` | Whether a worker that cannot give a session its own OS account may still serve one. |
+| `SSH_RELAY_HOST` | – | Address at which this worker's session ports are reachable from the supervisor that dials the relay. Unset, `docker` publishes loopback and `process` publishes the worker's tailnet address. |
 
-`auto` means `docker` and nothing else: a worker image that happens to
-ship `sshd` must not silently start running sessions in its own
-namespace, so `process` is opt-in.
-
-Pick `process` for a worker that *is* the machine the user rents — a
-vast.ai instance has no Docker socket, so the Docker backend never
-reports available there and the worker advertises no `ssh` capability.
-The process backend runs **one session per worker**, serves
-**interactive sessions only** (a non-interactive task needs a container
-runtime to run its image), and ignores `spec.image`.
-
-**What a process-mode session can reach.** A session is a login on the
-worker itself, so what isolates it is the account it runs as:
-
-| Worker runs as | Session account | Reaches the worker's credentials? |
-|----------------|-----------------|-----------------------------------|
-| root | a throwaway account created per session | No — different uid, so the worker's `/proc/<pid>/environ` and files are closed to it |
-| non-root | the worker's own account | **Yes** — it can read the worker's environment and files, including `WORKER_TOKEN` and any API keys the supervisor injected |
-
-A vast.ai instance runs the worker as root, so sessions there get their
-own account. Process mode still runs on a non-root worker rather than
-refusing, but it isolates nothing there — treat such a session as
-equivalent to shell access as the worker. `spec.user` is ignored when a
-per-session account is created; the account name is reported back as the
-session's username, so connect with the name the API returns.
-
-Two further limits apply in process mode: `SSH_MAX_CPU` / `SSH_MAX_MEMORY`
-/ `SSH_MAX_PIDS` and the `ENABLE_SSH_GPU_LIMIT` GPU subset cannot be
-enforced without a container — the GPU list is passed as an environment
-variable the session can simply unset — and `AllowTcpForwarding no` means
-`ssh -L` port forwarding does not work.
-
-`SSH_RELAY_HOST` exists because `proxy` and `forward` sessions publish
-a relay target that the **supervisor** dials. Loopback is correct only
-when the supervisor shares a host with the session — true for the
-Docker backend, false for a centrally-hosted supervisor driving remote
-rented boxes. Unset, the Docker backend publishes loopback and the
-process backend publishes the worker's own tailnet address
-(`100.64.0.0/10`); a process-mode worker with neither a tailnet address
-nor this variable fails the session rather than publishing an address
-nobody can reach.
+`process` serves one interactive session per worker and ignores `spec.image`.
+Only a root worker can give a session its own account, so `process` is
+unavailable on any other worker unless `ENABLE_UNISOLATED_SSH_SESSION` is set —
+without an account of its own a session runs as the worker and can read its
+environment and credentials. `SSH_MAX_CPU` / `SSH_MAX_MEMORY` / `SSH_MAX_PIDS`,
+the `ENABLE_SSH_GPU_LIMIT` subset, and `ssh -L` forwarding have no effect in
+`process` mode.
 
 ## SSH session resource caps
 
@@ -159,11 +126,6 @@ another worker if one has a larger cap; otherwise the dispatcher
 follows its standard requeue/retry behavior. The worker logs a startup
 warning if SSH is enabled with no cap configured.
 
-These caps are Docker-backend only: enforcing them needs cgroup control
-the process backend does not have over the worker it runs inside, so
-there the size of the rented machine is the cap. The worker logs a
-warning when caps are configured on a process-mode worker.
-
 ## SSH session lifetime
 
 | Variable | Default | Description |
@@ -177,6 +139,4 @@ connection for its idle timeout, which is clamped to the TTL. The idle
 clock starts when the session does, so a session nobody ever connects
 to is reaped too; set `spec.idleTimeoutSeconds: 0` to disable idle
 reaping and rely on the TTL alone. Idle reaping does not apply to
-non-interactive tasks, which hold no SSH connection by design. When a
-backend cannot observe connection state the session is never reaped on
-idle and the worker logs a warning — no evidence is not read as idle.
+non-interactive tasks, which hold no SSH connection by design.
