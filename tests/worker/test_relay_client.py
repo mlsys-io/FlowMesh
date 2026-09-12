@@ -4,6 +4,8 @@ import queue
 import socket
 import threading
 import time
+from typing import Any
+from unittest.mock import MagicMock
 
 import grpc
 import pytest
@@ -240,6 +242,20 @@ class TestTeardown:
 
 
 class TestDedicatedChannel:
+    def test_relay_client_asks_for_its_own_subchannel(self) -> None:
+        """Without this option the second channel is the same TCP connection."""
+        seen: dict[str, Any] = {}
+
+        class _Client(_FakeClient):
+            def create_grpc_channel(self, extra_options=None):
+                seen["extra_options"] = extra_options
+                return MagicMock()
+
+        relay = RelayClient(_Client(), EndpointRegistry())  # type: ignore[arg-type]
+        relay.start()
+
+        assert ("grpc.use_local_subchannel_pool", 1) in (seen["extra_options"] or [])
+
     def test_relay_channel_is_a_second_connection(self) -> None:
         """gRPC pools subchannels by target and options, so identical channels
         would share one TCP connection and one flow-control window."""
@@ -316,9 +332,10 @@ class TestShutdown:
 @pytest.fixture(autouse=True)
 def _no_leaked_relay_threads():
     yield
-    _wait(
+    leaked = not _wait(
         lambda: not any(
             t.name.startswith("flowmesh-relay-") for t in threading.enumerate()
         ),
-        timeout=2.0,
+        timeout=5.0,
     )
+    assert not leaked, "a relay thread outlived its test"

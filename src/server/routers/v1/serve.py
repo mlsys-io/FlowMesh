@@ -34,6 +34,11 @@ from ...task.runtime import TaskRuntime
 
 router = APIRouter(prefix="/serve", tags=["Serve"])
 
+# The relay terminates at a loopback connection the worker makes to its own
+# endpoint. The server names an endpoint id and deliberately does not know the
+# port, so there is no upstream address to put here.
+_UPSTREAM_HOST = "localhost"
+
 _STREAM_MAXLEN = 1000
 _READ_CHUNK = 16384
 _MAX_PROXY_BODY_BYTES = 100 * 1024 * 1024
@@ -63,14 +68,8 @@ _HOP_BY_HOP_RESPONSE_HEADERS = {
 }
 
 
-def _resolve_serve_endpoint(
-    runtime: TaskRuntime, task_id: str
-) -> tuple[TaskRecord, str, int]:
-    """Resolve the serve task's upstream address for the request's Host header.
-
-    The address comes only from task state, so caller input cannot choose an
-    arbitrary upstream.
-    """
+def _resolve_serve_endpoint(runtime: TaskRuntime, task_id: str) -> TaskRecord:
+    """Check that the serve task is running and reachable through the proxy."""
     record = runtime.get_record(task_id)
     if record is None or record.task_type != TaskType.SERVE:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "serve task not found")
@@ -85,13 +84,7 @@ def _resolve_serve_endpoint(
         raise HTTPException(
             status.HTTP_409_CONFLICT, "serve task is not in proxy access mode"
         )
-    host = serve_info.get("host")
-    port = serve_info.get("port")
-    if not host or not port:
-        raise HTTPException(
-            status.HTTP_409_CONFLICT, "serve task endpoint is incomplete"
-        )
-    return record, str(host), int(port)
+    return record
 
 
 async def _start_serve_uplink(
@@ -272,9 +265,7 @@ async def _read_capped_body(request: Request) -> bytes:
     return b"".join(chunks)
 
 
-async def _serialize_request(
-    request: Request, upstream_path: str, target_host: str, target_port: int
-) -> bytes:
+async def _serialize_request(request: Request, upstream_path: str) -> bytes:
     """Serialize the request for the relay target.
 
     Force ``Connection: close`` so relay eof cleanly marks the end of the upstream
@@ -293,7 +284,7 @@ async def _serialize_request(
         if name.lower() not in _HOP_BY_HOP_REQUEST_HEADERS
         and name.lower() not in dynamic_hop_by_hop
     ]
-    headers.append(("Host", f"{target_host}:{target_port}"))
+    headers.append(("Host", _UPSTREAM_HOST))
     headers.append(("Connection", "close"))
     headers.append(("Content-Length", str(len(body))))
     header_text = "".join(f"{name}: {value}\r\n" for name, value in headers)
@@ -386,7 +377,7 @@ async def serve_proxy(
     if not proxy_enabled:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "proxy disabled")
 
-    record, upstream_host, upstream_port = _resolve_serve_endpoint(runtime, task_id)
+    record = _resolve_serve_endpoint(runtime, task_id)
 
     relay_token = secrets.token_hex(32)
     try:
@@ -411,9 +402,7 @@ async def serve_proxy(
     response_ready = False
 
     try:
-        request_bytes = await _serialize_request(
-            request, upstream_path, upstream_host, upstream_port
-        )
+        request_bytes = await _serialize_request(request, upstream_path)
         await _send_to_relay(redis_client, down, request_bytes)
 
         # No timeout: a slow non-streaming generation is bounded only by relay eof.

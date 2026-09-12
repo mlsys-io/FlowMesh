@@ -89,6 +89,9 @@ def _payload_from_struct(struct: Struct) -> dict:
     return MessageToDict(struct, preserving_proto_field_name=True)
 
 
+_RELAY_QUEUE_MAX = 256
+
+
 class SupervisorServicer(supervisor_pb2_grpc.SupervisorServicer):
     def __init__(
         self,
@@ -247,7 +250,9 @@ class SupervisorServicer(supervisor_pb2_grpc.SupervisorServicer):
             )
             return
 
-        outbound: asyncio.Queue[bytes | None] = asyncio.Queue()
+        # Bounded so a worker that stops reading stalls the Redis reader
+        # instead of growing this queue without limit in the supervisor.
+        outbound: asyncio.Queue[bytes | None] = asyncio.Queue(maxsize=_RELAY_QUEUE_MAX)
 
         async def send(data: bytes) -> None:
             await outbound.put(data)
@@ -269,7 +274,9 @@ class SupervisorServicer(supervisor_pb2_grpc.SupervisorServicer):
                 send,
             )
         )
-        bridge.add_done_callback(lambda _: outbound.put_nowait(None))
+        # put(), not put_nowait(): the queue is bounded, and the consumer is
+        # still draining, so waiting for a slot is correct and cannot raise.
+        bridge.add_done_callback(lambda _: asyncio.ensure_future(outbound.put(None)))
         try:
             while True:
                 chunk = await outbound.get()

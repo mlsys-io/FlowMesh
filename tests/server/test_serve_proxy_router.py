@@ -396,14 +396,31 @@ async def test_non_proxy_mode_rejected() -> None:
 
 
 @pytest.mark.anyio
-async def test_incomplete_endpoint_rejected() -> None:
-    record = _make_record(latest_update={"serve": {"mode": "proxy"}})
-    app, _ = _make_app(record, b"")
+async def test_record_shaped_by_the_monitor_is_proxyable() -> None:
+    """The record the router reads has been rewritten by the proxy branch.
+
+    `_handle_port_forward_update` replaces `serve.host`/`port` with the
+    FlowMesh server's own address, and drops `port` entirely when the base URL
+    carries no explicit one. The router must not depend on either field: the
+    worker owns the upstream, and the server names only an endpoint id.
+    """
+    record = _make_record(
+        latest_update={
+            "serve": {
+                "mode": "proxy",
+                "host": "flowmesh.example.com",
+                "url": "https://flowmesh.example.com/api/v1/serve/tasks/tsk-abc",
+                "api_key": "vllm-secret-key",
+                "model": "Qwen/Qwen3-7B",
+            }
+        }
+    )
+    app, _ = _make_app(record, _fixed_length_http_response(b"{}"))
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as ac:
         resp = await ac.get(f"{PREFIX}/serve/tasks/tsk-abc/v1/models")
 
-    assert resp.status_code == 409
+    assert resp.status_code == 200
 
 
 @pytest.mark.anyio

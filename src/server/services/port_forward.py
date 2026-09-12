@@ -29,7 +29,8 @@ _DEFAULT_TIMEOUT_SEC = 5.0
 class _AuditContext:
     """Connection-audit metadata for a forwarded session.
 
-    Fed to the audit service when a client connects; not used by the forwarding path.
+    Fed to the audit service when a client connects. ``worker_id`` also names
+    the worker the supervisor asks to open the relay.
     """
 
     workflow_id: str | None

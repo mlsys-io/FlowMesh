@@ -1,9 +1,9 @@
 """Docker session backend: one sibling container per SSH session.
 
 Requires a reachable Docker daemon. The session container is isolated from the
-worker (its own image, network, cgroup limits and GPU slice) and the supervisor
-that dials its relay uplink shares a host with it, so its published port is
-reachable on loopback.
+worker: its own image, network, cgroup limits and GPU slice. Its port is
+published on the worker's host, which is where the worker reaches it when
+relaying and where a client reaches it in direct mode.
 """
 
 import io

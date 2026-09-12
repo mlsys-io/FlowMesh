@@ -50,10 +50,9 @@ class RelayClient:
 
     def shutdown(self) -> None:
         self._closing.set()
-        with self._lock:
-            threads = list(self._threads)
-        for thread in threads:
-            thread.join(timeout=5)
+        # Close first: a pump parked in the stream iterator is unblocked by the
+        # channel erroring, not by the flag, so joining first would wait out the
+        # full timeout for every live relay.
         if self._channel is not None:
             try:
                 self._channel.close()
@@ -61,6 +60,10 @@ class RelayClient:
                 pass
             self._channel = None
             self._stub = None
+        with self._lock:
+            threads = list(self._threads)
+        for thread in threads:
+            thread.join(timeout=5)
 
     def handle_request(self, relay_token: str, endpoint_id: str) -> None:
         """Serve one relay request without blocking the caller's stream."""
