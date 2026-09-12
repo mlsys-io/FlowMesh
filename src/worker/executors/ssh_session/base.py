@@ -148,11 +148,11 @@ class SSHSessionBackend(ABC):
         extra_env: dict[str, object],
         staged_input_specs: list[tuple[str, str]],
         create_dirs: list[str],
-        interactive: bool,
+        bootstrap_entrypoint: bool,
         gpu_device_ids: list[str] | None = None,
     ) -> dict[str, str]:
         env: dict[str, str] = {}
-        if interactive:
+        if bootstrap_entrypoint:
             env["SSH_USER"] = user
             if authorized_keys:
                 env["AUTHORIZED_KEYS"] = "\n".join(authorized_keys)

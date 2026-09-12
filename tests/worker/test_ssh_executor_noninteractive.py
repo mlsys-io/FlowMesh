@@ -217,7 +217,7 @@ class TestBuildEnvironment:
             {},
             [],
             [],
-            interactive=True,
+            bootstrap_entrypoint=True,
         )
         assert "SSH_USER" in env
         assert "AUTHORIZED_KEYS" in env
@@ -231,7 +231,7 @@ class TestBuildEnvironment:
             {"MY_VAR": "val"},
             [],
             [],
-            interactive=False,
+            bootstrap_entrypoint=False,
         )
         assert "SSH_USER" not in env
         assert "AUTHORIZED_KEYS" not in env
@@ -249,7 +249,7 @@ class TestBuildEnvironment:
             {},
             [],
             [],
-            interactive=False,
+            bootstrap_entrypoint=False,
             gpu_device_ids=["2", "3", "5"],
         )
         assert env["CUDA_VISIBLE_DEVICES"] == "0,1,2"
@@ -264,7 +264,7 @@ class TestBuildEnvironment:
             {},
             [],
             [],
-            interactive=False,
+            bootstrap_entrypoint=False,
         )
         assert "CUDA_VISIBLE_DEVICES" not in env
 

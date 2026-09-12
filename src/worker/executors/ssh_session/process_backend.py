@@ -191,7 +191,7 @@ class ProcessSessionBackend(SSHSessionBackend):
                 cfg.extra_env,
                 [],
                 [],
-                interactive=False,
+                bootstrap_entrypoint=False,
                 gpu_device_ids=cfg.gpu_device_ids,
             )
             environment["FLOWMESH_FINISH_SENTINEL"] = plan.finish_sentinel.as_posix()
