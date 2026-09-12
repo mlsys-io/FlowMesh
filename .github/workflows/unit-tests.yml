@@ -19,10 +19,12 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# RUNNER LANES — `push` to `main` may use the `nus-flowmesh` ARC scale set when
+# `vars.NUS_RUNNERS == 'on'`; fork PRs stay GitHub-hosted. Rationale: CONTRIBUTING.md § CI runners.
 jobs:
   unit-tests:
     name: Unit tests
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'push' && vars.NUS_RUNNERS == 'on' && 'nus-flowmesh' || 'ubuntu-latest' }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1

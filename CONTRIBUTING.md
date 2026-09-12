@@ -109,6 +109,14 @@ uv run pytest tests/test_core_flow.py  # Single file
 
 If your change touches shared schemas or proto definitions, verify downstream compatibility across Server and Worker packages.
 
+## CI runners
+
+CI runs on GitHub-hosted `ubuntu-latest` by default. When the repository variable `NUS_RUNNERS` is `on`, the six code CI workflows select `nus-flowmesh` — an ARC scale set on the NUS build farm (512 cores, 2.2 TiB RAM, warm BuildKit cache) — but only for `push` events on `main`.
+
+The event gate is a security control, not a preference. FlowMesh is public, and a pull request from a fork runs the fork's own workflow code; on a self-hosted runner that is untrusted code executing inside the NUS network, which is persistent by network position even when the runner pod is ephemeral. Pushing to `main` here requires write access, so that lane is trusted. Fork PRs stay GitHub-hosted, which is free and unlimited for a public repo.
+
+The gate is an allowlist, so a newly added trigger cannot silently inherit a self-hosted runner, and both arms of the expression are literal labels, so `runs-on` can never evaluate to empty — an empty label yields a job no runner claims, queued forever with nothing in any log. `NUS_RUNNERS` unset, or set to anything but `on`, means `ubuntu-latest` everywhere with no code change.
+
 ## Dependency Pins
 
 Runtime dependency versions live in two places with different styles:
