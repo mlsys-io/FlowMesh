@@ -139,20 +139,7 @@ class ProcessSessionBackend(SSHSessionBackend):
                 "Could not restrict access to this worker's process environment"
             )
 
-    def _default_relay_host(self) -> str:
-        address = resolve_tailnet_address()
-        if address is None:
-            raise ExecutionError(
-                "Cannot publish a relay target for this SSH session: the worker has "
-                "no tailnet address and SSH_RELAY_HOST is unset. A proxy- or "
-                "forward-mode session needs an address the supervisor can dial, and "
-                "loopback is only correct when the supervisor shares this host."
-            )
-        return address
-
-    def session_host(self) -> str:
-        if override := self._config.ssh_relay_host:
-            return override
+    def _default_session_host(self) -> str:
         return resolve_tailnet_address() or socket.getfqdn()
 
     def start_session(self, request: SessionRequest) -> "ProcessSession":

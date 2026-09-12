@@ -48,11 +48,10 @@ class SSHConfig(BaseModel):
     A non-root worker has no second identity to give the session, so it runs
     under the worker's own account and can read its credentials."""
     relay_host: str | None = env.SSH_RELAY_HOST
-    """Address at which the worker's session ports are reachable.
+    """Address a ``direct`` session is advertised at.
 
-    Only needed when the supervisor that dials the relay uplink does not share
-    a host with the worker, and the worker cannot discover a routable address
-    for itself."""
+    Only needed when the worker cannot discover an address its clients can
+    reach."""
 
     @field_validator("session_backend", mode="before")
     def normalize_session_backend(cls, v: Any) -> Any:

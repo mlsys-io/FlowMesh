@@ -791,7 +791,6 @@ class EventMonitor:
         key: str,
         normalize_mode: Callable[[str, str | None], str | None],
         inject_session_id: bool,
-        strip_relay_target_after: bool,
         on_registration_failure: Literal["fall_back_direct", "fail_task", "drop"],
         proxy_endpoint_path: Callable[[str], str] | None = None,
     ) -> dict[str, Any]:
@@ -821,7 +820,6 @@ class EventMonitor:
             if normalized_mode == "direct":
                 inner.pop("directHost", None)
                 inner.pop("directPort", None)
-                inner.pop("_relay_target", None)
             payload[key] = inner
 
         if normalized_mode == "proxy" and proxy_endpoint_path is not None:
@@ -857,8 +855,6 @@ class EventMonitor:
             )
             if inject_session_id:
                 inner.pop("session_id", None)
-            if strip_relay_target_after:
-                inner.pop("_relay_target", None)
         except Exception as exc:
             self._logger.warning(
                 "Failed to register forward target for task %s (%s): %s",
@@ -870,7 +866,6 @@ class EventMonitor:
                 case "fall_back_direct":
                     inner = inner.copy()
                     inner["mode"] = "direct"
-                    inner.pop("_relay_target", None)
                     payload[key] = inner
                     return payload
                 case "fail_task":
@@ -924,7 +919,6 @@ class EventMonitor:
             key="ssh",
             normalize_mode=self._normalize_ssh_mode,
             inject_session_id=False,
-            strip_relay_target_after=False,
             on_registration_failure="fall_back_direct",
         )
 
@@ -939,7 +933,6 @@ class EventMonitor:
             key="serve",
             normalize_mode=self._normalize_serve_mode,
             inject_session_id=True,
-            strip_relay_target_after=True,
             on_registration_failure="fail_task",
             proxy_endpoint_path=lambda tid: f"/api/v1/serve/tasks/{tid}",
         )

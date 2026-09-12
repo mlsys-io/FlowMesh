@@ -43,7 +43,6 @@ def _serve_forward_payload(host: str = "127.0.0.1", port: int = 8000) -> dict:
             "mode": "forward",
             "host": host,
             "port": port,
-            "_relay_target": {"host": host, "port": port},
         }
     }
 
@@ -58,7 +57,6 @@ class TestServeForwardRegistration:
             "mode": "forward",
             "host": "server.example.com",
             "port": 32001,
-            "_relay_target": {"host": "127.0.0.1", "port": 8000},
         }
 
         monitor = _make_monitor(port_forward=port_forward)
@@ -77,7 +75,6 @@ class TestServeForwardRegistration:
             "mode": "forward",
             "host": "server.example.com",
             "port": 32001,
-            "_relay_target": {"host": "127.0.0.1", "port": 8000},
         }
 
         monitor = _make_monitor(port_forward=port_forward)
@@ -99,7 +96,6 @@ class TestServeForwardRegistration:
             "mode": "forward",
             "host": "server.example.com",
             "port": 32001,
-            "_relay_target": {"host": "127.0.0.1", "port": 8000},
         }
 
         monitor = _make_monitor(port_forward=port_forward)
@@ -123,7 +119,6 @@ class TestServeForwardRegistration:
             "host": "server.example.com",
             "port": 32001,
             "session_id": "tsk-abc",
-            "_relay_target": {"host": "127.0.0.1", "port": 8000},
         }
 
         monitor = _make_monitor(port_forward=port_forward)
@@ -134,27 +129,6 @@ class TestServeForwardRegistration:
         )
 
         assert "session_id" not in result["serve"]
-
-    def test_forward_mode_strips_relay_target_from_result(self) -> None:
-        """_relay_target must not appear in latest_update.serve after registration."""
-        port_forward = MagicMock()
-        port_forward.register_port_forward.return_value = {
-            "model": "Qwen/Qwen3-7B",
-            "api_key": "key123",
-            "mode": "forward",
-            "host": "server.example.com",
-            "port": 32001,
-            "_relay_target": {"host": "127.0.0.1", "port": 8000},
-        }
-
-        monitor = _make_monitor(port_forward=port_forward)
-        monitor._runtime.get_record.return_value = None  # type: ignore[attr-defined]
-
-        result = monitor._handle_serve_task_update(
-            "tsk-abc", "wrk-1", _serve_forward_payload()
-        )
-
-        assert "_relay_target" not in result["serve"]
 
     def test_direct_mode_does_not_call_register(self) -> None:
         """A serve update with mode=direct leaves the payload unchanged."""
@@ -331,7 +305,6 @@ class TestServeForwardRegistration:
             "mode": "forward",
             "host": "server.example.com",
             "port": 32001,
-            "_relay_target": {"host": "127.0.0.1", "port": 8000},
         }
 
         monitor = _make_monitor(port_forward=port_forward)
@@ -355,7 +328,6 @@ class TestServeForwardRegistration:
                 "mode": "forward",
                 "host": "127.0.0.1",
                 "port": 8000,
-                "_relay_target": {"host": "127.0.0.1", "port": 8000},
             }
         }
         result = monitor._handle_ssh_task_update("tsk-abc", "wrk-1", payload)
@@ -372,7 +344,6 @@ def _serve_proxy_payload(host: str = "127.0.0.1", port: int = 8000) -> dict:
             "mode": "proxy",
             "host": host,
             "port": port,
-            "_relay_target": {"host": host, "port": port},
         }
     }
 
@@ -408,18 +379,6 @@ class TestServeProxyRegistration:
             serve_info["url"]
             == "http://server.example.com:8000/api/v1/serve/tasks/tsk-abc"
         )
-
-    def test_proxy_mode_keeps_relay_target_for_server_side_uplink(self) -> None:
-        """`_relay_target` must survive so the proxy router can start the
-        uplink; it never reaches the client because tasks.py strips private
-        (underscore-prefixed) fields before returning latest_update."""
-        monitor = _make_monitor(port_forward=None, serve_proxy_enabled=True)
-
-        result = monitor._handle_serve_task_update(
-            "tsk-abc", "wrk-1", _serve_proxy_payload(host="127.0.0.1", port=9001)
-        )
-
-        assert result["serve"]["_relay_target"] == {"host": "127.0.0.1", "port": 9001}
 
     def test_proxy_mode_keeps_api_key_and_model(self) -> None:
         monitor = _make_monitor(port_forward=None, serve_proxy_enabled=True)

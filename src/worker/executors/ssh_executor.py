@@ -251,21 +251,15 @@ class SSHExecutor(Executor):
             "port": host_port,
         }
         if access_mode in ("proxy", "forward"):
-            relay_host = self._backend.relay_host()
             if access_mode == "forward":
                 # Forward-mode sessions need separate direct connection info
                 ssh_info["directHost"] = host_name
                 ssh_info["directPort"] = host_port
-            ssh_info["_relay_target"] = {
-                "host": relay_host,
-                "port": host_port,
-            }
             logger.info(
-                "SSH %s session ready: host=%s port=%s relay=%s (task=%s)",
+                "SSH %s session ready: host=%s port=%s (task=%s)",
                 access_mode,
                 host_name,
                 host_port,
-                relay_host,
                 task.task_id,
             )
         else:

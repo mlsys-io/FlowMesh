@@ -51,7 +51,6 @@ def _make_app() -> tuple[FastAPI, _FakeAsyncRedis, AsyncMock]:
     record.workflow_id = "wfl-1"
     record.latest_update = {
         "ssh": {
-            "_relay_target": {"host": "127.0.0.1", "port": 22},
             "session_id": "sess-1",
         }
     }

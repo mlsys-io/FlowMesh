@@ -26,10 +26,8 @@ from .config import FINISH_SENTINEL_PATH, ResolvedSSHInput, SSHConfig
 
 logger = logging.getLogger(__name__)
 
-LOOPBACK_RELAY_HOST = "127.0.0.1"
-
 # Tailscale hands every node an address out of the CGNAT range, which is how a
-# rented box advertises an address the cloud supervisor can actually dial.
+# rented box advertises an address a client can actually dial.
 TAILNET_NETWORK = ipaddress.ip_network("100.64.0.0/10")
 
 _TCP_STATE_ESTABLISHED = "01"
@@ -134,22 +132,17 @@ class SSHSessionBackend(ABC):
     def teardown(self, worker_name: str) -> None:
         """Reap any sessions ``worker_name`` still owns."""
 
-    def relay_host(self) -> str:
-        """Address at which this worker's session ports are reachable.
+    def session_host(self) -> str:
+        """Host name reported to the user as the session's location.
 
-        The supervisor that dials the relay uplink is the consumer: it opens a
-        TCP connection to this address, so it must be routable *from the
-        supervisor*, not from the worker.
+        A ``direct`` session is dialled by the client, so this must be routable
+        from wherever the client is.
         """
         if override := self._config.ssh_relay_host:
             return override
-        return self._default_relay_host()
+        return self._default_session_host()
 
-    def _default_relay_host(self) -> str:
-        return LOOPBACK_RELAY_HOST
-
-    def session_host(self) -> str:
-        """Host name reported to the user as the session's location."""
+    def _default_session_host(self) -> str:
         return socket.getfqdn()
 
     def _build_environment(

@@ -97,7 +97,7 @@ Spark), set `DOCKER_GPU_RUNTIME=` in the stack env.
 |----------|---------|-------------|
 | `SSH_SESSION_BACKEND` | `auto` | Sandbox a session runs in: `docker` (sibling container), `process` (sshd inside the worker), or `auto` — `docker`, falling back to `process`. |
 | `ENABLE_UNISOLATED_SSH_SESSION` | `false` | Whether a worker that cannot give a session its own OS account may still serve one. |
-| `SSH_RELAY_HOST` | – | Address at which this worker's session ports are reachable from the supervisor that dials the relay. Unset, `docker` publishes loopback and `process` publishes the worker's tailnet address. |
+| `SSH_RELAY_HOST` | – | Address a `direct` session is advertised at. Unset, the worker uses its tailnet address, else its FQDN. `proxy` and `forward` do not use it: the worker opens the relay itself. |
 
 `process` serves one interactive session per worker and ignores `spec.image`.
 Only a root worker can give a session its own account, so `process` is

@@ -387,10 +387,9 @@ STACK_ENV_SCHEMA = EnvSchema(
                 EnvVar(
                     "SSH_RELAY_HOST",
                     description=[
-                        "Address at which a worker's session ports are",
-                        "reachable from the supervisor that dials the relay.",
-                        "Defaults to loopback for docker sessions and to the",
-                        "worker's own tailnet address for process sessions.",
+                        "Address a direct-mode session is advertised at.",
+                        "Defaults to the worker's tailnet address, else its",
+                        "FQDN.",
                     ],
                 ),
             ],

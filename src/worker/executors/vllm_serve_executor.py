@@ -213,7 +213,6 @@ class VLLMServeExecutor(Executor):
             update_payload: dict[str, Any] = {
                 "serve": {
                     "mode": access_mode,
-                    "_relay_target": {"host": "127.0.0.1", "port": port},
                     "host": advertised_host,
                     "port": port,
                     "api_key": api_key,

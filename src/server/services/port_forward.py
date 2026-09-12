@@ -55,10 +55,6 @@ class PortForwardSession:
     task_id: str
     node_id: str
     session_id: str
-    target_host: str
-    """The worker-internal host to which the connection is forwarded."""
-    target_port: int
-    """The worker-internal port to which the connection is forwarded."""
     port: int
     """The local port on which the port-forward service listens for this session."""
     server: asyncio.AbstractServer | None
@@ -233,16 +229,9 @@ class PortForwardService:
     ) -> dict[str, Any]:
         if registration is None:
             registration = _Registration()
-        relay_target = endpoint.get("_relay_target")
-        if not isinstance(relay_target, dict):
-            raise RuntimeError("Missing relay target for forward-mode task")
         session_id = endpoint.get("session_id")
         if not session_id:
             raise RuntimeError("Missing session_id for forward-mode task")
-        target_host = relay_target.get("host")
-        target_port = relay_target.get("port")
-        if not (target_host and target_port):
-            raise RuntimeError("Incomplete relay target for forward-mode task")
         username = (
             str(raw_username)
             if (raw_username := endpoint.get("username")) is not None
@@ -274,8 +263,6 @@ class PortForwardService:
                 # Update existing session info
                 session.node_id = worker.node_id
                 session.session_id = str(session_id)
-                session.target_host = str(target_host)
-                session.target_port = int(target_port)
                 session.audit.workflow_id = workflow_id
                 session.audit.worker_id = assigned_worker
                 session.audit.username = username
@@ -285,8 +272,6 @@ class PortForwardService:
                     task_id,
                     worker.node_id,
                     str(session_id),
-                    str(target_host),
-                    int(target_port),
                     audit,
                     registration,
                 )
@@ -299,8 +284,6 @@ class PortForwardService:
                 task_id,
                 worker.node_id,
                 str(session_id),
-                str(target_host),
-                int(target_port),
                 audit,
                 registration,
             )
@@ -340,8 +323,6 @@ class PortForwardService:
         task_id: str,
         node_id: str,
         session_id: str,
-        target_host: str,
-        target_port: int,
         audit: _AuditContext,
         registration: _Registration,
     ) -> PortForwardSession:
@@ -351,8 +332,6 @@ class PortForwardService:
                     task_id=task_id,
                     node_id=node_id,
                     session_id=session_id,
-                    target_host=target_host,
-                    target_port=target_port,
                     port=port,
                     audit=audit,
                     registration=registration,
@@ -365,8 +344,6 @@ class PortForwardService:
         task_id: str,
         node_id: str,
         session_id: str,
-        target_host: str,
-        target_port: int,
         audit: _AuditContext,
         registration: _Registration,
     ) -> PortForwardSession:
@@ -415,8 +392,6 @@ class PortForwardService:
                         task_id=task_id,
                         node_id=node_id,
                         session_id=session_id,
-                        target_host=target_host,
-                        target_port=target_port,
                         port=port,
                         audit=audit,
                         registration=registration,
