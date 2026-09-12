@@ -131,7 +131,8 @@ scripts/dev/            compile_protos, sync_requirements, check_env_examples
   of task types it can service, and the dispatcher routes a task only to workers
   that advertise its type. A worker advertises a type only when its executor came
   up — e.g. SSH requires a session backend (a reachable Docker daemon, or an
-  `sshd` binary when `SSH_SESSION_BACKEND=process`), and training or omni types
+  `sshd` binary when `SSH_SESSION_BACKEND=process`; that backend gives each
+  session its own OS account when the worker is root), and training or omni types
   require their (often GPU-only) dependencies — so a worker missing that executor
   isn't a candidate, rather than being handed a task it would fail.
 - **Stale worker reaping.** The watchdog deletes a dead worker's registry record

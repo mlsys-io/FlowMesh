@@ -16,7 +16,7 @@ The worker resolves `spec.taskType` against an executor registry in
 | `agent` | `AgentExecutor` | Tool-using LLM agent (utu / youtu-agent backend) |
 | `data_profiling` | `DataProfilingExecutor` | DataFrame profiling |
 | `data_retrieval` | `DataRetrievalExecutor` | DataFrame loading from sources (`type: sql`, `type: s3`, `type: lumid` with `mode: sql\|s3\|agent` via lumid-data-app; `type: lumid` (mode `sql`/`s3`/`agent`) requires `lumid_data_token`, the bearer forwarded to lumid-data-app) |
-| `ssh` | `SSHExecutor` | Interactive SSH session or non-interactive container job. The sandbox comes from a session backend (`SSH_SESSION_BACKEND`): a sibling Docker container, or an sshd process inside the worker for workers that have no Docker socket |
+| `ssh` | `SSHExecutor` | Interactive SSH session or non-interactive container job. The sandbox comes from a session backend (`SSH_SESSION_BACKEND`): a sibling Docker container, or an sshd process inside the worker for workers that have no Docker socket. A root worker gives each process-mode session its own throwaway account; a non-root worker cannot, and the session shares the worker's identity (see `docs/ENV.md`) |
 | `serve` | `VLLMServeExecutor` | Persistent vLLM API server for a single model |
 
 Helper utilities live in `src/worker/executors/utils/` (`artifacts`,

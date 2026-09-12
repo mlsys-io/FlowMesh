@@ -105,11 +105,30 @@ namespace, so `process` is opt-in.
 Pick `process` for a worker that *is* the machine the user rents — a
 vast.ai instance has no Docker socket, so the Docker backend never
 reports available there and the worker advertises no `ssh` capability.
-The process backend runs **one session per worker** (sessions would
-otherwise share a filesystem and a process namespace, so isolation is
-by rental), serves **interactive sessions only** (a non-interactive
-task needs a container runtime to run its image), and ignores
-`spec.image`.
+The process backend runs **one session per worker**, serves
+**interactive sessions only** (a non-interactive task needs a container
+runtime to run its image), and ignores `spec.image`.
+
+**What a process-mode session can reach.** A session is a login on the
+worker itself, so what isolates it is the account it runs as:
+
+| Worker runs as | Session account | Reaches the worker's credentials? |
+|----------------|-----------------|-----------------------------------|
+| root | a throwaway account created per session | No — different uid, so the worker's `/proc/<pid>/environ` and files are closed to it |
+| non-root | the worker's own account | **Yes** — it can read the worker's environment and files, including `WORKER_TOKEN` and any API keys the supervisor injected |
+
+A vast.ai instance runs the worker as root, so sessions there get their
+own account. Process mode still runs on a non-root worker rather than
+refusing, but it isolates nothing there — treat such a session as
+equivalent to shell access as the worker. `spec.user` is ignored when a
+per-session account is created; the account name is reported back as the
+session's username, so connect with the name the API returns.
+
+Two further limits apply in process mode: `SSH_MAX_CPU` / `SSH_MAX_MEMORY`
+/ `SSH_MAX_PIDS` and the `ENABLE_SSH_GPU_LIMIT` GPU subset cannot be
+enforced without a container — the GPU list is passed as an environment
+variable the session can simply unset — and `AllowTcpForwarding no` means
+`ssh -L` port forwarding does not work.
 
 `SSH_RELAY_HOST` exists because `proxy` and `forward` sessions publish
 a relay target that the **supervisor** dials. Loopback is correct only
