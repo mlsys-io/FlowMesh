@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any, cast
 
+import worker
 from shared.tasks.worker_message import WorkerHardware
 from shared.utils import parse_float_env
 from shared.utils.http import auth_headers
@@ -29,8 +30,8 @@ from worker.executors.utils.docker import (
     docker_client,
 )
 
-from ..base_executor import ExecutionError
-from .base import (
+from ...base_executor import ExecutionError
+from ..base import (
     SessionRequest,
     SSHSession,
     SSHSessionBackend,
@@ -38,7 +39,7 @@ from .base import (
     is_ssh_ready,
     path_size_bytes,
 )
-from .config import (
+from ..config import (
     FINISH_SENTINEL_PATH,
     LABEL_MANAGED,
     LABEL_SESSION,
@@ -50,7 +51,7 @@ from .config import (
     normalize_mount_path,
     reserve_mount_path,
 )
-from .inputs import (
+from ..inputs import (
     RESULT_BUNDLE_TIMEOUT_SEC,
     result_bundle_url,
     stage_inputs_locally,
@@ -80,7 +81,7 @@ _SESSION_SSH_PORT = 22
 _CONTAINER_RESULTS_SOURCE_ROOT = "/root/.flowmesh/results-source"
 _SSH_RUN_ENTRYPOINT_PATH = "/flowmesh-ssh-run.sh"
 _SSH_RUN_SCRIPT_SOURCE = (
-    Path(__file__).resolve().parent.parent.parent / "docker" / "ssh-run.sh"
+    Path(worker.__file__).resolve().parent / "docker" / "ssh-run.sh"
 )
 
 type DemuxLogStream = Iterator[tuple[bytes | None, bytes | None]]

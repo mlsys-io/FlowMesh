@@ -37,8 +37,8 @@ from shared.utils import parse_float_env
 from shared.utils.manifest import ARTIFACTS_DIR
 from worker.config import WorkerConfig
 
-from ..base_executor import ExecutionError
-from .base import (
+from ...base_executor import ExecutionError
+from ..base import (
     SessionRequest,
     SSHSession,
     SSHSessionBackend,
@@ -48,14 +48,14 @@ from .base import (
     read_local_proc_net_tcp,
     resolve_tailnet_address,
 )
-from .config import (
+from ..config import (
     STOP_TIMEOUT_SEC,
     SSHConfig,
     normalize_mount_path,
     reserve_mount_path,
 )
-from .inputs import stage_inputs_locally
-from .session_identity import SessionIdentity, reap_stale_accounts, resolve_identity
+from ..inputs import stage_inputs_locally
+from ..session_identity import SessionIdentity, reap_stale_accounts, resolve_identity
 
 logger = logging.getLogger(__name__)
 

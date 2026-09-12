@@ -9,13 +9,13 @@ from unittest.mock import MagicMock
 
 import pytest
 
-import worker.executors.ssh_session.docker_backend as docker_backend_module
+import worker.executors.ssh_session.backends.docker as docker_backend_module
 from shared.tasks.specs import SSHSpecStrict
 from shared.tasks.worker_message import WorkerTaskMessage
 from tests.worker.factories import DEFAULT_WORKER_CONFIG, make_live_worker_config
 from worker.executors.base_executor import ExecutionError
 from worker.executors.ssh_session import SSHConfig
-from worker.executors.ssh_session.docker_backend import (
+from worker.executors.ssh_session.backends.docker import (
     _SSH_RUN_ENTRYPOINT_PATH,
     DockerSession,
     DockerSessionBackend,

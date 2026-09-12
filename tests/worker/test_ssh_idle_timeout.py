@@ -10,7 +10,7 @@ from tests.worker.factories import DEFAULT_WORKER_CONFIG, make_live_worker_confi
 from worker.executors.base_executor import ExecutionError, TaskCancelledError
 from worker.executors.ssh_executor import SSHExecutor
 from worker.executors.ssh_session import SSHConfig, SSHSession
-from worker.executors.ssh_session import docker_backend as docker_backend_module
+from worker.executors.ssh_session.backends import docker as docker_backend_module
 
 
 @pytest.fixture(autouse=True)

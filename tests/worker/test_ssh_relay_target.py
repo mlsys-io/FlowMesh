@@ -16,10 +16,10 @@ from tests.worker.factories import DEFAULT_WORKER_CONFIG, make_live_worker_confi
 from worker.executors.base_executor import ExecutionError
 from worker.executors.ssh_executor import SSHExecutor
 from worker.executors.ssh_session import SSHConfig
-from worker.executors.ssh_session import docker_backend as docker_backend_module
-from worker.executors.ssh_session import process_backend as process_backend_module
-from worker.executors.ssh_session.docker_backend import DockerSessionBackend
-from worker.executors.ssh_session.process_backend import ProcessSessionBackend
+from worker.executors.ssh_session.backends import docker as docker_backend_module
+from worker.executors.ssh_session.backends import process as process_backend_module
+from worker.executors.ssh_session.backends.docker import DockerSessionBackend
+from worker.executors.ssh_session.backends.process import ProcessSessionBackend
 
 _TAILNET_ADDRESS = "100.89.73.50"
 

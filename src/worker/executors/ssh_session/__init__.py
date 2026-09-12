@@ -4,6 +4,8 @@ import logging
 
 from worker.config import WorkerConfig
 
+from .backends.docker import DockerSessionBackend
+from .backends.process import ProcessSessionBackend
 from .base import (
     LOOPBACK_RELAY_HOST,
     SessionRequest,
@@ -19,8 +21,6 @@ from .config import (
     normalize_mount_path,
     reserve_mount_path,
 )
-from .docker_backend import DockerSessionBackend
-from .process_backend import ProcessSessionBackend
 
 logger = logging.getLogger(__name__)
 

@@ -13,18 +13,16 @@ from worker.executors.ssh_session import (
     SessionRequest,
     SSHConfig,
     count_established_connections,
-)
-from worker.executors.ssh_session import docker_backend as docker_backend_module
-from worker.executors.ssh_session import process_backend as process_backend_module
-from worker.executors.ssh_session import (
     select_backend_cls,
 )
 from worker.executors.ssh_session import session_identity as session_identity_module
-from worker.executors.ssh_session.docker_backend import (
+from worker.executors.ssh_session.backends import docker as docker_backend_module
+from worker.executors.ssh_session.backends import process as process_backend_module
+from worker.executors.ssh_session.backends.docker import (
     DockerSession,
     DockerSessionBackend,
 )
-from worker.executors.ssh_session.process_backend import (
+from worker.executors.ssh_session.backends.process import (
     ProcessSession,
     ProcessSessionBackend,
     _install_finish_helper,

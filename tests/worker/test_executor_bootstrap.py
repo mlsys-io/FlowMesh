@@ -17,7 +17,7 @@ from tests.worker.factories import make_live_worker_config, make_worker_hardware
 from worker.executors.base_executor import Executor, ExecutorTask
 from worker.executors.ssh_executor import SSHExecutor
 from worker.executors.ssh_session import ProcessSessionBackend
-from worker.executors.ssh_session import docker_backend as docker_backend_mod
+from worker.executors.ssh_session.backends import docker as docker_backend_mod
 from worker.main import initialize_executors
 
 

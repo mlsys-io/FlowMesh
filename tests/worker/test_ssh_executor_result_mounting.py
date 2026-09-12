@@ -13,7 +13,7 @@ from tests.worker.factories import DEFAULT_WORKER_CONFIG, make_live_worker_confi
 from worker.config import WorkerConfig
 from worker.executors.ssh_session import ResolvedSSHInput, SSHConfig
 from worker.executors.ssh_session import inputs as inputs_module
-from worker.executors.ssh_session.docker_backend import DockerSessionBackend
+from worker.executors.ssh_session.backends.docker import DockerSessionBackend
 
 if TYPE_CHECKING:
     from docker import DockerClient
@@ -110,7 +110,7 @@ def test_build_mount_plan_uses_direct_binds_outside_container(
     staged_inputs_dir = tmp_path / "staged-inputs"
     (staged_inputs_dir / "task-pre").mkdir(parents=True)
     monkeypatch.setattr(
-        "worker.executors.ssh_session.docker_backend.stage_inputs_locally",
+        "worker.executors.ssh_session.backends.docker.stage_inputs_locally",
         lambda resolved_inputs, session_id: staged_inputs_dir,
     )
     # The results_mount_source=None path never calls into the client

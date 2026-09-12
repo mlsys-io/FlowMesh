@@ -11,7 +11,7 @@ from unittest.mock import MagicMock, patch
 from tests.worker.factories import make_live_worker_config
 from worker.config import WorkerConfig
 from worker.executors.ssh_session import SSHConfig
-from worker.executors.ssh_session.docker_backend import DockerSessionBackend
+from worker.executors.ssh_session.backends.docker import DockerSessionBackend
 
 _SSH_NETWORK_NAME = "flowmesh_ssh_test"
 
@@ -177,7 +177,7 @@ class TestEnsureSshNetwork:
 
 
 class TestPrepareCreatesNetwork:
-    @patch("worker.executors.ssh_session.docker_backend.docker_client")
+    @patch("worker.executors.ssh_session.backends.docker.docker_client")
     def test_prepare_sets_ssh_network(
         self, mock_docker_client: MagicMock, tmp_path: Path
     ) -> None:
@@ -190,7 +190,7 @@ class TestPrepareCreatesNetwork:
         assert backend._ssh_network == _SSH_NETWORK_NAME
         client.networks.create.assert_called_once()
 
-    @patch("worker.executors.ssh_session.docker_backend.docker_client")
+    @patch("worker.executors.ssh_session.backends.docker.docker_client")
     def test_prepare_graceful_fallback(
         self, mock_docker_client: MagicMock, tmp_path: Path
     ) -> None:
@@ -203,7 +203,7 @@ class TestPrepareCreatesNetwork:
 
         assert backend._ssh_network is None
 
-    @patch("worker.executors.ssh_session.docker_backend.docker_client")
+    @patch("worker.executors.ssh_session.backends.docker.docker_client")
     def test_prepare_skips_network_when_not_configured(
         self, mock_docker_client: MagicMock, tmp_path: Path
     ) -> None:
@@ -281,7 +281,7 @@ class TestBuildRunKwargsNetwork:
 
 
 class TestTeardownSkipsNetwork:
-    @patch("worker.executors.ssh_session.docker_backend.docker_client")
+    @patch("worker.executors.ssh_session.backends.docker.docker_client")
     def test_teardown_does_not_touch_network(
         self, mock_docker_client: MagicMock, tmp_path: Path
     ) -> None:
