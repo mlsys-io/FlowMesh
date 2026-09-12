@@ -2,7 +2,8 @@
 
 import subprocess
 from pathlib import Path
-from typing import cast
+from types import SimpleNamespace
+from typing import Any, cast
 
 import pytest
 
@@ -354,3 +355,29 @@ class TestFinishHelperParity:
             [str(bin_dir / "flowmesh-finish")], check=True, capture_output=True
         )
         assert sentinel.exists()
+
+
+class TestUnusablePasswordHash:
+    """A fresh account is locked until it carries a real hash, so this runs on
+    every process-mode session and must not depend on the value it generates."""
+
+    def test_the_generated_secret_is_never_read_as_an_option(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """openssl parses a leading "-" as a flag, and token_urlsafe emits them."""
+        seen: list[list[str]] = []
+
+        def _capture(argv: list[str], _what: str) -> Any:
+            seen.append(argv)
+            return SimpleNamespace(stdout=b"$6$abc$def\n")
+
+        monkeypatch.setattr(session_identity_module, "_run", _capture)
+        monkeypatch.setattr(
+            session_identity_module.shutil, "which", lambda _name: "/usr/bin/openssl"
+        )
+
+        for _ in range(200):
+            session_identity_module._unusable_password_hash()
+
+        assert seen, "the hash was never generated"
+        assert all(not argv[-1].startswith("-") for argv in seen)
