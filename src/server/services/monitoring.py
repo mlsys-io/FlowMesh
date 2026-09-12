@@ -86,6 +86,11 @@ def failed_task_can_retry(record: TaskRecord | None, retryable: bool | None) -> 
     return max_attempts is None or max_attempts < 0 or record.attempts < max_attempts
 
 
+def _is_loopback_bound(endpoint: dict[str, Any]) -> bool:
+    """Whether the worker bound this endpoint where only it can reach it."""
+    return str(endpoint.get("_bind_host") or "").startswith("127.")
+
+
 class EventMonitor:
     """Background listeners for task, worker, and server event streams."""
 
@@ -789,7 +794,7 @@ class EventMonitor:
         payload: dict[str, Any],
         *,
         key: str,
-        normalize_mode: Callable[[str, str | None], str | None],
+        normalize_mode: Callable[[str, str | None, dict[str, Any]], str | None],
         inject_session_id: bool,
         on_registration_failure: Literal["fall_back_direct", "fail_task", "drop"],
         proxy_endpoint_path: Callable[[str], str] | None = None,
@@ -801,10 +806,12 @@ class EventMonitor:
         payload = payload.copy()
 
         mode = str(inner.get("mode") or "direct")
-        normalized_mode = normalize_mode(mode, worker_id)
+        normalized_mode = normalize_mode(mode, worker_id, inner)
         if normalized_mode is None:
             match on_registration_failure:
-                case "fail_task":
+                # Falling back to direct is precisely what a None means is
+                # impossible, so it fails the task like an unservable endpoint.
+                case "fail_task" | "fall_back_direct":
                     payload.pop(key, None)
                     self._fail_forward_task(
                         task_id,
@@ -855,6 +862,11 @@ class EventMonitor:
             )
             if inject_session_id:
                 inner.pop("session_id", None)
+            if _is_loopback_bound(inner):
+                # `forward` advertises these as a second, direct route; a
+                # loopback bind makes that route dead.
+                inner.pop("directHost", None)
+                inner.pop("directPort", None)
         except Exception as exc:
             self._logger.warning(
                 "Failed to register forward target for task %s (%s): %s",
@@ -864,6 +876,15 @@ class EventMonitor:
             )
             match on_registration_failure:
                 case "fall_back_direct":
+                    if _is_loopback_bound(inner):
+                        payload.pop(key, None)
+                        self._fail_forward_task(
+                            task_id,
+                            worker_id,
+                            f"{key} session is bound to loopback and its relay "
+                            "could not be registered",
+                        )
+                        return payload
                     inner = inner.copy()
                     inner["mode"] = "direct"
                     payload[key] = inner
@@ -1097,25 +1118,49 @@ class EventMonitor:
                 "Failed to unregister forward target for task %s: %s", task_id, exc
             )
 
-    def _normalize_ssh_mode(self, mode: str, worker_id: str | None) -> str:
+    def _normalize_ssh_mode(
+        self, mode: str, worker_id: str | None, inner: dict[str, Any]
+    ) -> str | None:
         # `forward` -> `proxy` -> `direct` fallback
         if mode == "proxy":
-            return "proxy" if self._ssh_proxy_enabled else "direct"
+            return (
+                "proxy" if self._ssh_proxy_enabled else self._degrade_to_direct(inner)
+            )
         if mode == "forward":
             if not worker_id:
                 self._logger.warning(
                     "Cannot keep SSH forward mode without worker_id; "
                     "degrading access mode"
                 )
-                return "proxy" if self._ssh_proxy_enabled else "direct"
+                return (
+                    "proxy"
+                    if self._ssh_proxy_enabled
+                    else self._degrade_to_direct(inner)
+                )
             if self._port_forward is not None:
                 return "forward"
             if self._ssh_proxy_enabled:
                 return "proxy"
-            return "direct"
+            return self._degrade_to_direct(inner)
         return "direct"
 
-    def _normalize_serve_mode(self, mode: str, worker_id: str | None) -> str | None:
+    def _degrade_to_direct(self, inner: dict[str, Any]) -> str | None:
+        """Offer `direct` only when the session can actually be dialled.
+
+        A relayed session binds loopback, so advertising it as `direct` would
+        hand the user an address that refuses every connection.
+        """
+        if _is_loopback_bound(inner):
+            self._logger.warning(
+                "Cannot serve this SSH session: it is bound to loopback for a "
+                "relayed mode, and no relay is available to reach it."
+            )
+            return None
+        return "direct"
+
+    def _normalize_serve_mode(
+        self, mode: str, worker_id: str | None, inner: dict[str, Any]
+    ) -> str | None:
         """Normalize the serve access mode.
 
         Returns None when the endpoint cannot be served (e.g. no forward service).

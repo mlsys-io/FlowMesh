@@ -174,6 +174,7 @@ class TestSshdConfigRendering:
             host_key=tmp_path / "hostkey",
             authorized_keys=tmp_path / "authorized_keys",
             login_user="appuser",
+            bind_host="127.0.0.1",
         )
         assert "Port 2222" in rendered
         assert "AllowUsers appuser" in rendered
@@ -212,6 +213,7 @@ class TestSshdConfigRendering:
             host_key=Path("/tmp/s/hk"),
             authorized_keys=Path("/tmp/s/ak"),
             login_user="fmssn1",
+            bind_host="127.0.0.1",
             exported_env=exported,
         )
         assert "PermitUserEnvironment CUDA_VISIBLE_DEVICES,MY_TASK_VAR" in rendered
@@ -271,6 +273,7 @@ class TestReportedLoginUser:
             host_key=tmp_path / "hk",
             authorized_keys=tmp_path / "ak",
             login_user=identity.name,
+            bind_host="127.0.0.1",
         )
         assert f"AllowUsers {session.login_user()}" in rendered
 

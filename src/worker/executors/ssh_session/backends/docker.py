@@ -33,6 +33,7 @@ from worker.executors.utils.docker import (
 
 from ...base_executor import ExecutionError
 from ..base import (
+    ANY_BIND_HOST,
     SessionRequest,
     SSHSession,
     SSHSessionBackend,
@@ -120,6 +121,10 @@ class DockerSessionBackend(SSHSessionBackend):
             raise ExecutionError("Docker SDK is not available (`pip install docker`).")
         self._docker = self._get_docker_client()
         self._ssh_network = self._ensure_ssh_network(self._docker)
+
+    def session_bind_host(self, access_mode: str) -> str:
+        """Docker publishes the container's port on the host either way."""
+        return ANY_BIND_HOST
 
     def teardown(self, worker_name: str) -> None:
         stop_timeout_sec = parse_float_env("SSH_STOP_TIMEOUT_SEC", STOP_TIMEOUT_SEC)

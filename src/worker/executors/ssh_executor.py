@@ -251,6 +251,7 @@ class SSHExecutor(Executor):
             "port": host_port,
         }
         if access_mode in ("proxy", "forward"):
+            ssh_info["_bind_host"] = self._backend.session_bind_host(access_mode)
             if access_mode == "forward":
                 # Forward-mode sessions need separate direct connection info
                 ssh_info["directHost"] = host_name

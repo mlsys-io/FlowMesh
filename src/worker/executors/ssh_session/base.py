@@ -26,6 +26,9 @@ from .config import FINISH_SENTINEL_PATH, ResolvedSSHInput, SSHConfig
 
 logger = logging.getLogger(__name__)
 
+LOOPBACK_BIND_HOST = "127.0.0.1"
+ANY_BIND_HOST = "0.0.0.0"  # nosec B104 - a direct session must be dialable
+
 # Tailscale hands every node an address out of the CGNAT range, which is how a
 # rented box advertises an address a client can actually dial.
 TAILNET_NETWORK = ipaddress.ip_network("100.64.0.0/10")
@@ -131,6 +134,14 @@ class SSHSessionBackend(ABC):
     @abstractmethod
     def teardown(self, worker_name: str) -> None:
         """Reap any sessions ``worker_name`` still owns."""
+
+    def session_bind_host(self, access_mode: str) -> str:
+        """Address the session's sshd listens on.
+
+        Only a ``direct`` session is dialled from outside the worker; a relayed
+        one is reached over loopback by the worker itself.
+        """
+        return ANY_BIND_HOST if access_mode == "direct" else LOOPBACK_BIND_HOST
 
     def session_host(self) -> str:
         """Host name reported to the user as the session's location.

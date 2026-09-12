@@ -169,3 +169,38 @@ class TestEndpointPublication:
         executor._wait_session_ready(cast(Any, _ReadySession()), "ssn-1234", task, cfg)
 
         assert published == {"ssn-1234": 2222}
+
+
+class TestSessionBindHost:
+    def test_a_relayed_process_session_binds_loopback(self, tmp_path: Path) -> None:
+        """Nothing outside the worker dials it, so nothing outside should reach it."""
+        backend = ProcessSessionBackend(make_live_worker_config(tmp_path))
+        assert backend.session_bind_host("proxy") == "127.0.0.1"
+        assert backend.session_bind_host("forward") == "127.0.0.1"
+
+    def test_a_direct_process_session_binds_every_interface(
+        self, tmp_path: Path
+    ) -> None:
+        backend = ProcessSessionBackend(make_live_worker_config(tmp_path))
+        assert backend.session_bind_host("direct") == "0.0.0.0"
+
+    def test_a_docker_session_is_reachable_in_every_mode(self, tmp_path: Path) -> None:
+        """Docker publishes the container's port on the host either way."""
+        backend = DockerSessionBackend(make_live_worker_config(tmp_path))
+        assert backend.session_bind_host("proxy") == "0.0.0.0"
+        assert backend.session_bind_host("direct") == "0.0.0.0"
+
+    def test_the_bind_is_published_so_the_server_can_see_it(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The server decides the served mode after the worker has bound."""
+        executor = SSHExecutor(make_live_worker_config(tmp_path))
+        emitted: dict[str, Any] = {}
+        monkeypatch.setattr(
+            executor, "emit_update", lambda task_id, payload: emitted.update(payload)
+        )
+        task = _task_message()
+        cfg = SSHConfig.from_spec(cast(SSHSpecStrict, task.spec), DEFAULT_WORKER_CONFIG)
+        executor._wait_session_ready(cast(Any, _ReadySession()), "ssn-1234", task, cfg)
+
+        assert emitted["ssh"]["_bind_host"] == "0.0.0.0"
