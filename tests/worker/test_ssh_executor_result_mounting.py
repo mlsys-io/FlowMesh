@@ -2,7 +2,7 @@
 
 import tarfile
 from pathlib import Path
-from typing import cast
+from typing import TYPE_CHECKING, cast
 from unittest.mock import MagicMock
 
 import pytest
@@ -14,6 +14,9 @@ from worker.config import WorkerConfig
 from worker.executors.ssh_session import ResolvedSSHInput, SSHConfig
 from worker.executors.ssh_session import inputs as inputs_module
 from worker.executors.ssh_session.docker_backend import DockerSessionBackend
+
+if TYPE_CHECKING:
+    from docker import DockerClient
 
 
 def _worker_config(
@@ -221,7 +224,7 @@ def test_stage_inputs_in_volume_downloads_missing_upstream_results(
     fake_client = _FakeClient()
 
     volume_name = backend._stage_inputs_in_volume(  # noqa: SLF001
-        fake_client,
+        cast("DockerClient", fake_client),
         resolved_inputs,
         "flowmesh-results",
         "session-remote",
