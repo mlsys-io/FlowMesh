@@ -16,6 +16,7 @@ from shared.tasks.worker_message import WorkerHardware, WorkerStatus
 from shared.utils.time import now_iso
 
 from .power import PowerMonitor
+from .relay import EndpointRegistry
 from .supervisor_client import SupervisorClient
 
 
@@ -28,8 +29,10 @@ class Lifecycle:
         hb_file: Path,
         cost_per_hour: float,
         power_monitor: PowerMonitor | None = None,
+        endpoints: EndpointRegistry | None = None,
     ):
         self.client = client
+        self.endpoints = endpoints or EndpointRegistry()
         self.hb_sec = hb_sec
         self.hb_ttl_sec = hb_ttl_sec
         self.hb_file = hb_file
@@ -147,6 +150,12 @@ class Lifecycle:
             self.client.task_cancelled(task_id, metadata=metadata)
         except Exception:
             pass
+
+    def publish_endpoint(self, endpoint_id: str, port: int) -> None:
+        self.endpoints.publish(endpoint_id, port)
+
+    def withdraw_endpoint(self, endpoint_id: str) -> None:
+        self.endpoints.withdraw(endpoint_id)
 
     def notify_task_update(self, task_id: str, payload: dict[str, Any]) -> None:
         try:
