@@ -17,6 +17,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import ClassVar
 
+import psutil
+
 from shared.tasks.worker_message import WorkerHardware
 from worker.config import WorkerConfig
 
@@ -243,12 +245,8 @@ def read_local_proc_net_tcp() -> str | None:
 def resolve_tailnet_address() -> str | None:
     """Return this host's tailnet address, or ``None`` when it has none."""
     try:
-        import psutil
-    except Exception:
-        return None
-    try:
         interfaces = psutil.net_if_addrs()
-    except Exception:
+    except OSError:
         return None
     for addresses in interfaces.values():
         for address in addresses:
