@@ -48,6 +48,7 @@ runtime-worker-core = [
     "httpx>=0.28.1",
     "nvidia-ml-py>=13.580.82",
     "protobuf>=5.29.6",
+    "psutil>=7.1.2",
     "python-dotenv>=1.2.2",
     "websocket-client>=1.9.0",
 ]

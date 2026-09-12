@@ -2106,6 +2106,7 @@ runtime-worker-core = [
     { name = "httpx" },
     { name = "nvidia-ml-py" },
     { name = "protobuf" },
+    { name = "psutil" },
     { name = "python-dotenv" },
     { name = "websocket-client" },
 ]
@@ -2153,6 +2154,7 @@ runtime-worker-cpu = [
     { name = "pillow" },
     { name = "prompt-toolkit" },
     { name = "protobuf" },
+    { name = "psutil" },
     { name = "psycopg", extra = ["binary"] },
     { name = "pymupdf" },
     { name = "python-dotenv" },
@@ -2410,6 +2412,7 @@ runtime-worker-core = [
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "nvidia-ml-py", specifier = ">=13.580.82" },
     { name = "protobuf", specifier = ">=5.29.6" },
+    { name = "psutil", specifier = ">=7.1.2" },
     { name = "python-dotenv", specifier = ">=1.2.2" },
     { name = "websocket-client", specifier = ">=1.9.0" },
 ]
@@ -2457,6 +2460,7 @@ runtime-worker-cpu = [
     { name = "pillow", specifier = ">=12.3.0" },
     { name = "prompt-toolkit", specifier = ">=3.0.52" },
     { name = "protobuf", specifier = ">=5.29.6" },
+    { name = "psutil", specifier = ">=7.1.2" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2.12" },
     { name = "pymupdf", specifier = ">=1.26.7" },
     { name = "python-dotenv", specifier = ">=1.2.2" },
