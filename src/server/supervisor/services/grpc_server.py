@@ -274,9 +274,15 @@ class SupervisorServicer(supervisor_pb2_grpc.SupervisorServicer):
                 send,
             )
         )
-        # put(), not put_nowait(): the queue is bounded, and the consumer is
-        # still draining, so waiting for a slot is correct and cannot raise.
-        bridge.add_done_callback(lambda _: asyncio.ensure_future(outbound.put(None)))
+        # put(), not put_nowait(): the queue is bounded. On the cancel path
+        # below nothing drains it again, so the sentinel is cancelled with it.
+        sentinel: asyncio.Task[None] | None = None
+
+        def _close_outbound(_: asyncio.Task[None]) -> None:
+            nonlocal sentinel
+            sentinel = asyncio.ensure_future(outbound.put(None))
+
+        bridge.add_done_callback(_close_outbound)
         try:
             while True:
                 chunk = await outbound.get()
@@ -289,6 +295,8 @@ class SupervisorServicer(supervisor_pb2_grpc.SupervisorServicer):
         finally:
             if not bridge.done():
                 bridge.cancel()
+            if sentinel is not None and not sentinel.done():
+                sentinel.cancel()
         yield supervisor_pb2.RelayFrame(eof=True)
 
     async def PushEvents(

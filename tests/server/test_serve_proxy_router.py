@@ -880,3 +880,38 @@ async def test_background_task_alone_cleans_up_abandoned_response() -> None:
     await response.background()
 
     assert redis_client.asyncio.eof_signal_count == 1
+
+
+@pytest.mark.anyio
+async def test_relayed_request_does_not_advertise_the_servers_own_address() -> None:
+    """The Host header is the upstream's, and the server is not the upstream.
+
+    `serve.host` on a proxy record is the FlowMesh server's address, so reading
+    it here would send the server's own name upstream.
+    """
+    scope = {
+        "type": "http",
+        "http_version": "1.1",
+        "method": "GET",
+        "path": "/api/v1/serve/tasks/tsk-abc/v1/models",
+        "raw_path": b"/api/v1/serve/tasks/tsk-abc/v1/models",
+        "query_string": b"",
+        "headers": [
+            (b"host", b"flowmesh.example.com"),
+            (b"accept", b"application/json"),
+        ],
+        "client": ("10.0.0.1", 5555),
+        "server": ("flowmesh.example.com", 443),
+        "scheme": "https",
+    }
+
+    async def _receive() -> dict[str, object]:
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    request = Request(scope, receive=_receive)  # type: ignore[arg-type]
+    raw = await serve_router._serialize_request(request, "v1/models")
+
+    head = raw.split(b"\r\n\r\n", 1)[0].decode("latin-1")
+    host_lines = [ln for ln in head.split("\r\n") if ln.lower().startswith("host:")]
+    assert host_lines == ["Host: localhost"]
+    assert "flowmesh.example.com" not in head

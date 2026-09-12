@@ -89,6 +89,10 @@ class RelayClient:
             self._pump(relay_token, endpoint_id, port)
         except grpc.RpcError as exc:
             logger.warning("Relay stream for %s failed: %s", endpoint_id, exc)
+        except ValueError as exc:
+            # Invoking on a channel shutdown() just closed raises this, not
+            # RpcError, and a relay racing worker shutdown lands here.
+            logger.info("Relay for %s abandoned during shutdown: %s", endpoint_id, exc)
         except OSError as exc:
             logger.warning(
                 "Relay for %s could not reach its port: %s", endpoint_id, exc

@@ -302,6 +302,38 @@ class TestDedicatedChannel:
 
 
 class TestShutdown:
+    def test_a_relay_racing_shutdown_does_not_raise_out_of_its_thread(self) -> None:
+        """Closing the channel first means a starting relay finds it closed.
+
+        grpc raises ValueError, not RpcError, for an RPC on a closed channel.
+        """
+        endpoints = EndpointRegistry()
+        relay = RelayClient(_FakeClient(), endpoints)  # type: ignore[arg-type]
+
+        class _ClosedStub:
+            def Relay(self, *_args, **_kwargs):  # noqa: N802
+                raise ValueError("Cannot invoke RPC: Channel closed!")
+
+        relay._stub = _ClosedStub()  # type: ignore[assignment]
+        server = _EchoServer()
+        endpoints.publish("ssn-a", server.port)
+
+        errors: list[BaseException | None] = []
+        hook = threading.excepthook
+        threading.excepthook = lambda args: errors.append(args.exc_value)
+        try:
+            relay.handle_request("tok", "ssn-a")
+            assert _wait(
+                lambda: not any(
+                    t.name.startswith("flowmesh-relay-") for t in threading.enumerate()
+                )
+            )
+        finally:
+            threading.excepthook = hook
+            server.close()
+
+        assert errors == []
+
     def test_shutdown_closes_the_relay_channel(self) -> None:
         closed = threading.Event()
 
