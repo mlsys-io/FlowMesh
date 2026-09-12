@@ -311,7 +311,6 @@ class DockerSessionBackend(SSHSessionBackend):
         if cfg.command is not None:
             return cfg.command
 
-        # Neither set — inspect the image metadata for defaults.
         try:
             image_obj = client.images.get(cfg.image)
             image_config = image_obj.attrs.get("Config", {})
@@ -435,7 +434,6 @@ class DockerSessionBackend(SSHSessionBackend):
         staged_inputs_dir: Path | None = None
         staged_inputs_volume: str | None = None
 
-        # Stage inputs in an isolated volume/directory
         if results_source and resolved_inputs:
             staged_inputs_volume = self._stage_inputs_in_volume(
                 client, resolved_inputs, results_source, session_id, worker_name
@@ -446,11 +444,9 @@ class DockerSessionBackend(SSHSessionBackend):
         elif resolved_inputs:
             staged_inputs_dir = stage_inputs_locally(resolved_inputs, session_id)
 
-        # Mount resolved inputs
         for resolved in resolved_inputs:
             reserve_mount_path(used_mount_paths, resolved.mount_path)
             if results_source:
-                # Materialize the requested staged input into the final mount path.
                 staged_input_specs.append(
                     (
                         resolved.mount_path,
@@ -458,7 +454,6 @@ class DockerSessionBackend(SSHSessionBackend):
                     )
                 )
             else:
-                # Can mount directly from the local staged directory
                 assert staged_inputs_dir is not None
                 staged_input_path = staged_inputs_dir / resolved.task_id
                 volumes.append(f"{staged_input_path}:{resolved.mount_path}:ro")
@@ -466,18 +461,15 @@ class DockerSessionBackend(SSHSessionBackend):
         direct_output_path: Path | None = None
         copy_output_path: str | None = None
         if cfg.output is not None:
-            # Mount output directory
             output_mount_path = normalize_mount_path(
                 cfg.output.mount_path, field_name="sshOutput.mountPath"
             )
             reserve_mount_path(used_mount_paths, output_mount_path)
             artifacts_dir = out_dir / ARTIFACTS_DIR
             if results_source:
-                # Copy output back from the container after the session ends.
                 create_dirs.append(output_mount_path)
                 copy_output_path = output_mount_path
             else:
-                # Can mount directly to the output directory
                 volumes.append(f"{artifacts_dir}:{output_mount_path}:rw")
                 direct_output_path = artifacts_dir
 
@@ -787,7 +779,6 @@ class DockerSession(SSHSession):
         except Exception:
             logger.debug("Container log stream ended", exc_info=True)
 
-        # Flush any unterminated remainder.
         for stream_name, leftover in buffers.items():
             if leftover:
                 _emit(leftover, stream_name)

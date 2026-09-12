@@ -264,7 +264,6 @@ def _resolve_gpu_devices(
             )
 
     if not devices:
-        # No per-device metadata to filter by — fall back to first-N host IDs.
         if len(host_gpu_ids) < requested:
             raise ExecutionError(
                 f"SSH task requested {requested} GPU(s) but only "
@@ -276,7 +275,6 @@ def _resolve_gpu_devices(
     if len(matching_indices) >= requested:
         return [host_gpu_ids[idx] for idx in matching_indices]
 
-    # Unified memory fallback
     if required_mem_bytes is not None and hardware is not None:
         type_only_req = GPURequirements(
             count=gpu_req.count, type=gpu_req.type, memory=None
