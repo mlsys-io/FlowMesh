@@ -99,6 +99,12 @@ Spark), set `DOCKER_GPU_RUNTIME=` in the stack env.
 | `ENABLE_UNISOLATED_SSH_SESSION` | `false` | Whether a worker that cannot give a session its own OS account may still serve one. |
 | `SSH_RELAY_HOST` | – | Address a `direct` session is advertised at. Unset, the worker uses its tailnet address, else its FQDN. `proxy` and `forward` do not use it: the worker opens the relay itself. |
 
+A `proxy` or `forward` session is reached over a relay the worker opens to its
+supervisor, so its sshd binds loopback and the worker needs no inbound
+reachability. `external` workers are not redeployed by the server; one running a
+binary that predates worker-initiated relays must be restarted alongside it, or
+its sessions fail once the supervisor stops waiting for a relay stream.
+
 `process` serves one interactive session per worker and ignores `spec.image`.
 Only a root worker can give a session its own account, so `process` is
 unavailable on any other worker unless `ENABLE_UNISOLATED_SSH_SESSION` is set —

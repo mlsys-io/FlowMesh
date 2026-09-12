@@ -49,7 +49,9 @@ The runtime is two top-level processes:
 
 - **server ↔ supervisor (same node)** — `multiprocessing.Queue`.
 - **server ↔ supervisor (across nodes)** — Redis pub/sub.
-- **supervisor ↔ worker** — bidirectional gRPC. Proto stubs at
+- **supervisor ↔ worker** — gRPC. The worker opens every connection: it streams
+  tasks down, pushes events and logs up, and opens a bidirectional `Relay`
+  stream per relayed TCP connection. Proto stubs at
   `src/shared/grpc/supervisor/v1/`.
 - **client ↔ server** — REST.
 
@@ -135,6 +137,18 @@ scripts/dev/            compile_protos, sync_requirements, check_env_examples
   and training or omni types require their (often GPU-only) dependencies — so a
   worker missing that executor isn't a candidate, rather than being handed a
   task it would fail.
+- **Session relays are worker-initiated.** A `proxy` or `forward` session, and a
+  proxied `serve` endpoint, are reached over a gRPC stream the *worker* opens to
+  its supervisor, which bridges it to the Redis `up`/`down` streams the client
+  is already reading. The supervisor never connects to a worker, so a worker
+  behind NAT with no inbound reachability — a rented GPU box, typically — serves
+  sessions like any other. An executor publishes its local port to the worker's
+  endpoint registry when it starts listening; the supervisor names only that
+  endpoint, never a host and port, and the worker refuses an id it has not
+  published. Only `direct` mode still needs the worker to be reachable, which is
+  what that mode means. A worker binary older than this must be restarted with
+  the server: it ignores the relay request, and the session fails after the
+  supervisor's attach timeout.
 - **Stale worker reaping.** The watchdog deletes a dead worker's registry record
   (`WORKERS_SET_KEY` membership + `worker_key` hash) after it has been stale past
   `WORKER_REAP_GRACE_SEC`, so a worker that leaves without a clean `UNREGISTER` — a
