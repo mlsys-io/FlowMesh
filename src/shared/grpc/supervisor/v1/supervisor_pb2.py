@@ -14,7 +14,7 @@ from google.protobuf import empty_pb2 as google_dot_protobuf_dot_empty__pb2
 from google.protobuf import struct_pb2 as google_dot_protobuf_dot_struct__pb2
 
 DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(
-    b'\n\x1esupervisor/v1/supervisor.proto\x12\rsupervisor.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1bgoogle/protobuf/empty.proto"8\n\x0fRegisterRequest\x12%\n\x04meta\x18\x01 \x01(\x0b2\x17.google.protobuf.Struct"%\n\x10RegisterResponse\x12\x11\n\tworker_id\x18\x01 \x01(\t"3\n\x10InterruptMessage\x12\x0f\n\x07task_id\x18\x01 \x01(\t\x12\x0e\n\x06reason\x18\x02 \x01(\t".\n\x0bStopMessage\x12\x0f\n\x07task_id\x18\x01 \x01(\t\x12\x0e\n\x06reason\x18\x02 \x01(\t"7\n\x0bTaskMessage\x12(\n\x07payload\x18\x01 \x01(\x0b2\x17.google.protobuf.Struct"\xaa\x01\n\x0fDispatchMessage\x12*\n\x04task\x18\x01 \x01(\x0b2\x1a.supervisor.v1.TaskMessageH\x00\x124\n\tinterrupt\x18\x02 \x01(\x0b2\x1f.supervisor.v1.InterruptMessageH\x00\x12*\n\x04stop\x18\x03 \x01(\x0b2\x1a.supervisor.v1.StopMessageH\x00B\t\n\x07payload"8\n\x0cEventMessage\x12(\n\x07payload\x18\x01 \x01(\x0b2\x17.google.protobuf.Struct"6\n\nLogMessage\x12(\n\x07payload\x18\x01 \x01(\x0b2\x17.google.protobuf.Struct2\xae\x02\n\nSupervisor\x12Q\n\x0eRegisterWorker\x12\x1e.supervisor.v1.RegisterRequest\x1a\x1f.supervisor.v1.RegisterResponse\x12G\n\x0bStreamTasks\x12\x16.google.protobuf.Empty\x1a\x1e.supervisor.v1.DispatchMessage0\x01\x12C\n\nPushEvents\x12\x1b.supervisor.v1.EventMessage\x1a\x16.google.protobuf.Empty(\x01\x12?\n\x08PushLogs\x12\x19.supervisor.v1.LogMessage\x1a\x16.google.protobuf.Empty(\x01b\x06proto3'
+    b'\n\x1esupervisor/v1/supervisor.proto\x12\rsupervisor.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1bgoogle/protobuf/empty.proto"8\n\x0fRegisterRequest\x12%\n\x04meta\x18\x01 \x01(\x0b2\x17.google.protobuf.Struct"%\n\x10RegisterResponse\x12\x11\n\tworker_id\x18\x01 \x01(\t"3\n\x10InterruptMessage\x12\x0f\n\x07task_id\x18\x01 \x01(\t\x12\x0e\n\x06reason\x18\x02 \x01(\t".\n\x0bStopMessage\x12\x0f\n\x07task_id\x18\x01 \x01(\t\x12\x0e\n\x06reason\x18\x02 \x01(\t"7\n\x0bTaskMessage\x12(\n\x07payload\x18\x01 \x01(\x0b2\x17.google.protobuf.Struct"8\n\x0cRelayRequest\x12\x13\n\x0brelay_token\x18\x01 \x01(\t\x12\x13\n\x0bendpoint_id\x18\x02 \x01(\t"\xd8\x01\n\x0fDispatchMessage\x12*\n\x04task\x18\x01 \x01(\x0b2\x1a.supervisor.v1.TaskMessageH\x00\x124\n\tinterrupt\x18\x02 \x01(\x0b2\x1f.supervisor.v1.InterruptMessageH\x00\x12*\n\x04stop\x18\x03 \x01(\x0b2\x1a.supervisor.v1.StopMessageH\x00\x12,\n\x05relay\x18\x04 \x01(\x0b2\x1b.supervisor.v1.RelayRequestH\x00B\t\n\x07payload"5\n\tRelayOpen\x12\x13\n\x0brelay_token\x18\x01 \x01(\t\x12\x13\n\x0bendpoint_id\x18\x02 \x01(\t"`\n\nRelayFrame\x12(\n\x04open\x18\x01 \x01(\x0b2\x18.supervisor.v1.RelayOpenH\x00\x12\x0e\n\x04data\x18\x02 \x01(\x0cH\x00\x12\r\n\x03eof\x18\x03 \x01(\x08H\x00B\t\n\x07payload"8\n\x0cEventMessage\x12(\n\x07payload\x18\x01 \x01(\x0b2\x17.google.protobuf.Struct"6\n\nLogMessage\x12(\n\x07payload\x18\x01 \x01(\x0b2\x17.google.protobuf.Struct2\xf1\x02\n\nSupervisor\x12Q\n\x0eRegisterWorker\x12\x1e.supervisor.v1.RegisterRequest\x1a\x1f.supervisor.v1.RegisterResponse\x12G\n\x0bStreamTasks\x12\x16.google.protobuf.Empty\x1a\x1e.supervisor.v1.DispatchMessage0\x01\x12C\n\nPushEvents\x12\x1b.supervisor.v1.EventMessage\x1a\x16.google.protobuf.Empty(\x01\x12?\n\x08PushLogs\x12\x19.supervisor.v1.LogMessage\x1a\x16.google.protobuf.Empty(\x01\x12A\n\x05Relay\x12\x19.supervisor.v1.RelayFrame\x1a\x19.supervisor.v1.RelayFrame(\x010\x01b\x06proto3'
 )
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -33,11 +33,17 @@ if not _descriptor._USE_C_DESCRIPTORS:
     _globals["_STOPMESSAGE"]._serialized_end = 304
     _globals["_TASKMESSAGE"]._serialized_start = 306
     _globals["_TASKMESSAGE"]._serialized_end = 361
-    _globals["_DISPATCHMESSAGE"]._serialized_start = 364
-    _globals["_DISPATCHMESSAGE"]._serialized_end = 534
-    _globals["_EVENTMESSAGE"]._serialized_start = 536
-    _globals["_EVENTMESSAGE"]._serialized_end = 592
-    _globals["_LOGMESSAGE"]._serialized_start = 594
-    _globals["_LOGMESSAGE"]._serialized_end = 648
-    _globals["_SUPERVISOR"]._serialized_start = 651
-    _globals["_SUPERVISOR"]._serialized_end = 953
+    _globals["_RELAYREQUEST"]._serialized_start = 363
+    _globals["_RELAYREQUEST"]._serialized_end = 419
+    _globals["_DISPATCHMESSAGE"]._serialized_start = 422
+    _globals["_DISPATCHMESSAGE"]._serialized_end = 638
+    _globals["_RELAYOPEN"]._serialized_start = 640
+    _globals["_RELAYOPEN"]._serialized_end = 693
+    _globals["_RELAYFRAME"]._serialized_start = 695
+    _globals["_RELAYFRAME"]._serialized_end = 791
+    _globals["_EVENTMESSAGE"]._serialized_start = 793
+    _globals["_EVENTMESSAGE"]._serialized_end = 849
+    _globals["_LOGMESSAGE"]._serialized_start = 851
+    _globals["_LOGMESSAGE"]._serialized_end = 905
+    _globals["_SUPERVISOR"]._serialized_start = 908
+    _globals["_SUPERVISOR"]._serialized_end = 1277
