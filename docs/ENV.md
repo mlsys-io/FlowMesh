@@ -91,6 +91,36 @@ Spark), set `DOCKER_GPU_RUNTIME=` in the stack env.
 | `SUPERVISOR_GRPC_EXTERNAL_PORT` | – | External port (when port-forwarded) |
 | `SERVER_GRPC_TLS_*` | – | TLS certificate files |
 
+## SSH session backend
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SSH_SESSION_BACKEND` | `auto` | Sandbox a session runs in: `docker` (sibling container), `process` (sshd inside the worker), or `auto`. |
+| `SSH_RELAY_HOST` | – | Address at which this worker's session ports are reachable from the supervisor that dials the relay. |
+
+`auto` means `docker` and nothing else: a worker image that happens to
+ship `sshd` must not silently start running sessions in its own
+namespace, so `process` is opt-in.
+
+Pick `process` for a worker that *is* the machine the user rents — a
+vast.ai instance has no Docker socket, so the Docker backend never
+reports available there and the worker advertises no `ssh` capability.
+The process backend runs **one session per worker** (sessions would
+otherwise share a filesystem and a process namespace, so isolation is
+by rental), serves **interactive sessions only** (a non-interactive
+task needs a container runtime to run its image), and ignores
+`spec.image`.
+
+`SSH_RELAY_HOST` exists because `proxy` and `forward` sessions publish
+a relay target that the **supervisor** dials. Loopback is correct only
+when the supervisor shares a host with the session — true for the
+Docker backend, false for a centrally-hosted supervisor driving remote
+rented boxes. Unset, the Docker backend publishes loopback and the
+process backend publishes the worker's own tailnet address
+(`100.64.0.0/10`); a process-mode worker with neither a tailnet address
+nor this variable fails the session rather than publishing an address
+nobody can reach.
+
 ## SSH session resource caps
 
 When `enable_ssh` is true on a Docker worker, these configured
@@ -102,10 +132,32 @@ Unset values mean unbounded (host-wide access).
 | `SSH_MAX_CPU` | – | Max CPU cores per SSH container (float, e.g. `4` or `2.5`). Sets Docker `nano_cpus`. |
 | `SSH_MAX_MEMORY` | – | Max memory per SSH container (e.g. `8Gi`, `512Mi`, or a byte count). Sets Docker `mem_limit`. |
 | `SSH_MAX_PIDS` | – | Max PIDs per SSH container. Sets Docker `pids_limit`. Admin-only — not user-overridable. |
-| `ENABLE_SSH_GPU_LIMIT` | `false` | When `true`, mount only the GPU subset matching the spec (`count` / `type` / `memory`); otherwise mount all worker GPUs. |
+| `ENABLE_SSH_GPU_LIMIT` | `true` | When `true`, expose only the GPU subset matching the spec (`count` / `type` / `memory`); otherwise expose all worker GPUs. |
 
 The effective CPU/memory limit is `min(spec.resources.hardware, worker
 cap)`. A task that requests more than the worker cap is dispatched to
 another worker if one has a larger cap; otherwise the dispatcher
 follows its standard requeue/retry behavior. The worker logs a startup
 warning if SSH is enabled with no cap configured.
+
+These caps are Docker-backend only: enforcing them needs cgroup control
+the process backend does not have over the worker it runs inside, so
+there the size of the rented machine is the cap. The worker logs a
+warning when caps are configured on a process-mode worker.
+
+## SSH session lifetime
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SSH_DEFAULT_TTL_SEC` | `3600` | Session TTL when `spec.ttlSeconds` is unset |
+| `SSH_MAX_TTL_SEC` | `28800` | Upper bound on session TTL |
+| `SSH_DEFAULT_IDLE_SEC` | `900` | Idle timeout when `spec.idleTimeoutSeconds` is unset |
+
+An interactive session is stopped once it has had no established SSH
+connection for its idle timeout, which is clamped to the TTL. The idle
+clock starts when the session does, so a session nobody ever connects
+to is reaped too; set `spec.idleTimeoutSeconds: 0` to disable idle
+reaping and rely on the TTL alone. Idle reaping does not apply to
+non-interactive tasks, which hold no SSH connection by design. When a
+backend cannot observe connection state the session is never reaped on
+idle and the worker logs a warning — no evidence is not read as idle.

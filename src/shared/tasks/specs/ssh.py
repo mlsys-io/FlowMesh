@@ -8,11 +8,6 @@ from ..task_type import TaskType
 from .common import TaskSpecStrictBase, TaskSpecTemplateBase
 
 
-class SSHMountSpec(StrictBaseModel):
-    name: str
-    mode: Literal["ro", "rw"] | None = None
-
-
 class SSHInputSpec(StrictBaseModel):
     stage: str
     mountPath: str | None = None
@@ -121,7 +116,6 @@ class SSHSpecStrict(TaskSpecStrictBase):
     accessMode: Literal["direct", "proxy", "forward"] | None = None
     inputs: list[SSHInputSpec] | None = None
     sshOutput: SSHOutputSpec | None = None
-    mounts: list[SSHMountSpec] | None = None
     env: dict[str, Any] | None = None
 
     @model_validator(mode="after")
@@ -145,7 +139,6 @@ class SSHSpecTemplate(TaskSpecTemplateBase):
     accessMode: Literal["direct", "proxy", "forward"] | None = None
     inputs: list[SSHInputSpec] | None = None
     sshOutput: SSHOutputSpecTemplate | None = None
-    mounts: list[SSHMountSpec] | None = None
     env: dict[str, Any] | None = None
 
     @model_validator(mode="after")

@@ -1,4 +1,4 @@
-"""Tests for non-interactive SSH executor behaviour."""
+"""Tests for the Docker SSH session backend, including non-interactive runs."""
 
 import io
 import logging
@@ -9,15 +9,17 @@ from unittest.mock import MagicMock
 
 import pytest
 
-import worker.executors.ssh_executor as ssh_executor_module
+import worker.executors.ssh_session.docker_backend as docker_backend_module
 from shared.tasks.specs import SSHSpecStrict
 from shared.tasks.worker_message import WorkerTaskMessage
 from tests.worker.factories import DEFAULT_WORKER_CONFIG, make_live_worker_config
 from worker.executors.base_executor import ExecutionError
-from worker.executors.ssh_executor import (
+from worker.executors.ssh_session import SSHConfig
+from worker.executors.ssh_session.docker_backend import (
     _SSH_RUN_ENTRYPOINT_PATH,
-    SSHConfig,
-    SSHExecutor,
+    DockerSession,
+    DockerSessionBackend,
+    SSHMountPlan,
 )
 
 
@@ -101,12 +103,11 @@ class TestSSHConfigFromSpec:
 
 
 class TestResolveNoninteractiveCommand:
-    def _make_executor(self, tmp_path: Path) -> SSHExecutor:
-        cfg = make_live_worker_config(tmp_path)
-        return SSHExecutor(cfg, lifecycle=None)
+    def _make_backend(self, tmp_path: Path) -> DockerSessionBackend:
+        return DockerSessionBackend(make_live_worker_config(tmp_path))
 
     def test_command_only(self, tmp_path: Path) -> None:
-        executor = self._make_executor(tmp_path)
+        backend = self._make_backend(tmp_path)
         cfg = SSHConfig.from_spec(
             SSHSpecStrict.model_validate(
                 {
@@ -118,11 +119,11 @@ class TestResolveNoninteractiveCommand:
             DEFAULT_WORKER_CONFIG,
         )
         client = MagicMock()
-        result = executor._resolve_noninteractive_command(client, cfg)
+        result = backend._resolve_noninteractive_command(client, cfg)
         assert result == ["python", "train.py"]
 
     def test_entrypoint_only(self, tmp_path: Path) -> None:
-        executor = self._make_executor(tmp_path)
+        backend = self._make_backend(tmp_path)
         cfg = SSHConfig.from_spec(
             SSHSpecStrict.model_validate(
                 {
@@ -134,11 +135,11 @@ class TestResolveNoninteractiveCommand:
             DEFAULT_WORKER_CONFIG,
         )
         client = MagicMock()
-        result = executor._resolve_noninteractive_command(client, cfg)
+        result = backend._resolve_noninteractive_command(client, cfg)
         assert result == ["/run.sh"]
 
     def test_entrypoint_and_command(self, tmp_path: Path) -> None:
-        executor = self._make_executor(tmp_path)
+        backend = self._make_backend(tmp_path)
         cfg = SSHConfig.from_spec(
             SSHSpecStrict.model_validate(
                 {
@@ -151,11 +152,11 @@ class TestResolveNoninteractiveCommand:
             DEFAULT_WORKER_CONFIG,
         )
         client = MagicMock()
-        result = executor._resolve_noninteractive_command(client, cfg)
+        result = backend._resolve_noninteractive_command(client, cfg)
         assert result == ["/bin/bash", "-c", "echo hello"]
 
     def test_neither_inspects_image(self, tmp_path: Path) -> None:
-        executor = self._make_executor(tmp_path)
+        backend = self._make_backend(tmp_path)
         cfg = SSHConfig.from_spec(
             SSHSpecStrict.model_validate(
                 {
@@ -175,12 +176,12 @@ class TestResolveNoninteractiveCommand:
         }
         client = MagicMock()
         client.images.get.return_value = mock_image
-        result = executor._resolve_noninteractive_command(client, cfg)
+        result = backend._resolve_noninteractive_command(client, cfg)
         assert result == ["/usr/bin/myapp", "--serve"]
         client.images.get.assert_called_once_with("myimg:latest")
 
     def test_neither_set_no_image_entrypoint_raises(self, tmp_path: Path) -> None:
-        executor = self._make_executor(tmp_path)
+        backend = self._make_backend(tmp_path)
         cfg = SSHConfig.from_spec(
             SSHSpecStrict.model_validate(
                 {
@@ -196,7 +197,7 @@ class TestResolveNoninteractiveCommand:
         client = MagicMock()
         client.images.get.return_value = mock_image
         with pytest.raises(Exception, match="no Entrypoint or Cmd"):
-            executor._resolve_noninteractive_command(client, cfg)
+            backend._resolve_noninteractive_command(client, cfg)
 
 
 # ------------------------------------------------------------------ #
@@ -205,13 +206,12 @@ class TestResolveNoninteractiveCommand:
 
 
 class TestBuildEnvironment:
-    def _make_executor(self, tmp_path: Path) -> SSHExecutor:
-        cfg = make_live_worker_config(tmp_path)
-        return SSHExecutor(cfg, lifecycle=None)
+    def _make_backend(self, tmp_path: Path) -> DockerSessionBackend:
+        return DockerSessionBackend(make_live_worker_config(tmp_path))
 
     def test_interactive_includes_ssh_vars(self, tmp_path: Path) -> None:
-        executor = self._make_executor(tmp_path)
-        env = executor._build_environment(
+        backend = self._make_backend(tmp_path)
+        env = backend._build_environment(
             "flowmesh",
             ["ssh-rsa AAAA..."],
             {},
@@ -224,8 +224,8 @@ class TestBuildEnvironment:
         assert "SSH_UID" in env
 
     def test_noninteractive_omits_ssh_vars(self, tmp_path: Path) -> None:
-        executor = self._make_executor(tmp_path)
-        env = executor._build_environment(
+        backend = self._make_backend(tmp_path)
+        env = backend._build_environment(
             "flowmesh",
             ["ssh-rsa AAAA..."],
             {"MY_VAR": "val"},
@@ -242,8 +242,8 @@ class TestBuildEnvironment:
     def test_cuda_visible_devices_normalized_to_slice_count(
         self, tmp_path: Path
     ) -> None:
-        executor = self._make_executor(tmp_path)
-        env = executor._build_environment(
+        backend = self._make_backend(tmp_path)
+        env = backend._build_environment(
             "flowmesh",
             [],
             {},
@@ -257,8 +257,8 @@ class TestBuildEnvironment:
     def test_cuda_visible_devices_absent_when_no_gpu_slice(
         self, tmp_path: Path
     ) -> None:
-        executor = self._make_executor(tmp_path)
-        env = executor._build_environment(
+        backend = self._make_backend(tmp_path)
+        env = backend._build_environment(
             "flowmesh",
             [],
             {},
@@ -296,7 +296,6 @@ def _build_ssh_config(
         extra_env={},
         inputs=[],
         output=None,
-        mounts=[],
         poll_interval_sec=1.0,
         stop_timeout_sec=5.0,
         cpu_limit=cpu_limit,
@@ -307,17 +306,18 @@ def _build_ssh_config(
 
 
 class TestBuildRunKwargs:
-    def _make_executor(
+    def _make_backend(
         self, tmp_path: Path, docker_gpu_runtime: str | None = None
-    ) -> SSHExecutor:
-        cfg = make_live_worker_config(tmp_path, docker_gpu_runtime=docker_gpu_runtime)
-        return SSHExecutor(cfg, hardware=None, lifecycle=None)
+    ) -> DockerSessionBackend:
+        return DockerSessionBackend(
+            make_live_worker_config(tmp_path, docker_gpu_runtime=docker_gpu_runtime)
+        )
 
     def test_noninteractive_injects_wrapper_entrypoint_and_command(
         self, tmp_path: Path
     ) -> None:
-        executor = self._make_executor(tmp_path)
-        kwargs = executor._build_run_kwargs(
+        backend = self._make_backend(tmp_path)
+        kwargs = backend._build_run_kwargs(
             _build_ssh_config(),
             container_name="worker-1_ssh-task-1234",
             environment={},
@@ -333,8 +333,8 @@ class TestBuildRunKwargs:
     def test_interactive_does_not_override_image_entrypoint(
         self, tmp_path: Path
     ) -> None:
-        executor = self._make_executor(tmp_path)
-        kwargs = executor._build_run_kwargs(
+        backend = self._make_backend(tmp_path)
+        kwargs = backend._build_run_kwargs(
             _build_ssh_config(),
             container_name="worker-1_ssh-task-1234",
             environment={},
@@ -350,15 +350,15 @@ class TestBuildRunKwargs:
     def test_gpu_run_kwargs_omit_runtime_when_not_configured(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        executor = self._make_executor(tmp_path)
+        backend = self._make_backend(tmp_path)
         fake_device_request = MagicMock(name="device_request")
         monkeypatch.setattr(
-            ssh_executor_module,
+            docker_backend_module,
             "DeviceRequest",
             MagicMock(return_value=fake_device_request),
         )
 
-        kwargs = executor._build_run_kwargs(
+        kwargs = backend._build_run_kwargs(
             _build_ssh_config(gpu_device_ids=["0"]),
             container_name="worker-1_ssh-task-1234",
             environment={},
@@ -375,15 +375,15 @@ class TestBuildRunKwargs:
     def test_gpu_run_kwargs_include_configured_runtime(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        executor = self._make_executor(tmp_path, docker_gpu_runtime="nvidia")
+        backend = self._make_backend(tmp_path, docker_gpu_runtime="nvidia")
         fake_device_request = MagicMock(name="device_request")
         monkeypatch.setattr(
-            ssh_executor_module,
+            docker_backend_module,
             "DeviceRequest",
             MagicMock(return_value=fake_device_request),
         )
 
-        kwargs = executor._build_run_kwargs(
+        kwargs = backend._build_run_kwargs(
             _build_ssh_config(gpu_device_ids=["0"]),
             container_name="worker-1_ssh-task-1234",
             environment={},
@@ -403,8 +403,8 @@ class TestBuildRunKwargs:
         # Even if WORKER_HOST_GPU_ID is set in env, an empty slice on the
         # config (e.g. CPU-only task) must not emit a device_requests kwarg.
         monkeypatch.setenv("WORKER_HOST_GPU_ID", "0,1")
-        executor = self._make_executor(tmp_path)
-        kwargs = executor._build_run_kwargs(
+        backend = self._make_backend(tmp_path)
+        kwargs = backend._build_run_kwargs(
             _build_ssh_config(),
             container_name="worker-1_ssh-task-1234",
             environment={},
@@ -417,8 +417,8 @@ class TestBuildRunKwargs:
         assert "device_requests" not in kwargs
 
     def test_resource_limits_absent_when_unset(self, tmp_path: Path) -> None:
-        executor = self._make_executor(tmp_path)
-        kwargs = executor._build_run_kwargs(
+        backend = self._make_backend(tmp_path)
+        kwargs = backend._build_run_kwargs(
             _build_ssh_config(),
             container_name="worker-1_ssh-task-1234",
             environment={},
@@ -433,8 +433,8 @@ class TestBuildRunKwargs:
         assert "pids_limit" not in kwargs
 
     def test_resource_limits_applied(self, tmp_path: Path) -> None:
-        executor = self._make_executor(tmp_path)
-        kwargs = executor._build_run_kwargs(
+        backend = self._make_backend(tmp_path)
+        kwargs = backend._build_run_kwargs(
             _build_ssh_config(
                 cpu_limit=2.5,
                 memory_limit_bytes=8 * 1024**3,
@@ -454,15 +454,14 @@ class TestBuildRunKwargs:
 
 
 class TestNoninteractiveContainerStartup:
-    def _make_executor(self, tmp_path: Path) -> SSHExecutor:
-        cfg = make_live_worker_config(tmp_path)
-        return SSHExecutor(cfg, lifecycle=None)
+    def _make_backend(self, tmp_path: Path) -> DockerSessionBackend:
+        return DockerSessionBackend(make_live_worker_config(tmp_path))
 
     def test_build_ssh_run_archive_contains_executable_script(
         self, tmp_path: Path
     ) -> None:
-        executor = self._make_executor(tmp_path)
-        archive_bytes = executor._build_ssh_run_archive()
+        backend = self._make_backend(tmp_path)
+        archive_bytes = backend._build_ssh_run_archive()
         with tarfile.open(fileobj=io.BytesIO(archive_bytes), mode="r:") as tar:
             member = tar.getmember(_SSH_RUN_ENTRYPOINT_PATH.lstrip("/"))
             extracted = tar.extractfile(member)
@@ -474,14 +473,14 @@ class TestNoninteractiveContainerStartup:
     def test_create_and_start_noninteractive_container_injects_before_start(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        executor = self._make_executor(tmp_path)
-        monkeypatch.setattr(ssh_executor_module, "Container", MagicMock)
+        backend = self._make_backend(tmp_path)
+        monkeypatch.setattr(docker_backend_module, "Container", MagicMock)
         container = MagicMock()
         client = MagicMock()
         client.containers.create.return_value = container
         kwargs = {"image": "myimg:latest", "entrypoint": [_SSH_RUN_ENTRYPOINT_PATH]}
 
-        result, log_stream = executor._run_noninteractive_container(client, kwargs)
+        result, log_stream = backend._run_noninteractive_container(client, kwargs)
 
         assert result is container
         assert log_stream is container.attach.return_value
@@ -496,15 +495,15 @@ class TestNoninteractiveContainerStartup:
     def test_create_and_start_noninteractive_container_cleans_up_on_injection_error(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        executor = self._make_executor(tmp_path)
-        monkeypatch.setattr(ssh_executor_module, "Container", MagicMock)
+        backend = self._make_backend(tmp_path)
+        monkeypatch.setattr(docker_backend_module, "Container", MagicMock)
         container = MagicMock()
         container.put_archive.side_effect = RuntimeError("boom")
         client = MagicMock()
         client.containers.create.return_value = container
 
         with pytest.raises(Exception, match="initialize non-interactive container"):
-            executor._run_noninteractive_container(client, {"image": "x"})
+            backend._run_noninteractive_container(client, {"image": "x"})
 
         container.start.assert_not_called()
         container.remove.assert_called_once_with(force=True)
@@ -512,8 +511,8 @@ class TestNoninteractiveContainerStartup:
     def test_pulls_missing_image_and_retries_create(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        executor = self._make_executor(tmp_path)
-        monkeypatch.setattr(ssh_executor_module, "Container", MagicMock)
+        backend = self._make_backend(tmp_path)
+        monkeypatch.setattr(docker_backend_module, "Container", MagicMock)
         container = MagicMock()
         client = MagicMock()
         client.containers.create.side_effect = [
@@ -523,7 +522,7 @@ class TestNoninteractiveContainerStartup:
             container,
         ]
 
-        result, log_stream = executor._start_container(
+        result, log_stream = backend._start_container(
             client,
             {"image": "python:3.12-slim", "entrypoint": [_SSH_RUN_ENTRYPOINT_PATH]},
             interactive=False,
@@ -539,8 +538,8 @@ class TestNoninteractiveContainerStartup:
     def test_pulls_missing_image_and_retries_interactive_run(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        executor = self._make_executor(tmp_path)
-        monkeypatch.setattr(ssh_executor_module, "Container", MagicMock)
+        backend = self._make_backend(tmp_path)
+        monkeypatch.setattr(docker_backend_module, "Container", MagicMock)
         container = MagicMock()
         client = MagicMock()
         client.containers.run.side_effect = [
@@ -548,7 +547,7 @@ class TestNoninteractiveContainerStartup:
             container,
         ]
 
-        result, log_stream = executor._start_container(
+        result, log_stream = backend._start_container(
             client,
             {"image": "myimg:latest", "command": ["sleep", "1"]},
             interactive=True,
@@ -577,10 +576,12 @@ class TestStreamContainerLogs:
             ]
         )
 
-        with caplog.at_level(logging.DEBUG, logger=ssh_executor_module.__name__):
-            SSHExecutor._stream_container_logs(log_stream)
+        with caplog.at_level(logging.DEBUG, logger=docker_backend_module.__name__):
+            DockerSession._stream_container_logs(log_stream)
         messages = [
-            r.message for r in caplog.records if r.name == ssh_executor_module.__name__
+            r.message
+            for r in caplog.records
+            if r.name == docker_backend_module.__name__
         ]
         assert "hello from stdout" in messages
         assert "oops on stderr" in messages
@@ -588,7 +589,7 @@ class TestStreamContainerLogs:
         streams = {
             r.message: getattr(r, "flowmesh_stream", None)
             for r in caplog.records
-            if r.name == ssh_executor_module.__name__
+            if r.name == docker_backend_module.__name__
         }
         assert streams["hello from stdout"] == "stdout"
         assert streams["oops on stderr"] == "stderr"
@@ -603,13 +604,13 @@ class TestStreamContainerLogs:
             ]
         )
 
-        with caplog.at_level(logging.DEBUG, logger=ssh_executor_module.__name__):
-            SSHExecutor._stream_container_logs(log_stream)
+        with caplog.at_level(logging.DEBUG, logger=docker_backend_module.__name__):
+            DockerSession._stream_container_logs(log_stream)
 
         levels = {
             r.message: r.levelno
             for r in caplog.records
-            if r.name == ssh_executor_module.__name__
+            if r.name == docker_backend_module.__name__
         }
         assert levels["info line"] == logging.INFO
         assert levels["warn line"] == logging.WARNING
@@ -624,11 +625,13 @@ class TestStreamContainerLogs:
             ]
         )
 
-        with caplog.at_level(logging.DEBUG, logger=ssh_executor_module.__name__):
-            SSHExecutor._stream_container_logs(log_stream)
+        with caplog.at_level(logging.DEBUG, logger=docker_backend_module.__name__):
+            DockerSession._stream_container_logs(log_stream)
 
         messages = [
-            r.message for r in caplog.records if r.name == ssh_executor_module.__name__
+            r.message
+            for r in caplog.records
+            if r.name == docker_backend_module.__name__
         ]
         assert messages == ["hello world", "second line"]
 
@@ -643,11 +646,13 @@ class TestStreamContainerLogs:
             ]
         )
 
-        with caplog.at_level(logging.DEBUG, logger=ssh_executor_module.__name__):
-            SSHExecutor._stream_container_logs(log_stream)
+        with caplog.at_level(logging.DEBUG, logger=docker_backend_module.__name__):
+            DockerSession._stream_container_logs(log_stream)
 
         messages = [
-            r.message for r in caplog.records if r.name == ssh_executor_module.__name__
+            r.message
+            for r in caplog.records
+            if r.name == docker_backend_module.__name__
         ]
         assert messages == ["complete", "no newline at end"]
 
@@ -663,11 +668,13 @@ class TestStreamContainerLogs:
             ]
         )
 
-        with caplog.at_level(logging.DEBUG, logger=ssh_executor_module.__name__):
-            SSHExecutor._stream_container_logs(log_stream)
+        with caplog.at_level(logging.DEBUG, logger=docker_backend_module.__name__):
+            DockerSession._stream_container_logs(log_stream)
 
         messages = [
-            r.message for r in caplog.records if r.name == ssh_executor_module.__name__
+            r.message
+            for r in caplog.records
+            if r.name == docker_backend_module.__name__
         ]
         assert messages == ["line1", "line2", "line3"]
 
@@ -681,26 +688,42 @@ class TestStreamContainerLogs:
         log_stream = _exploding_attach()
 
         with caplog.at_level(logging.DEBUG):
-            SSHExecutor._stream_container_logs(log_stream)
+            DockerSession._stream_container_logs(log_stream)
 
         messages = [
-            r.message for r in caplog.records if r.name == ssh_executor_module.__name__
+            r.message
+            for r in caplog.records
+            if r.name == docker_backend_module.__name__
         ]
         assert "first" in messages
 
 
 # ------------------------------------------------------------------ #
-# _wait_for_port tests
+# DockerSession.wait_ready tests
 # ------------------------------------------------------------------ #
 
 
-class TestWaitForPort:
-    def _make_executor(self, tmp_path: Path) -> SSHExecutor:
-        cfg = make_live_worker_config(tmp_path)
-        return SSHExecutor(cfg, lifecycle=None)
+def _docker_session(container: MagicMock) -> DockerSession:
+    return DockerSession(
+        client=MagicMock(),
+        container=container,
+        container_name="test-container",
+        cfg=_build_ssh_config(),
+        mount_plan=SSHMountPlan(
+            volumes=[],
+            staged_input_specs=[],
+            create_dirs=[],
+            direct_output_path=None,
+            copy_output_path=None,
+            staged_inputs_dir=None,
+            staged_inputs_volume=None,
+        ),
+        log_stream=None,
+    )
 
-    def test_reports_container_exit_with_logs(self, tmp_path: Path) -> None:
-        executor = self._make_executor(tmp_path)
+
+class TestWaitReady:
+    def test_reports_container_exit_with_logs(self) -> None:
         container = MagicMock()
         container.name = "test-container"
         container.status = "exited"
@@ -709,11 +732,10 @@ class TestWaitForPort:
         container.logs.return_value = b"bash: sshd: command not found\n"
 
         with pytest.raises(ExecutionError, match="exited.*code 127") as exc_info:
-            executor._wait_for_port(container, timeout_sec=1)
+            _docker_session(container).wait_ready(timeout_sec=1)
         assert "sshd: command not found" in str(exc_info.value)
 
-    def test_reports_container_exit_without_logs(self, tmp_path: Path) -> None:
-        executor = self._make_executor(tmp_path)
+    def test_reports_container_exit_without_logs(self) -> None:
         container = MagicMock()
         container.name = "test-container"
         container.status = "exited"
@@ -722,10 +744,9 @@ class TestWaitForPort:
         container.logs.side_effect = RuntimeError("no logs")
 
         with pytest.raises(ExecutionError, match="exited.*code 1"):
-            executor._wait_for_port(container, timeout_sec=1)
+            _docker_session(container).wait_ready(timeout_sec=1)
 
-    def test_timeout_message_suggests_sshd(self, tmp_path: Path) -> None:
-        executor = self._make_executor(tmp_path)
+    def test_timeout_message_suggests_sshd(self) -> None:
         container = MagicMock()
         container.name = "test-container"
         container.status = "running"
@@ -733,5 +754,5 @@ class TestWaitForPort:
         container.ports = {}
 
         with pytest.raises(ExecutionError, match="openssh-server") as exc_info:
-            executor._wait_for_port(container, timeout_sec=0.1)
+            _docker_session(container).wait_ready(timeout_sec=0.1)
         assert "omitting the image field" in str(exc_info.value)

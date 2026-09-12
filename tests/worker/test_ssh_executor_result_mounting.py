@@ -1,4 +1,4 @@
-"""SSH executor result mounting tests."""
+"""SSH session input staging and result mounting tests."""
 
 import tarfile
 from pathlib import Path
@@ -11,7 +11,9 @@ from shared.tasks.specs import SSHSpecStrict
 from shared.tasks.worker_message import WorkerTaskMessage
 from tests.worker.factories import DEFAULT_WORKER_CONFIG, make_live_worker_config
 from worker.config import WorkerConfig
-from worker.executors.ssh_executor import ResolvedSSHInput, SSHConfig, SSHExecutor
+from worker.executors.ssh_session import ResolvedSSHInput, SSHConfig
+from worker.executors.ssh_session import inputs as inputs_module
+from worker.executors.ssh_session.docker_backend import DockerSessionBackend
 
 
 def _worker_config(
@@ -60,23 +62,21 @@ def test_build_mount_plan_uses_worker_volume_view_in_container(
     monkeypatch.setenv("RESULTS_DIR", str(results_dir))
     task = _task_message()
     cfg = SSHConfig.from_spec(cast(SSHSpecStrict, task.spec), DEFAULT_WORKER_CONFIG)
-    executor = SSHExecutor(
-        _worker_config(tmp_path, network_mode="container:flowmesh-worker-1")
-    )
+    worker_cfg = _worker_config(tmp_path, network_mode="container:flowmesh-worker-1")
+    backend = DockerSessionBackend(worker_cfg)
     monkeypatch.setattr(
-        executor,
+        backend,
         "_stage_inputs_in_volume",
-        lambda client, resolved_inputs, results_source, session_id: "staged-inputs-vol",
+        lambda *args: "staged-inputs-vol",
     )
     # _build_mount_plan only hands the client to _stage_inputs_in_volume,
     # which we mock above — no need to hit docker.from_env() for this.
     fake_docker = MagicMock()
-    monkeypatch.setattr(executor, "_get_docker_client", lambda: fake_docker)
 
-    resolved_inputs = executor._resolve_inputs(task, cfg)  # noqa: SLF001
-    plan = executor._build_mount_plan(
-        executor._get_docker_client(), out_dir, resolved_inputs, cfg, "session-1234"
-    )  # noqa: SLF001
+    resolved_inputs = inputs_module.resolve_inputs(task, cfg, worker_cfg.results_dir)
+    plan = backend._build_mount_plan(  # noqa: SLF001
+        fake_docker, out_dir, resolved_inputs, cfg, "session-1234", "worker-1"
+    )
 
     assert plan.volumes == ["staged-inputs-vol:/root/.flowmesh/results-source:ro"]
     assert plan.staged_input_specs == [
@@ -102,23 +102,22 @@ def test_build_mount_plan_uses_direct_binds_outside_container(
     monkeypatch.setenv("RESULTS_DIR", str(results_dir))
     task = _task_message()
     cfg = SSHConfig.from_spec(cast(SSHSpecStrict, task.spec), DEFAULT_WORKER_CONFIG)
-    executor = SSHExecutor(_worker_config(tmp_path, results_mount_source=None))
+    worker_cfg = _worker_config(tmp_path, results_mount_source=None)
+    backend = DockerSessionBackend(worker_cfg)
     staged_inputs_dir = tmp_path / "staged-inputs"
     (staged_inputs_dir / "task-pre").mkdir(parents=True)
     monkeypatch.setattr(
-        executor,
-        "_stage_inputs_locally",
+        "worker.executors.ssh_session.docker_backend.stage_inputs_locally",
         lambda resolved_inputs, session_id: staged_inputs_dir,
     )
     # The results_mount_source=None path never calls into the client
     # either (see _build_mount_plan), so a mock is sufficient.
     fake_docker = MagicMock()
-    monkeypatch.setattr(executor, "_get_docker_client", lambda: fake_docker)
 
-    resolved_inputs = executor._resolve_inputs(task, cfg)  # noqa: SLF001
-    plan = executor._build_mount_plan(
-        executor._get_docker_client(), out_dir, resolved_inputs, cfg, "session-1234"
-    )  # noqa: SLF001
+    resolved_inputs = inputs_module.resolve_inputs(task, cfg, worker_cfg.results_dir)
+    plan = backend._build_mount_plan(  # noqa: SLF001
+        fake_docker, out_dir, resolved_inputs, cfg, "session-1234", "worker-1"
+    )
 
     assert plan.staged_input_specs == []
     assert plan.direct_output_path == artifacts_dir
@@ -141,12 +140,10 @@ def test_resolve_inputs_rejects_unsafe_mount_path(
     monkeypatch.setenv("RESULTS_DIR", str(results_dir))
     task = _task_message(inputs=[{"stage": "preprocess", "mountPath": "/tmp/unsafe"}])
     cfg = SSHConfig.from_spec(cast(SSHSpecStrict, task.spec), DEFAULT_WORKER_CONFIG)
-    executor = SSHExecutor(
-        _worker_config(tmp_path, network_mode="container:flowmesh-worker-1")
-    )
+    worker_cfg = _worker_config(tmp_path, network_mode="container:flowmesh-worker-1")
 
     with pytest.raises(Exception, match="must be under /mnt/flowmesh"):
-        executor._resolve_inputs(task, cfg)  # noqa: SLF001
+        inputs_module.resolve_inputs(task, cfg, worker_cfg.results_dir)
 
 
 def test_stage_inputs_locally_downloads_missing_upstream_results(
@@ -154,21 +151,19 @@ def test_stage_inputs_locally_downloads_missing_upstream_results(
 ) -> None:
     task = _task_message()
     cfg = SSHConfig.from_spec(cast(SSHSpecStrict, task.spec), DEFAULT_WORKER_CONFIG)
-    executor = SSHExecutor(_worker_config(tmp_path, results_mount_source=None))
+    worker_cfg = _worker_config(tmp_path, results_mount_source=None)
 
     monkeypatch.setenv("RESULTS_DIR", str(tmp_path / "results"))
-    resolved_inputs = executor._resolve_inputs(task, cfg)  # noqa: SLF001
+    resolved_inputs = inputs_module.resolve_inputs(task, cfg, worker_cfg.results_dir)
 
     def _download(task_id: str, destination_dir: Path) -> None:
         staged = destination_dir / task_id
         staged.mkdir(parents=True)
         (staged / "results.json").write_text("{}", encoding="utf-8")
 
-    monkeypatch.setattr(executor, "_download_result_bundle", _download)
+    monkeypatch.setattr(inputs_module, "download_result_bundle", _download)
 
-    staging_dir = executor._stage_inputs_locally(  # noqa: SLF001
-        resolved_inputs, "session-remote"
-    )
+    staging_dir = inputs_module.stage_inputs_locally(resolved_inputs, "session-remote")
 
     assert (staging_dir / "task-pre" / "results.json").exists()
 
@@ -179,7 +174,7 @@ def test_stage_inputs_in_volume_downloads_missing_upstream_results(
     monkeypatch.setenv("FLOWMESH_BASE_URL", "http://flowmesh.example")
     monkeypatch.setenv("FLOWMESH_API_KEY", "secret-token")
 
-    executor = SSHExecutor(
+    backend = DockerSessionBackend(
         _worker_config(tmp_path, network_mode="container:flowmesh-worker-1")
     )
     local_source = tmp_path / "results" / "task-local"
@@ -224,13 +219,13 @@ def test_stage_inputs_in_volume_downloads_missing_upstream_results(
             self.containers = _FakeContainers()
 
     fake_client = _FakeClient()
-    monkeypatch.setattr(executor, "_get_docker_client", lambda: fake_client)
 
-    volume_name = executor._stage_inputs_in_volume(
-        executor._get_docker_client(),
+    volume_name = backend._stage_inputs_in_volume(  # noqa: SLF001
+        fake_client,
         resolved_inputs,
         "flowmesh-results",
         "session-remote",
+        "worker-1",
     )
 
     assert fake_client.containers.kwargs is not None
@@ -255,4 +250,4 @@ def test_extract_result_bundle_rejects_path_traversal(tmp_path: Path) -> None:
         archive.add(payload, arcname="../escape.txt")
 
     with pytest.raises(Exception, match="Unsafe path"):
-        SSHExecutor._extract_result_bundle(bundle, tmp_path / "dest")  # noqa: SLF001
+        inputs_module.extract_result_bundle(bundle, tmp_path / "dest")

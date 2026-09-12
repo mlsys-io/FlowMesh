@@ -91,7 +91,9 @@ SSH_STOP_TIMEOUT_SEC: float | None = parse_float_env("SSH_STOP_TIMEOUT_SEC")
 SSH_MAX_CPU: float | None = parse_float_env("SSH_MAX_CPU")
 SSH_MAX_MEMORY: str | None = os.getenv("SSH_MAX_MEMORY", "").strip() or None
 SSH_MAX_PIDS: int | None = parse_int_env("SSH_MAX_PIDS")
-ENABLE_SSH_GPU_LIMIT: bool = parse_bool_env("ENABLE_SSH_GPU_LIMIT", False)
+ENABLE_SSH_GPU_LIMIT: bool = parse_bool_env("ENABLE_SSH_GPU_LIMIT", True)
+SSH_SESSION_BACKEND: str | None = os.getenv("SSH_SESSION_BACKEND", "").strip() or None
+SSH_RELAY_HOST: str | None = os.getenv("SSH_RELAY_HOST", "").strip() or None
 
 LOG_FILE: str = os.getenv("LOG_FILE", "server.log")
 LOG_MAX_BYTES: int = int(os.getenv("LOG_MAX_BYTES", 5_242_880))

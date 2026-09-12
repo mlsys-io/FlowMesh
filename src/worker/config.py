@@ -50,6 +50,8 @@ class WorkerConfig:
     network_mode: str | None = None
     container_name: str | None = None
     ssh_network_name: str | None = None
+    ssh_session_backend: str = "auto"
+    ssh_relay_host: str | None = None
 
     @staticmethod
     def from_env() -> "WorkerConfig":
@@ -146,7 +148,9 @@ class WorkerConfig:
                 max_pids=ssh_max_pids,
             )
         )
-        enable_ssh_gpu_limit = parse_bool_env("ENABLE_SSH_GPU_LIMIT", False)
+        enable_ssh_gpu_limit = parse_bool_env("ENABLE_SSH_GPU_LIMIT", True)
+        ssh_session_backend = os.getenv("SSH_SESSION_BACKEND", "").strip() or "auto"
+        ssh_relay_host = os.getenv("SSH_RELAY_HOST", "").strip() or None
 
         return WorkerConfig(
             worker_token=worker_token,
@@ -175,4 +179,6 @@ class WorkerConfig:
             network_mode=network_mode,
             container_name=container_name,
             ssh_network_name=ssh_network_name,
+            ssh_session_backend=ssh_session_backend,
+            ssh_relay_host=ssh_relay_host,
         )

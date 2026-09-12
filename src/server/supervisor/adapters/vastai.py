@@ -4,7 +4,7 @@ import threading
 from collections import Counter
 from typing import Any
 
-from pydantic import PrivateAttr, SecretStr
+from pydantic import Field, PrivateAttr, SecretStr
 from vastai import VastAI  # type: ignore
 
 from ... import env
@@ -19,6 +19,7 @@ from .base import (
     WorkerFactory,
     WorkerTokenType,
 )
+from .ssh import SSHConfig
 from .utils import env_to_secret_str, get_worker_image_name, to_env_str
 
 _PROVIDER_NAME = "vastai"
@@ -46,6 +47,14 @@ class VastAIWorkerConfig(WorkerConfig):
     """Label to assign to the VastAI instance"""
     search_limit: int = env.VAST_SEARCH_LIMIT
     """Maximum number of offers to retrieve during search"""
+
+    enable_ssh: bool = env.ENABLE_SSH_BY_DEFAULT
+    """Whether to enable support for SSH jobs"""
+    ssh: SSHConfig = Field(default_factory=SSHConfig)
+    """Default SSH session configuration.
+
+    A rented instance is itself the worker container and has no Docker socket,
+    so ``ssh.session_backend`` has to name a backend that does not need one."""
 
     vast_api_key: SecretStr | None = env_to_secret_str("VAST_API_KEY")
     """VastAI API key"""
@@ -180,6 +189,8 @@ class VastAIWorkerAdapter(WorkerAdapter):
     def _base_environment(self) -> dict[str, str]:
         environment = super()._base_environment()
         environment["RESULTS_DIR"] = self.CONTAINER_RESULTS_DIR
+        if self.config.enable_ssh:
+            environment.update(self.config.ssh.to_env())
         return environment
 
     def _start(self) -> bool:

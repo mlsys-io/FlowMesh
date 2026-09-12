@@ -46,7 +46,7 @@ def _make_service(
         redis_client=MagicMock(),
         node_registry=MagicMock(),
         worker_registry=worker_registry,
-        ssh_audit=None,
+        ssh_connections=None,
         bind_host="127.0.0.1",
         public_host="lum.id",
         port_start=port_start,

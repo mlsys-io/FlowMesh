@@ -14,9 +14,10 @@ import pytest
 
 from shared.schemas.result import BaseExecutorResult
 from tests.worker.factories import make_live_worker_config, make_worker_hardware
-from worker.executors import ssh_executor as ssh_mod
 from worker.executors.base_executor import Executor, ExecutorTask
 from worker.executors.ssh_executor import SSHExecutor
+from worker.executors.ssh_session import ProcessSessionBackend
+from worker.executors.ssh_session import docker_backend as docker_backend_mod
 from worker.main import initialize_executors
 
 
@@ -87,7 +88,21 @@ class TestInitializeExecutorsAvailability:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         cfg = make_live_worker_config(tmp_path)
-        monkeypatch.setattr(ssh_mod, "docker_available", lambda: False)
+        monkeypatch.setattr(docker_backend_mod, "docker_available", lambda: False)
         assert SSHExecutor.is_available(cfg) is False
-        monkeypatch.setattr(ssh_mod, "docker_available", lambda: True)
+        monkeypatch.setattr(docker_backend_mod, "docker_available", lambda: True)
         assert SSHExecutor.is_available(cfg) is True
+
+    def test_ssh_availability_ignores_process_backend_unless_requested(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A worker image that ships sshd must not silently downgrade."""
+        monkeypatch.setattr(docker_backend_mod, "docker_available", lambda: False)
+        assert SSHExecutor.is_available(make_live_worker_config(tmp_path)) is False
+        assert SSHExecutor.is_available(
+            make_live_worker_config(tmp_path, ssh_session_backend="process")
+        ) is ProcessSessionBackend.is_available(make_live_worker_config(tmp_path))
+
+    def test_unknown_ssh_backend_is_unavailable(self, tmp_path: Path) -> None:
+        cfg = make_live_worker_config(tmp_path, ssh_session_backend="nonsense")
+        assert SSHExecutor.is_available(cfg) is False

@@ -85,10 +85,15 @@ calls.
 | Method | Path | Description |
 |--------|------|-------------|
 | WS | `/api/v1/ssh/tasks/{task_id}/proxy` | WebSocket SSH proxy for proxy-mode SSH tasks. |
-| GET | `/api/v1/ssh/connections` | List active server-audited SSH proxy/forward connections. |
+| GET | `/api/v1/ssh/connections` | List the SSH proxy/forward connections the server is relaying right now. |
+
+`/ssh/connections` is a live registry, not an audit log: a row exists
+only while its connection does, and `direct`-mode sessions never pass
+through the server so they never appear.
 
 Server policy toggles: `ENABLE_SERVER_SSH_PROXY`,
-`ENABLE_SERVER_PORT_FORWARD`, `ENABLE_SERVER_SSH_CONNECTION_AUDIT`.
+`ENABLE_SERVER_PORT_FORWARD`, `ENABLE_SERVER_SSH_CONNECTION_REGISTRY`
+(previously `ENABLE_SERVER_SSH_CONNECTION_AUDIT`, still honoured).
 
 ## Serve
 

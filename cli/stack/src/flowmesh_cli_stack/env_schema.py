@@ -322,9 +322,15 @@ STACK_ENV_SCHEMA = EnvSchema(
             vars=[
                 EnvVar("ENABLE_SERVER_SSH_PROXY", "true", var_type=EnvVarType.BOOL),
                 EnvVar(
-                    "ENABLE_SERVER_SSH_CONNECTION_AUDIT",
+                    "ENABLE_SERVER_SSH_CONNECTION_REGISTRY",
                     "true",
                     var_type=EnvVarType.BOOL,
+                    description=[
+                        "Whether the server tracks currently-relayed SSH",
+                        "connections. The registry holds live rows only:",
+                        "a row is removed when the connection closes, and",
+                        "direct-mode sessions never reach the server at all.",
+                    ],
                 ),
             ],
         ),
@@ -355,12 +361,34 @@ STACK_ENV_SCHEMA = EnvSchema(
                 EnvVar("SSH_MAX_PIDS", var_type=EnvVarType.INT, min_value=1),
                 EnvVar(
                     "ENABLE_SSH_GPU_LIMIT",
-                    "false",
+                    "true",
                     var_type=EnvVarType.BOOL,
                     description=[
                         "Whether to apply requested GPU limits to SSH tasks.",
                         "If false, SSH tasks are allocated all available GPUs",
                         "regardless of their resource requests.",
+                    ],
+                ),
+                EnvVar(
+                    "SSH_SESSION_BACKEND",
+                    "auto",
+                    var_type=EnvVarType.ENUM,
+                    choices={"auto", "docker", "process"},
+                    description=[
+                        "Sandbox an SSH session runs in. 'docker' creates a",
+                        "sibling container; 'process' runs sshd inside the",
+                        "worker itself, for workers that are the rented",
+                        "machine and have no Docker socket (one session per",
+                        "worker, interactive only). 'auto' means docker.",
+                    ],
+                ),
+                EnvVar(
+                    "SSH_RELAY_HOST",
+                    description=[
+                        "Address at which a worker's session ports are",
+                        "reachable from the supervisor that dials the relay.",
+                        "Defaults to loopback for docker sessions and to the",
+                        "worker's own tailnet address for process sessions.",
                     ],
                 ),
             ],
