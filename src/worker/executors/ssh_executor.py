@@ -199,6 +199,7 @@ class SSHExecutor(Executor):
                 # Wait for the thread to drain remaining output before tearing down
                 # the session.
                 log_thread.join(timeout=30.0)
+            self.withdraw_endpoint(session_id)
             self._current_session = None
             self._cancel_event.clear()
             self._finish_event.clear()
@@ -239,6 +240,7 @@ class SSHExecutor(Executor):
         access_mode = cfg.access_mode
         expires_at = self._iso_offset(cfg.ttl_sec)
         host_port = session.wait_ready(_SESSION_READY_TIMEOUT_SEC)
+        self.publish_endpoint(session_id, host_port)
         host_name = self._backend.session_host()
         ssh_info: dict[str, Any] = {
             "session_id": session_id,
