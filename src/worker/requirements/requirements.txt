@@ -43,6 +43,7 @@ pexpect==4.9.0
 pillow==12.3.0
 prompt-toolkit==3.0.52
 protobuf==6.33.6
+psutil==7.1.2
 psycopg[binary]==3.2.12
 pymupdf==1.27.2.3
 python-dotenv==1.2.2

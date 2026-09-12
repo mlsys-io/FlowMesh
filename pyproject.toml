@@ -48,6 +48,7 @@ runtime-worker-core = [
     "httpx>=0.28.1",
     "nvidia-ml-py>=13.580.82",
     "protobuf>=5.29.6",
+    "psutil>=7.1.2",
     "python-dotenv>=1.2.2",
     "websocket-client>=1.9.0",
 ]
@@ -223,7 +224,7 @@ ignore-words-list = "pre-select,protol"
 skips = [
     "B101",  # assert: internal invariants, not shipped with -O
     "B102",  # exec: agent Python executor sandbox feature
-    "B104",  # 0.0.0.0 bind: containerized; exposure controlled at orchestration
+    "B104",  # 0.0.0.0 bind: key-only auth is the control
     "B107",  # password default: placeholder, not a real credential
     "B110",  # try/except/pass: best-effort cleanup paths
     "B112",  # try/except/continue: iteration over partially-bad inputs

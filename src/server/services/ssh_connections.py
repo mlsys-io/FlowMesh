@@ -1,10 +1,14 @@
+"""Registry of SSH connections the server is currently relaying."""
+
 import json
 
 from ..clients.redis import SSH_CONNECTION_IDS_KEY, RedisClient, ssh_connection_key
 from ..schemas.ssh import SSHConnectionInfo
 
 
-class SshAuditService:
+class SshConnectionRegistry:
+    """Tracks the SSH connections a server is relaying."""
+
     def __init__(self, redis_client: RedisClient) -> None:
         self._redis = redis_client
 

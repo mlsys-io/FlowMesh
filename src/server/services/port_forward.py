@@ -18,7 +18,7 @@ from ..clients.redis import RedisClient, relay_down_key, relay_up_key
 from ..registries.node import NodeRegistry
 from ..registries.worker import WorkerRegistry
 from ..schemas.ssh import SSHConnectionInfo
-from .ssh_audit import SshAuditService
+from .ssh_connections import SshConnectionRegistry
 
 _STREAM_MAXLEN = 1000
 _READ_CHUNK = 16384
@@ -72,7 +72,7 @@ class PortForwardService:
         redis_client: RedisClient,
         node_registry: NodeRegistry,
         worker_registry: WorkerRegistry,
-        ssh_audit: SshAuditService | None,
+        ssh_connections: SshConnectionRegistry | None,
         bind_host: str,
         public_host: str,
         port_start: int,
@@ -83,7 +83,7 @@ class PortForwardService:
         self._redis = redis_client
         self._node_registry = node_registry
         self._worker_registry = worker_registry
-        self._ssh_audit = ssh_audit
+        self._ssh_connections = ssh_connections
         self._logger = logger
         self._bind_host = bind_host
         self._public_host = public_host
@@ -550,9 +550,9 @@ class PortForwardService:
                 pass
             return
 
-        if self._ssh_audit is not None:
+        if self._ssh_connections is not None:
             try:
-                await self._ssh_audit.register_connection(
+                await self._ssh_connections.register_connection(
                     SSHConnectionInfo(
                         connection_id=connection_id,
                         access_mode="forward",
@@ -635,9 +635,9 @@ class PortForwardService:
                 except (asyncio.CancelledError, Exception):
                     pass
         finally:
-            if self._ssh_audit is not None:
+            if self._ssh_connections is not None:
                 try:
-                    await self._ssh_audit.unregister_connection(connection_id)
+                    await self._ssh_connections.unregister_connection(connection_id)
                 except Exception:
                     self._logger.debug(
                         "Failed to unregister SSH audit connection %s",

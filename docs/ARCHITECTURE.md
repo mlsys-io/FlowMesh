@@ -130,9 +130,11 @@ scripts/dev/            compile_protos, sync_requirements, check_env_examples
 - **Worker capabilities.** Beyond hardware fit, each worker advertises the set
   of task types it can service, and the dispatcher routes a task only to workers
   that advertise its type. A worker advertises a type only when its executor came
-  up — e.g. SSH requires a reachable Docker daemon, and training or omni types
-  require their (often GPU-only) dependencies — so a worker missing that executor
-  isn't a candidate, rather than being handed a task it would fail.
+  up — e.g. SSH requires a session backend (a reachable Docker daemon, or an
+  `sshd` binary on a root worker, which gives each session its own OS account),
+  and training or omni types require their (often GPU-only) dependencies — so a
+  worker missing that executor isn't a candidate, rather than being handed a
+  task it would fail.
 - **Stale worker reaping.** The watchdog deletes a dead worker's registry record
   (`WORKERS_SET_KEY` membership + `worker_key` hash) after it has been stale past
   `WORKER_REAP_GRACE_SEC`, so a worker that leaves without a clean `UNREGISTER` — a

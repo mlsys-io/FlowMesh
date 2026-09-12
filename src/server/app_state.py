@@ -10,7 +10,7 @@ from .registries import NodeRegistry, WorkerRegistry, WorkflowRegistry
 from .services.metrics import MetricsRecorder
 from .services.monitoring import EventMonitor
 from .services.port_forward import PortForwardService
-from .services.ssh_audit import SshAuditService
+from .services.ssh_connections import SshConnectionRegistry
 from .services.watchdog import WorkerWatchdog
 from .supervisor.supervisor import WorkerSupervisor
 from .task.runtime import TaskRuntime
@@ -84,8 +84,8 @@ def get_port_forward(conn: HTTPConnection) -> PortForwardService | None:
     return conn.app.state.port_forward
 
 
-def get_ssh_audit(conn: HTTPConnection) -> SshAuditService | None:
-    return conn.app.state.ssh_audit
+def get_ssh_connection_registry(conn: HTTPConnection) -> SshConnectionRegistry | None:
+    return conn.app.state.ssh_connections
 
 
 def get_ssh_proxy_enabled(conn: HTTPConnection) -> bool:

@@ -12,6 +12,14 @@ class WorkerStatus(StrEnum):
     BUSY = "BUSY"
 
 
+class SSHBackendName(StrEnum):
+    """Sandbox an SSH session runs in, as named by ``SSH_SESSION_BACKEND``."""
+
+    AUTO = "auto"
+    DOCKER = "docker"
+    PROCESS = "process"
+
+
 class SSHLimits(BaseModel):
     """Per-worker ceiling for resources accessible by SSH session containers.
 
@@ -41,4 +49,4 @@ class WorkerCapabilities(BaseModel):
     )
 
 
-__all__ = ["SSHLimits", "WorkerCapabilities", "WorkerStatus"]
+__all__ = ["SSHBackendName", "SSHLimits", "WorkerCapabilities", "WorkerStatus"]

@@ -37,7 +37,7 @@ def test_lora_adapter_fields_are_typed_and_extracted() -> None:
     assert adapter.task_id == "tsk-train"
 
     executor = VLLMLoRAExecutor(make_worker_config())
-    extracted = executor._extract_adapter_specs(spec)  # noqa: SLF001
+    extracted = executor._extract_adapter_specs(spec)
 
     assert len(extracted) == 1
     assert extracted[0].name == "math"

@@ -20,7 +20,7 @@ from ...app_state import (
     get_node_registry,
     get_redis_client,
     get_runtime,
-    get_ssh_audit,
+    get_ssh_connection_registry,
     get_ssh_proxy_enabled,
     get_worker_registry,
 )
@@ -35,7 +35,7 @@ from ...hooks import ResourceAction, ResourceKind
 from ...registries.node import NodeRegistry
 from ...registries.worker import Worker, WorkerRegistry
 from ...schemas.ssh import SSHConnectionInfo
-from ...services.ssh_audit import SshAuditService
+from ...services.ssh_connections import SshConnectionRegistry
 from ...task.models import TaskRecord
 from ...task.runtime import TaskRuntime
 from ...utils.misc import filter_models_by_queries
@@ -93,7 +93,9 @@ async def ssh_proxy(
     proxy_enabled: bool = Depends(get_ssh_proxy_enabled),
     node_registry: NodeRegistry = Depends(get_node_registry),
     worker_registry: WorkerRegistry = Depends(get_worker_registry),
-    ssh_audit: SshAuditService | None = Depends(get_ssh_audit),
+    ssh_connections: SshConnectionRegistry | None = Depends(
+        get_ssh_connection_registry
+    ),
 ) -> None:
     """Proxy an SSH session over WebSocket.
 
@@ -147,7 +149,7 @@ async def ssh_proxy(
     down = relay_down_key(relay_token)
 
     await websocket.accept()
-    if ssh_audit is not None:
+    if ssh_connections is not None:
         ssh_info = safe_get(record.latest_update, "ssh")
         session_id = safe_get(ssh_info, "session_id")
         username = safe_get(ssh_info, "username")
@@ -157,7 +159,7 @@ async def ssh_proxy(
         else:
             source_ip, source_port = client.host, client.port
         try:
-            await ssh_audit.register_connection(
+            await ssh_connections.register_connection(
                 SSHConnectionInfo(
                     connection_id=connection_id,
                     access_mode="proxy",
@@ -238,9 +240,9 @@ async def ssh_proxy(
                     task_id,
                     exc_info=True,
                 )
-        if ssh_audit is not None:
+        if ssh_connections is not None:
             try:
-                await ssh_audit.unregister_connection(connection_id)
+                await ssh_connections.unregister_connection(connection_id)
             except Exception:
                 logger.debug(
                     "Failed to unregister SSH audit connection %s",
@@ -263,13 +265,15 @@ async def ssh_proxy(
 async def list_ssh_connections(
     request: Request,
     principal: PrincipalContext = Depends(authenticate_connection),
-    ssh_audit: SshAuditService | None = Depends(get_ssh_audit),
+    ssh_connections: SshConnectionRegistry | None = Depends(
+        get_ssh_connection_registry
+    ),
     logger: logging.Logger = Depends(get_logger),
 ) -> list[SSHConnectionInfo]:
     await require_permission(
         principal, ResourceKind.SYSTEM, None, ResourceAction.ADMIN, logger
     )
-    if ssh_audit is None:
+    if ssh_connections is None:
         return []
-    connections = await ssh_audit.list_connections()
+    connections = await ssh_connections.list_connections()
     return filter_models_by_queries(connections, request.query_params)

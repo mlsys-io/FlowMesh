@@ -79,7 +79,7 @@ def _make_app() -> tuple[FastAPI, _FakeAsyncRedis, AsyncMock]:
     app.state.ssh_proxy_enabled = True
     app.state.node_registry = node_registry
     app.state.worker_registry = worker_registry
-    app.state.ssh_audit = None
+    app.state.ssh_connections = None
     app.include_router(ssh_router.router, prefix=PREFIX)
     return app, fake_redis, node_registry.exec_node_cmd
 

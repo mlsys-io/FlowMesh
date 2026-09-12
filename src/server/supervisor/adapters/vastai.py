@@ -4,8 +4,10 @@ import threading
 from collections import Counter
 from typing import Any
 
-from pydantic import PrivateAttr, SecretStr
+from pydantic import Field, PrivateAttr, SecretStr, field_validator
 from vastai import VastAI  # type: ignore
+
+from shared.schemas.worker import SSHBackendName
 
 from ... import env
 from ...hooks import PrincipalContext
@@ -19,11 +21,23 @@ from .base import (
     WorkerFactory,
     WorkerTokenType,
 )
+from .ssh import SSHConfig
 from .utils import env_to_secret_str, get_worker_image_name, to_env_str
 
 _PROVIDER_NAME = "vastai"
+_GPULESS_NAMES = frozenset({"", "n/a", "none"})
 
 logger = logging.getLogger("supervisor")
+
+
+def offer_gpu_arch(gpu_name: str | None) -> GpuArch | None:
+    """Classify an offer's GPU, or ``None`` when it has none.
+
+    VastAI names a GPU-less offer ``"N/A"`` rather than omitting the field, so
+    a plain ``is None`` check sends a CPU-only machine the GPU image.
+    """
+    name = (gpu_name or "").strip()
+    return None if name.lower() in _GPULESS_NAMES else GpuArch.from_name(name)
 
 
 class VastAIWorkerConfig(WorkerConfig):
@@ -46,6 +60,20 @@ class VastAIWorkerConfig(WorkerConfig):
     """Label to assign to the VastAI instance"""
     search_limit: int = env.VAST_SEARCH_LIMIT
     """Maximum number of offers to retrieve during search"""
+    enable_ssh: bool = env.ENABLE_SSH_BY_DEFAULT
+    """Whether to enable support for SSH jobs"""
+    ssh: SSHConfig = Field(default_factory=SSHConfig)
+    """Default SSH session configuration."""
+
+    @field_validator("ssh")
+    def reject_docker_session_backend(cls, v: SSHConfig) -> SSHConfig:
+        if v.session_backend is SSHBackendName.DOCKER:
+            raise ValueError(
+                "ssh.session_backend cannot be 'docker' on a VastAI worker: the "
+                "instance exposes no Docker socket, so the worker would advertise no "
+                "ssh capability. Leave it unset or set it to 'process'."
+            )
+        return v
 
     vast_api_key: SecretStr | None = env_to_secret_str("VAST_API_KEY")
     """VastAI API key"""
@@ -180,6 +208,8 @@ class VastAIWorkerAdapter(WorkerAdapter):
     def _base_environment(self) -> dict[str, str]:
         environment = super()._base_environment()
         environment["RESULTS_DIR"] = self.CONTAINER_RESULTS_DIR
+        if self.config.enable_ssh:
+            environment.update(self.config.ssh.to_env())
         return environment
 
     def _start(self) -> bool:
@@ -247,8 +277,7 @@ class VastAIWorkerAdapter(WorkerAdapter):
             logger.debug(
                 "Launching VastAI instance %s for worker %s.", instance_id, self.name
             )
-            gpu_name = instance_info.get("gpu_name")
-            gpu_arch = None if gpu_name is None else GpuArch.from_name(gpu_name)
+            gpu_arch = offer_gpu_arch(instance_info.get("gpu_name"))
             env = self._build_env_str()
             try:
                 resp = self._client.create_instance(

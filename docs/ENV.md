@@ -91,6 +91,22 @@ Spark), set `DOCKER_GPU_RUNTIME=` in the stack env.
 | `SUPERVISOR_GRPC_EXTERNAL_PORT` | – | External port (when port-forwarded) |
 | `SERVER_GRPC_TLS_*` | – | TLS certificate files |
 
+## SSH session backend
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SSH_SESSION_BACKEND` | `auto` | Sandbox a session runs in: `docker` (sibling container), `process` (sshd inside the worker), or `auto` — `docker`, falling back to `process`. |
+| `ENABLE_UNISOLATED_SSH_SESSION` | `false` | Whether a worker that cannot give a session its own OS account may still serve one. |
+| `SSH_RELAY_HOST` | – | Address at which this worker's session ports are reachable from the supervisor that dials the relay. Unset, `docker` publishes loopback and `process` publishes the worker's tailnet address. |
+
+`process` serves one interactive session per worker and ignores `spec.image`.
+Only a root worker can give a session its own account, so `process` is
+unavailable on any other worker unless `ENABLE_UNISOLATED_SSH_SESSION` is set —
+without an account of its own a session runs as the worker and can read its
+environment and credentials. `SSH_MAX_CPU` / `SSH_MAX_MEMORY` / `SSH_MAX_PIDS`,
+the `ENABLE_SSH_GPU_LIMIT` subset, and `ssh -L` forwarding have no effect in
+`process` mode.
+
 ## SSH session resource caps
 
 When `enable_ssh` is true on a Docker worker, these configured
@@ -102,10 +118,25 @@ Unset values mean unbounded (host-wide access).
 | `SSH_MAX_CPU` | – | Max CPU cores per SSH container (float, e.g. `4` or `2.5`). Sets Docker `nano_cpus`. |
 | `SSH_MAX_MEMORY` | – | Max memory per SSH container (e.g. `8Gi`, `512Mi`, or a byte count). Sets Docker `mem_limit`. |
 | `SSH_MAX_PIDS` | – | Max PIDs per SSH container. Sets Docker `pids_limit`. Admin-only — not user-overridable. |
-| `ENABLE_SSH_GPU_LIMIT` | `false` | When `true`, mount only the GPU subset matching the spec (`count` / `type` / `memory`); otherwise mount all worker GPUs. |
+| `ENABLE_SSH_GPU_LIMIT` | `true` | When `true`, expose only the GPU subset matching the spec (`count` / `type` / `memory`); otherwise expose all worker GPUs. |
 
 The effective CPU/memory limit is `min(spec.resources.hardware, worker
 cap)`. A task that requests more than the worker cap is dispatched to
 another worker if one has a larger cap; otherwise the dispatcher
 follows its standard requeue/retry behavior. The worker logs a startup
 warning if SSH is enabled with no cap configured.
+
+## SSH session lifetime
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SSH_DEFAULT_TTL_SEC` | `3600` | Session TTL when `spec.ttlSeconds` is unset |
+| `SSH_MAX_TTL_SEC` | `28800` | Upper bound on session TTL |
+| `SSH_DEFAULT_IDLE_SEC` | `900` | Idle timeout when `spec.idleTimeoutSeconds` is unset |
+
+An interactive session is stopped once it has had no established SSH
+connection for its idle timeout, which is clamped to the TTL. The idle
+clock starts when the session does, so a session nobody ever connects
+to is reaped too; set `spec.idleTimeoutSeconds: 0` to disable idle
+reaping and rely on the TTL alone. Idle reaping does not apply to
+non-interactive tasks, which hold no SSH connection by design.

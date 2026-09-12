@@ -99,7 +99,7 @@ class PortForwardConfig:
     enabled: bool = True
     persistent_listeners: bool = True
     ssh_proxy_enabled: bool = True
-    ssh_audit_enabled: bool = True
+    ssh_connection_registry_enabled: bool = True
     serve_proxy_enabled: bool = True
     bind_host: str = "0.0.0.0"
     public_host: str = "localhost"
@@ -112,8 +112,9 @@ class PortForwardConfig:
             enabled=parse_bool_env("ENABLE_SERVER_PORT_FORWARD", True),
             persistent_listeners=parse_bool_env("ENABLE_PERSISTENT_PORT_FORWARD", True),
             ssh_proxy_enabled=parse_bool_env("ENABLE_SERVER_SSH_PROXY", True),
-            ssh_audit_enabled=parse_bool_env(
-                "ENABLE_SERVER_SSH_CONNECTION_AUDIT", True
+            ssh_connection_registry_enabled=parse_bool_env(
+                "ENABLE_SERVER_SSH_CONNECTION_REGISTRY",
+                parse_bool_env("ENABLE_SERVER_SSH_CONNECTION_AUDIT", True),
             ),
             serve_proxy_enabled=parse_bool_env("ENABLE_SERVER_SERVE_PROXY", True),
             bind_host=os.getenv("SERVER_PORT_FORWARD_BIND_HOST", "0.0.0.0").strip(),
