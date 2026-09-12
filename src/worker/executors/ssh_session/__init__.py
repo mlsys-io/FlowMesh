@@ -2,6 +2,7 @@
 
 import logging
 
+from shared.schemas.worker import SSHBackendName
 from worker.config import WorkerConfig
 
 from .backends.docker import DockerSessionBackend
@@ -24,40 +25,39 @@ from .config import (
 
 logger = logging.getLogger(__name__)
 
-AUTO_BACKEND = "auto"
-
-BACKENDS: dict[str, type[SSHSessionBackend]] = {
+BACKENDS: dict[SSHBackendName, type[SSHSessionBackend]] = {
     DockerSessionBackend.name: DockerSessionBackend,
     ProcessSessionBackend.name: ProcessSessionBackend,
 }
 
 
-def select_backend_cls(config: WorkerConfig) -> type[SSHSessionBackend] | None:
-    """Resolve the session backend this worker should use, if any.
+def _resolve_auto(config: WorkerConfig) -> type[SSHSessionBackend] | None:
+    """Pick a backend for ``auto``, preferring the isolation Docker gives."""
+    for backend_cls in (DockerSessionBackend, ProcessSessionBackend):
+        if backend_cls.is_available(config):
+            return backend_cls
+    return None
 
-    ``auto`` resolves to Docker alone: a worker image that happens to ship
-    ``sshd`` must not silently downgrade to running sessions in its own
-    namespace, so process mode is opt-in.
-    """
-    requested = (config.ssh_session_backend or AUTO_BACKEND).strip().lower()
-    if requested == AUTO_BACKEND:
-        backend_cls: type[SSHSessionBackend] = DockerSessionBackend
-    else:
-        selected = BACKENDS.get(requested)
-        if selected is None:
-            logger.warning(
-                "Unknown SSH_SESSION_BACKEND %r; expected one of %s or %r",
-                requested,
-                ", ".join(sorted(BACKENDS)),
-                AUTO_BACKEND,
-            )
-            return None
-        backend_cls = selected
+
+def select_backend_cls(config: WorkerConfig) -> type[SSHSessionBackend] | None:
+    """Resolve the session backend this worker should use, if any."""
+    raw = (config.ssh_session_backend or SSHBackendName.AUTO).strip().lower()
+    try:
+        requested = SSHBackendName(raw)
+    except ValueError:
+        logger.warning(
+            "Unknown SSH_SESSION_BACKEND %r; expected one of %s",
+            raw,
+            ", ".join(sorted(SSHBackendName)),
+        )
+        return None
+    if requested is SSHBackendName.AUTO:
+        return _resolve_auto(config)
+    backend_cls = BACKENDS[requested]
     return backend_cls if backend_cls.is_available(config) else None
 
 
 __all__ = [
-    "AUTO_BACKEND",
     "BACKENDS",
     "LOOPBACK_RELAY_HOST",
     "DockerSessionBackend",

@@ -19,6 +19,7 @@ from typing import ClassVar
 
 import psutil
 
+from shared.schemas.worker import SSHBackendName
 from shared.tasks.worker_message import WorkerHardware
 from worker.config import WorkerConfig
 
@@ -107,7 +108,7 @@ class SSHSession(ABC):
 class SSHSessionBackend(ABC):
     """Creates and reaps SSH sessions for one worker."""
 
-    name: ClassVar[str]
+    name: ClassVar[SSHBackendName]
     supports_noninteractive: ClassVar[bool] = True
     """Whether the backend can run a user-supplied image non-interactively."""
 

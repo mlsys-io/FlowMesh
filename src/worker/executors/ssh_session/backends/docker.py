@@ -19,6 +19,7 @@ from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any, cast
 
 import worker
+from shared.schemas.worker import SSHBackendName
 from shared.tasks.worker_message import WorkerHardware
 from shared.utils import parse_float_env
 from shared.utils.http import auth_headers
@@ -99,7 +100,7 @@ class SSHMountPlan:
 
 
 class DockerSessionBackend(SSHSessionBackend):
-    name = "docker"
+    name = SSHBackendName.DOCKER
     supports_noninteractive = True
 
     def __init__(

@@ -32,6 +32,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+from shared.schemas.worker import SSHBackendName
 from shared.tasks.worker_message import WorkerHardware
 from shared.utils import parse_float_env
 from shared.utils.manifest import ARTIFACTS_DIR
@@ -89,7 +90,7 @@ def find_ssh_keygen() -> str | None:
 
 
 class ProcessSessionBackend(SSHSessionBackend):
-    name = "process"
+    name = SSHBackendName.PROCESS
     supports_noninteractive = False
 
     def __init__(
@@ -101,6 +102,14 @@ class ProcessSessionBackend(SSHSessionBackend):
 
     @classmethod
     def is_available(cls, config: WorkerConfig) -> bool:
+        if os.getuid() != 0 and not config.enable_unisolated_ssh_session:
+            logger.info(
+                "Process SSH backend unavailable: this worker is not root, so a "
+                "session would run under its own account and could read its "
+                "credentials. Set ENABLE_UNISOLATED_SSH_SESSION=true to accept "
+                "that and serve sessions anyway."
+            )
+            return False
         if find_sshd() is None:
             logger.info(
                 "Process SSH backend unavailable: no sshd binary found "

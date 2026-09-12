@@ -3,6 +3,7 @@ import os
 import tempfile
 from pathlib import Path
 
+from shared.schemas.worker import SSHBackendName
 from shared.utils import parse_bool_env, parse_float_env, parse_int_env
 
 NODE_NAMESPACE: str = os.getenv("NODE_NAMESPACE") or "flowmesh"
@@ -92,7 +93,18 @@ SSH_MAX_CPU: float | None = parse_float_env("SSH_MAX_CPU")
 SSH_MAX_MEMORY: str | None = os.getenv("SSH_MAX_MEMORY", "").strip() or None
 SSH_MAX_PIDS: int | None = parse_int_env("SSH_MAX_PIDS")
 ENABLE_SSH_GPU_LIMIT: bool = parse_bool_env("ENABLE_SSH_GPU_LIMIT", True)
-SSH_SESSION_BACKEND: str | None = os.getenv("SSH_SESSION_BACKEND", "").strip() or None
+ENABLE_UNISOLATED_SSH_SESSION: bool = parse_bool_env(
+    "ENABLE_UNISOLATED_SSH_SESSION", False
+)
+_ssh_session_backend = os.getenv("SSH_SESSION_BACKEND", "").strip().lower() or None
+if _ssh_session_backend is not None and _ssh_session_backend not in set(SSHBackendName):
+    raise RuntimeError(
+        f"SSH_SESSION_BACKEND={_ssh_session_backend!r} is not one of "
+        f"{', '.join(sorted(SSHBackendName))}"
+    )
+SSH_SESSION_BACKEND: SSHBackendName | None = (
+    SSHBackendName(_ssh_session_backend) if _ssh_session_backend else None
+)
 SSH_RELAY_HOST: str | None = os.getenv("SSH_RELAY_HOST", "").strip() or None
 
 LOG_FILE: str = os.getenv("LOG_FILE", "server.log")

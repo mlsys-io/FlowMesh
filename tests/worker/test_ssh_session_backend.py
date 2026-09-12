@@ -81,12 +81,27 @@ class TestBackendSelection:
             is DockerSessionBackend
         )
 
-    def test_auto_never_falls_back_to_process(
+    def test_auto_falls_back_to_an_available_process_backend(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Whether that backend is safe to use is its own call to make."""
+        monkeypatch.setattr(docker_backend_module, "docker_available", lambda: False)
+        monkeypatch.setattr(
+            ProcessSessionBackend, "is_available", classmethod(lambda cls, config: True)
+        )
+        assert (
+            select_backend_cls(make_live_worker_config(tmp_path))
+            is ProcessSessionBackend
+        )
+
+    def test_auto_yields_nothing_when_no_backend_is_available(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setattr(docker_backend_module, "docker_available", lambda: False)
         monkeypatch.setattr(
-            ProcessSessionBackend, "is_available", classmethod(lambda cls, config: True)
+            ProcessSessionBackend,
+            "is_available",
+            classmethod(lambda cls, config: False),
         )
         assert select_backend_cls(make_live_worker_config(tmp_path)) is None
 

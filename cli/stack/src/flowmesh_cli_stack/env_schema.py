@@ -325,12 +325,6 @@ STACK_ENV_SCHEMA = EnvSchema(
                     "ENABLE_SERVER_SSH_CONNECTION_REGISTRY",
                     "true",
                     var_type=EnvVarType.BOOL,
-                    description=[
-                        "Whether the server tracks currently-relayed SSH",
-                        "connections. The registry holds live rows only:",
-                        "a row is removed when the connection closes, and",
-                        "direct-mode sessions never reach the server at all.",
-                    ],
                 ),
             ],
         ),
@@ -367,6 +361,15 @@ STACK_ENV_SCHEMA = EnvSchema(
                         "Whether to apply requested GPU limits to SSH tasks.",
                         "If false, SSH tasks are allocated all available GPUs",
                         "regardless of their resource requests.",
+                    ],
+                ),
+                EnvVar(
+                    "ENABLE_UNISOLATED_SSH_SESSION",
+                    "false",
+                    var_type=EnvVarType.BOOL,
+                    description=[
+                        "Whether a non-root worker may serve SSH sessions,",
+                        "which run as the worker and can read its credentials.",
                     ],
                 ),
                 EnvVar(
