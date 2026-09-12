@@ -1,6 +1,12 @@
 """Tests for server worker configuration models."""
 
+import pytest
+from pydantic import ValidationError
+
+from server.supervisor.adapters.ssh import SSHConfig
+from server.supervisor.adapters.vastai import VastAIWorkerConfig
 from server.supervisor.manager import ServerWorkerConfig, WorkerInitConfig
+from shared.schemas.worker import SSHBackendName
 
 
 class TestWorkerInitConfig:
@@ -55,3 +61,28 @@ class TestServerWorkerConfig:
         assert len(cfg.workers) == 2
         assert cfg.workers[0].provider == "docker"
         assert cfg.workers[1].provider == "vastai"
+
+
+class TestVastAISessionBackend:
+    """A VastAI instance is the worker container and exposes no Docker socket."""
+
+    def test_docker_backend_is_rejected(self) -> None:
+        with pytest.raises(ValidationError, match="cannot be 'docker'"):
+            VastAIWorkerConfig(ssh=SSHConfig(session_backend=SSHBackendName.DOCKER))
+
+    def test_rejection_ignores_case_and_padding(self) -> None:
+        with pytest.raises(ValidationError, match="cannot be 'docker'"):
+            VastAIWorkerConfig(
+                ssh=SSHConfig.model_validate({"session_backend": "  Docker  "})
+            )
+
+    def test_process_backend_is_accepted(self) -> None:
+        cfg = VastAIWorkerConfig(ssh=SSHConfig(session_backend=SSHBackendName.PROCESS))
+        assert cfg.ssh.session_backend is SSHBackendName.PROCESS
+
+    def test_auto_is_accepted(self) -> None:
+        cfg = VastAIWorkerConfig(ssh=SSHConfig(session_backend=SSHBackendName.AUTO))
+        assert cfg.ssh.session_backend is SSHBackendName.AUTO
+
+    def test_unset_backend_is_accepted(self) -> None:
+        VastAIWorkerConfig(ssh=SSHConfig(session_backend=None))

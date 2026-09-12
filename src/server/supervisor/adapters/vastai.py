@@ -4,8 +4,10 @@ import threading
 from collections import Counter
 from typing import Any
 
-from pydantic import Field, PrivateAttr, SecretStr
+from pydantic import Field, PrivateAttr, SecretStr, field_validator
 from vastai import VastAI  # type: ignore
+
+from shared.schemas.worker import SSHBackendName
 
 from ... import env
 from ...hooks import PrincipalContext
@@ -47,14 +49,20 @@ class VastAIWorkerConfig(WorkerConfig):
     """Label to assign to the VastAI instance"""
     search_limit: int = env.VAST_SEARCH_LIMIT
     """Maximum number of offers to retrieve during search"""
-
     enable_ssh: bool = env.ENABLE_SSH_BY_DEFAULT
     """Whether to enable support for SSH jobs"""
     ssh: SSHConfig = Field(default_factory=SSHConfig)
-    """Default SSH session configuration.
+    """Default SSH session configuration."""
 
-    A rented instance is itself the worker container and has no Docker socket,
-    so ``ssh.session_backend`` has to name a backend that does not need one."""
+    @field_validator("ssh")
+    def reject_docker_session_backend(cls, v: SSHConfig) -> SSHConfig:
+        if v.session_backend is SSHBackendName.DOCKER:
+            raise ValueError(
+                "ssh.session_backend cannot be 'docker' on a VastAI worker: the "
+                "instance exposes no Docker socket, so the worker would advertise no "
+                "ssh capability. Leave it unset or set it to 'process'."
+            )
+        return v
 
     vast_api_key: SecretStr | None = env_to_secret_str("VAST_API_KEY")
     """VastAI API key"""
