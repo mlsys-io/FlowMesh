@@ -109,6 +109,12 @@ uv run pytest tests/test_core_flow.py  # Single file
 
 If your change touches shared schemas or proto definitions, verify downstream compatibility across Server and Worker packages.
 
+## CI runners
+
+CI runs on GitHub-hosted `ubuntu-latest`. Pushes to `main` run on `nus-flowmesh`, an ARC scale set on the NUS build farm, when the repository variable `NUS_RUNNERS` is `on`. Every other event, including pull requests from forks, runs on `ubuntu-latest`.
+
+The NUS runners sit inside the NUS network, so only triggers that required write access reach them. Set `NUS_RUNNERS` to `off` to move every job back to GitHub-hosted runners.
+
 ## Dependency Pins
 
 Runtime dependency versions live in two places with different styles:
