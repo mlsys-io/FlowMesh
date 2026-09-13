@@ -789,7 +789,7 @@ class EventMonitor:
         payload: dict[str, Any],
         *,
         key: str,
-        normalize_mode: Callable[[str, str | None, dict[str, Any]], str],
+        normalize_mode: Callable[[str, str | None], str],
         inject_session_id: bool,
         proxy_endpoint_path: Callable[[str], str] | None = None,
     ) -> dict[str, Any]:
@@ -800,7 +800,7 @@ class EventMonitor:
         payload = payload.copy()
 
         mode = str(inner.get("mode") or "direct")
-        normalized_mode = normalize_mode(mode, worker_id, inner)
+        normalized_mode = normalize_mode(mode, worker_id)
         if normalized_mode == "direct":
             return self._report_direct(
                 payload,
@@ -1109,9 +1109,7 @@ class EventMonitor:
                 "Failed to unregister forward target for task %s: %s", task_id, exc
             )
 
-    def _normalize_ssh_mode(
-        self, mode: str, worker_id: str | None, inner: dict[str, Any]
-    ) -> str:
+    def _normalize_ssh_mode(self, mode: str, worker_id: str | None) -> str:
         """Pick the best mode this server can serve the session in.
 
         `direct` is always available as the last one: the worker advertises the
@@ -1134,9 +1132,7 @@ class EventMonitor:
             return "direct"
         return "direct"
 
-    def _normalize_serve_mode(
-        self, mode: str, worker_id: str | None, inner: dict[str, Any]
-    ) -> str:
+    def _normalize_serve_mode(self, mode: str, worker_id: str | None) -> str:
         """Pick the best mode this server can serve the endpoint in.
 
         `direct` is always available as the last one: the worker advertises the
