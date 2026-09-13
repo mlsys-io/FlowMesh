@@ -15,8 +15,7 @@ service Supervisor {
   rpc PushEvents(stream EventMessage) returns (google.protobuf.Empty);
   // Accept a stream of task-scoped logs for relay to the supervisor.
   rpc PushLogs(stream LogMessage) returns (google.protobuf.Empty);
-  // Relay one TCP connection for an endpoint the worker owns. Opened by the
-  // worker, so the supervisor never has to reach the worker's listening port.
+  // Relay one TCP connection for an endpoint the worker owns.
   rpc Relay(stream RelayFrame) returns (stream RelayFrame);
 }
 

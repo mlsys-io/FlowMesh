@@ -146,8 +146,7 @@ class RelayUplinkService:
         if entry is None:
             return
         self._logger.warning(
-            "No relay stream for endpoint %s within %ss. If this worker was not "
-            "restarted with the server, it may predate worker-initiated relays.",
+            "No relay stream for endpoint %s within %ss; abandoning it.",
             endpoint_id,
             _ATTACH_TIMEOUT_SEC,
         )

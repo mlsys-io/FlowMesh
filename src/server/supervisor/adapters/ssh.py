@@ -50,8 +50,7 @@ class SSHConfig(BaseModel):
     direct_host: str | None = env.SSH_DIRECT_HOST
     """Address a ``direct`` session is advertised at.
 
-    Only needed when the worker cannot discover an address its clients can
-    reach."""
+    Only needed when the worker cannot discover an address its clients can reach."""
 
     @field_validator("session_backend", mode="before")
     def normalize_session_backend(cls, v: Any) -> Any:

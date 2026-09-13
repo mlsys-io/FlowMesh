@@ -97,9 +97,7 @@ class SupervisorServicer:
         raise NotImplementedError("Method not implemented!")
 
     def Relay(self, request_iterator, context):
-        """Relay one TCP connection for an endpoint the worker owns. Opened by the
-        worker, so the supervisor never has to reach the worker's listening port.
-        """
+        """Relay one TCP connection for an endpoint the worker owns."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details("Method not implemented!")
         raise NotImplementedError("Method not implemented!")
