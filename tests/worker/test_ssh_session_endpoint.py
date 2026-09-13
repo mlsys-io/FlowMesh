@@ -14,6 +14,7 @@ import pytest
 from shared.tasks.specs import SSHSpecStrict
 from shared.tasks.worker_message import WorkerTaskMessage
 from tests.worker.factories import DEFAULT_WORKER_CONFIG, make_live_worker_config
+from worker.config import WorkerConfig
 from worker.executors.ssh_executor import SSHExecutor
 from worker.executors.ssh_session import SSHConfig
 from worker.executors.ssh_session.backends import docker as docker_backend_module
@@ -71,9 +72,8 @@ class TestSessionHost:
         assert backend.session_host() == socket.getfqdn()
 
     def test_docker_backend_honours_explicit_override(self, tmp_path: Path) -> None:
-        """The override outlives the relay it was named for."""
         backend = DockerSessionBackend(
-            make_live_worker_config(tmp_path, ssh_relay_host="10.0.0.9")
+            make_live_worker_config(tmp_path, ssh_direct_host="10.0.0.9")
         )
         assert backend.session_host() == "10.0.0.9"
 
@@ -93,7 +93,7 @@ class TestSessionHost:
             process_backend_module, "resolve_tailnet_address", lambda: _TAILNET_ADDRESS
         )
         backend = ProcessSessionBackend(
-            make_live_worker_config(tmp_path, ssh_relay_host="10.0.0.9")
+            make_live_worker_config(tmp_path, ssh_direct_host="10.0.0.9")
         )
         assert backend.session_host() == "10.0.0.9"
 
@@ -204,3 +204,33 @@ class TestSessionBindHost:
         executor._wait_session_ready(cast(Any, _ReadySession()), "ssn-1234", task, cfg)
 
         assert emitted["ssh"]["_bind_host"] == "0.0.0.0"
+
+
+class TestDirectHostFromEnv:
+    @pytest.fixture(autouse=True)
+    def _required_env(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        monkeypatch.setenv("WORKER_TOKEN", "tok")
+        monkeypatch.setenv("SUPERVISOR_GRPC_TARGET", "supervisor:50051")
+        monkeypatch.setenv("WORKER_HB_FILE", (tmp_path / "worker.hb").as_posix())
+        monkeypatch.delenv("SSH_DIRECT_HOST", raising=False)
+        monkeypatch.delenv("SSH_RELAY_HOST", raising=False)
+
+    def test_unset_leaves_the_worker_to_discover_its_address(self) -> None:
+        assert WorkerConfig.from_env().ssh_direct_host is None
+
+    def test_reads_the_current_name(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("SSH_DIRECT_HOST", "10.0.0.9")
+        assert WorkerConfig.from_env().ssh_direct_host == "10.0.0.9"
+
+    def test_falls_back_to_the_former_name(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("SSH_RELAY_HOST", "10.0.0.8")
+        assert WorkerConfig.from_env().ssh_direct_host == "10.0.0.8"
+
+    def test_the_current_name_wins_over_the_former(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("SSH_DIRECT_HOST", "10.0.0.9")
+        monkeypatch.setenv("SSH_RELAY_HOST", "10.0.0.8")
+        assert WorkerConfig.from_env().ssh_direct_host == "10.0.0.9"

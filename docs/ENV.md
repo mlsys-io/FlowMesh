@@ -97,7 +97,7 @@ Spark), set `DOCKER_GPU_RUNTIME=` in the stack env.
 |----------|---------|-------------|
 | `SSH_SESSION_BACKEND` | `auto` | Sandbox a session runs in: `docker` (sibling container), `process` (sshd inside the worker), or `auto` — `docker`, falling back to `process`. |
 | `ENABLE_UNISOLATED_SSH_SESSION` | `false` | Whether a worker that cannot give a session its own OS account may still serve one. |
-| `SSH_RELAY_HOST` | – | Address a `direct` session is advertised at. Unset, the worker uses its tailnet address, else its FQDN. `proxy` and `forward` do not use it: the worker opens the relay itself. |
+| `SSH_DIRECT_HOST` | – | Address a `direct` session is advertised at. Unset, the worker uses its tailnet address, else its FQDN. Only `direct` uses it: a relayed session is reached over a stream the worker opens. |
 
 A `proxy` or `forward` session is reached over a relay the worker opens to its
 supervisor, so its sshd binds loopback and the worker needs no inbound

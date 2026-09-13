@@ -149,7 +149,7 @@ class SSHSessionBackend(ABC):
         A ``direct`` session is dialled by the client, so this must be routable
         from wherever the client is.
         """
-        if override := self._config.ssh_relay_host:
+        if override := self._config.ssh_direct_host:
             return override
         return self._default_session_host()
 

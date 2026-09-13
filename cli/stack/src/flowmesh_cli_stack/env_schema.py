@@ -385,7 +385,7 @@ STACK_ENV_SCHEMA = EnvSchema(
                     ],
                 ),
                 EnvVar(
-                    "SSH_RELAY_HOST",
+                    "SSH_DIRECT_HOST",
                     description=[
                         "Address a direct-mode session is advertised at.",
                         "Defaults to the worker's tailnet address, else its",

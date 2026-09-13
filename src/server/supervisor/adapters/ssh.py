@@ -47,7 +47,7 @@ class SSHConfig(BaseModel):
 
     A non-root worker has no second identity to give the session, so it runs
     under the worker's own account and can read its credentials."""
-    relay_host: str | None = env.SSH_RELAY_HOST
+    direct_host: str | None = env.SSH_DIRECT_HOST
     """Address a ``direct`` session is advertised at.
 
     Only needed when the worker cannot discover an address its clients can
@@ -73,7 +73,7 @@ class SSHConfig(BaseModel):
             "ENABLE_SSH_GPU_LIMIT": self.enable_gpu_limit,
             "SSH_SESSION_BACKEND": self.session_backend,
             "ENABLE_UNISOLATED_SSH_SESSION": self.enable_unisolated_session,
-            "SSH_RELAY_HOST": self.relay_host,
+            "SSH_DIRECT_HOST": self.direct_host,
         }
         return {k: to_env_str(v) for k, v in mapping.items() if v is not None}
 
