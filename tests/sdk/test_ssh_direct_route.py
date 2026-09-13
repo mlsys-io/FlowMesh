@@ -66,7 +66,9 @@ class TestRenderedCommandLabels:
         labels = dict(ssh_connection_commands("tsk-1", info, "http://s:8000"))
         phrase = direct_route_scope(info)
         assert line is not None and f"({phrase})" in line
-        assert any(f"({phrase})" in label or f", {phrase})" in label for label in labels)
+        assert any(
+            f"({phrase})" in label or f", {phrase})" in label for label in labels
+        )
 
     def test_a_degraded_session_labels_its_only_command_with_the_scope(self) -> None:
         """`direct` here is the sole route, so the scope matters most."""
