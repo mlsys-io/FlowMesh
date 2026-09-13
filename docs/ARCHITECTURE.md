@@ -146,7 +146,12 @@ scripts/dev/            compile_protos, sync_requirements, check_env_examples
   endpoint registry when it starts listening; the supervisor names only that
   endpoint, never a host and port, and the worker refuses an id it has not
   published. Only `direct` mode still needs the worker to be reachable, which is
-  what that mode means. A worker binary older than this must be restarted with
+  what that mode means. A session or `serve` endpoint that no relay mode can
+  carry is reported as `direct` at the address it actually listens on —
+  loopback, when it bound for a relay — rather than discarded, since that
+  address still reaches it from the worker's own machine. Only an endpoint that
+  published no address at all fails its task. A worker binary older than this
+  must be restarted with
   the server: it ignores the relay request, and the session fails after the
   supervisor's attach timeout.
 - **Stale worker reaping.** The watchdog deletes a dead worker's registry record

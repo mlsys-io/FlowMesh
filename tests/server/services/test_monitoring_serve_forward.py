@@ -47,6 +47,10 @@ def _serve_forward_payload(host: str = "127.0.0.1", port: int = 8000) -> dict:
     }
 
 
+def _addressless_payload() -> dict:
+    return {"serve": {"model": "Qwen/Qwen3-7B", "mode": "forward"}}
+
+
 class TestServeForwardRegistration:
     def test_forward_mode_calls_register_port_forward(self) -> None:
         """A serve TASK_UPDATE with mode=forward triggers register_port_forward."""
@@ -169,30 +173,43 @@ class TestServeForwardRegistration:
         assert result["serve"]["host"] == "worker-1.cluster.local"
         assert result["serve"]["port"] == 8000
 
-    def test_no_forward_service_drops_serve_endpoint(self) -> None:
-        """When forward is None, forward mode is rejected and the serve endpoint
-        is dropped rather than degraded to direct (serve has no proxy fallback)."""
+    def test_no_forward_service_degrades_to_direct(self) -> None:
+        """The endpoint is reported where it listens rather than discarded."""
         monitor = _make_monitor(port_forward=None)
 
         result = monitor._handle_serve_task_update(
             "tsk-abc", "wrk-1", _serve_forward_payload()
         )
 
-        assert "serve" not in result
+        assert result["serve"]["mode"] == "direct"
+        assert result["serve"]["host"] == "127.0.0.1"
+        assert result["serve"]["port"] == 8000
+        monitor._dispatcher.fail_task.assert_not_called()  # type: ignore[attr-defined]
 
-    def test_no_forward_service_fails_task(self) -> None:
-        """With no way to serve the endpoint, the task must be failed instead of
-        left DISPATCHED with an executor running to no purpose until its TTL."""
+    def test_no_forward_service_prefers_the_serve_proxy(self) -> None:
+        monitor = _make_monitor(port_forward=None, serve_proxy_enabled=True)
+
+        result = monitor._handle_serve_task_update(
+            "tsk-abc", "wrk-1", _serve_forward_payload()
+        )
+
+        assert result["serve"]["mode"] == "proxy"
+
+    def test_an_endpoint_without_an_address_fails_the_task(self) -> None:
+        """Nothing to hand the client: the one case with no fallback left."""
         monitor = _make_monitor(port_forward=None)
 
-        monitor._handle_serve_task_update("tsk-abc", "wrk-1", _serve_forward_payload())
+        result = monitor._handle_serve_task_update(
+            "tsk-abc", "wrk-1", _addressless_payload()
+        )
 
+        assert "serve" not in result
         monitor._dispatcher.fail_task.assert_called_once()  # type: ignore[attr-defined]
         call_args = monitor._dispatcher.fail_task.call_args  # type: ignore[attr-defined]
         assert call_args.args[0] == "tsk-abc"
         assert call_args.kwargs["worker_id"] == "wrk-1"
 
-    def test_no_forward_service_also_stops_the_worker(self) -> None:
+    def test_an_endpoint_without_an_address_also_stops_the_worker(self) -> None:
         """Marking the task failed only updates scheduling state; it does not
         stop the worker process. Without an explicit stop, the vLLM server
         the executor started keeps running (and holding its GPU) until the
@@ -201,7 +218,7 @@ class TestServeForwardRegistration:
         worker = SimpleNamespace(id="wrk-1")
         monitor._worker_registry.get_worker.return_value = worker  # type: ignore[attr-defined]
 
-        monitor._handle_serve_task_update("tsk-abc", "wrk-1", _serve_forward_payload())
+        monitor._handle_serve_task_update("tsk-abc", "wrk-1", _addressless_payload())
 
         monitor._worker_registry.get_worker.assert_called_once_with(  # type: ignore[attr-defined]
             "wrk-1"
@@ -220,7 +237,7 @@ class TestServeForwardRegistration:
         `publish_interrupt` must not be invoked (e.g. with `None`)."""
         monitor = _make_monitor(port_forward=None)
 
-        monitor._handle_serve_task_update("tsk-abc", None, _serve_forward_payload())
+        monitor._handle_serve_task_update("tsk-abc", None, _addressless_payload())
 
         monitor._worker_registry.get_worker.assert_not_called()  # type: ignore[attr-defined]
         monitor._worker_registry.publish_interrupt.assert_not_called()  # type: ignore[attr-defined]
@@ -231,7 +248,7 @@ class TestServeForwardRegistration:
         monitor = _make_monitor(port_forward=None)
         monitor._worker_registry.get_worker.return_value = None  # type: ignore[attr-defined]
 
-        monitor._handle_serve_task_update("tsk-abc", "wrk-1", _serve_forward_payload())
+        monitor._handle_serve_task_update("tsk-abc", "wrk-1", _addressless_payload())
 
         monitor._worker_registry.publish_interrupt.assert_not_called()  # type: ignore[attr-defined]
 
@@ -245,13 +262,12 @@ class TestServeForwardRegistration:
             "redis unavailable"
         )
 
-        monitor._handle_serve_task_update("tsk-abc", "wrk-1", _serve_forward_payload())
+        monitor._handle_serve_task_update("tsk-abc", "wrk-1", _addressless_payload())
 
         monitor._dispatcher.fail_task.assert_called_once()  # type: ignore[attr-defined]
 
-    def test_register_port_forward_failure_drops_serve_endpoint(self) -> None:
-        """If register_port_forward raises, the serve endpoint is dropped so the
-        worker-internal address is never stored as a client-facing endpoint."""
+    def test_register_port_forward_failure_degrades_to_direct(self) -> None:
+        """The vLLM server is up and listening; report where, rather than drop."""
         port_forward = MagicMock()
         port_forward.register_port_forward.side_effect = RuntimeError("port exhausted")
 
@@ -262,23 +278,9 @@ class TestServeForwardRegistration:
             "tsk-abc", "wrk-1", _serve_forward_payload()
         )
 
-        assert "serve" not in result
-
-    def test_register_port_forward_failure_fails_task(self) -> None:
-        """A forward-registration failure must fail the task (no fallback for
-        serve) so the worker executor is torn down rather than left running."""
-        port_forward = MagicMock()
-        port_forward.register_port_forward.side_effect = RuntimeError("port exhausted")
-
-        monitor = _make_monitor(port_forward=port_forward)
-        monitor._runtime.get_record.return_value = None  # type: ignore[attr-defined]
-
-        monitor._handle_serve_task_update("tsk-abc", "wrk-1", _serve_forward_payload())
-
-        monitor._dispatcher.fail_task.assert_called_once()  # type: ignore[attr-defined]
-        call_args = monitor._dispatcher.fail_task.call_args  # type: ignore[attr-defined]
-        assert call_args.args[0] == "tsk-abc"
-        assert call_args.kwargs["worker_id"] == "wrk-1"
+        assert result["serve"]["mode"] == "direct"
+        assert result["serve"]["host"] == "127.0.0.1"
+        monitor._dispatcher.fail_task.assert_not_called()  # type: ignore[attr-defined]
 
     def test_direct_mode_does_not_fail_task(self) -> None:
         """A healthy direct-mode update must never fail the task."""
@@ -315,8 +317,7 @@ class TestServeForwardRegistration:
         monitor._dispatcher.fail_task.assert_not_called()  # type: ignore[attr-defined]
 
     def test_ssh_forward_failure_does_not_fail_task(self) -> None:
-        """SSH keeps its fall_back_to_direct behavior; forward-registration
-        failure must never fail the SSH task."""
+        """Forward-registration failure degrades the SSH session, never fails it."""
         port_forward = MagicMock()
         port_forward.register_port_forward.side_effect = RuntimeError("port exhausted")
 
@@ -390,25 +391,19 @@ class TestServeProxyRegistration:
         assert result["serve"]["api_key"] == "key123"
         assert result["serve"]["model"] == "Qwen/Qwen3-7B"
 
-    def test_proxy_mode_disabled_drops_endpoint(self) -> None:
-        """When the relay proxy is disabled, proxy mode is rejected like an
-        unservable access mode (dropped, no fallback)."""
+    def test_proxy_mode_disabled_degrades_to_direct(self) -> None:
         monitor = _make_monitor(port_forward=None, serve_proxy_enabled=False)
 
         result = monitor._handle_serve_task_update(
             "tsk-abc", "wrk-1", _serve_proxy_payload()
         )
 
-        assert "serve" not in result
-
-    def test_proxy_mode_disabled_fails_task(self) -> None:
-        monitor = _make_monitor(port_forward=None, serve_proxy_enabled=False)
-
-        monitor._handle_serve_task_update("tsk-abc", "wrk-1", _serve_proxy_payload())
-
-        monitor._dispatcher.fail_task.assert_called_once()  # type: ignore[attr-defined]
+        assert result["serve"]["mode"] == "direct"
+        assert result["serve"]["host"] == "127.0.0.1"
+        monitor._dispatcher.fail_task.assert_not_called()  # type: ignore[attr-defined]
 
     def test_proxy_mode_does_not_fall_back_to_ssh_proxy_capability(self) -> None:
+        """The SSH proxy is a different route; it cannot carry a serve endpoint."""
         monitor = _make_monitor(
             port_forward=None,
             ssh_proxy_enabled=True,
@@ -419,8 +414,7 @@ class TestServeProxyRegistration:
             "tsk-abc", "wrk-1", _serve_proxy_payload()
         )
 
-        assert "serve" not in result
-        monitor._dispatcher.fail_task.assert_called_once()  # type: ignore[attr-defined]
+        assert result["serve"]["mode"] == "direct"
 
     def test_proxy_mode_success_does_not_fail_task(self) -> None:
         monitor = _make_monitor(port_forward=None, serve_proxy_enabled=True)
@@ -429,14 +423,14 @@ class TestServeProxyRegistration:
 
         monitor._dispatcher.fail_task.assert_not_called()  # type: ignore[attr-defined]
 
-    def test_proxy_mode_no_worker_id_drops_endpoint(self) -> None:
+    def test_proxy_mode_no_worker_id_degrades_to_direct(self) -> None:
         monitor = _make_monitor(port_forward=None, serve_proxy_enabled=True)
 
         result = monitor._handle_serve_task_update(
             "tsk-abc", None, _serve_proxy_payload()
         )
 
-        assert "serve" not in result
+        assert result["serve"]["mode"] == "direct"
 
 
 class TestServerBaseUrlValidation:
