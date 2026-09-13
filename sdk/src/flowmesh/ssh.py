@@ -164,6 +164,31 @@ def ssh_proxy_url(base_url: str, task_id: str) -> str:
     return urlunsplit((ws_scheme, base.netloc, path, "", ""))
 
 
+def direct_route_scope(ssh_info: dict[str, Any]) -> str:
+    """Phrase naming where a session's direct route reaches it from.
+
+    Empty when the worker published no scope.
+    """
+    scope = ssh_info.get("directScope")
+    if not scope:
+        return ""
+    worker = ssh_info.get("workerId")
+    if scope == "loopback" and worker:
+        return f"loopback on worker {worker}"
+    return str(scope)
+
+
+def describe_direct_route(ssh_info: dict[str, Any], host: Any, port: Any) -> str | None:
+    """Render ``host``/``port`` with the scope the worker published for it.
+
+    Returns None when the worker published no scope.
+    """
+    note = direct_route_scope(ssh_info)
+    if not host or port is None or not note:
+        return None
+    return f"Direct route: {host}:{port} ({note})"
+
+
 def ssh_connection_commands(
     task_id: str,
     ssh_info: dict[str, Any],
@@ -186,6 +211,9 @@ def ssh_connection_commands(
     port = ssh_info.get("port")
     direct_host = str(ssh_info.get("directHost", host))
     direct_port = ssh_info.get("directPort", port)
+    scope_note = direct_route_scope(ssh_info)
+    direct_label = f"ssh (direct, {scope_note})" if scope_note else "ssh (direct)"
+    plain_label = f"ssh ({scope_note})" if scope_note else "ssh"
 
     def _append_direct(label: str, ssh_host: str, ssh_port: Any) -> None:
         ssh_args = list(base_ssh_args)
@@ -204,7 +232,7 @@ def ssh_connection_commands(
                 f"flowmesh ssh connect --direct {shlex.quote(task_id)}",
             )
         )
-        _append_direct("ssh (direct)", host, port)
+        _append_direct(direct_label, direct_host, direct_port)
         proxy_cmd = (
             'websocat -H "Authorization: Bearer $FLOWMESH_API_KEY" '
             + shlex.quote(ssh_proxy_url(base_url, task_id))
@@ -224,10 +252,10 @@ def ssh_connection_commands(
             )
         )
         _append_direct("ssh (forward)", host, port)
-        _append_direct("ssh (direct)", direct_host, direct_port)
+        _append_direct(direct_label, direct_host, direct_port)
     elif mode == "direct":
         commands.append(("flowmesh", f"flowmesh ssh connect {shlex.quote(task_id)}"))
-        _append_direct("ssh", host, port)
+        _append_direct(plain_label, host, port)
     return commands
 
 
