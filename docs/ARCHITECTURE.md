@@ -141,19 +141,12 @@ scripts/dev/            compile_protos, sync_requirements, check_env_examples
   proxied `serve` endpoint, are reached over a gRPC stream the *worker* opens to
   its supervisor, which bridges it to the Redis `up`/`down` streams the client
   is already reading. The supervisor never connects to a worker, so a worker
-  behind NAT with no inbound reachability — a rented GPU box, typically — serves
-  sessions like any other. An executor publishes its local port to the worker's
-  endpoint registry when it starts listening; the supervisor names only that
-  endpoint, never a host and port, and the worker refuses an id it has not
-  published. Only `direct` mode still needs the worker to be reachable, which is
-  what that mode means. A session or `serve` endpoint that no relay mode can
-  carry is reported as `direct` at the address it actually listens on —
-  loopback, when it bound for a relay — rather than discarded, since that
-  address still reaches it from the worker's own machine. Only an endpoint that
-  published no address at all fails its task. A worker binary older than this
-  must be restarted with
-  the server: it ignores the relay request, and the session fails after the
-  supervisor's attach timeout.
+  behind NAT serves sessions like any other. An executor publishes its local
+  port to the worker's endpoint registry when it starts listening; the
+  supervisor names only that endpoint, never a host and port, and the worker
+  refuses an id it has not published. Only `direct` mode needs the worker to be
+  reachable. An endpoint no relay mode can carry is reported as `direct` at the
+  address it listens on, and fails its task only when it published no address.
 - **Stale worker reaping.** The watchdog deletes a dead worker's registry record
   (`WORKERS_SET_KEY` membership + `worker_key` hash) after it has been stale past
   `WORKER_REAP_GRACE_SEC`, so a worker that leaves without a clean `UNREGISTER` — a

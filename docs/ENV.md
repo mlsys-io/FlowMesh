@@ -101,9 +101,7 @@ Spark), set `DOCKER_GPU_RUNTIME=` in the stack env.
 
 A `proxy` or `forward` session is reached over a relay the worker opens to its
 supervisor, so its sshd binds loopback and the worker needs no inbound
-reachability. `external` workers are not redeployed by the server; one running a
-binary that predates worker-initiated relays must be restarted alongside it, or
-its sessions fail once the supervisor stops waiting for a relay stream.
+reachability.
 
 `process` serves one interactive session per worker and ignores `spec.image`.
 Only a root worker can give a session its own account, so `process` is
