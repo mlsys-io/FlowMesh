@@ -153,6 +153,17 @@ class SSHSessionBackend(ABC):
             return override
         return self._default_session_host()
 
+    def session_address(self, access_mode: str) -> str:
+        """Address a client uses to reach the session.
+
+        Derived from the bind so the two cannot disagree: a session bound to
+        loopback is reachable only from the worker itself, whatever name the
+        worker otherwise answers to.
+        """
+        if self.session_bind_host(access_mode) == ANY_BIND_HOST:
+            return self.session_host()
+        return LOOPBACK_BIND_HOST
+
     def _default_session_host(self) -> str:
         return socket.getfqdn()
 

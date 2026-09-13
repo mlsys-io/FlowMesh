@@ -241,7 +241,7 @@ class SSHExecutor(Executor):
         expires_at = self._iso_offset(cfg.ttl_sec)
         host_port = session.wait_ready(_SESSION_READY_TIMEOUT_SEC)
         self.publish_endpoint(session_id, host_port)
-        host_name = self._backend.session_host()
+        host_name = self._backend.session_address(access_mode)
         ssh_info: dict[str, Any] = {
             "session_id": session_id,
             "mode": access_mode,
@@ -251,7 +251,6 @@ class SSHExecutor(Executor):
             "port": host_port,
         }
         if access_mode in ("proxy", "forward"):
-            ssh_info["_bind_host"] = self._backend.session_bind_host(access_mode)
             if access_mode == "forward":
                 # Forward-mode sessions need separate direct connection info
                 ssh_info["directHost"] = host_name

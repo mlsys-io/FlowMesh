@@ -190,10 +190,35 @@ class TestSessionBindHost:
         assert backend.session_bind_host("proxy") == "0.0.0.0"
         assert backend.session_bind_host("direct") == "0.0.0.0"
 
-    def test_the_bind_is_published_so_the_server_can_see_it(
+
+class TestSessionAddress:
+    """What the worker tells the server the session can be reached at."""
+
+    def test_a_relayed_process_session_reports_loopback(self, tmp_path: Path) -> None:
+        backend = ProcessSessionBackend(make_live_worker_config(tmp_path))
+        assert backend.session_address("proxy") == "127.0.0.1"
+        assert backend.session_address("forward") == "127.0.0.1"
+
+    def test_a_direct_process_session_reports_its_host(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """The server decides the served mode after the worker has bound."""
+        monkeypatch.setattr(
+            process_backend_module, "resolve_tailnet_address", lambda: _TAILNET_ADDRESS
+        )
+        backend = ProcessSessionBackend(make_live_worker_config(tmp_path))
+        assert backend.session_address("direct") == _TAILNET_ADDRESS
+
+    def test_a_docker_session_reports_its_host_in_every_mode(
+        self, tmp_path: Path
+    ) -> None:
+        """Docker publishes the port on the host, so it is never loopback-only."""
+        backend = DockerSessionBackend(make_live_worker_config(tmp_path))
+        assert backend.session_address("proxy") == socket.getfqdn()
+        assert backend.session_address("direct") == socket.getfqdn()
+
+    def test_the_advertised_address_is_what_the_session_is_published_at(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         executor = SSHExecutor(make_live_worker_config(tmp_path))
         emitted: dict[str, Any] = {}
         monkeypatch.setattr(
@@ -203,7 +228,9 @@ class TestSessionBindHost:
         cfg = SSHConfig.from_spec(cast(SSHSpecStrict, task.spec), DEFAULT_WORKER_CONFIG)
         executor._wait_session_ready(cast(Any, _ReadySession()), "ssn-1234", task, cfg)
 
-        assert emitted["ssh"]["_bind_host"] == "0.0.0.0"
+        assert emitted["ssh"]["host"] == socket.getfqdn()
+        assert emitted["ssh"]["port"] == 2222
+        assert "_bind_host" not in emitted["ssh"]
 
 
 class TestDirectHostFromEnv:
