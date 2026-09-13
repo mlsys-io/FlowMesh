@@ -14,6 +14,7 @@ from .executors.mp_executor import MPExecutor
 from .hw import collect_hw
 from .lifecycle import Lifecycle
 from .power import PowerMonitor
+from .relay import EndpointRegistry, RelayClient
 from .runner import Runner
 from .supervisor_client import SupervisorClient
 from .utils.logging import get_logger
@@ -206,6 +207,10 @@ def main() -> None:
         grpc_keepalive_timeout_ms=cfg.grpc_keepalive_timeout_ms,
     )
 
+    endpoints = EndpointRegistry()
+    relay_client = RelayClient(supervisor_client, endpoints)
+    supervisor_client.set_relay_handler(relay_client.handle_request)
+
     lifecycle = Lifecycle(
         supervisor_client,
         cfg.hb_interval_sec,
@@ -213,6 +218,8 @@ def main() -> None:
         cfg.hb_file,
         cost_per_hour=cfg.cost_per_hour,
         power_monitor=PowerMonitor(),
+        endpoints=endpoints,
+        relay_client=relay_client,
     )
     hardware = collect_hw(bandwidth_bytes_per_sec=cfg.network_bandwidth_bytes_per_sec)
     logger.info("Collected hardware info: %s", hardware)

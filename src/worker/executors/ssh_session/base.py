@@ -26,10 +26,13 @@ from .config import FINISH_SENTINEL_PATH, ResolvedSSHInput, SSHConfig
 
 logger = logging.getLogger(__name__)
 
-LOOPBACK_RELAY_HOST = "127.0.0.1"
+LOOPBACK_BIND_HOST = "127.0.0.1"
+ANY_BIND_HOST = "0.0.0.0"  # nosec B104 - a direct session must be dialable
+LOOPBACK_SCOPE = "loopback"
+NETWORK_SCOPE = "network"
 
 # Tailscale hands every node an address out of the CGNAT range, which is how a
-# rented box advertises an address the cloud supervisor can actually dial.
+# rented box advertises an address a client can actually dial.
 TAILNET_NETWORK = ipaddress.ip_network("100.64.0.0/10")
 
 _TCP_STATE_ESTABLISHED = "01"
@@ -134,22 +137,48 @@ class SSHSessionBackend(ABC):
     def teardown(self, worker_name: str) -> None:
         """Reap any sessions ``worker_name`` still owns."""
 
-    def relay_host(self) -> str:
-        """Address at which this worker's session ports are reachable.
+    def session_bind_host(self, access_mode: str) -> str:
+        """Address the session's sshd listens on.
 
-        The supervisor that dials the relay uplink is the consumer: it opens a
-        TCP connection to this address, so it must be routable *from the
-        supervisor*, not from the worker.
+        Only a ``direct`` session is dialled from outside the worker; a relayed
+        one is reached over loopback by the worker itself.
         """
-        if override := self._config.ssh_relay_host:
-            return override
-        return self._default_relay_host()
-
-    def _default_relay_host(self) -> str:
-        return LOOPBACK_RELAY_HOST
+        return ANY_BIND_HOST if access_mode == "direct" else LOOPBACK_BIND_HOST
 
     def session_host(self) -> str:
-        """Host name reported to the user as the session's location."""
+        """Host name reported to the user as the session's location.
+
+        A ``direct`` session is dialled by the client, so this must be routable
+        from wherever the client is.
+        """
+        if override := self._config.ssh_direct_host:
+            return override
+        return self._default_session_host()
+
+    def session_address(self, access_mode: str) -> str:
+        """Address a client uses to reach the session.
+
+        Derived from the bind so the two cannot disagree: a session bound to
+        loopback is reachable only from the worker itself, whatever name the
+        worker otherwise answers to.
+        """
+        if self.session_scope(access_mode) == NETWORK_SCOPE:
+            return self.session_host()
+        return LOOPBACK_BIND_HOST
+
+    def session_scope(self, access_mode: str) -> str:
+        """Which addresses the session accepts connections on.
+
+        ``loopback`` reaches it only from the worker's own host, since that
+        address resolves on whichever machine reads it. ``network`` says the
+        session is bound beyond loopback, not that any given client can route
+        to the worker.
+        """
+        if self.session_bind_host(access_mode) == ANY_BIND_HOST:
+            return NETWORK_SCOPE
+        return LOOPBACK_SCOPE
+
+    def _default_session_host(self) -> str:
         return socket.getfqdn()
 
     def _build_environment(

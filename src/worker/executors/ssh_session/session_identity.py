@@ -239,8 +239,10 @@ def _unusable_password_hash() -> str:
         # "*" and a leading "!" both read as locked to sshd; a bare salted
         # marker does not, and no password hashes to it.
         return f"$6$nologin${secrets.token_hex(16)}"
+    # token_hex, not token_urlsafe: the urlsafe alphabet includes "-", and a
+    # value starting with one is parsed by openssl as an option.
     result = _run(
-        [openssl, "passwd", "-6", secrets.token_urlsafe(32)],
+        [openssl, "passwd", "-6", secrets.token_hex(32)],
         "generate an unusable password hash",
     )
     return result.stdout.decode("utf-8", errors="replace").strip() or (

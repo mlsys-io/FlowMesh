@@ -199,6 +199,7 @@ class SSHExecutor(Executor):
                 # Wait for the thread to drain remaining output before tearing down
                 # the session.
                 log_thread.join(timeout=30.0)
+            self.withdraw_endpoint(session_id)
             self._current_session = None
             self._cancel_event.clear()
             self._finish_event.clear()
@@ -239,7 +240,8 @@ class SSHExecutor(Executor):
         access_mode = cfg.access_mode
         expires_at = self._iso_offset(cfg.ttl_sec)
         host_port = session.wait_ready(_SESSION_READY_TIMEOUT_SEC)
-        host_name = self._backend.session_host()
+        self.publish_endpoint(session_id, host_port)
+        host_name = self._backend.session_address(access_mode)
         ssh_info: dict[str, Any] = {
             "session_id": session_id,
             "mode": access_mode,
@@ -249,21 +251,18 @@ class SSHExecutor(Executor):
             "port": host_port,
         }
         if access_mode in ("proxy", "forward"):
-            relay_host = self._backend.relay_host()
-            if access_mode == "forward":
-                # Forward-mode sessions need separate direct connection info
-                ssh_info["directHost"] = host_name
-                ssh_info["directPort"] = host_port
-            ssh_info["_relay_target"] = {
-                "host": relay_host,
-                "port": host_port,
-            }
+            # A relayed session's own address, reported for every relayed mode
+            # so a client on the worker's host can still reach it. `host` and
+            # `port` may be rewritten to the server's route; these are not.
+            ssh_info["directHost"] = host_name
+            ssh_info["directPort"] = host_port
+            ssh_info["directScope"] = self._backend.session_scope(access_mode)
+            ssh_info["workerId"] = task.assigned_worker
             logger.info(
-                "SSH %s session ready: host=%s port=%s relay=%s (task=%s)",
+                "SSH %s session ready: host=%s port=%s (task=%s)",
                 access_mode,
                 host_name,
                 host_port,
-                relay_host,
                 task.task_id,
             )
         else:

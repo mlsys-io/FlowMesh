@@ -2,7 +2,8 @@
 
 import subprocess
 from pathlib import Path
-from typing import cast
+from types import SimpleNamespace
+from typing import Any, cast
 
 import pytest
 
@@ -174,6 +175,7 @@ class TestSshdConfigRendering:
             host_key=tmp_path / "hostkey",
             authorized_keys=tmp_path / "authorized_keys",
             login_user="appuser",
+            bind_host="127.0.0.1",
         )
         assert "Port 2222" in rendered
         assert "AllowUsers appuser" in rendered
@@ -212,6 +214,7 @@ class TestSshdConfigRendering:
             host_key=Path("/tmp/s/hk"),
             authorized_keys=Path("/tmp/s/ak"),
             login_user="fmssn1",
+            bind_host="127.0.0.1",
             exported_env=exported,
         )
         assert "PermitUserEnvironment CUDA_VISIBLE_DEVICES,MY_TASK_VAR" in rendered
@@ -271,6 +274,7 @@ class TestReportedLoginUser:
             host_key=tmp_path / "hk",
             authorized_keys=tmp_path / "ak",
             login_user=identity.name,
+            bind_host="127.0.0.1",
         )
         assert f"AllowUsers {session.login_user()}" in rendered
 
@@ -351,3 +355,29 @@ class TestFinishHelperParity:
             [str(bin_dir / "flowmesh-finish")], check=True, capture_output=True
         )
         assert sentinel.exists()
+
+
+class TestUnusablePasswordHash:
+    """A fresh account is locked until it carries a real hash, so this runs on
+    every process-mode session and must not depend on the value it generates."""
+
+    def test_the_generated_secret_is_never_read_as_an_option(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """openssl parses a leading "-" as a flag, and token_urlsafe emits them."""
+        seen: list[list[str]] = []
+
+        def _capture(argv: list[str], _what: str) -> Any:
+            seen.append(argv)
+            return SimpleNamespace(stdout=b"$6$abc$def\n")
+
+        monkeypatch.setattr(session_identity_module, "_run", _capture)
+        monkeypatch.setattr(
+            session_identity_module.shutil, "which", lambda _name: "/usr/bin/openssl"
+        )
+
+        for _ in range(200):
+            session_identity_module._unusable_password_hash()
+
+        assert seen, "the hash was never generated"
+        assert all(not argv[-1].startswith("-") for argv in seen)

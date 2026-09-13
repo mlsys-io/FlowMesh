@@ -5,7 +5,7 @@ import logging
 import queue
 import threading
 import time
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any
 
@@ -84,6 +84,20 @@ class SupervisorClient:
         self._task_thread: threading.Thread | None = None
         self._channel: grpc.Channel | None = None
         self._stub: supervisor_pb2_grpc.SupervisorStub | None = None
+        self._relay_handler: Callable[[str, str], None] | None = None
+
+    def set_relay_handler(self, handler: Callable[[str, str], None]) -> None:
+        """Route relay requests arriving on the task stream to ``handler``."""
+        self._relay_handler = handler
+
+    def _dispatch_relay(self, relay_token: str, endpoint_id: str) -> None:
+        if self._relay_handler is None:
+            self.logger.warning(
+                "Ignoring relay request for %s: no relay handler installed",
+                endpoint_id,
+            )
+            return
+        self._relay_handler(relay_token, endpoint_id)
 
     @property
     def worker_id(self) -> str:
@@ -165,7 +179,7 @@ class SupervisorClient:
             return
         self._shutdown.clear()
         self._stop.clear()
-        self._channel = self._create_grpc_channel()
+        self._channel = self.create_grpc_channel()
         self._stub = supervisor_pb2_grpc.SupervisorStub(self._channel)
         self._start_event_stream()
         self._start_task_stream()
@@ -343,7 +357,7 @@ class SupervisorClient:
             return None
         return TaskLogEmitter(
             stub=self._stub,
-            metadata=self._grpc_metadata(),
+            metadata=self.grpc_metadata(),
             struct_from_payload=self._struct_from_payload,
             logger=self.logger,
             task_id=task_id,
@@ -400,12 +414,12 @@ class SupervisorClient:
             self.worker_alias,
             self.grpc_target,
         )
-        with self._create_grpc_channel() as channel:
+        with self.create_grpc_channel() as channel:
             stub = supervisor_pb2_grpc.SupervisorStub(channel)
             request = supervisor_pb2.RegisterRequest(
                 meta=self._struct_from_payload(worker_meta)
             )
-            metadata = self._grpc_metadata()
+            metadata = self.grpc_metadata()
             try:
                 resp = stub.RegisterWorker(request, metadata=metadata)
             except grpc.RpcError as exc:
@@ -455,7 +469,7 @@ class SupervisorClient:
         meta["status"] = self._last_status.value
         meta["last_seen"] = now_iso()
         request = supervisor_pb2.RegisterRequest(meta=self._struct_from_payload(meta))
-        metadata = self._grpc_metadata()
+        metadata = self.grpc_metadata()
         delay = 1.0
         while not (self._shutdown.is_set() or self._stop.is_set()):
             try:
@@ -508,7 +522,7 @@ class SupervisorClient:
         if self._channel is None or self._stub is None:
             self.logger.error("Supervisor gRPC channel not initialized")
             return
-        metadata = self._grpc_metadata()
+        metadata = self.grpc_metadata()
         while not self._shutdown.is_set() or self._drain.is_set():
             seen_gen = self._register_generation
             try:
@@ -540,7 +554,7 @@ class SupervisorClient:
         if self._channel is None or self._stub is None:
             self.logger.error("Supervisor gRPC channel not initialized")
             return
-        metadata = self._grpc_metadata()
+        metadata = self.grpc_metadata()
         while not self._stop.is_set():
             seen_gen = self._register_generation
             try:
@@ -554,6 +568,10 @@ class SupervisorClient:
                     elif message.HasField("stop"):
                         self._stop_queue.put(
                             (message.stop.task_id, message.stop.reason)
+                        )
+                    elif message.HasField("relay"):
+                        self._dispatch_relay(
+                            message.relay.relay_token, message.relay.endpoint_id
                         )
                     else:
                         payload = self._payload_from_struct(message.task.payload)
@@ -610,15 +628,19 @@ class SupervisorClient:
 
     # ---- Networking helpers ----------------------------------------- #
 
-    def _grpc_metadata(self) -> tuple[tuple[str, str], ...]:
+    def grpc_metadata(self) -> tuple[tuple[str, str], ...]:
         return (("authorization", f"Bearer {self._worker_token}"),)
 
-    def _create_grpc_channel(self) -> grpc.Channel:
+    def create_grpc_channel(
+        self, extra_options: list[tuple[str, int]] | None = None
+    ) -> grpc.Channel:
         root_cert = self._load_tls_root_cert()
         options: list[tuple[str, int]] = [
             ("grpc.max_receive_message_length", self._GRPC_MAX_MSG_BYTES),
             ("grpc.max_send_message_length", self._GRPC_MAX_MSG_BYTES),
         ]
+        if extra_options:
+            options.extend(extra_options)
         if self._grpc_keepalive_time_ms is not None:
             options.extend(
                 [

@@ -353,7 +353,6 @@ class TestServeAccessModeHostBinding:
         assert cmd[cmd.index("--host") + 1] == "0.0.0.0"
         assert serve["mode"] == "direct"
         assert serve["host"] == "worker-1.cluster.local"
-        assert serve["_relay_target"] == {"host": "127.0.0.1", "port": serve["port"]}
 
     def test_forward_mode_binds_loopback(self, tmp_path: Path) -> None:
         spec = ServeSpecStrict(
@@ -384,7 +383,6 @@ class TestServeAccessModeHostBinding:
         port = int(cmd[cmd.index("--port") + 1])
         assert 1 <= port <= 65535
         assert serve["port"] == port
-        assert serve["_relay_target"] == {"host": "127.0.0.1", "port": port}
 
     def test_explicit_free_port_is_used(self, tmp_path: Path) -> None:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:

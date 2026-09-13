@@ -104,6 +104,19 @@ class Executor(ABC):
         if self._lifecycle is not None:
             self._lifecycle.notify_task_update(task_id, payload)
 
+    def publish_endpoint(self, endpoint_id: str, port: int) -> None:
+        """Offer a local port for the supervisor to relay to.
+
+        Calls the lifecycle if one was injected; otherwise a no-op.
+        """
+        if self._lifecycle is not None:
+            self._lifecycle.publish_endpoint(endpoint_id, port)
+
+    def withdraw_endpoint(self, endpoint_id: str) -> None:
+        """Stop offering a local port. Safe to call for an unpublished id."""
+        if self._lifecycle is not None:
+            self._lifecycle.withdraw_endpoint(endpoint_id)
+
     def prepare(self) -> None:
         """Optional: called once before the first `run`.
         Use for lazy initialization (e.g., loading models, warming caches).

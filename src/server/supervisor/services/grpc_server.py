@@ -28,6 +28,7 @@ from ..manager import WorkerManager
 from ..registry import WorkerRegistry
 from ..schemas import WorkerStatus
 from ..services.relay_service import RelayService
+from ..services.relay_uplink import RelayRefused, RelayUplinkService
 from ..services.task_listener import TaskListener
 
 # Rewrite node_id for each worker key that still exists, atomically. KEYS are
@@ -88,6 +89,9 @@ def _payload_from_struct(struct: Struct) -> dict:
     return MessageToDict(struct, preserving_proto_field_name=True)
 
 
+_RELAY_QUEUE_MAX = 256
+
+
 class SupervisorServicer(supervisor_pb2_grpc.SupervisorServicer):
     def __init__(
         self,
@@ -99,10 +103,12 @@ class SupervisorServicer(supervisor_pb2_grpc.SupervisorServicer):
         relay_service: RelayService,
         worker_manager: WorkerManager,
         logger: logging.Logger,
+        relay_uplink: RelayUplinkService | None = None,
     ) -> None:
         self._registry = registry
         self._task_listener = task_listener
         self._relay_service = relay_service
+        self._relay_uplink = relay_uplink
         self._redis = redis
         self._node_id = node_id
         self._node_alias = node_alias
@@ -211,11 +217,93 @@ class SupervisorServicer(supervisor_pb2_grpc.SupervisorServicer):
                         reason=str(event["reason"]),
                     )
                 )
+            elif event.get("kind") == "relay":
+                yield supervisor_pb2.DispatchMessage(
+                    relay=supervisor_pb2.RelayRequest(
+                        relay_token=str(event["relay_token"]),
+                        endpoint_id=str(event["endpoint_id"]),
+                    )
+                )
             else:
                 yield supervisor_pb2.DispatchMessage(
                     task=supervisor_pb2.TaskMessage(payload=_struct_from_payload(event))
                 )
         self._logger.info("Task stream closed for worker %s", worker_id)
+
+    async def Relay(
+        self,
+        request_iterator: AsyncIterator[supervisor_pb2.RelayFrame],
+        context: grpc.aio.ServicerContext,
+    ) -> AsyncIterator[supervisor_pb2.RelayFrame]:
+        worker_id = self._get_worker_id_from_context(context)
+        if worker_id is None:
+            await context.abort(grpc.StatusCode.UNAUTHENTICATED, "Invalid worker token")
+        if self._relay_uplink is None:
+            await context.abort(
+                grpc.StatusCode.FAILED_PRECONDITION, "Relay uplink not available"
+            )
+
+        opened = await anext(aiter(request_iterator), None)
+        if opened is None or not opened.HasField("open"):
+            await context.abort(
+                grpc.StatusCode.INVALID_ARGUMENT, "Relay must open with a RelayOpen"
+            )
+            return
+
+        # Bounded so a worker that stops reading stalls the Redis reader
+        # instead of growing this queue without limit in the supervisor.
+        outbound: asyncio.Queue[bytes | None] = asyncio.Queue(maxsize=_RELAY_QUEUE_MAX)
+
+        async def send(data: bytes) -> None:
+            await outbound.put(data)
+
+        async def recv() -> AsyncIterator[bytes]:
+            async for frame in request_iterator:
+                if frame.HasField("eof"):
+                    return
+                if frame.HasField("data"):
+                    yield frame.data
+
+        assert self._relay_uplink is not None
+        bridge = asyncio.create_task(
+            self._relay_uplink.attach(
+                opened.open.relay_token,
+                worker_id,
+                opened.open.endpoint_id,
+                recv(),
+                send,
+            )
+        )
+        # The sentinel is put(), not put_nowait(), because the queue is
+        # bounded. Nothing drains it once teardown starts, so the callback must
+        # not schedule one then -- it can still fire after the finally, since a
+        # done-callback is always deferred to the next loop step.
+        sentinel: asyncio.Task[None] | None = None
+        closing = False
+
+        def _close_outbound(_: asyncio.Task[None]) -> None:
+            nonlocal sentinel
+            if closing:
+                return
+            sentinel = asyncio.ensure_future(outbound.put(None))
+
+        bridge.add_done_callback(_close_outbound)
+        try:
+            while True:
+                chunk = await outbound.get()
+                if chunk is None:
+                    break
+                yield supervisor_pb2.RelayFrame(data=chunk)
+            refusal = bridge.exception()
+            if isinstance(refusal, RelayRefused):
+                await context.abort(grpc.StatusCode.PERMISSION_DENIED, str(refusal))
+        finally:
+            closing = True
+            if not bridge.done():
+                bridge.cancel()
+            if sentinel is not None and not sentinel.done():
+                sentinel.cancel()
+        yield supervisor_pb2.RelayFrame(eof=True)
 
     async def PushEvents(
         self,
@@ -304,6 +392,7 @@ class GrpcServer:
         relay_service: RelayService,
         worker_manager: WorkerManager,
         logger: logging.Logger,
+        relay_uplink: RelayUplinkService | None = None,
     ) -> None:
         self._logger = logger
         self._server: grpc.aio.Server | None = None
@@ -316,6 +405,7 @@ class GrpcServer:
             relay_service,
             worker_manager,
             logger,
+            relay_uplink,
         )
         self._listen_addr = f"{host}:{port}"
 

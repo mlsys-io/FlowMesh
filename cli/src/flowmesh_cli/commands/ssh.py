@@ -16,6 +16,7 @@ from flowmesh import FlowMesh
 from flowmesh.exceptions import FlowMeshError, NotFoundError
 from flowmesh.models.common import TERMINAL_TASK_STATUSES, TaskStatus
 from flowmesh.params import append_param, extend_params
+from flowmesh.ssh import describe_direct_route
 
 from ..core import logging
 from ..core.query import parse_query_filters
@@ -60,6 +61,9 @@ def _exec_ssh(
         if not host:
             logging.error("SSH host is not available.")
             raise typer.Exit(code=1)
+        if direct or mode == "direct":
+            if route := describe_direct_route(ssh_info, host, port):
+                typer.echo(route, err=True)
         if port:
             args += ["-p", str(port)]
         args.append(f"{user}@{host}")

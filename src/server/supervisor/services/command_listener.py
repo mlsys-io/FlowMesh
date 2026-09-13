@@ -484,13 +484,12 @@ class CommandListener:
                 CommandErrorCode.INTERNAL,
             )
         relay_token = cmd.payload.get("relay_token")
-        target_host = cmd.payload.get("target_host")
-        target_port = cmd.payload.get("target_port")
-        session_id = cmd.payload.get("session_id")
-        if not (relay_token and target_host and target_port and session_id):
+        worker_id = cmd.payload.get("worker_id")
+        endpoint_id = cmd.payload.get("endpoint_id")
+        if not (relay_token and worker_id and endpoint_id):
             return CommandResponse.error(
                 cmd,
-                "Missing relay_token, target_host, target_port, or session_id "
+                "Missing relay_token, worker_id, or endpoint_id "
                 "for START_RELAY command",
                 CommandErrorCode.INTERNAL,
             )
@@ -498,9 +497,8 @@ class CommandListener:
             self._relay_uplink.start_uplink(
                 self._redis.telemetry_client,
                 str(relay_token),
-                str(target_host),
-                int(target_port),
-                str(session_id),
+                str(worker_id),
+                str(endpoint_id),
             )
             return CommandResponse.ok(cmd)
         except Exception as exc:

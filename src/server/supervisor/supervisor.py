@@ -331,9 +331,11 @@ def _run_supervisor(
     # --- Supervisor components (constructed with the assigned node_id) ---
     worker_adapter_registry = WorkerAdapterRegistry()
     relay_service = RelayService(redis=redis_client.sync, logger=logger)
-    relay_uplink = RelayUplinkService(logger=logger)
     task_listener = TaskListener(
         redis=redis_client.sync, node_id=node_id, logger=logger
+    )
+    relay_uplink = RelayUplinkService(
+        logger=logger, dispatch_relay=task_listener.dispatch_relay
     )
     worker_manager = WorkerManager(
         system_principal,
@@ -361,6 +363,7 @@ def _run_supervisor(
         relay_service=relay_service,
         worker_manager=worker_manager,
         logger=logger,
+        relay_uplink=relay_uplink,
     )
 
     def _on_reregister(new_node_id: str) -> None:

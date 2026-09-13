@@ -113,3 +113,13 @@ class TestVastAIImageSelection:
         arch = offer_gpu_arch(gpu_name)
         assert arch is expected
         assert get_worker_image_name("reg", "v1", arch).endswith("-gpu")
+
+
+class TestSSHConfigEnv:
+    def test_the_direct_host_is_injected_under_its_current_name_only(self) -> None:
+        rendered = SSHConfig(direct_host="10.0.0.9").to_env()
+        assert rendered["SSH_DIRECT_HOST"] == "10.0.0.9"
+        assert "SSH_RELAY_HOST" not in rendered
+
+    def test_an_unset_direct_host_injects_nothing(self) -> None:
+        assert "SSH_DIRECT_HOST" not in SSHConfig(direct_host=None).to_env()

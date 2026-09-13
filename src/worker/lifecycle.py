@@ -16,6 +16,7 @@ from shared.tasks.worker_message import WorkerHardware, WorkerStatus
 from shared.utils.time import now_iso
 
 from .power import PowerMonitor
+from .relay import EndpointRegistry, RelayClient
 from .supervisor_client import SupervisorClient
 
 
@@ -28,8 +29,12 @@ class Lifecycle:
         hb_file: Path,
         cost_per_hour: float,
         power_monitor: PowerMonitor | None = None,
+        endpoints: EndpointRegistry | None = None,
+        relay_client: RelayClient | None = None,
     ):
         self.client = client
+        self.endpoints = endpoints or EndpointRegistry()
+        self.relay_client = relay_client
         self.hb_sec = hb_sec
         self.hb_ttl_sec = hb_ttl_sec
         self.hb_file = hb_file
@@ -97,6 +102,8 @@ class Lifecycle:
             power_metrics=initial_power,
         )
         self.client.start()
+        if self.relay_client is not None:
+            self.relay_client.start()
         self.client.set_status(WorkerStatus.IDLE)
         self._touch_hb_file()
         threading.Thread(target=self._hb_loop, daemon=True).start()
@@ -148,6 +155,12 @@ class Lifecycle:
         except Exception:
             pass
 
+    def publish_endpoint(self, endpoint_id: str, port: int) -> None:
+        self.endpoints.publish(endpoint_id, port)
+
+    def withdraw_endpoint(self, endpoint_id: str) -> None:
+        self.endpoints.withdraw(endpoint_id)
+
     def notify_task_update(self, task_id: str, payload: dict[str, Any]) -> None:
         try:
             self.client.task_update(task_id, payload)
@@ -196,6 +209,8 @@ class Lifecycle:
             )
         except Exception:
             pass
+        if self.relay_client is not None:
+            self.relay_client.shutdown()
         self.client.shutdown()
         self._remove_hb_file()
 

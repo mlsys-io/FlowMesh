@@ -61,6 +61,12 @@ class SupervisorStub:
             response_deserializer=google_dot_protobuf_dot_empty__pb2.Empty.FromString,
             _registered_method=True,
         )
+        self.Relay = channel.stream_stream(
+            "/supervisor.v1.Supervisor/Relay",
+            request_serializer=supervisor_dot_v1_dot_supervisor__pb2.RelayFrame.SerializeToString,
+            response_deserializer=supervisor_dot_v1_dot_supervisor__pb2.RelayFrame.FromString,
+            _registered_method=True,
+        )
 
 
 class SupervisorServicer:
@@ -90,6 +96,12 @@ class SupervisorServicer:
         context.set_details("Method not implemented!")
         raise NotImplementedError("Method not implemented!")
 
+    def Relay(self, request_iterator, context):
+        """Relay one TCP connection for an endpoint the worker owns."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details("Method not implemented!")
+        raise NotImplementedError("Method not implemented!")
+
 
 def add_SupervisorServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -112,6 +124,11 @@ def add_SupervisorServicer_to_server(servicer, server):
             servicer.PushLogs,
             request_deserializer=supervisor_dot_v1_dot_supervisor__pb2.LogMessage.FromString,
             response_serializer=google_dot_protobuf_dot_empty__pb2.Empty.SerializeToString,
+        ),
+        "Relay": grpc.stream_stream_rpc_method_handler(
+            servicer.Relay,
+            request_deserializer=supervisor_dot_v1_dot_supervisor__pb2.RelayFrame.FromString,
+            response_serializer=supervisor_dot_v1_dot_supervisor__pb2.RelayFrame.SerializeToString,
         ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -235,6 +252,36 @@ class Supervisor:
             "/supervisor.v1.Supervisor/PushLogs",
             supervisor_dot_v1_dot_supervisor__pb2.LogMessage.SerializeToString,
             google_dot_protobuf_dot_empty__pb2.Empty.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True,
+        )
+
+    @staticmethod
+    def Relay(
+        request_iterator,
+        target,
+        options=(),
+        channel_credentials=None,
+        call_credentials=None,
+        insecure=False,
+        compression=None,
+        wait_for_ready=None,
+        timeout=None,
+        metadata=None,
+    ):
+        return grpc.experimental.stream_stream(
+            request_iterator,
+            target,
+            "/supervisor.v1.Supervisor/Relay",
+            supervisor_dot_v1_dot_supervisor__pb2.RelayFrame.SerializeToString,
+            supervisor_dot_v1_dot_supervisor__pb2.RelayFrame.FromString,
             options,
             channel_credentials,
             insecure,

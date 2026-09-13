@@ -206,13 +206,13 @@ class VLLMServeExecutor(Executor):
             self._poll_health(
                 proc, port, task.task_id, readiness_timeout, tail, eof_event
             )
+            self.publish_endpoint(task.task_id, port)
             advertised_host = (
                 socket.getfqdn() if access_mode == "direct" else "127.0.0.1"
             )
             update_payload: dict[str, Any] = {
                 "serve": {
                     "mode": access_mode,
-                    "_relay_target": {"host": "127.0.0.1", "port": port},
                     "host": advertised_host,
                     "port": port,
                     "api_key": api_key,
@@ -223,6 +223,7 @@ class VLLMServeExecutor(Executor):
             logger.info("vLLM server ready on port %d (task=%s)", port, task.task_id)
             self._wait_for_serve(proc, ttl_sec)
         finally:
+            self.withdraw_endpoint(task.task_id)
             self._proc = None
             self._cancel_event.clear()
             self._stop_event.clear()

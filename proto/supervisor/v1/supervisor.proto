@@ -15,6 +15,8 @@ service Supervisor {
   rpc PushEvents(stream EventMessage) returns (google.protobuf.Empty);
   // Accept a stream of task-scoped logs for relay to the supervisor.
   rpc PushLogs(stream LogMessage) returns (google.protobuf.Empty);
+  // Relay one TCP connection for an endpoint the worker owns.
+  rpc Relay(stream RelayFrame) returns (stream RelayFrame);
 }
 
 // Worker registration payload.
@@ -46,6 +48,14 @@ message TaskMessage {
   google.protobuf.Struct payload = 1;
 }
 
+// Ask a worker to open a relay stream for one endpoint it owns.
+message RelayRequest {
+  // Authorizes the stream against a relay the supervisor is already expecting.
+  string relay_token = 1;
+  // Names an endpoint the worker published; the worker resolves it to a port.
+  string endpoint_id = 2;
+}
+
 // Dispatch envelope emitted by the supervisor.
 message DispatchMessage {
   oneof payload {
@@ -55,6 +65,26 @@ message DispatchMessage {
     InterruptMessage interrupt = 2;
     // Graceful stop signal for an active task.
     StopMessage stop = 3;
+    // Request for a worker-initiated relay stream.
+    RelayRequest relay = 4;
+  }
+}
+
+// First frame of a relay stream, identifying what the worker is relaying.
+message RelayOpen {
+  string relay_token = 1;
+  string endpoint_id = 2;
+}
+
+// One frame of a relayed TCP connection, in either direction.
+message RelayFrame {
+  oneof payload {
+    // Sent by the worker as the first frame only.
+    RelayOpen open = 1;
+    // A chunk of the relayed byte stream.
+    bytes data = 2;
+    // The sender will write no more data.
+    bool eof = 3;
   }
 }
 
