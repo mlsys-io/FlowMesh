@@ -28,6 +28,8 @@ logger = logging.getLogger(__name__)
 
 LOOPBACK_BIND_HOST = "127.0.0.1"
 ANY_BIND_HOST = "0.0.0.0"  # nosec B104 - a direct session must be dialable
+LOOPBACK_SCOPE = "loopback"
+NETWORK_SCOPE = "network"
 
 # Tailscale hands every node an address out of the CGNAT range, which is how a
 # rented box advertises an address a client can actually dial.
@@ -160,9 +162,21 @@ class SSHSessionBackend(ABC):
         loopback is reachable only from the worker itself, whatever name the
         worker otherwise answers to.
         """
-        if self.session_bind_host(access_mode) == ANY_BIND_HOST:
+        if self.session_scope(access_mode) == NETWORK_SCOPE:
             return self.session_host()
         return LOOPBACK_BIND_HOST
+
+    def session_scope(self, access_mode: str) -> str:
+        """Which addresses the session accepts connections on.
+
+        ``loopback`` reaches it only from the worker's own host, since that
+        address resolves on whichever machine reads it. ``network`` says the
+        session is bound beyond loopback, not that any given client can route
+        to the worker.
+        """
+        if self.session_bind_host(access_mode) == ANY_BIND_HOST:
+            return NETWORK_SCOPE
+        return LOOPBACK_SCOPE
 
     def _default_session_host(self) -> str:
         return socket.getfqdn()

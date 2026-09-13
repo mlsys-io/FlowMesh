@@ -66,6 +66,25 @@ class _ReadySession:
         return self.user
 
 
+def _emit_ready(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    process_backend: bool = False,
+) -> dict[str, Any]:
+    """Run a session to ready and return the update it published."""
+    executor = SSHExecutor(make_live_worker_config(tmp_path))
+    if process_backend:
+        executor._backend = ProcessSessionBackend(make_live_worker_config(tmp_path))
+    emitted: dict[str, Any] = {}
+    monkeypatch.setattr(
+        executor, "emit_update", lambda task_id, payload: emitted.update(payload)
+    )
+    task = _task_message()
+    cfg = SSHConfig.from_spec(cast(SSHSpecStrict, task.spec), DEFAULT_WORKER_CONFIG)
+    executor._wait_session_ready(cast(Any, _ReadySession()), "ssn-1234", task, cfg)
+    return emitted
+
+
 class TestSessionHost:
     def test_docker_backend_reports_its_fqdn(self, tmp_path: Path) -> None:
         backend = DockerSessionBackend(make_live_worker_config(tmp_path))
@@ -219,18 +238,30 @@ class TestSessionAddress:
     def test_the_advertised_address_is_what_the_session_is_published_at(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        executor = SSHExecutor(make_live_worker_config(tmp_path))
-        emitted: dict[str, Any] = {}
-        monkeypatch.setattr(
-            executor, "emit_update", lambda task_id, payload: emitted.update(payload)
-        )
-        task = _task_message()
-        cfg = SSHConfig.from_spec(cast(SSHSpecStrict, task.spec), DEFAULT_WORKER_CONFIG)
-        executor._wait_session_ready(cast(Any, _ReadySession()), "ssn-1234", task, cfg)
+        emitted = _emit_ready(tmp_path, monkeypatch)
 
         assert emitted["ssh"]["host"] == socket.getfqdn()
         assert emitted["ssh"]["port"] == 2222
         assert "_bind_host" not in emitted["ssh"]
+
+    def test_a_relayed_session_reports_its_own_route_and_scope(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """`host` may be rewritten to the server's route; this one is not."""
+        emitted = _emit_ready(tmp_path, monkeypatch)["ssh"]
+
+        assert emitted["directHost"] == socket.getfqdn()
+        assert emitted["directPort"] == 2222
+        assert emitted["directScope"] == "network"
+        assert emitted["workerId"] == "worker-1"
+
+    def test_a_loopback_bound_session_says_so(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        emitted = _emit_ready(tmp_path, monkeypatch, process_backend=True)["ssh"]
+
+        assert emitted["directHost"] == "127.0.0.1"
+        assert emitted["directScope"] == "loopback"
 
 
 class TestDirectHostFromEnv:

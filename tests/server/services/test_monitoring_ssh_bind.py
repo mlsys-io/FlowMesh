@@ -43,6 +43,8 @@ def _ssh_payload(mode: str, host: str) -> dict[str, Any]:
             "port": 2222,
             "directHost": host,
             "directPort": 2222,
+            "directScope": "loopback" if host.startswith("127.") else "network",
+            "workerId": "wrk-1",
         }
     }
 
@@ -120,8 +122,8 @@ class TestLoopbackBoundSession:
         monitor._dispatcher.fail_task.assert_not_called()  # type: ignore[attr-defined]
 
 
-class TestRoutableSession:
-    def test_a_routable_session_degrades_to_its_routable_address(self) -> None:
+class TestNetworkBoundSession:
+    def test_a_network_bound_session_degrades_to_its_network_address(self) -> None:
         monitor = _make_monitor(ssh_proxy_enabled=False)
         monitor._runtime.get_record.return_value = None  # type: ignore[attr-defined]
 
@@ -132,7 +134,7 @@ class TestRoutableSession:
         assert result["ssh"]["mode"] == "direct"
         assert result["ssh"]["host"] == "worker.example.com"
 
-    def test_a_routable_forward_session_keeps_its_direct_route(self) -> None:
+    def test_a_network_bound_forward_session_keeps_its_direct_route(self) -> None:
         port_forward = MagicMock()
         port_forward.register_port_forward.return_value = {
             "session_id": "ssn-1",
@@ -150,3 +152,46 @@ class TestRoutableSession:
         )
 
         assert result["ssh"]["directHost"] == "worker.example.com"
+
+    def test_degrading_to_direct_keeps_the_scope_that_describes_the_route(self) -> None:
+        """`host` becomes the only way in, so its scope must survive with it."""
+        monitor = _make_monitor(ssh_proxy_enabled=False)
+        monitor._runtime.get_record.return_value = None  # type: ignore[attr-defined]
+
+        result = monitor._handle_ssh_task_update(
+            "tsk-abc", "wrk-1", _ssh_payload("proxy", "127.0.0.1")
+        )
+
+        assert result["ssh"]["mode"] == "direct"
+        assert result["ssh"]["host"] == "127.0.0.1"
+        assert result["ssh"]["directScope"] == "loopback"
+        assert result["ssh"]["workerId"] == "wrk-1"
+        for dropped in ("directHost", "directPort"):
+            assert dropped not in result["ssh"]
+
+    def test_a_served_relay_keeps_the_scope_alongside_the_route(self) -> None:
+        port_forward = MagicMock()
+        port_forward.register_port_forward.return_value = {
+            "session_id": "ssn-1",
+            "mode": "forward",
+            "host": "server.example.com",
+            "port": 32001,
+            "directHost": "127.0.0.1",
+            "directPort": 2222,
+            "directScope": "loopback",
+            "workerId": "wrk-1",
+        }
+        monitor = _make_monitor(port_forward=port_forward, ssh_proxy_enabled=True)
+        monitor._runtime.get_record.return_value = None  # type: ignore[attr-defined]
+
+        result = monitor._handle_ssh_task_update(
+            "tsk-abc", "wrk-1", _ssh_payload("forward", "127.0.0.1")
+        )
+
+        # What reaches the forward service, not just what the mock hands back.
+        registered = port_forward.register_port_forward.call_args.args[3]
+        assert registered["directScope"] == "loopback"
+        assert registered["workerId"] == "wrk-1"
+        assert result["ssh"]["host"] == "server.example.com"
+        assert result["ssh"]["directHost"] == "127.0.0.1"
+        assert result["ssh"]["directScope"] == "loopback"

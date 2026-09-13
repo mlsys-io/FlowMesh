@@ -251,10 +251,13 @@ class SSHExecutor(Executor):
             "port": host_port,
         }
         if access_mode in ("proxy", "forward"):
-            if access_mode == "forward":
-                # Forward-mode sessions need separate direct connection info
-                ssh_info["directHost"] = host_name
-                ssh_info["directPort"] = host_port
+            # A relayed session's own address, reported for every relayed mode
+            # so a client on the worker's host can still reach it. `host` and
+            # `port` may be rewritten to the server's route; these are not.
+            ssh_info["directHost"] = host_name
+            ssh_info["directPort"] = host_port
+            ssh_info["directScope"] = self._backend.session_scope(access_mode)
+            ssh_info["workerId"] = task.assigned_worker
             logger.info(
                 "SSH %s session ready: host=%s port=%s (task=%s)",
                 access_mode,

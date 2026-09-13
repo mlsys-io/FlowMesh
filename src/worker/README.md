@@ -113,7 +113,9 @@ the worker:
    - **direct**: worker-published `host`/`port` (random host port for `22/tcp`)
    - **proxy/forward**: the session port, published to the worker's endpoint
      registry so the supervisor can ask the worker to relay to it, plus
-     `directHost`/`directPort` for optional `--direct` fallback
+     `directHost`/`directPort` for optional `--direct` fallback, `directScope`
+     (`loopback` or `network`) saying where that address reaches the session
+     from, and `workerId` naming the worker it belongs to
 5. Blocks until the container exits, the TTL expires, or the task is cancelled.
 6. Cleans up the SSH container and copies back `sshOutput` artifacts.
 

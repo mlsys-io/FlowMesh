@@ -891,6 +891,9 @@ class EventMonitor:
             return payload
         inner = inner.copy()
         inner["mode"] = "direct"
+        # `host` is now the direct route, so the separate copy is noise -- but
+        # its scope still describes `host`, and this is the one mode where that
+        # address is the only way in.
         inner.pop("directHost", None)
         inner.pop("directPort", None)
         payload[key] = inner
