@@ -19,12 +19,12 @@ _ClientKey = tuple[str, float, bool, bool]
 
 
 class APIExecutor(Executor):
-    """Executor that performs a single HTTP request defined by task YAML.
+    """Performs a single HTTP request defined by task YAML.
 
-    Uses a class-level connection pool keyed by (base_url, timeout, verify_tls,
-    follow_redirects) so that repeated calls to the same endpoint (e.g. a trading
-    bot hitting QuantArena every few seconds) reuse the underlying TCP/TLS
-    connection instead of paying the handshake cost on every request.
+    Endpoint-agnostic with a legacy Nebula fallback. ``spec.api.url`` wins over
+    ``NEBULA_API_BASE_URL``; ``spec.api.auth.credential_env`` wins over
+    ``NEBULA_API_TOKEN``. A call with no credential fails closed unless
+    ``spec.api.auth.mode: none`` opts out explicitly.
     """
 
     name = "api"
@@ -110,9 +110,35 @@ class APIExecutor(Executor):
         if not isinstance(headers, dict):
             raise ExecutionError("spec.api.headers must be a mapping")
 
-        token = os.getenv("NEBULA_API_TOKEN")
-        if token and not any(k.lower() == "authorization" for k in headers):
-            headers["Authorization"] = f"Bearer {token}"
+        auth = api_cfg.get("auth")
+        if auth is not None:
+            if not isinstance(auth, dict):
+                raise ExecutionError("spec.api.auth must be a mapping")
+            if auth.get("mode") != "none":
+                credential_env = auth.get("credential_env")
+                if not isinstance(credential_env, str) or not credential_env:
+                    raise ExecutionError(
+                        "spec.api.auth.credential_env must name an env var"
+                    )
+                token = os.getenv(credential_env)
+                if not token:
+                    raise ExecutionError(
+                        f"spec.api.auth.credential_env names {credential_env}, "
+                        "which is not set on the worker"
+                    )
+                header_name = str(auth.get("header", "Authorization"))
+                scheme = str(auth.get("scheme", "Bearer"))
+                if not any(k.lower() == header_name.lower() for k in headers):
+                    headers[header_name] = f"{scheme} {token}"
+        else:
+            token = os.getenv("NEBULA_API_TOKEN")
+            if token and not any(k.lower() == "authorization" for k in headers):
+                headers["Authorization"] = f"Bearer {token}"
+            elif not token and not any(k.lower() == "authorization" for k in headers):
+                raise ExecutionError(
+                    "no credential configured: set spec.api.auth.credential_env, "
+                    "NEBULA_API_TOKEN, an Authorization header, or auth.mode 'none'"
+                )
 
         params = api_cfg.get("params")
         if params is not None and not isinstance(params, dict):

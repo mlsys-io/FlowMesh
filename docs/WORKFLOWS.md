@@ -69,6 +69,39 @@ parent output substitution and validation. See
 `src/worker/executors/utils/graph_templates.py` for the templating
 contract.
 
+## API task
+
+`taskType: api` performs a single HTTP request. The endpoint and credential are caller-supplied and endpoint-agnostic, with a legacy Nebula fallback preserved for backward compatibility.
+
+URL precedence: `spec.api.url` names the full request URL and wins; when absent, the executor falls back to `NEBULA_API_BASE_URL` (appending `/v1/chat/completions`).
+
+Credential precedence: an explicit `spec.api.auth.credential_env` (naming a worker env var holding the token) wins; when no `auth` block is present, the executor falls back to `NEBULA_API_TOKEN`. `auth.header` and `auth.scheme` override the default `Authorization` / `Bearer`.
+
+```yaml
+spec:
+  taskType: api
+  api:
+    url: https://api.example.com/v1/chat/completions
+    method: POST
+    auth:
+      credential_env: LLM_API_TOKEN   # env var on the worker holding the token
+      header: Authorization           # default
+      scheme: Bearer                  # default
+    headers:
+      Content-Type: application/json
+    body:
+      model: gpt-4o
+      messages:
+        - role: user
+          content: Hello
+    response:
+      parse_json: true
+```
+
+When `auth.credential_env` is set but the named env var is not present on the worker, the task fails closed with an error naming the missing variable — it never falls back to another credential and never calls unauthenticated.
+
+A call is authenticated from `auth.credential_env`, `NEBULA_API_TOKEN`, or an `Authorization` header supplied directly in `headers`. A call with none of these fails closed unless the caller opts out explicitly with `auth.mode: none`, so a forgotten credential errors instead of silently going out anonymous.
+
 ## data_retrieval: type lumid
 
 `type: lumid` routes the retrieval through lumid-data-app (HTTP). Three
