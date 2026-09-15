@@ -299,6 +299,7 @@ Summary:"""
         adjust_tp: Callable[[int], int],
         task_ids: Iterable[str] | None,
     ) -> None:
+        """Load or reuse the vLLM engine for ``ident``."""
         if self._llm:
             if self._inference_spec == new_inference_spec:
                 logger.info("Reusing existing vLLM instance for model %s", ident)
@@ -429,6 +430,7 @@ Summary:"""
         last_exc: Exception | None = None
         success = False
         chosen_kwargs: dict[str, Any] = {}
+        memory_constrained = False
 
         for tp_idx, tp_value in enumerate(tp_candidates, start=1):
             kwargs = dict(kwargs_base)
@@ -436,6 +438,7 @@ Summary:"""
 
             safe_util, free_ratio = self._compute_safe_utilization(requested_util)
             if safe_util < requested_util - 1e-3:
+                memory_constrained = True
                 if free_ratio is not None:
                     logger.warning(
                         "Requested gpu_memory_utilization=%.3f but only %.2f%% of GPU "
@@ -535,7 +538,9 @@ Summary:"""
                 f"candidates {tp_candidates} and gpu_memory_utilization adjustments "
                 f"(last error: {last_exc})"
             )
-            raise ExecutionError(message)
+            # A memory-constrained load is transient: the dispatcher requeues
+            # and the idle checker evicts the stale engine before the retry.
+            raise ExecutionError(message, retryable=memory_constrained)
 
         self._llm_kwargs = chosen_kwargs
         self._model_name = ident
