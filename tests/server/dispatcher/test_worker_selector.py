@@ -177,3 +177,26 @@ class TestCollectMetrics:
         )
         assert worker is not None
         assert worker.id == "w-unified"
+
+    def test_homogeneous_workers_prefer_least_recently_dispatched(self) -> None:
+        pool = [_worker("w-0"), _worker("w-1")]
+        last_dispatch = {"w-0": 100.0, "w-1": 300.0}
+        worker, info = select_worker(
+            pool, strategy="best_fit", task_id="t-1", worker_last_dispatch=last_dispatch
+        )
+        assert worker is not None
+        assert worker.id == "w-0"
+        assert info["chosen_metrics"]["last_dispatch"] == 100.0
+
+    def test_recency_bonus_does_not_override_capacity(self) -> None:
+        w_small = _worker("w-small", gpu_count=1, gpu_mem=16_000_000_000)
+        w_big = _worker("w-big", gpu_count=4, gpu_mem=80_000_000_000)
+        last_dispatch = {"w-small": 0.0, "w-big": 1000.0}
+        worker, _ = select_worker(
+            [w_small, w_big],
+            strategy="best_fit",
+            task_id="t-1",
+            worker_last_dispatch=last_dispatch,
+        )
+        assert worker is not None
+        assert worker.id == "w-big"
