@@ -181,6 +181,7 @@ class WorkerWatchdog:
 
         try:
             self._worker_registry.unregister_workers(worker_id)
+            self._dispatcher._on_worker_unregistered(worker_id)
         except Exception as exc:
             self._logger.warning(
                 "Worker watchdog failed to reap worker %s: %s", worker_id, exc
