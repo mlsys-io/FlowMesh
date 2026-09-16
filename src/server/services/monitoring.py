@@ -732,7 +732,7 @@ class EventMonitor:
             case "UNREGISTER":
                 worker_id = (event.worker_id or "").strip()
                 self._worker_registry.unregister_workers(worker_id)
-                self._dispatcher._on_worker_unregistered(worker_id)
+                self._dispatcher.on_worker_unregistered(worker_id)
                 if worker_id:
                     self._schedule_deregister(
                         ResourceKind.WORKER, worker_id, self._actor_from_event(event)

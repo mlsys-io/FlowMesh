@@ -106,7 +106,7 @@ class Dispatcher:
             eligible &= set(record.selected_worker)
         return eligible
 
-    def _on_worker_unregistered(self, worker_id: str) -> None:
+    def on_worker_unregistered(self, worker_id: str) -> None:
         self._worker_last_dispatch.pop(worker_id, None)
 
     def _grace_then_fail(
