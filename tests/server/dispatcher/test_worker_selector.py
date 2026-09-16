@@ -15,6 +15,7 @@ from shared.tasks.worker_message import (
     NetworkInfo,
     WorkerHardware,
 )
+from tests.server.dispatcher.helpers import make_capturing_dispatcher
 
 
 def _worker(
@@ -203,16 +204,12 @@ class TestCollectMetrics:
 
 class TestWorkerUnregisterCleanup:
     def test_unregister_removes_last_dispatch_entry(self) -> None:
-        from tests.server.dispatcher.helpers import make_capturing_dispatcher
-
         dispatcher = make_capturing_dispatcher()
         dispatcher._worker_last_dispatch["w-1"] = 100.0
         dispatcher._on_worker_unregistered("w-1")
         assert "w-1" not in dispatcher._worker_last_dispatch
 
     def test_unregister_unknown_worker_is_noop(self) -> None:
-        from tests.server.dispatcher.helpers import make_capturing_dispatcher
-
         dispatcher = make_capturing_dispatcher()
         dispatcher._worker_last_dispatch["w-1"] = 100.0
         dispatcher._on_worker_unregistered("w-other")
