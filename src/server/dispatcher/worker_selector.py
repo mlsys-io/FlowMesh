@@ -160,7 +160,7 @@ def _select_best_fit(
                 "normalized_cost": metrics.get("normalized_cost"),
                 "last_dispatch": last_dispatch.get(worker.id),
             }
-            for _, _, worker, metrics in scores
+            for _, _, worker, metrics in scores[:5]
         ],
     }
     return best_worker, debug
