@@ -1,12 +1,19 @@
 import time
 from typing import Any
 
-from pydantic import BaseModel, Field, computed_field
+from pydantic import (
+    BaseModel,
+    Field,
+    SerializerFunctionWrapHandler,
+    computed_field,
+    model_serializer,
+)
 
 from shared.tasks import TaskEnvelopeTemplate
 from shared.tasks.worker_message import HardwareUsage
 
 from ..utils.time import now_iso
+from .redact import redact_api, redact_raw_yaml
 
 TRAINING_TASK_TYPES = {
     "sft",
@@ -160,6 +167,16 @@ class TaskRecord(BaseModel):
     def last_failed_worker(self) -> str | None:
         """The most recent worker to have failed this task."""
         return self.failed_workers[-1] if self.failed_workers else None
+
+    @model_serializer(mode="wrap")
+    def _serialize(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        data = handler(self)
+        data["raw_yaml"] = redact_raw_yaml(self.raw_yaml)
+        spec = self.task.spec
+        api = getattr(spec, "api", None)
+        if isinstance(api, dict):
+            data["task"]["spec"]["api"] = redact_api(api)
+        return data
 
 
 class TaskInfo(TaskRecord):

@@ -36,6 +36,7 @@ from ..registries.worker import Worker, WorkerRegistry
 from ..services.metrics import MetricsRecorder
 from ..task.metadata import extract_model_dataset_names
 from ..task.models import TaskRecord, TaskStatus
+from ..task.redact import REDACTED
 from ..task.runtime import TaskRuntime
 from ..utils.time import now_iso
 from .worker_selector import DEFAULT_WORKER_SELECTION, select_worker
@@ -390,6 +391,23 @@ class Dispatcher:
             self._runtime.release_merge(task_id)
             self.fail_task(
                 task_id, "spec_validation_failed", payload={"error": str(exc)}
+            )
+            return True
+
+        # A redacted credential means the task was rehydrated from a dump that
+        # could not retain the secret; it cannot authenticate, so fail it rather
+        # than dispatch with a placeholder bearer token.
+        if self._has_redacted_credential(rendered_task.spec):
+            self._runtime.release_merge(task_id)
+            self.fail_task(
+                task_id,
+                "credential_not_retained",
+                payload={
+                    "error": (
+                        "the API credential was not retained across the server "
+                        "restart; resubmit the workflow with the credential"
+                    )
+                },
             )
             return True
 
@@ -1054,6 +1072,16 @@ class Dispatcher:
                 continue
             results[name] = envelope.result
         return results
+
+    def _has_redacted_credential(self, spec: TaskSpecStrict) -> bool:
+        """Whether an api spec carries a redacted credential placeholder."""
+        api = getattr(spec, "api", None)
+        if not isinstance(api, dict):
+            return False
+        headers = api.get("headers")
+        if not isinstance(headers, dict):
+            return False
+        return any(value == REDACTED for value in headers.values())
 
     def _resolve_upstream_task_ids(
         self, record: TaskRecord, spec: TaskSpecStrict
