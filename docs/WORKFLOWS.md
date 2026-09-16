@@ -71,29 +71,27 @@ contract.
 
 ## API task
 
-`taskType: api` performs a single HTTP request. The endpoint and model default to the lum.id/llm chat-completions endpoint and the deepseek model when the spec omits them.
+`taskType: api` performs a single HTTP request. By default it routes to the Nebula endpoint and authenticates with the worker's `NEBULA_API_TOKEN`.
 
-`spec.api.url` names the full request URL; when absent, the executor defaults to `https://lum.id/llm/v1/chat/completions`. When the request body has no `model` key, the executor injects `deepseek-v4-flash`.
+`spec.api.url` overrides the endpoint; when absent, the executor uses `NEBULA_API_BASE_URL` (appending `/v1/chat/completions`). `spec.api.headers` may supply an `Authorization` header directly.
 
-The credential is either an `Authorization` header supplied directly in `spec.api.headers`, or the worker's own `NEBULA_API_TOKEN`, which the executor fills in as `Authorization: Bearer <NEBULA_API_TOKEN>`. A call with neither fails closed.
+Credential handling: a caller-supplied `Authorization` header is always used as-is and never overwritten. With no header, `NEBULA_API_TOKEN` is injected only when the call is on the Nebula url (no custom `spec.api.url`) — the Nebula token is never sent to a custom endpoint. A Nebula-path call with no token available fails closed.
 
 ```yaml
 spec:
   taskType: api
   api:
-    url: https://lum.id/llm/v1/chat/completions
     method: POST
     headers:
       Content-Type: application/json
     body:
+      model: gpt-4o
       messages:
         - role: user
           content: Hello
     response:
       parse_json: true
 ```
-
-When no `Authorization` header is supplied and `NEBULA_API_TOKEN` is not set on the worker, the task fails closed with an error — it never calls unauthenticated.
 
 ## data_retrieval: type lumid
 

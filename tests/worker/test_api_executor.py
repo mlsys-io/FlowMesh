@@ -1,4 +1,4 @@
-"""Tests for the API executor defaults, credential handling, and model injection."""
+"""Tests for the API executor url override and Nebula credential handling."""
 
 from pathlib import Path
 from unittest.mock import patch
@@ -25,11 +25,8 @@ def _task_message(**spec_updates: object) -> WorkerTaskMessage:
             "spec": {
                 "taskType": "api",
                 "api": {
-                    "url": "https://api.example.com/v1/chat/completions",
                     "method": "POST",
-                    "body": {
-                        "messages": [{"role": "user", "content": "hi"}],
-                    },
+                    "body": {"messages": [{"role": "user", "content": "hi"}]},
                     **spec_updates,
                 },
             },
@@ -65,69 +62,62 @@ def _run(
         executor.run(task, Path("/tmp/out"))
 
 
-class TestDefaults:
-    def test_default_url_is_lum_id_llm(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("NEBULA_API_TOKEN", "token")
-        task = _task_message(url=None)
-        transport = _RecordingTransport()
-        _run(APIExecutor.__new__(APIExecutor), task, transport)
-        assert transport.request is not None
-        assert transport.request.url == "https://lum.id/llm/v1/chat/completions"
-
-    def test_default_model_injected_when_body_has_no_model(
+class TestNebulaPath:
+    def test_no_url_no_header_uses_nebula_url_and_token(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setenv("NEBULA_API_TOKEN", "token")
+        monkeypatch.setenv("NEBULA_API_BASE_URL", "https://nebula.example.com")
+        monkeypatch.setenv("NEBULA_API_TOKEN", "nebula-token")
         task = _task_message()
         transport = _RecordingTransport()
         _run(APIExecutor.__new__(APIExecutor), task, transport)
         assert transport.request is not None
-        sent = _sent_json(transport.request)
-        assert sent["model"] == "deepseek-v4-flash"
+        assert transport.request.url == "https://nebula.example.com/v1/chat/completions"
+        assert transport.request.headers["Authorization"] == "Bearer nebula-token"
 
-    def test_explicit_model_left_untouched(
+    def test_no_url_with_header_preserves_header_and_skips_token(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setenv("NEBULA_API_TOKEN", "token")
-        task = _task_message(body={"model": "gpt-4o", "messages": []})
+        monkeypatch.setenv("NEBULA_API_BASE_URL", "https://nebula.example.com")
+        monkeypatch.setenv("NEBULA_API_TOKEN", "nebula-token")
+        task = _task_message(headers={"Authorization": "Bearer custom"})
         transport = _RecordingTransport()
         _run(APIExecutor.__new__(APIExecutor), task, transport)
         assert transport.request is not None
-        sent = _sent_json(transport.request)
-        assert sent["model"] == "gpt-4o"
+        assert transport.request.url == "https://nebula.example.com/v1/chat/completions"
+        assert transport.request.headers["Authorization"] == "Bearer custom"
 
-
-class TestCredential:
-    def test_explicit_authorization_header_left_untouched(
+    def test_neither_url_nor_base_url_raises(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setenv("NEBULA_API_TOKEN", "worker-token")
-        task = _task_message(headers={"Authorization": "Bearer explicit"})
-        transport = _RecordingTransport()
-        _run(APIExecutor.__new__(APIExecutor), task, transport)
-        assert transport.request is not None
-        assert transport.request.headers["Authorization"] == "Bearer explicit"
-
-    def test_nebula_token_used_when_no_header(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setenv("NEBULA_API_TOKEN", "worker-token")
+        monkeypatch.delenv("NEBULA_API_BASE_URL", raising=False)
         task = _task_message()
-        transport = _RecordingTransport()
-        _run(APIExecutor.__new__(APIExecutor), task, transport)
-        assert transport.request is not None
-        assert transport.request.headers["Authorization"] == "Bearer worker-token"
-
-    def test_missing_credential_fails_closed(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.delenv("NEBULA_API_TOKEN", raising=False)
-        task = _task_message()
-        with pytest.raises(ExecutionError, match="NEBULA_API_TOKEN"):
+        with pytest.raises(ExecutionError, match="spec.api.url or NEBULA_API_BASE_URL"):
             _run(APIExecutor.__new__(APIExecutor), task, _RecordingTransport())
 
 
-def _sent_json(request: httpx.Request) -> dict:
-    import json
+class TestCustomUrl:
+    def test_custom_url_no_header_does_not_inject_token(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("NEBULA_API_TOKEN", "nebula-token")
+        task = _task_message(url="https://custom.example.com/v1/chat/completions")
+        transport = _RecordingTransport()
+        _run(APIExecutor.__new__(APIExecutor), task, transport)
+        assert transport.request is not None
+        assert transport.request.url == "https://custom.example.com/v1/chat/completions"
+        assert "Authorization" not in transport.request.headers
 
-    return json.loads(request.content.decode("utf-8"))
+    def test_custom_url_with_header_preserves_header(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("NEBULA_API_TOKEN", "nebula-token")
+        task = _task_message(
+            url="https://custom.example.com/v1/chat/completions",
+            headers={"Authorization": "Bearer custom"},
+        )
+        transport = _RecordingTransport()
+        _run(APIExecutor.__new__(APIExecutor), task, transport)
+        assert transport.request is not None
+        assert transport.request.url == "https://custom.example.com/v1/chat/completions"
+        assert transport.request.headers["Authorization"] == "Bearer custom"

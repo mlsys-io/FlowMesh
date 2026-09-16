@@ -17,17 +17,14 @@ logger = logging.getLogger(__name__)
 # Cache key: (base_url, timeout_seconds, verify_tls, follow_redirects)
 _ClientKey = tuple[str, float, bool, bool]
 
-_DEFAULT_BASE_URL = "https://lum.id/llm"
-_DEFAULT_MODEL = "deepseek-v4-flash"
-
 
 class APIExecutor(Executor):
     """Performs a single HTTP request defined by task YAML.
 
-    Defaults to the lum.id/llm chat-completions endpoint and the deepseek model
-    when the spec omits them. The credential is the worker's own
-    ``NEBULA_API_TOKEN`` unless the spec supplies an ``Authorization`` header
-    directly. A call with no credential fails closed.
+    Defaults to the Nebula endpoint via ``NEBULA_API_BASE_URL`` and authenticates
+    with ``NEBULA_API_TOKEN``. ``spec.api.url`` overrides the endpoint and
+    ``spec.api.headers`` may supply an ``Authorization`` header directly; the
+    Nebula token is never sent to a custom endpoint.
     """
 
     name = "api"
@@ -102,8 +99,12 @@ class APIExecutor(Executor):
             raise ExecutionError("spec.api must be a mapping")
 
         url = api_cfg.get("url")
+        custom_url = url is not None
         if url is None:
-            url = _DEFAULT_BASE_URL + "/v1/chat/completions"
+            url = os.getenv("NEBULA_API_BASE_URL")
+            if not url:
+                raise ExecutionError("spec.api.url or NEBULA_API_BASE_URL is required")
+            url = url.rstrip("/") + "/v1/chat/completions"
 
         method = str(api_cfg.get("method", "POST")).upper()
         headers = api_cfg.get("headers", {})
@@ -111,13 +112,14 @@ class APIExecutor(Executor):
             raise ExecutionError("spec.api.headers must be a mapping")
 
         if not any(k.lower() == "authorization" for k in headers):
-            token = os.getenv("NEBULA_API_TOKEN")
-            if not token:
-                raise ExecutionError(
-                    "no credential configured: set an Authorization header or "
-                    "NEBULA_API_TOKEN"
-                )
-            headers["Authorization"] = f"Bearer {token}"
+            if not custom_url:
+                token = os.getenv("NEBULA_API_TOKEN")
+                if not token:
+                    raise ExecutionError(
+                        "no credential configured: set an Authorization header or "
+                        "NEBULA_API_TOKEN"
+                    )
+                headers["Authorization"] = f"Bearer {token}"
 
         params = api_cfg.get("params")
         if params is not None and not isinstance(params, dict):
@@ -142,15 +144,9 @@ class APIExecutor(Executor):
 
         request_kwargs: dict[str, Any] = {}
         if json_payload is not None:
-            if isinstance(json_payload, dict) and "model" not in json_payload:
-                json_payload = {**json_payload, "model": _DEFAULT_MODEL}
             request_kwargs["json"] = json_payload
         elif body is not None:
-            if isinstance(body, dict):
-                if "model" not in body:
-                    body = {**body, "model": _DEFAULT_MODEL}
-                request_kwargs["json"] = body
-            elif isinstance(body, list):
+            if isinstance(body, (dict, list)):
                 request_kwargs["json"] = body
             else:
                 request_kwargs["content"] = body
