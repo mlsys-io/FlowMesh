@@ -4,10 +4,10 @@
 # Stage 1 calls a chat completion endpoint and returns raw text.
 # Stage 2 sends Stage 1's returned text as the next prompt.
 #
-# Stage 1 uses the general path: spec.api.url names the endpoint and
-# spec.api.auth.credential_env names a worker env var holding the token.
-# Stage 2 omits url and auth, so it falls back to the legacy Nebula
-# defaults (NEBULA_API_BASE_URL + NEBULA_API_TOKEN).
+# Stage 1 names the endpoint explicitly via spec.api.url. Stage 2 omits url
+# and model, so it uses the defaults: https://lum.id/llm/v1/chat/completions
+# with the deepseek-v4-flash model. Both stages authenticate with the
+# worker's own NEBULA_API_TOKEN.
 
 apiVersion: flowmesh/v1
 kind: APITask
@@ -21,14 +21,12 @@ spec:
     - name: stage-1
       spec:
         api:
-          url: https://api.openai.com/v1/chat/completions
+          url: https://lum.id/llm/v1/chat/completions
           method: POST
-          auth:
-            credential_env: LLM_API_TOKEN
           headers:
             Content-Type: application/json
           body:
-            model: gpt-4o
+            model: deepseek-v4-flash
             messages:
               - role: user
                 content: Please explain vector databases in simple terms.
@@ -45,7 +43,6 @@ spec:
           headers:
             Content-Type: application/json
           body:
-            model: gpt-4o
             messages:
               - role: user
                 content: "The previous stage's response is as follows. Please provide a simpler explanation: \n${stage-1.text}"
