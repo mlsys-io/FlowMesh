@@ -25,6 +25,7 @@ from shared.tasks import (
 )
 from shared.tasks.placeholders import PLACEHOLDER_PATTERN
 from shared.tasks.specs import (
+    ApiSpecStrict,
     ConditionSpec,
     SSHSpecStrict,
     SSHSpecTemplate,
@@ -394,9 +395,6 @@ class Dispatcher:
             )
             return True
 
-        # A redacted credential means the task was rehydrated from a dump that
-        # could not retain the secret; it cannot authenticate, so fail it rather
-        # than dispatch with a placeholder bearer token.
         if self._has_redacted_credential(rendered_task.spec):
             self._runtime.release_merge(task_id)
             self.fail_task(
@@ -1075,8 +1073,10 @@ class Dispatcher:
 
     def _has_redacted_credential(self, spec: TaskSpecStrict) -> bool:
         """Whether an api spec carries a redacted credential placeholder."""
-        api = getattr(spec, "api", None)
-        if not isinstance(api, dict):
+        if not isinstance(spec, ApiSpecStrict):
+            return False
+        api = spec.api
+        if api is None:
             return False
         headers = api.get("headers")
         if not isinstance(headers, dict):
