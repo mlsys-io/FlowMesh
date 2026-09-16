@@ -84,7 +84,6 @@ class Dispatcher:
         self._stage_weight_stickiness_enabled = enable_stage_weight_stickiness
         self._no_worker_grace_sec = max(0, no_worker_grace_sec)
         self._metrics = metrics_recorder
-        self._worker_last_dispatch: dict[str, float] = {}
         self._weight_reference_hints: tuple[str, ...] = (
             "checkpoint",
             "weight",
@@ -105,9 +104,6 @@ class Dispatcher:
         if record.selected_worker:
             eligible &= set(record.selected_worker)
         return eligible
-
-    def on_worker_unregistered(self, worker_id: str) -> None:
-        self._worker_last_dispatch.pop(worker_id, None)
 
     def _grace_then_fail(
         self,
@@ -330,7 +326,6 @@ class Dispatcher:
                 task_id=task_id,
                 jitter_epsilon=self._selection_jitter,
                 task_age=task_age,
-                worker_last_dispatch=self._worker_last_dispatch,
             )
             if not worker and preferred_pool:
                 worker, selection_info = select_worker(
@@ -342,7 +337,6 @@ class Dispatcher:
                     task_id=task_id,
                     jitter_epsilon=self._selection_jitter,
                     task_age=task_age,
-                    worker_last_dispatch=self._worker_last_dispatch,
                 )
         if not worker:
             self._logger.debug(
@@ -543,7 +537,6 @@ class Dispatcher:
             self._worker_registry.update_worker_status(worker.id, WorkerStatus.BUSY)
         except Exception as exc:
             self._logger.debug("Failed to update worker %s status: %s", worker.id, exc)
-        self._worker_last_dispatch[worker.id] = time.time()
 
         try:
             chosen_score = selection_info.get("chosen_metrics", {}).get("score")
