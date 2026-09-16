@@ -1,7 +1,7 @@
 import hashlib
 import logging
 from collections.abc import Iterable
-from typing import Any, cast
+from typing import Any
 
 from ..registries.worker import Worker, dedicated_gpu_memory_total_bytes
 
@@ -98,9 +98,9 @@ def _select_best_fit(
     category_key = (task_category or "other").lower()
     lam = float(lambda_config.get(category_key, lambda_config.get("other", 0.5)))
     lam = max(0.0, min(1.0, lam))
-    scores: list[tuple[float, float, Worker, dict[str, float | str | None]]] = []
+    scores: list[tuple[float, float, Worker, dict[str, float]]] = []
 
-    metric_payloads: list[tuple[Worker, dict[str, float | str | None]]] = []
+    metric_payloads: list[tuple[Worker, dict[str, float]]] = []
     for worker in candidates:
         metric_payloads.append((worker, _collect_worker_metrics(worker)))
 
@@ -111,8 +111,8 @@ def _select_best_fit(
             "reason": "no_scores",
         }
 
-    throughputs = [cast(float, payload["throughput"]) for _, payload in metric_payloads]
-    costs = [cast(float, payload["cost"]) for _, payload in metric_payloads]
+    throughputs = [payload["throughput"] for _, payload in metric_payloads]
+    costs = [payload["cost"] for _, payload in metric_payloads]
     throughput_min = min(throughputs)
     throughput_range = max(throughputs) - throughput_min
     cost_min = min(costs)
@@ -122,8 +122,8 @@ def _select_best_fit(
     max_last = max(last_dispatch.values(), default=0.0)
 
     for worker, metrics in metric_payloads:
-        throughput = cast(float, metrics["throughput"])
-        cost = cast(float, metrics["cost"])
+        throughput = metrics["throughput"]
+        cost = metrics["cost"]
         norm_throughput = (
             0.0
             if throughput_range <= 0
@@ -133,8 +133,6 @@ def _select_best_fit(
         score = lam * norm_throughput - (1.0 - lam) * norm_cost
         last = last_dispatch.get(worker.id)
         time_since_dispatch = max_last - last if last is not None else max_last + 1.0
-        metrics["last_dispatch"] = last
-        metrics["time_since_dispatch"] = time_since_dispatch
         if task_age is not None:
             score += min(task_age, 300.0) * 1e-4
         if task_id:
@@ -145,7 +143,7 @@ def _select_best_fit(
         metrics["score"] = score
         scores.append((score, time_since_dispatch, worker, metrics))
 
-    scores.sort(key=lambda item: cast(str, item[3]["worker_id"]))  # stable by worker id
+    scores.sort(key=lambda item: item[2].id)  # stable by worker id
     scores.sort(key=lambda item: (item[0], item[1]), reverse=True)
     best_score, _, best_worker, best_metrics = scores[0]
     debug = {
@@ -156,15 +154,15 @@ def _select_best_fit(
         "task_age": task_age,
         "top_scores": [
             {
-                "worker_id": metrics["worker_id"],
+                "worker_id": worker.id,
                 "score": metrics["score"],
                 "throughput": metrics["throughput"],
                 "normalized_throughput": metrics.get("normalized_throughput"),
                 "cost": metrics["cost"],
                 "normalized_cost": metrics.get("normalized_cost"),
-                "last_dispatch": metrics.get("last_dispatch"),
+                "last_dispatch": last_dispatch.get(worker.id),
             }
-            for _, _, _, metrics in scores[:5]
+            for _, _, worker, metrics in scores[:5]
         ],
     }
     return best_worker, debug
@@ -180,22 +178,18 @@ def _select_min_capacity(
 ) -> tuple[Worker | None, dict[str, Any]]:
     last_dispatch = worker_last_dispatch or {}
     max_last = max(last_dispatch.values(), default=0.0)
-    scored: list[
-        tuple[float, float, float, str, Worker, dict[str, float | str | None]]
-    ] = []
+    scored: list[tuple[float, float, float, str, Worker, dict[str, float]]] = []
     for worker in candidates:
         metrics = _collect_worker_metrics(worker)
-        adjusted_throughput = cast(float, metrics["throughput"])
+        adjusted_throughput = metrics["throughput"]
         if task_id:
             adjusted_throughput += _stable_jitter(task_id, worker.id, jitter_epsilon)
         last = last_dispatch.get(worker.id)
         time_since_dispatch = max_last - last if last is not None else max_last + 1.0
-        metrics["last_dispatch"] = last
-        metrics["time_since_dispatch"] = time_since_dispatch
         scored.append(
             (
                 adjusted_throughput,
-                cast(float, metrics["cost"]),
+                metrics["cost"],
                 -time_since_dispatch,
                 worker.id,
                 worker,
@@ -233,7 +227,7 @@ def _select_min_capacity(
     return chosen_worker, debug
 
 
-def _collect_worker_metrics(worker: Worker) -> dict[str, float | str | None]:
+def _collect_worker_metrics(worker: Worker) -> dict[str, float]:
     hardware = worker.hardware
     devices = [] if hardware is None else hardware.gpu.devices
     gpu_count = len(devices)
@@ -258,7 +252,6 @@ def _collect_worker_metrics(worker: Worker) -> dict[str, float | str | None]:
 
     gb = 1 << 30
     return {
-        "worker_id": worker.id,
         "throughput": throughput,
         "cost": cost,
         "gpu_count": float(gpu_count),

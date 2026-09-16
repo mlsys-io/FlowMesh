@@ -181,12 +181,11 @@ class TestCollectMetrics:
     def test_homogeneous_workers_prefer_least_recently_dispatched(self) -> None:
         pool = [_worker("w-0"), _worker("w-1")]
         last_dispatch = {"w-0": 100.0, "w-1": 300.0}
-        worker, info = select_worker(
+        worker, _ = select_worker(
             pool, strategy="best_fit", worker_last_dispatch=last_dispatch
         )
         assert worker is not None
         assert worker.id == "w-0"
-        assert info["chosen_metrics"]["last_dispatch"] == 100.0
 
     def test_time_since_dispatch_does_not_override_capacity(self) -> None:
         w_small = _worker("w-small", gpu_count=1, gpu_mem=16_000_000_000)
