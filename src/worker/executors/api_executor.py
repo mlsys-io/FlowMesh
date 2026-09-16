@@ -23,8 +23,9 @@ class APIExecutor(Executor):
 
     Defaults to the Nebula endpoint via ``NEBULA_API_BASE_URL`` and authenticates
     with ``NEBULA_API_TOKEN``. ``spec.api.url`` overrides the endpoint and
-    ``spec.api.headers`` may supply an ``Authorization`` header directly; the
-    Nebula token is never sent to a custom endpoint.
+    ``spec.api.headers`` may supply an ``Authorization`` header directly. A
+    custom ``spec.api.url`` requires its own credential: the Nebula token is
+    never sent to an endpoint the caller chose.
     """
 
     name = "api"
@@ -111,15 +112,22 @@ class APIExecutor(Executor):
         if not isinstance(headers, dict):
             raise ExecutionError("spec.api.headers must be a mapping")
 
-        if not any(k.lower() == "authorization" for k in headers):
-            if not custom_url:
-                token = os.getenv("NEBULA_API_TOKEN")
-                if not token:
-                    raise ExecutionError(
-                        "no credential configured: set an Authorization header or "
-                        "NEBULA_API_TOKEN"
-                    )
-                headers["Authorization"] = f"Bearer {token}"
+        has_credential = any(k.lower() == "authorization" for k in headers)
+        if custom_url:
+            if not has_credential:
+                raise ExecutionError(
+                    "spec.api.url names a custom endpoint but no credential was "
+                    "supplied; set an Authorization header. The Nebula token is "
+                    "never sent to an endpoint the caller chose."
+                )
+        elif not has_credential:
+            token = os.getenv("NEBULA_API_TOKEN")
+            if not token:
+                raise ExecutionError(
+                    "no credential configured: set an Authorization header or "
+                    "NEBULA_API_TOKEN"
+                )
+            headers["Authorization"] = f"Bearer {token}"
 
         params = api_cfg.get("params")
         if params is not None and not isinstance(params, dict):

@@ -97,16 +97,20 @@ class TestNebulaPath:
 
 
 class TestCustomUrl:
-    def test_custom_url_no_header_does_not_inject_token(
+    def test_custom_url_without_credential_raises(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        """A custom endpoint must carry its own credential.
+
+        The Nebula token is available here, so the failure proves it is withheld
+        rather than merely absent: a caller-chosen endpoint never receives it.
+        """
         monkeypatch.setenv("NEBULA_API_TOKEN", "nebula-token")
         task = _task_message(url="https://custom.example.com/v1/chat/completions")
         transport = _RecordingTransport()
-        _run(APIExecutor.__new__(APIExecutor), task, transport)
-        assert transport.request is not None
-        assert transport.request.url == "https://custom.example.com/v1/chat/completions"
-        assert "Authorization" not in transport.request.headers
+        with pytest.raises(ExecutionError, match="custom endpoint"):
+            _run(APIExecutor.__new__(APIExecutor), task, transport)
+        assert transport.request is None
 
     def test_custom_url_with_header_preserves_header(
         self, monkeypatch: pytest.MonkeyPatch
