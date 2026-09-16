@@ -130,8 +130,7 @@ def _select_best_fit(
         )
         norm_cost = 0.0 if cost_range <= 0 else (cost - cost_min) / cost_range
         score = lam * norm_throughput - (1.0 - lam) * norm_cost
-        last = last_dispatch.get(worker.id)
-        recency_key = -last if last is not None else 0
+        recency_key = -last_dispatch.get(worker.id, 0.0)
         if task_age is not None:
             score += min(task_age, 300.0) * 1e-4
         if task_id:
@@ -182,8 +181,7 @@ def _select_min_capacity(
         adjusted_throughput = metrics["throughput"]
         if task_id:
             adjusted_throughput += _stable_jitter(task_id, worker.id, jitter_epsilon)
-        last = last_dispatch.get(worker.id)
-        recency_key = last if last is not None else 0
+        recency_key = last_dispatch.get(worker.id, 0.0)
         scored.append(
             (
                 adjusted_throughput,

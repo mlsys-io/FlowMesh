@@ -201,6 +201,23 @@ class TestCollectMetrics:
         assert worker is not None
         assert worker.id == "w-big"
 
+    def test_min_satisfying_prefers_least_recently_dispatched(self) -> None:
+        pool = [_worker("w-0"), _worker("w-1")]
+        last_dispatch = {"w-0": 100.0, "w-1": 300.0}
+        worker, _ = select_worker(
+            pool, strategy="min_satisfying", worker_last_dispatch=last_dispatch
+        )
+        assert worker is not None
+        assert worker.id == "w-0"
+
+    def test_min_satisfying_prefers_never_dispatched(self) -> None:
+        pool = [_worker("w-used"), _worker("w-fresh")]
+        worker, _ = select_worker(
+            pool, strategy="min_satisfying", worker_last_dispatch={"w-used": 500.0}
+        )
+        assert worker is not None
+        assert worker.id == "w-fresh"
+
 
 class TestWorkerUnregisterCleanup:
     def test_unregister_removes_last_dispatch_entry(self) -> None:
