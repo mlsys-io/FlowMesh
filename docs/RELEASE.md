@@ -62,7 +62,7 @@ the production publish job.
 5. Build and smoke-test the distributions:
 
    ```bash
-   uv sync --all-packages --group dev --frozen
+   uv sync --all-packages --group ci --frozen
    uv build --all-packages --out-dir dist
    uv run scripts/ci/check_package_build.py --dist dist
    ```
