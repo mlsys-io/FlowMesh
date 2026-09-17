@@ -733,12 +733,24 @@ class DataMixin(GovernanceMixin):
         """
         cur = 0
         grouped_items: list[dict[str, Any]] = []
-        for df in table_stores_list:
+        for group_index, df in enumerate(table_stores_list):
             if not isinstance(df, pd.DataFrame):
                 raise ExecutionError("table_stores_list must contain DataFrames.")
             size = len(df)
-            outputs = [item["output"] for item in items[cur : cur + size]]
-            grouped_items.append({"output": outputs})
+            group = items[cur : cur + size]
+            # A group has no single prompt or finish_reason of its own, so it
+            # takes the first row's prompt and reports one finish_reason per
+            # member — the list form InferenceItem allows.
+            payload: dict[str, Any] = {
+                "index": group_index,
+                "prompt": str(group[0].get("prompt", "")) if group else "",
+                "output": [item["output"] for item in group],
+                "finish_reason": [item.get("finish_reason") for item in group],
+            }
+            metadata = group[0].get("metadata") if group else None
+            if metadata:
+                payload["metadata"] = metadata
+            grouped_items.append(payload)
             cur += size
         if cur != len(items):
             raise ExecutionError(
