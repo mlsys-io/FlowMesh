@@ -86,6 +86,31 @@ class TestMirrorTaskResults:
         # leaves child-specific data inside ``parent.result.children``).
         assert loaded["kind"] == "PARENT"
 
+    def test_preserves_dir_of_an_in_flight_child_post(self, tmp_path: Path) -> None:
+        """The mirror must not delete a directory a POST is still writing into.
+
+        ``ingest_result`` creates ``<results_dir>/<child>/`` before it writes
+        ``results.json``, so a mirror firing inside that window sees a child
+        directory with no result file and falls past the skip guard. Replacing
+        the directory there destroys the in-flight writer's tempfile along with
+        it; the mirror overlays instead.
+        """
+        monitor = _make_monitor(tmp_path)
+        _seed_result(
+            tmp_path, "tsk-parent", {"task_id": "tsk-parent", "kind": "PARENT"}
+        )
+        # The state ingest_result leaves behind mid-write: directory present,
+        # results.json not yet replaced into place, tempfile open beside it.
+        child_dir = tmp_path / "tsk-child"
+        child_dir.mkdir(parents=True)
+        in_flight = child_dir / ".results.json.tmp"
+        in_flight.write_text("partial")
+
+        monitor.mirror_task_results("tsk-parent", ["tsk-child"])
+
+        assert in_flight.exists(), "mirror deleted an in-flight writer's tempfile"
+        assert (child_dir / RESULTS_NAME).exists()
+
     def test_defers_when_parent_dir_missing(self, tmp_path: Path) -> None:
         """Mirror is queued on ``_pending_result_clones`` if the parent
         hasn't landed yet — ``ingest_result`` drains the queue."""

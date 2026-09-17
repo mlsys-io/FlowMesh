@@ -18,20 +18,36 @@ SCRATCH_DIR = "scratch"
 _SHARED_DIR_MODE = 0o0777
 
 
+def _ensure_shared_dir(path: Path) -> None:
+    """Create ``path`` if absent and make it writable by peer UIDs.
+
+    The results volume is shared: the server's event loop (result ingest), its
+    ``tasks-events`` thread (merged-child mirroring) and peer worker UIDs all
+    materialize the same task directory. Testing ``exists()`` before ``mkdir()``
+    leaves a window in which another party wins the race and the loser raises
+    ``FileExistsError``, so create unconditionally with ``exist_ok=True`` — which
+    still raises if ``path`` exists as a non-directory.
+
+    The ``chmod`` is best-effort: a directory created by a different UID cannot
+    be re-moded by this process, and whoever created it already set the mode.
+    """
+    path.mkdir(parents=True, exist_ok=True)
+    try:
+        path.chmod(_SHARED_DIR_MODE)
+    except OSError:
+        pass
+
+
 def prepare_output_dir(base_dir: Path) -> None:
     """Ensure the base directory and standard sub-directories exist."""
     for d in (base_dir, base_dir / LOGS_DIR, base_dir / ARTIFACTS_DIR):
-        if not d.exists():
-            d.mkdir(parents=True)
-            d.chmod(_SHARED_DIR_MODE)
+        _ensure_shared_dir(d)
 
 
 def scratch_dir(base_dir: Path) -> Path:
     """Return `out_dir/scratch/`, creating it if needed."""
     path = base_dir / SCRATCH_DIR
-    if not path.exists():
-        path.mkdir(parents=True)
-        path.chmod(_SHARED_DIR_MODE)
+    _ensure_shared_dir(path)
     return path
 
 

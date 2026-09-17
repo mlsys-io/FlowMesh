@@ -264,9 +264,14 @@ class EventMonitor:
             if dst_dir.exists() and (dst_dir / RESULTS_NAME).exists():
                 continue
             try:
-                if dst_dir.exists():
-                    shutil.rmtree(dst_dir, ignore_errors=True)
-                shutil.copytree(parent_dir, dst_dir)
+                # Overlay rather than replace. The results volume is shared
+                # with an in-flight ``POST /results`` for this same child, which
+                # has already created the directory but may not have written
+                # ``results.json`` yet — so the guard above cannot see it. An
+                # rmtree here would delete the directory out from under that
+                # writer, dropping its result (``404`` on a DONE task) and, once
+                # its open tempfile lost its parent, failing the delivery.
+                shutil.copytree(parent_dir, dst_dir, dirs_exist_ok=True)
                 record = self._runtime.get_record(child_id)
                 expected_artifacts: list[str] = []
                 if record:
