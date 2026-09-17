@@ -134,9 +134,9 @@ def _select_best_fit(
         metrics["score"] = score
         scores.append((score, worker, metrics))
 
-    scores.sort(key=lambda item: item[2]["worker_id"])  # stable by worker id
+    scores.sort(key=lambda item: item[1].id)  # stable by worker id
     scores.sort(key=lambda item: item[0], reverse=True)
-    best_score, best_worker, best_metrics = scores[0]
+    _, best_worker, best_metrics = scores[0]
     debug = {
         "strategy": "best_fit",
         "candidate_count": len(candidates),
@@ -145,14 +145,14 @@ def _select_best_fit(
         "task_age": task_age,
         "top_scores": [
             {
-                "worker_id": metrics["worker_id"],
+                "worker_id": worker.id,
                 "score": metrics["score"],
                 "throughput": metrics["throughput"],
                 "normalized_throughput": metrics.get("normalized_throughput"),
                 "cost": metrics["cost"],
                 "normalized_cost": metrics.get("normalized_cost"),
             }
-            for _, _, metrics in scores[:5]
+            for _, worker, metrics in scores[:5]
         ],
     }
     return best_worker, debug
@@ -200,7 +200,7 @@ def _select_min_capacity(
         "task_age": task_age,
         "top_candidates": [
             {
-                "worker_id": entry[4]["worker_id"],
+                "worker_id": entry[2],
                 "throughput": entry[4]["throughput"],
                 "adjusted_throughput": entry[0],
                 "cost": entry[4]["cost"],
@@ -211,7 +211,7 @@ def _select_min_capacity(
     return chosen_worker, debug
 
 
-def _collect_worker_metrics(worker: Worker) -> dict[str, Any]:
+def _collect_worker_metrics(worker: Worker) -> dict[str, float]:
     hardware = worker.hardware
     devices = [] if hardware is None else hardware.gpu.devices
     gpu_count = len(devices)
@@ -236,7 +236,6 @@ def _collect_worker_metrics(worker: Worker) -> dict[str, Any]:
 
     gb = 1 << 30
     return {
-        "worker_id": worker.id,
         "throughput": throughput,
         "cost": cost,
         "gpu_count": float(gpu_count),
