@@ -544,7 +544,7 @@ def _make_runtime_with_record(task_id: str) -> tuple[TaskRuntime, TaskRecord]:
         task_id=task_id,
         workflow_id="wfl-1",
         owner_id="admin",
-        raw_yaml="",
+        source="",
         task=env,
     )
     runtime._tasks[task_id] = record  # type: ignore[attr-defined]

@@ -9,6 +9,7 @@ import httpx
 from shared.schemas.result import APIResult
 from shared.tasks.specs import ApiSpecStrict
 from shared.tasks.task_type import TaskType
+from shared.utils.redact import is_sensitive_key
 
 from .base_executor import ExecutionError, Executor, ExecutorTask
 
@@ -19,12 +20,13 @@ _ClientKey = tuple[str, float, bool, bool]
 
 
 class APIExecutor(Executor):
-    """Executor that performs a single HTTP request defined by task YAML.
+    """Performs a single HTTP request defined by task YAML.
 
-    Uses a class-level connection pool keyed by (base_url, timeout, verify_tls,
-    follow_redirects) so that repeated calls to the same endpoint (e.g. a trading
-    bot hitting QuantArena every few seconds) reuse the underlying TCP/TLS
-    connection instead of paying the handshake cost on every request.
+    Defaults to the Nebula endpoint via ``NEBULA_API_BASE_URL`` and authenticates
+    with ``NEBULA_API_TOKEN``. ``spec.api.url`` overrides the endpoint and
+    ``spec.api.headers`` may supply a credential header (``Authorization``,
+    ``X-API-Key``, etc.) directly. A custom ``spec.api.url`` requires its own
+    credential: the Nebula token is never sent to an endpoint the caller chose.
     """
 
     name = "api"
@@ -99,20 +101,25 @@ class APIExecutor(Executor):
             raise ExecutionError("spec.api must be a mapping")
 
         url = api_cfg.get("url")
+        method = str(api_cfg.get("method", "POST")).upper()
+        headers = api_cfg.get("headers", {})
+        if not isinstance(headers, dict):
+            raise ExecutionError("spec.api.headers must be a mapping")
+
         if url is None:
             url = os.getenv("NEBULA_API_BASE_URL")
             if not url:
                 raise ExecutionError("spec.api.url or NEBULA_API_BASE_URL is required")
             url = url.rstrip("/") + "/v1/chat/completions"
 
-        method = str(api_cfg.get("method", "POST")).upper()
-        headers = api_cfg.get("headers", {})
-        if not isinstance(headers, dict):
-            raise ExecutionError("spec.api.headers must be a mapping")
-
-        token = os.getenv("NEBULA_API_TOKEN")
-        if token and not any(k.lower() == "authorization" for k in headers):
-            headers["Authorization"] = f"Bearer {token}"
+            if not any(is_sensitive_key(k) for k in headers):
+                token = os.getenv("NEBULA_API_TOKEN")
+                if not token:
+                    raise ExecutionError(
+                        "no credential configured: set an Authorization header or "
+                        "NEBULA_API_TOKEN"
+                    )
+                headers["Authorization"] = f"Bearer {token}"
 
         params = api_cfg.get("params")
         if params is not None and not isinstance(params, dict):

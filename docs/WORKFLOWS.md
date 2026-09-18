@@ -69,6 +69,30 @@ parent output substitution and validation. See
 `src/worker/executors/utils/graph_templates.py` for the templating
 contract.
 
+## API task
+
+`taskType: api` performs a single HTTP request. By default it routes to the Nebula endpoint and authenticates with the worker's `NEBULA_API_TOKEN`.
+
+`spec.api.url` overrides the endpoint; when absent, the executor uses `NEBULA_API_BASE_URL` (appending `/v1/chat/completions`). `spec.api.headers` may supply an `Authorization` header directly.
+
+Credential handling: a caller-supplied `Authorization` header is always used as-is and never overwritten. With no header, `NEBULA_API_TOKEN` is injected only when the call is on the Nebula url (no custom `spec.api.url`) — the Nebula token is never sent to a custom endpoint. A Nebula-path call with no token available fails closed.
+
+```yaml
+spec:
+  taskType: api
+  api:
+    method: POST
+    headers:
+      Content-Type: application/json
+    body:
+      model: gpt-4o
+      messages:
+        - role: user
+          content: Hello
+    response:
+      parse_json: true
+```
+
 ## data_retrieval: type lumid
 
 `type: lumid` routes the retrieval through lumid-data-app (HTTP). Three

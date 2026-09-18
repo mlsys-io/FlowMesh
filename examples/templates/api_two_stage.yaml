@@ -4,8 +4,9 @@
 # Stage 1 calls a chat completion endpoint and returns raw text.
 # Stage 2 sends Stage 1's returned text as the next prompt.
 #
-# NOTE: Configure NEBULA_API_BASE_URL and NEBULA_API_TOKEN on the worker before
-# submitting. APIExecutor injects the Authorization header from NEBULA_API_TOKEN.
+# Stage 1 names a custom endpoint via spec.api.url and supplies its own
+# Authorization header. Stage 2 omits url and header, so it uses the Nebula
+# defaults (NEBULA_API_BASE_URL + NEBULA_API_TOKEN).
 
 apiVersion: flowmesh/v1
 kind: APITask
@@ -19,8 +20,10 @@ spec:
     - name: stage-1
       spec:
         api:
+          url: https://api.example.com/v1/chat/completions
           method: POST
           headers:
+            Authorization: Bearer <your-token>
             Content-Type: application/json
           body:
             model: gpt-4o

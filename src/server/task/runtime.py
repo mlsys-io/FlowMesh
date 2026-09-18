@@ -109,7 +109,7 @@ class TaskRuntime:
     ) -> tuple[str, list[TaskParsingResult]]:
         parsed_workflow = parse_workflow(payload, format)
         specs = parsed_workflow.tasks
-        yaml_text = payload
+        source_text = payload
         results: list[TaskParsingResult] = []
         workflow_id = new_workflow_id()
         task_records: list[TaskRecord] = []
@@ -155,7 +155,7 @@ class TaskRuntime:
                     task_id=task_id,
                     workflow_id=workflow_id,
                     owner_id=owner_id,
-                    raw_yaml=yaml_text,
+                    source=source_text,
                     task=task,
                     local_name=entry.local_name,
                     graph_node_name=entry.graph_node_name,
