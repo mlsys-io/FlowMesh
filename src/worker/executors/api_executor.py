@@ -18,8 +18,8 @@ from .mixins.data import DataMixin
 
 logger = logging.getLogger(__name__)
 
-# Cache key: (base_url, timeout_seconds, verify_tls, follow_redirects)
-_ClientKey = tuple[str, float, bool, bool]
+# Cache key: (base_url, timeout_seconds, verify_tls, follow_redirects, concurrency)
+_ClientKey = tuple[str, float, bool, bool, int]
 
 # Worker-side per-row slot in a batched request body. Server-side stage
 # references are ${...}; this is a worker-side token, hence {{...}}.
@@ -41,8 +41,9 @@ class APIExecutor(DataMixin, Executor):
     Defaults to the Nebula endpoint via ``NEBULA_API_BASE_URL`` and authenticates
     with ``NEBULA_API_TOKEN``. ``spec.api.url`` overrides the endpoint and
     ``spec.api.headers`` may supply a credential header (``Authorization``,
-    ``X-API-Key``, etc.) directly. A custom ``spec.api.url`` requires its own
-    credential: the Nebula token is never sent to an endpoint the caller chose.
+    ``X-API-Key``, etc.) directly. A custom ``spec.api.url`` may be
+    unauthenticated; the Nebula token is never sent to an endpoint the caller
+    chose.
     """
 
     name = "api"
@@ -69,34 +70,40 @@ class APIExecutor(DataMixin, Executor):
         timeout: httpx.Timeout,
         verify_tls: bool,
         follow_redirects: bool,
+        concurrency: int,
     ) -> httpx.Client:
         """Return a cached client or create a new one for the given parameters."""
         timeout_sec = timeout.connect  # all four fields are set to same value
         if timeout_sec is None:
             timeout_sec = 0.0
-        key: _ClientKey = (base_url, float(timeout_sec), verify_tls, follow_redirects)
+        key: _ClientKey = (
+            base_url,
+            float(timeout_sec),
+            verify_tls,
+            follow_redirects,
+            concurrency,
+        )
         with cls._clients_lock:
             client = cls._clients.get(key)
             if client is not None and not client.is_closed:
                 return client
-            # Create a new client for this combination. The connection pool is
-            # sized to the max concurrency so parallel row requests never queue
-            # on connections (which would make the parallelism imaginary).
             client = httpx.Client(
                 timeout=timeout,
                 verify=verify_tls,
                 follow_redirects=follow_redirects,
                 limits=httpx.Limits(
-                    max_connections=_MAX_CONCURRENCY,
-                    max_keepalive_connections=_MAX_CONCURRENCY,
+                    max_connections=concurrency,
+                    max_keepalive_connections=concurrency,
                 ),
             )
             cls._clients[key] = client
             logger.debug(
-                "Created new HTTP client for %s (verify=%s, timeout=%s)",
+                "Created new HTTP client for %s (verify=%s, timeout=%s, "
+                "concurrency=%s)",
                 base_url,
                 verify_tls,
                 timeout_sec,
+                concurrency,
             )
             return client
 
@@ -279,23 +286,22 @@ class APIExecutor(DataMixin, Executor):
         max_body_bytes = int(response_cfg.get("max_body_bytes", 200000))
         raise_for_status = bool(response_cfg.get("raise_for_status", True))
 
-        base = self._base_url(str(url))
-        client = self._get_client(base, timeout, verify_tls, follow_redirects)
+        concurrency = int(api_cfg.get("concurrency", _MAX_CONCURRENCY))
+        if concurrency < 1:
+            raise ExecutionError("spec.api.concurrency must be >= 1")
+        concurrency = min(concurrency, _MAX_CONCURRENCY)
 
-        # spec.data is required and yields one row per request.
+        base = self._base_url(str(url))
+        client = self._get_client(
+            base, timeout, verify_tls, follow_redirects, concurrency
+        )
+
         entry = self._collect_prompts_for_spec(spec, task_id=task.task_id)
         prompts = entry.prompts
         if not prompts:
             raise ExecutionError("spec.data produced no rows")
 
-        # Build the request skeleton once; each worker only substitutes its
-        # prompt into the prepared body and issues the request.
         request_kwargs = self._build_request_kwargs(api_cfg, None)
-
-        concurrency = int(api_cfg.get("concurrency", _MAX_CONCURRENCY))
-        if concurrency < 1:
-            raise ExecutionError("spec.api.concurrency must be >= 1")
-        concurrency = min(concurrency, _MAX_CONCURRENCY)
 
         def _issue(idx: int, prompt: Any) -> APIItem:
             prompt_str = self._prompt_to_str(prompt)
