@@ -1,6 +1,7 @@
 """Tests for the API executor's batch mode (one task, N row-aligned requests)."""
 
 import json
+import threading
 import time
 from pathlib import Path
 from typing import Any, cast
@@ -39,7 +40,8 @@ def _task_message(**spec_updates: Any) -> WorkerTaskMessage:
 
 
 class _RecordingTransport(httpx.MockTransport):
-    """MockTransport that echoes each row's prompt back as its response text."""
+    """MockTransport that echoes each row's prompt back with row-specific
+    status, usage, and headers."""
 
     def __init__(self) -> None:
         self.requests: list[httpx.Request] = []
@@ -50,10 +52,11 @@ class _RecordingTransport(httpx.MockTransport):
         body = request.read()
         prompt = json.loads(body)["messages"][0]["content"]
         return httpx.Response(
-            200,
+            200 + len(prompt) % 3,
+            headers={"X-Row": prompt},
             json={
                 "choices": [{"message": {"content": f"echo:{prompt}"}}],
-                "usage": {"total_tokens": 3},
+                "usage": {"total_tokens": len(prompt)},
             },
         )
 
@@ -86,6 +89,10 @@ def _batch_task(items: list[Any], **api_updates: Any) -> WorkerTaskMessage:
                 "api": {
                     "method": "POST",
                     "body": {"messages": [{"role": "user", "content": "{{prompt}}"}]},
+                    "response": {
+                        "raise_for_status": False,
+                        "include_headers": True,
+                    },
                     **api_updates,
                 },
                 "data": {"type": "list", "items": items},
@@ -119,6 +126,9 @@ class TestBatch:
             assert item.response_json["choices"][0]["message"]["content"] == (
                 f"echo:{prompt}"
             )
+            assert item.status_code == 200 + len(prompt) % 3
+            assert item.usage == {"total_tokens": len(prompt)}
+            assert item.headers["x-row"] == prompt
 
     def test_rows_stay_aligned_when_requests_complete_out_of_order(
         self, tmp_path: Path
@@ -137,10 +147,11 @@ class TestBatch:
                 delay = {"a": 0.3, "b": 0.2, "c": 0.1}[prompt]
                 time.sleep(delay)
                 return httpx.Response(
-                    200,
+                    200 + len(prompt) % 3,
+                    headers={"X-Row": prompt},
                     json={
                         "choices": [{"message": {"content": f"echo:{prompt}"}}],
-                        "usage": {"total_tokens": 3},
+                        "usage": {"total_tokens": len(prompt)},
                     },
                 )
 
@@ -155,6 +166,9 @@ class TestBatch:
             assert item.response_json["choices"][0]["message"]["content"] == (
                 f"echo:{prompt}"
             )
+            assert item.status_code == 200 + len(prompt) % 3
+            assert item.usage == {"total_tokens": len(prompt)}
+            assert item.headers["x-row"] == prompt
 
     def test_single_row_batches_to_one_item(self, tmp_path: Path) -> None:
         task = _batch_task(["only"])
@@ -193,7 +207,7 @@ class TestBatch:
                     },
                 )
 
-        task = _batch_task(["a", "b", "c"])
+        task = _batch_task(["a", "b", "c"], response={"raise_for_status": True})
         transport = _FailRow("b")
         with pytest.raises(ExecutionError, match="row 1"):
             _run(APIExecutor.__new__(APIExecutor), task, transport, tmp_path)
@@ -297,6 +311,36 @@ class TestBatch:
         assert elapsed < 0.2 * n_rows * 0.6
         assert [item.index for item in result.items] == list(range(n_rows))
 
+    def test_concurrency_one_serializes_requests(self, tmp_path: Path) -> None:
+        """concurrency: 1 limits the worker pool so requests never overlap."""
+
+        class _OverlapTransport(httpx.MockTransport):
+            def __init__(self) -> None:
+                self.max_in_flight = 0
+                self._in_flight = 0
+                self._lock = threading.Lock()
+                super().__init__(self._handler)
+
+            def _handler(self, request: httpx.Request) -> httpx.Response:
+                with self._lock:
+                    self._in_flight += 1
+                    self.max_in_flight = max(self.max_in_flight, self._in_flight)
+                time.sleep(0.05)
+                with self._lock:
+                    self._in_flight -= 1
+                return httpx.Response(
+                    200,
+                    json={
+                        "choices": [{"message": {"content": "hello"}}],
+                        "usage": {"total_tokens": 3},
+                    },
+                )
+
+        task = _batch_task(["a", "b", "c", "d"], concurrency=1)
+        transport = _OverlapTransport()
+        _run(APIExecutor.__new__(APIExecutor), task, transport, tmp_path)
+        assert transport.max_in_flight == 1
+
     def test_request_skeleton_constructed_once(self, tmp_path: Path) -> None:
         """The request template is built once, not once per row."""
         task = _batch_task(["a", "b", "c"])
@@ -350,6 +394,34 @@ class TestBatch:
             APIExecutor.__new__(APIExecutor).run(task, tmp_path)
 
         assert captured["concurrency"] == 8
+
+    @pytest.mark.parametrize("concurrency", [1, 4])
+    def test_run_passes_effective_concurrency_to_client(
+        self, tmp_path: Path, concurrency: int
+    ) -> None:
+        """run() forwards the uncapped configured concurrency to the client."""
+        task = _batch_task(["a", "b", "c"], concurrency=concurrency)
+        captured: dict[str, Any] = {}
+
+        def _fake_get_client(*args: Any, **kwargs: Any) -> httpx.Client:
+            captured["concurrency"] = kwargs.get("concurrency", args[4])
+            return httpx.Client(transport=_RecordingTransport())
+
+        with patch.object(APIExecutor, "_get_client", side_effect=_fake_get_client):
+            APIExecutor.__new__(APIExecutor).run(task, tmp_path)
+
+        assert captured["concurrency"] == concurrency
+
+    @pytest.mark.parametrize("concurrency", [0, -1])
+    def test_concurrency_below_one_rejected(
+        self, tmp_path: Path, concurrency: int
+    ) -> None:
+        """A configured concurrency below 1 is rejected."""
+        task = _batch_task(["a", "b", "c"], concurrency=concurrency)
+        with pytest.raises(ExecutionError, match="spec.api.concurrency must be >= 1"):
+            _run(
+                APIExecutor.__new__(APIExecutor), task, _RecordingTransport(), tmp_path
+            )
 
     def test_client_cache_key_includes_concurrency(self) -> None:
         """Pools built for different concurrency values are not shared."""
