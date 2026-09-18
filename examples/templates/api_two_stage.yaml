@@ -1,14 +1,17 @@
 # api_two_stage.yaml
 #
-# Two-stage API executor demo.
-# Stage 1 calls a chat completion endpoint and returns raw text.
-# Stage 2 sends Stage 1's returned text as the next prompt.
+# Two-stage batched API executor demo.
 #
 # spec.data is required for an api task and yields one row per request; a
-# single request is a one-row list. Stage 1 names a custom endpoint via
-# spec.api.url and supplies its own Authorization header. Stage 2 omits url
-# and header, so it uses the Nebula defaults (NEBULA_API_BASE_URL +
-# NEBULA_API_TOKEN).
+# single request is a one-row list. Each row's prompt is substituted for the
+# {{prompt}} placeholder in the request body and one request is issued per
+# row, returned row-aligned in APIResult.items. Server-side stage references
+# are ${...}; {{prompt}} is a worker-side per-row slot, so it is not touched
+# by server-side resolution.
+#
+# Stage 1 fans out over three rows and calls a chat completion endpoint.
+# Stage 2 consumes Stage 1's returned text (${stage-1.text}) as the next
+# prompt, so the two-stage character is kept while exercising the batch path.
 
 apiVersion: flowmesh/v1
 kind: APITask
@@ -24,7 +27,9 @@ spec:
         data:
           type: list
           items:
-            - Please explain vector databases in simple terms.
+            - Explain vector databases in simple terms.
+            - Explain attention in simple terms.
+            - Explain backpropagation in simple terms.
         api:
           url: https://api.example.com/v1/chat/completions
           method: POST
