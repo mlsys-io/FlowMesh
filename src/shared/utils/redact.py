@@ -90,6 +90,20 @@ def redact_value(value: Any) -> Any:
     return value
 
 
+def redact_credential(value: Any) -> Any:
+    """Replace a known scalar credential while preserving an omitted value."""
+    if value is None:
+        return None
+    if isinstance(value, list):
+        return [REDACTED]
+    return REDACTED
+
+
+def is_redacted(value: Any) -> bool:
+    """Whether a scalar value is the redaction marker."""
+    return value == REDACTED
+
+
 def contains_redacted(value: Any) -> bool:
     """Whether a value contains a redacted placeholder at any depth."""
     if value == REDACTED:
@@ -115,16 +129,6 @@ def contains_redacted_credential(value: Any) -> bool:
     if isinstance(value, list):
         return any(contains_redacted_credential(item) for item in value)
     return False
-
-
-def redact_api(api: dict[str, Any] | None) -> dict[str, Any] | None:
-    """Return a copy of an api spec with credential values replaced.
-
-    The original mapping is never mutated.
-    """
-    if not isinstance(api, dict):
-        return api
-    return redact_value(api)
 
 
 def redact_raw_yaml(raw_yaml: str) -> str:

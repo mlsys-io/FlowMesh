@@ -8,10 +8,11 @@ import pytest
 from server.task.models import TaskRecord
 from shared.tasks import TaskEnvelopeTemplate
 from shared.tasks.specs import ApiSpecTemplate, RagSpecTemplate
+from shared.tasks.specs.misc import redact_api
 from shared.utils.redact import (
     REDACTED,
     is_sensitive_key,
-    redact_api,
+    redact_credential,
     redact_raw_yaml,
     redact_value,
 )
@@ -201,6 +202,17 @@ class TestRedactTask:
     def test_base_spec_redaction_is_a_no_op(self) -> None:
         record = _record_for_task(_task("echo", data={"token": "echo-data"}))
         assert record.model_dump()["task"]["spec"]["data"]["token"] == "echo-data"
+
+
+class TestRedactCredential:
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        [(None, None), ("secret", REDACTED), (["secret"], [REDACTED])],
+    )
+    def test_redacts_scalar_and_list_credentials(
+        self, value: object, expected: object
+    ) -> None:
+        assert redact_credential(value) == expected
 
 
 class TestRedactRawYaml:

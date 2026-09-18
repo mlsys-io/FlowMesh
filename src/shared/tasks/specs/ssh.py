@@ -2,7 +2,12 @@ from typing import Any, Literal, Self
 
 from pydantic import model_validator
 
-from ...utils.redact import contains_redacted_credential, redact_value
+from ...utils.redact import (
+    contains_redacted,
+    contains_redacted_credential,
+    redact_credential,
+    redact_value,
+)
 from .._base import StrictBaseModel, TemplateBaseModel
 from ..placeholders import TemplateInt
 from ..task_type import TaskType
@@ -120,19 +125,16 @@ class SSHSpecStrict(TaskSpecStrictBase):
     env: dict[str, Any] | None = None
 
     def redact_credentials(self) -> Self:
-        redacted = redact_value(
-            {"authorizedKeys": self.authorizedKeys, "env": self.env}
-        )
         return self.model_copy(
             update={
-                "authorizedKeys": redacted["authorizedKeys"],
-                "env": redacted["env"],
+                "authorizedKeys": redact_credential(self.authorizedKeys),
+                "env": redact_value(self.env),
             }
         )
 
     def has_redacted_credentials(self) -> bool:
-        return contains_redacted_credential(
-            {"authorizedKeys": self.authorizedKeys, "env": self.env}
+        return contains_redacted(self.authorizedKeys) or contains_redacted_credential(
+            self.env
         )
 
     @model_validator(mode="after")
@@ -159,19 +161,16 @@ class SSHSpecTemplate(TaskSpecTemplateBase):
     env: dict[str, Any] | None = None
 
     def redact_credentials(self) -> Self:
-        redacted = redact_value(
-            {"authorizedKeys": self.authorizedKeys, "env": self.env}
-        )
         return self.model_copy(
             update={
-                "authorizedKeys": redacted["authorizedKeys"],
-                "env": redacted["env"],
+                "authorizedKeys": redact_credential(self.authorizedKeys),
+                "env": redact_value(self.env),
             }
         )
 
     def has_redacted_credentials(self) -> bool:
-        return contains_redacted_credential(
-            {"authorizedKeys": self.authorizedKeys, "env": self.env}
+        return contains_redacted(self.authorizedKeys) or contains_redacted_credential(
+            self.env
         )
 
     @model_validator(mode="after")

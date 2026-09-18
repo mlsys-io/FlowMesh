@@ -1,6 +1,6 @@
 from typing import Any, Literal, Self
 
-from ...utils.redact import contains_redacted_credential, redact_api, redact_value
+from ...utils.redact import contains_redacted_credential, redact_value
 from ..task_type import TaskType
 from .common import (
     ModelSpecStrict,
@@ -8,6 +8,13 @@ from .common import (
     TaskSpecStrictBase,
     TaskSpecTemplateBase,
 )
+
+
+def redact_api(api: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Return a copy of an API spec with credential values replaced."""
+    if not isinstance(api, dict):
+        return api
+    return redact_value(api)
 
 
 class ApiSpecStrict(TaskSpecStrictBase):

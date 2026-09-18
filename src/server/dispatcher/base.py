@@ -393,7 +393,7 @@ class Dispatcher:
             )
             return True
 
-        if self._has_redacted_credential(rendered_task.spec):
+        if rendered_task.spec.has_redacted_credentials():
             self._runtime.release_merge(task_id)
             self.fail_task(
                 task_id,
@@ -1068,10 +1068,6 @@ class Dispatcher:
                 continue
             results[name] = envelope.result
         return results
-
-    def _has_redacted_credential(self, spec: TaskSpecStrict) -> bool:
-        """Whether a task spec carries a redacted credential placeholder."""
-        return spec.has_redacted_credentials()
 
     def _resolve_upstream_task_ids(
         self, record: TaskRecord, spec: TaskSpecStrict
