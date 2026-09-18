@@ -14,7 +14,7 @@ from server.registries.worker import WorkerRegistry
 from server.task.models import TaskRecord, TaskStatus
 from server.task.parser import parse_workflow
 from server.task.runtime import TaskRuntime
-from shared.schemas.result import ResultEnvelope
+from shared.schemas.result import APIItem, APIResult, ResultEnvelope
 from shared.tasks import TaskEnvelopeTemplate, TaskType
 from shared.tasks.specs import SSHSpecStrict
 
@@ -392,8 +392,6 @@ def test_stage_reference_uses_payload_root_for_local_and_http_results(
 def test_api_dependent_stage_resolves_first_row_text(tmp_path: Path) -> None:
     """A dependent stage's ${stage.items.0.text} resolves to the first row's
     text of a batch-only APIResult."""
-    from shared.schemas.result import APIItem, APIResult
-
     stage_dir = tmp_path / "task-api"
     stage_dir.mkdir()
     result = APIResult(

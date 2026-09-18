@@ -13,7 +13,11 @@ from tests.worker.factories import make_live_worker_config, make_worker_hardware
 from worker.executors.mp_executor import MPExecutor
 from worker.executors.vllm_executor import VLLMExecutor
 
-pynvml.nvmlInit()
+try:
+    pynvml.nvmlInit()
+    _NVML_AVAILABLE = True
+except Exception:
+    _NVML_AVAILABLE = False
 
 
 def _descendants_of(pid: int) -> set[int]:
@@ -25,6 +29,7 @@ def _descendants_of(pid: int) -> set[int]:
 
 
 @pytest.mark.gpu
+@pytest.mark.skipif(not _NVML_AVAILABLE, reason="NVML unavailable (no GPU)")
 def test_mp_executor_cleans_up_vllm(caplog, tmp_path: Path) -> None:
     """Start MPExecutor with the real executors, run a minimal task to
     trigger engine startup, and ensure cleanup removes the worker process

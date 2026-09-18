@@ -3,7 +3,7 @@
 import json
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from unittest.mock import patch
 
 import httpx
@@ -106,9 +106,12 @@ class TestBatch:
         transport = _RecordingTransport()
         result = _run(APIExecutor.__new__(APIExecutor), task, transport, tmp_path)
         assert len(transport.requests) == 3
+        issued = {
+            json.loads(req.read())["messages"][0]["content"]
+            for req in transport.requests
+        }
+        assert issued == {"first", "second", "third"}
         for idx, prompt in enumerate(["first", "second", "third"]):
-            body = transport.requests[idx].read()
-            assert prompt.encode() in body
             item = result.items[idx]
             assert item.index == idx
             assert item.prompt == prompt
@@ -328,7 +331,7 @@ class TestBatch:
                 True,
                 concurrency,
             )
-            pool = client._transport._pool  # type: ignore[attr-defined]
+            pool = cast(Any, client._transport)._pool
             assert pool._max_connections == concurrency
             assert pool._max_keepalive_connections == concurrency
         finally:
