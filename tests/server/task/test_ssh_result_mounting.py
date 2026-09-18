@@ -14,6 +14,7 @@ from server.registries.worker import WorkerRegistry
 from server.task.models import TaskRecord, TaskStatus
 from server.task.parser import parse_workflow
 from server.task.runtime import TaskRuntime
+from shared.schemas.result import ResultEnvelope
 from shared.tasks import TaskEnvelopeTemplate, TaskType
 from shared.tasks.specs import SSHSpecStrict
 
@@ -386,3 +387,66 @@ def test_stage_reference_uses_payload_root_for_local_and_http_results(
         http_value
         == "http://flowmesh.example/api/v1/results/task-http/files/final_lora.tar.gz"
     )
+
+
+def test_api_dependent_stage_resolves_first_row_text(tmp_path: Path) -> None:
+    """A dependent stage's ${stage.items.0.text} resolves to the first row's
+    text of a batch-only APIResult."""
+    from shared.schemas.result import APIItem, APIResult
+
+    stage_dir = tmp_path / "task-api"
+    stage_dir.mkdir()
+    result = APIResult(
+        ok=True,
+        executor="api",
+        method="POST",
+        url="https://api.example.com/v1/chat/completions",
+        status_code=200,
+        items=[
+            APIItem(
+                index=0,
+                url="https://api.example.com/v1/chat/completions",
+                status_code=200,
+                text="first row text",
+                prompt="first",
+            ),
+            APIItem(
+                index=1,
+                url="https://api.example.com/v1/chat/completions",
+                status_code=200,
+                text="second row text",
+                prompt="second",
+            ),
+        ],
+    )
+    (stage_dir / "results.json").write_text(
+        json.dumps(
+            {
+                "task_id": "task-api",
+                "result": json.loads(
+                    ResultEnvelope(task_id="task-api", result=result).model_dump_json()
+                )["result"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    upstream = TaskRecord(
+        task_id="task-api",
+        workflow_id="wf-1",
+        owner_id="owner",
+        source="raw",
+        task=_task_template(TaskType.API),
+        status=TaskStatus.DONE,
+        task_type="api",
+        local_name="stage",
+    )
+    dispatcher = Dispatcher(
+        runtime=cast(TaskRuntime, _DummyRuntime({})),
+        worker_registry=cast(WorkerRegistry, object()),
+        results_dir=tmp_path,
+        logger=logging.getLogger("test-api-dependent-stage"),
+    )
+
+    value = dispatcher._resolve_reference("stage.items.0.text", {"stage": upstream})
+    assert value == "first row text"
