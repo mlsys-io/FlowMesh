@@ -88,6 +88,41 @@ from .utils.checkpoints import (
 
 logger = logging.getLogger(__name__)
 
+# Auto-cap headroom: how many tokens to hold back from the model window when
+# clamping max_tokens, to absorb chat-template / special tokens not present in
+# the raw rendered string we tokenize, plus a token of slack.
+_AUTO_CAP_MARGIN = 16
+# Never clamp the output budget below this. If the window cannot even fit this
+# much output after the prompt, the prompt itself is at/over the window and
+# vLLM will raise its own "maximum context length" error — which is the honest
+# signal, not something to paper over with a 1-token generation.
+_AUTO_CAP_MIN_OUTPUT = 16
+
+
+def _auto_capped_max_tokens(
+    requested: int, prompt_tokens: int, window: int | None, *,
+    margin: int = _AUTO_CAP_MARGIN, floor: int = _AUTO_CAP_MIN_OUTPUT,
+) -> int:
+    """Clamp a requested max_tokens to what the model window can actually hold.
+
+    vLLM rejects a request when ``prompt_tokens + max_tokens > max_model_len``,
+    and a caller that hard-codes a large max_tokens (e.g. 65536 against a 40960
+    window) fails EVERY request regardless of prompt size. This returns the
+    largest output budget that fits: ``window - prompt_tokens - margin``,
+    bounded below by ``floor`` and never above what was requested.
+
+    Returns ``requested`` unchanged when the window is unknown (``None`` / <= 0)
+    — a missing window must not silently shrink a caller's budget. When the
+    fitting budget is below ``floor`` the prompt is effectively at the window,
+    so ``floor`` is returned and vLLM is left to raise the real error.
+    """
+    if not window or window <= 0:
+        return requested
+    budget = window - max(0, prompt_tokens) - margin
+    if budget < floor:
+        return floor
+    return min(requested, budget)
+
 
 class _RawJsonSchema:
     """Tag wrapping a JSON schema so ``_build_sampling_params`` can
@@ -711,6 +746,71 @@ Summary:"""
             **optional_sampling_fields,
         )
 
+    def _resolve_max_model_len(self) -> int | None:
+        """Best-effort read of the live engine's context window.
+
+        Reads it off the engine rather than tracking it through _init so it
+        reflects whatever vLLM actually resolved (native window when
+        max_model_len was left unset). Returns None on any shape it does not
+        recognise, so a version skew degrades to "no clamp", never a crash.
+        """
+        engine = getattr(self._llm, "llm_engine", None)
+        model_config = getattr(engine, "model_config", None)
+        window = getattr(model_config, "max_model_len", None)
+        try:
+            window = int(window) if window is not None else None
+        except (TypeError, ValueError):
+            return None
+        return window if window and window > 0 else None
+
+    def _auto_cap_sampling_params(
+        self, sampling_params: "SamplingParams"
+    ) -> "SamplingParams | list[SamplingParams]":
+        """Clamp max_tokens per prompt to what the model window can hold.
+
+        No-ops (returns the shared object) when the window is unknown, no
+        tokenizer is available, or nothing would actually be clamped — so the
+        hot path keeps passing a single SamplingParams. Multimodal prompts are
+        left at the requested budget: the raw text undercounts image tokens, so
+        clamping on text alone could permit MORE than fits; preserving today's
+        behaviour there is the safe choice.
+        """
+        window = self._resolve_max_model_len()
+        if not window:
+            return sampling_params
+        tokenizer = self._get_tokenizer()
+        if tokenizer is None:
+            return sampling_params
+        requested = int(getattr(sampling_params, "max_tokens", 0) or 0)
+        if requested <= 0:
+            return sampling_params
+
+        per_prompt: "list[SamplingParams]" = []
+        clamped_any = False
+        for inp in self._batched_inputs:
+            # Skip multimodal TextPrompt entries — see docstring.
+            if not isinstance(inp, str):
+                per_prompt.append(sampling_params)
+                continue
+            try:
+                n_prompt = len(tokenizer.encode(inp))
+            except Exception:
+                per_prompt.append(sampling_params)
+                continue
+            eff = _auto_capped_max_tokens(requested, n_prompt, window)
+            if eff == requested:
+                per_prompt.append(sampling_params)
+                continue
+            clamped = sampling_params.clone()
+            clamped.max_tokens = eff
+            per_prompt.append(clamped)
+            clamped_any = True
+            logger.info(
+                "auto-capped max_tokens %d -> %d (prompt=%d tok, window=%d)",
+                requested, eff, n_prompt, window,
+            )
+        return per_prompt if clamped_any else sampling_params
+
     def _remap_grouped_outputs(
         self,
         *,
@@ -1062,6 +1162,11 @@ Summary:"""
         sampling_params = self._build_sampling_params(
             self._base_inference, schema=template_param_schema
         )
+        # Auto-cap max_tokens per prompt to the model window. vLLM takes either
+        # one SamplingParams for the whole batch or a per-prompt list; we build
+        # the list only when a clamp actually bites, so the common case keeps
+        # sharing a single object. See _auto_capped_max_tokens.
+        sampling_params = self._auto_cap_sampling_params(sampling_params)
 
         generate_kwargs = self._build_generate_kwargs(spec, out_dir)
 
