@@ -2,10 +2,11 @@ import logging
 import tempfile
 import time
 import uuid
+from collections.abc import Iterator
 from pathlib import Path
 
 import psutil
-import pynvml  # type: ignore
+import pynvml  # type: ignore[import-not-found]
 import pytest
 
 from shared.tasks.worker_message import WorkerTaskMessage
@@ -13,11 +14,15 @@ from tests.worker.factories import make_live_worker_config, make_worker_hardware
 from worker.executors.mp_executor import MPExecutor
 from worker.executors.vllm_executor import VLLMExecutor
 
-try:
-    pynvml.nvmlInit()
-    _NVML_AVAILABLE = True
-except Exception:
-    _NVML_AVAILABLE = False
+
+@pytest.fixture(scope="module")
+def _nvml() -> Iterator[None]:
+    try:
+        pynvml.nvmlInit()
+    except Exception:
+        pytest.skip("NVML unavailable (no GPU)")
+    yield
+    pynvml.nvmlShutdown()
 
 
 def _descendants_of(pid: int) -> set[int]:
@@ -29,8 +34,7 @@ def _descendants_of(pid: int) -> set[int]:
 
 
 @pytest.mark.gpu
-@pytest.mark.skipif(not _NVML_AVAILABLE, reason="NVML unavailable (no GPU)")
-def test_mp_executor_cleans_up_vllm(caplog, tmp_path: Path) -> None:
+def test_mp_executor_cleans_up_vllm(caplog, tmp_path: Path, _nvml: None) -> None:
     """Start MPExecutor with the real executors, run a minimal task to
     trigger engine startup, and ensure cleanup removes the worker process
     and any descendants it spawned.
