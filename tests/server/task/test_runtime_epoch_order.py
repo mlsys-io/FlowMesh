@@ -72,7 +72,7 @@ def test_runtime_epoch_mode_enforces_frontier_order() -> None:
         logging.getLogger("runtime-test"),
     )
     payload = """
-apiVersion: mloc/v1
+apiVersion: flowmesh/v1
 kind: Workflow
 metadata:
   name: graph
@@ -131,7 +131,7 @@ def test_runtime_unordered_in_epoch_allows_any_order() -> None:
         logging.getLogger("runtime-test"),
     )
     payload = """
-apiVersion: mloc/v1
+apiVersion: flowmesh/v1
 kind: Workflow
 metadata:
   name: graph
@@ -177,7 +177,7 @@ def test_runtime_epoch_mode_fails_later_epochs_when_frontier_task_fails() -> Non
         logging.getLogger("runtime-test"),
     )
     payload = """
-apiVersion: mloc/v1
+apiVersion: flowmesh/v1
 kind: Workflow
 metadata:
   name: graph
@@ -234,7 +234,7 @@ def test_cancel_workflow_marks_dispatched_task_cancelling_and_publishes_interrup
         logging.getLogger("runtime-test"),
     )
     payload = """
-apiVersion: mloc/v1
+apiVersion: flowmesh/v1
 kind: Workflow
 metadata:
   name: cancel
@@ -269,7 +269,7 @@ def test_cancel_workflow_skips_interruptive_cancellation_for_merged_tasks() -> N
         logging.getLogger("runtime-test"),
     )
     payload = """
-apiVersion: mloc/v1
+apiVersion: flowmesh/v1
 kind: Workflow
 metadata:
   name: merge-cancel

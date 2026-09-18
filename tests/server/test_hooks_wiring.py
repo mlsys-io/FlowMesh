@@ -538,7 +538,7 @@ def _make_runtime_with_record(task_id: str) -> tuple[TaskRuntime, TaskRecord]:
         logger=logging.getLogger("test.supplier"),
     )
     env = TaskEnvelopeTemplate.model_validate(
-        {"apiVersion": "mloc/v1", "kind": "Task", "spec": {"taskType": "echo"}}
+        {"apiVersion": "flowmesh/v1", "kind": "Task", "spec": {"taskType": "echo"}}
     )
     record = TaskRecord(
         task_id=task_id,

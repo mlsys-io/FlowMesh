@@ -38,7 +38,7 @@ class TestComputeMergeKey:
     ) -> TaskEnvelopeTemplate:
         spec_data = {"taskType": task_type, **spec_kw}
         return TaskEnvelopeTemplate.model_validate(
-            {"apiVersion": "mloc/v1", "kind": "Task", "spec": spec_data}
+            {"apiVersion": "flowmesh/v1", "kind": "Task", "spec": spec_data}
         )
 
     def test_deterministic(self) -> None:

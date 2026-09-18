@@ -80,7 +80,7 @@ def test_connector_logs_printed_to_stderr(tmp_path: Path) -> None:
             "assigned_worker": "test-worker",
             "dispatched_at": "2026-03-01T00:00:00Z",
             "task": {
-                "apiVersion": "mloc/v1",
+                "apiVersion": "flowmesh/v1",
                 "kind": "EchoTask",
                 "spec": {"taskType": "echo", "data": {"items": ["test"]}},
             },

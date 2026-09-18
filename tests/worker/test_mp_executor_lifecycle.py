@@ -131,7 +131,7 @@ class _RetryableErrorExecutor(Executor):
 def _simple_task_message() -> WorkerTaskMessage:
     return make_worker_task_message(
         EchoSpecStrict(taskType=TaskType.ECHO, data={"items": ["test"]}),
-        api_version="mloc/v1",
+        api_version="flowmesh/v1",
         kind="EchoTask",
         task_id=str(uuid.uuid4()),
         workflow_id="test-workflow",
