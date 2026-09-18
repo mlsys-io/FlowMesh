@@ -12,7 +12,7 @@ import pytest
 
 from shared.tasks.worker_message import WorkerTaskMessage
 from worker.executors.api_executor import APIExecutor
-from worker.executors.base_executor import ExecutionError
+from worker.executors.base_executor import ExecutionError, TaskCancelledError
 
 
 def _task_message(**spec_updates: Any) -> WorkerTaskMessage:
@@ -492,6 +492,47 @@ class TestBatch:
                 )
 
         task = _batch_task(["a", "b"], response={"raise_for_status": True})
-        with pytest.raises(ExecutionError, match="row 0") as excinfo:
+        with pytest.raises(ExecutionError, match="status 503") as excinfo:
             _run(APIExecutor.__new__(APIExecutor), task, _ErrorBody(), tmp_path)
         assert excinfo.value.retryable is True
+
+    def test_cancel_during_batch_raises_task_cancelled(self, tmp_path: Path) -> None:
+        """Cancelling a running batch raises TaskCancelledError."""
+
+        class _BlockingTransport(httpx.MockTransport):
+            def __init__(self) -> None:
+                self.started = threading.Event()
+                self.release = threading.Event()
+                super().__init__(self._handler)
+
+            def _handler(self, request: httpx.Request) -> httpx.Response:
+                self.started.set()
+                self.release.wait(timeout=5)
+                return httpx.Response(
+                    200,
+                    json={
+                        "choices": [{"message": {"content": "ok"}}],
+                        "usage": {"total_tokens": 3},
+                    },
+                )
+
+        executor = APIExecutor.__new__(APIExecutor)
+        task = _batch_task(["a", "b", "c", "d"])
+        transport = _BlockingTransport()
+        errors: list[BaseException] = []
+
+        def _run_in_thread() -> None:
+            try:
+                _run(executor, task, transport, tmp_path)
+            except BaseException as exc:  # noqa: BLE001 - captured for assertion
+                errors.append(exc)
+
+        thread = threading.Thread(target=_run_in_thread)
+        thread.start()
+        assert transport.started.wait(timeout=5)
+        executor.cancel("task-api-batch")
+        transport.release.set()
+        thread.join(timeout=10)
+
+        assert len(errors) == 1
+        assert isinstance(errors[0], TaskCancelledError)

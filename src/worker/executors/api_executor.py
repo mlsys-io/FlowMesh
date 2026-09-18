@@ -13,7 +13,12 @@ from shared.tasks.specs import ApiSpecStrict
 from shared.tasks.task_type import TaskType
 from shared.utils.redact import is_sensitive_key
 
-from .base_executor import ExecutionError, Executor, ExecutorTask
+from .base_executor import (
+    ExecutionError,
+    Executor,
+    ExecutorTask,
+    TaskCancelledError,
+)
 from .mixins.data import DataMixin
 
 logger = logging.getLogger(__name__)
@@ -49,6 +54,13 @@ class APIExecutor(DataMixin, Executor):
 
     name = "api"
     supported_task_types = frozenset({TaskType.API})
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        super().__init__(*args, **kwargs)
+        self._cancel_event = threading.Event()
+
+    def cancel(self, task_id: str) -> None:
+        self._cancel_event.set()
 
     # ---- Class-level connection pool (shared across all instances) ----
     _clients: ClassVar[dict[_ClientKey, httpx.Client]] = {}
@@ -239,6 +251,7 @@ class APIExecutor(DataMixin, Executor):
         return item, body_text
 
     def run(self, task: ExecutorTask, out_dir: Path) -> APIResult:
+        self._cancel_event = threading.Event()
         spec = self.require_spec(task, ApiSpecStrict)
         api_cfg = spec.api or {}
         if not isinstance(api_cfg, dict):
@@ -302,6 +315,8 @@ class APIExecutor(DataMixin, Executor):
         request_kwargs = self._build_request_kwargs(api_cfg, None)
 
         def _issue(idx: int, prompt: Any) -> APIItem:
+            if self._cancel_event.is_set():
+                raise TaskCancelledError("API task cancelled")
             prompt_str = self._prompt_to_str(prompt)
             kwargs = self._substitute_prompt(request_kwargs, prompt_str)
             try:
@@ -333,10 +348,11 @@ class APIExecutor(DataMixin, Executor):
 
         results: dict[int, APIItem] = {}
         with ThreadPoolExecutor(max_workers=concurrency) as pool:
-            futures = {
-                pool.submit(_issue, idx, prompt): idx
-                for idx, prompt in enumerate(prompts)
-            }
+            futures = {}
+            for idx, prompt in enumerate(prompts):
+                if self._cancel_event.is_set():
+                    raise TaskCancelledError("API task cancelled")
+                futures[pool.submit(_issue, idx, prompt)] = idx
             for future in as_completed(futures):
                 idx = futures[future]
                 results[idx] = future.result()
