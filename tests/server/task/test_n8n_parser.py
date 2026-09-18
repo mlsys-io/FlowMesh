@@ -36,9 +36,11 @@ class TestTranslateN8nWorkflow:
         assert api["method"] == "POST"
         assert api["body"]["model"] == "gpt-4"
 
-        # Prompt content preserved in messages
-        messages = api["body"]["messages"]
-        assert any("Hello, world!" in m.get("content", "") for m in messages)
+        # Prompt content preserved as a one-row spec.data
+        assert spec["data"]["type"] == "list"
+        assert spec["data"]["items"] == ["Hello, world!"]
+        # Body carries the worker-side per-row placeholder
+        assert api["body"]["messages"][0]["content"] == "{{prompt}}"
 
     def test_no_task_nodes_raises_value_error(self) -> None:
         """Workflow with no recognized task nodes should raise ValueError."""
