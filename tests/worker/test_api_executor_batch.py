@@ -1,5 +1,6 @@
 """Tests for the API executor's batch mode (one task, N row-aligned requests)."""
 
+import concurrent.futures
 import json
 import threading
 import time
@@ -496,16 +497,18 @@ class TestBatch:
             _run(APIExecutor.__new__(APIExecutor), task, _ErrorBody(), tmp_path)
         assert excinfo.value.retryable is True
 
-    def test_cancel_during_batch_raises_task_cancelled(self, tmp_path: Path) -> None:
-        """Cancelling a running batch raises TaskCancelledError."""
+    def test_cancel_prevents_queued_rows_from_issuing(self, tmp_path: Path) -> None:
+        """After cancel, a row that has not started never issues its request."""
 
         class _BlockingTransport(httpx.MockTransport):
             def __init__(self) -> None:
+                self.requests: list[httpx.Request] = []
                 self.started = threading.Event()
                 self.release = threading.Event()
                 super().__init__(self._handler)
 
             def _handler(self, request: httpx.Request) -> httpx.Response:
+                self.requests.append(request)
                 self.started.set()
                 self.release.wait(timeout=5)
                 return httpx.Response(
@@ -517,22 +520,83 @@ class TestBatch:
                 )
 
         executor = APIExecutor.__new__(APIExecutor)
-        task = _batch_task(["a", "b", "c", "d"])
+        task = _batch_task(["a", "b", "c", "d"], concurrency=1)
         transport = _BlockingTransport()
         errors: list[BaseException] = []
+        submitted: list[Any] = []
+        all_submitted = threading.Event()
+        real_submit = concurrent.futures.ThreadPoolExecutor.submit
+
+        def _recording_submit(self: Any, fn: Any, *args: Any, **kwargs: Any) -> Any:
+            submitted.append(fn)
+            if len(submitted) == 4:
+                all_submitted.set()
+            return real_submit(self, fn, *args, **kwargs)
 
         def _run_in_thread() -> None:
             try:
-                _run(executor, task, transport, tmp_path)
+                with patch.object(
+                    concurrent.futures.ThreadPoolExecutor,
+                    "submit",
+                    _recording_submit,
+                ):
+                    _run(executor, task, transport, tmp_path)
             except BaseException as exc:  # noqa: BLE001 - captured for assertion
                 errors.append(exc)
 
         thread = threading.Thread(target=_run_in_thread)
         thread.start()
         assert transport.started.wait(timeout=5)
+        assert all_submitted.wait(timeout=5)
         executor.cancel("task-api-batch")
         transport.release.set()
         thread.join(timeout=10)
 
+        assert len(transport.requests) == 1
         assert len(errors) == 1
         assert isinstance(errors[0], TaskCancelledError)
+
+    def test_cancel_before_submission_prevents_any_future(self, tmp_path: Path) -> None:
+        """Cancelling before futures are submitted surfaces TaskCancelledError
+        without submitting any future."""
+        executor = APIExecutor.__new__(APIExecutor)
+        task = _batch_task(["a", "b", "c", "d"])
+        transport = _RecordingTransport()
+        errors: list[BaseException] = []
+        submitted: list[Any] = []
+        real_submit = concurrent.futures.ThreadPoolExecutor.submit
+        real_base_url = APIExecutor._base_url
+
+        def _recording_submit(self: Any, fn: Any, *args: Any, **kwargs: Any) -> Any:
+            submitted.append(fn)
+            return real_submit(self, fn, *args, **kwargs)
+
+        def _run_in_thread() -> None:
+            def _cancel_then_base_url(url: str) -> str:
+                executor.cancel("task-api-batch")
+                return real_base_url(url)
+
+            try:
+                with (
+                    patch.object(
+                        concurrent.futures.ThreadPoolExecutor,
+                        "submit",
+                        _recording_submit,
+                    ),
+                    patch.object(
+                        APIExecutor,
+                        "_base_url",
+                        side_effect=_cancel_then_base_url,
+                    ),
+                ):
+                    _run(executor, task, transport, tmp_path)
+            except BaseException as exc:  # noqa: BLE001 - captured for assertion
+                errors.append(exc)
+
+        thread = threading.Thread(target=_run_in_thread)
+        thread.start()
+        thread.join(timeout=10)
+
+        assert len(errors) == 1
+        assert isinstance(errors[0], TaskCancelledError)
+        assert submitted == []
