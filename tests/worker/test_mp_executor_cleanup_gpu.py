@@ -62,7 +62,7 @@ def test_mp_executor_cleans_up_vllm(caplog, tmp_path: Path) -> None:
             "assigned_worker": "test-worker",
             "dispatched_at": "2026-03-01T00:00:00Z",
             "task": {
-                "apiVersion": "mloc/v1",
+                "apiVersion": "flowmesh/v1",
                 "kind": "InferenceTask",
                 "spec": {
                     "taskType": "inference",

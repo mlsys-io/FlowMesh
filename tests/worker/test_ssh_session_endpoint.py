@@ -39,7 +39,7 @@ def _task_message() -> WorkerTaskMessage:
             "assigned_worker": "worker-1",
             "dispatched_at": "2026-03-22T00:00:00Z",
             "task": {
-                "apiVersion": "mloc/v1",
+                "apiVersion": "flowmesh/v1",
                 "kind": "Task",
                 "metadata": {"name": "wf:shell"},
                 "spec": {

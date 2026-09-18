@@ -40,7 +40,7 @@ def _task_message(**spec_updates: object) -> WorkerTaskMessage:
         "dispatched_at": "2026-03-22T00:00:00Z",
         "upstream_task_ids": {"preprocess": "task-pre"},
         "task": {
-            "apiVersion": "mloc/v1",
+            "apiVersion": "flowmesh/v1",
             "kind": "Task",
             "metadata": {"name": "wf:annotate"},
             "spec": {

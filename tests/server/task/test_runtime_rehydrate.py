@@ -117,7 +117,7 @@ async def _register(runtime: TaskRuntime, payload: str) -> tuple[str, dict[str, 
 
 
 GRAPH = """
-apiVersion: mloc/v1
+apiVersion: flowmesh/v1
 kind: Workflow
 metadata:
   name: graph
@@ -134,7 +134,7 @@ spec:
 """
 
 EPOCH_GRAPH = """
-apiVersion: mloc/v1
+apiVersion: flowmesh/v1
 kind: Workflow
 metadata:
   name: graph

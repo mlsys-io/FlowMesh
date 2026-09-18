@@ -12,7 +12,7 @@ from shared.utils.redact import REDACTED, is_sensitive_key, redact_api, redact_r
 def _api_task(api: dict) -> TaskEnvelopeTemplate:
     return TaskEnvelopeTemplate.model_validate(
         {
-            "apiVersion": "mloc/v1",
+            "apiVersion": "flowmesh/v1",
             "kind": "Task",
             "metadata": {"name": "t"},
             "spec": {"taskType": "api", "api": api},
