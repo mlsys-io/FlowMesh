@@ -24,9 +24,10 @@ def _task_message(**spec_updates: object) -> WorkerTaskMessage:
             "metadata": {"name": "wf:api"},
             "spec": {
                 "taskType": "api",
+                "data": {"type": "list", "items": ["hi"]},
                 "api": {
                     "method": "POST",
-                    "body": {"messages": [{"role": "user", "content": "hi"}]},
+                    "body": {"messages": [{"role": "user", "content": "{{prompt}}"}]},
                     **spec_updates,
                 },
             },

@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -24,15 +25,18 @@ _ClientKey = tuple[str, float, bool, bool]
 # references are ${...}; this is a worker-side token, hence {{...}}.
 _PROMPT_PLACEHOLDER = "{{prompt}}"
 
+# Default cap on parallel row requests and the client connection pool. The
+# pool is sized to this so parallel requests never queue on connections.
+_MAX_CONCURRENCY = 8
+
 
 class APIExecutor(DataMixin, Executor):
     """Performs HTTP requests defined by task YAML.
 
-    A single-request task issues one request from ``spec.api`` and returns one
-    ``APIResult`` with the scalar fields populated. When ``spec.data`` is
-    present the task batches: each row's prompt is substituted for the
-    ``{{prompt}}`` placeholder in the request body and one request is issued
-    per row, returned row-aligned in ``APIResult.items``.
+    ``spec.data`` is required and yields one row per request: each row's prompt
+    is substituted for the ``{{prompt}}`` placeholder in the request body and
+    one request is issued per row, returned row-aligned in ``APIResult.items``.
+    A single request is a one-row ``spec.data``.
 
     Defaults to the Nebula endpoint via ``NEBULA_API_BASE_URL`` and authenticates
     with ``NEBULA_API_TOKEN``. ``spec.api.url`` overrides the endpoint and
@@ -75,11 +79,17 @@ class APIExecutor(DataMixin, Executor):
             client = cls._clients.get(key)
             if client is not None and not client.is_closed:
                 return client
-            # Create a new client for this combination
+            # Create a new client for this combination. The connection pool is
+            # sized to the max concurrency so parallel row requests never queue
+            # on connections (which would make the parallelism imaginary).
             client = httpx.Client(
                 timeout=timeout,
                 verify=verify_tls,
                 follow_redirects=follow_redirects,
+                limits=httpx.Limits(
+                    max_connections=_MAX_CONCURRENCY,
+                    max_keepalive_connections=_MAX_CONCURRENCY,
+                ),
             )
             cls._clients[key] = client
             logger.debug(
@@ -272,67 +282,27 @@ class APIExecutor(DataMixin, Executor):
         base = self._base_url(str(url))
         client = self._get_client(base, timeout, verify_tls, follow_redirects)
 
-        data_cfg = spec.data
-        if data_cfg is None:
-            # Single-request path: build kwargs once, issue one request.
-            request_kwargs = self._build_request_kwargs(api_cfg, None)
-            try:
-                resp = client.request(
-                    method,
-                    str(url),
-                    headers=headers,
-                    params=params,
-                    **request_kwargs,
-                )
-            except httpx.RequestError as exc:
-                raise ExecutionError(
-                    f"API request failed: {exc}", retryable=True
-                ) from exc
-
-            item, body_text = self._parse_response(
-                resp,
-                response_cfg=response_cfg,
-                max_body_bytes=max_body_bytes,
-            )
-            result = APIResult(
-                ok=resp.is_success,
-                executor=self.name,
-                method=method,
-                url=str(resp.url),
-                status_code=resp.status_code,
-                truncated=item.truncated,
-                headers=item.headers,
-                text=item.text,
-            )
-            result.response_json = item.response_json
-            result.usage = item.usage
-
-            if raise_for_status and resp.is_error:
-                message = f"API request returned status {resp.status_code}"
-                if body_text:
-                    message = f"{message}: {body_text[:200]}"
-                retryable = resp.status_code >= 500 or resp.status_code in (408, 429)
-                raise ExecutionError(message, retryable=retryable)
-
-            return result
-
-        # Batch path: one request per row, row-aligned in items.
+        # spec.data is required and yields one row per request.
         entry = self._collect_prompts_for_spec(spec, task_id=task.task_id)
         prompts = entry.prompts
         if not prompts:
-            raise ExecutionError("spec.data produced no rows to batch")
+            raise ExecutionError("spec.data produced no rows")
 
-        items: list[APIItem] = []
-        for idx, prompt in enumerate(prompts):
+        # Build the request skeleton once; each worker only substitutes its
+        # prompt into the prepared body and issues the request.
+        request_kwargs = self._build_request_kwargs(api_cfg, None)
+
+        concurrency = int(api_cfg.get("concurrency", _MAX_CONCURRENCY))
+        if concurrency < 1:
+            raise ExecutionError("spec.api.concurrency must be >= 1")
+        concurrency = min(concurrency, _MAX_CONCURRENCY)
+
+        def _issue(idx: int, prompt: Any) -> APIItem:
             prompt_str = self._prompt_to_str(prompt)
-            request_kwargs = self._build_request_kwargs(api_cfg, prompt_str)
+            kwargs = self._substitute_prompt(request_kwargs, prompt_str)
             try:
                 resp = client.request(
-                    method,
-                    str(url),
-                    headers=headers,
-                    params=params,
-                    **request_kwargs,
+                    method, str(url), headers=headers, params=params, **kwargs
                 )
             except httpx.RequestError as exc:
                 raise ExecutionError(
@@ -346,7 +316,6 @@ class APIExecutor(DataMixin, Executor):
             )
             item.index = idx
             item.prompt = prompt_str
-            items.append(item)
 
             if raise_for_status and resp.is_error:
                 message = f"API request returned status {resp.status_code} (row {idx})"
@@ -354,6 +323,20 @@ class APIExecutor(DataMixin, Executor):
                     message = f"{message}: {body_text[:200]}"
                 retryable = resp.status_code >= 500 or resp.status_code in (408, 429)
                 raise ExecutionError(message, retryable=retryable)
+
+            return item
+
+        results: dict[int, APIItem] = {}
+        with ThreadPoolExecutor(max_workers=concurrency) as pool:
+            futures = {
+                pool.submit(_issue, idx, prompt): idx
+                for idx, prompt in enumerate(prompts)
+            }
+            for future in as_completed(futures):
+                idx = futures[future]
+                results[idx] = future.result()
+
+        items = [results[idx] for idx in range(len(prompts))]
 
         return APIResult(
             ok=True,
