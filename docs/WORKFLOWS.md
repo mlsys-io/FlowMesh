@@ -71,7 +71,13 @@ contract.
 
 ## API task
 
-`taskType: api` performs a single HTTP request. By default it routes to the Nebula endpoint and authenticates with the worker's `NEBULA_API_TOKEN`.
+`taskType: api` issues one HTTP request per row of `spec.data`, in parallel,
+and returns the responses row-aligned in `APIResult.items`. A single request
+is a one-row `spec.data`. `spec.data` is required, exactly as for the vLLM
+executor; it supports the same data types (`list`, `dataset`, `graph_template`,
+`dataframe`).
+
+By default it routes to the Nebula endpoint and authenticates with the worker's `NEBULA_API_TOKEN`.
 
 `spec.api.url` overrides the endpoint; when absent, the executor uses `NEBULA_API_BASE_URL` (appending `/v1/chat/completions`). `spec.api.headers` may supply an `Authorization` header directly.
 
@@ -104,6 +110,7 @@ prompt is substituted for the `{{prompt}}` placeholder in the request body.
 Server-side stage references are `${...}`; `{{prompt}}` is a worker-side
 per-row slot, so it is not touched by server-side resolution. A failure in any
 row fails the whole task rather than shifting the remaining rows.
+`spec.api.concurrency` bounds the number of in-flight requests (default 8).
 
 ```yaml
 spec:

@@ -144,7 +144,7 @@ def translate_n8n_workflow(payload: dict[str, Any]) -> dict[str, Any]:
         name = node["name"]
         spec = {
             "taskType": "api",
-            "api": _build_api_node_spec(
+            **_build_api_node_spec(
                 node,
                 openai_model_nodes,
                 incoming,
@@ -239,12 +239,12 @@ def _build_api_node_spec(
     headers = {
         "Content-Type": "application/json",
     }
-    spec = {
+    api_spec = {
         "method": "POST",
         "headers": headers,
         "body": {
             "model": model_id,
-            "messages": [{"role": "user", "content": prompt_text}],
+            "messages": [{"role": "user", "content": "{{prompt}}"}],
         },
         "response": {
             "parse_json": True,
@@ -253,11 +253,14 @@ def _build_api_node_spec(
         },
     }
     if api_key := credential_data.get("api_key"):
-        spec["key"] = api_key
+        api_spec["key"] = api_key
         headers["Authorization"] = f"Bearer {api_key}"
     if api_url := credential_data.get("url"):
-        spec["url"] = api_url
-    return spec
+        api_spec["url"] = api_url
+    return {
+        "data": {"type": "list", "items": [prompt_text]},
+        "api": api_spec,
+    }
 
 
 def _resolve_api_model_id(
