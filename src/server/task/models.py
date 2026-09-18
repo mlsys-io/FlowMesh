@@ -7,6 +7,7 @@ from pydantic import (
     ConfigDict,
     Field,
     PrivateAttr,
+    SerializationInfo,
     SerializerFunctionWrapHandler,
     computed_field,
     model_serializer,
@@ -190,10 +191,16 @@ class TaskRecord(BaseModel):
         return self._redacted_spec
 
     @model_serializer(mode="wrap")
-    def _serialize(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+    def _serialize(
+        self, handler: SerializerFunctionWrapHandler, info: SerializationInfo
+    ) -> dict[str, Any]:
         data = handler(self)
         data["source"] = self._redact_source()
-        data["task"]["spec"] = self._redact_spec().model_dump(mode="python")
+        data["task"]["spec"] = self._redact_spec().model_dump(
+            mode=info.mode,
+            by_alias=info.by_alias,
+            exclude_none=info.exclude_none,
+        )
         return data
 
 

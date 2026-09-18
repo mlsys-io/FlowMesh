@@ -281,6 +281,18 @@ class TestTaskRecordSerializer:
         assert rec.task.spec.api is not None
         assert rec.task.spec.api["headers"]["Authorization"] == "Bearer SECRET"
 
+    def test_spec_dump_honors_by_alias(self) -> None:
+        rec = _record({"headers": {"Authorization": "Bearer SECRET"}})
+        spec = rec.model_dump(by_alias=True)["task"]["spec"]
+        assert "_upstreamResults" in spec
+        assert spec["api"]["headers"]["Authorization"] == REDACTED
+
+    def test_spec_dump_honors_exclude_none(self) -> None:
+        rec = _record({"headers": {"Authorization": "Bearer SECRET"}})
+        spec = rec.model_dump(exclude_none=True)["task"]["spec"]
+        assert "upstreamResults" not in spec
+        assert spec["api"]["headers"]["Authorization"] == REDACTED
+
     def test_no_credential_unchanged(self) -> None:
         api = {"url": "http://x", "json": {"model": "gpt"}}
         rec = _record(api)
