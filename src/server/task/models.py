@@ -2,7 +2,9 @@ import time
 from typing import Any
 
 from pydantic import (
+    AliasChoices,
     BaseModel,
+    ConfigDict,
     Field,
     PrivateAttr,
     SerializerFunctionWrapHandler,
@@ -78,12 +80,17 @@ class TaskUsage(BaseModel):
 
 
 class TaskRecord(BaseModel):
+    model_config = ConfigDict(validate_by_alias=True)
+
     task_id: str = Field(description="Task identifier.")
     workflow_id: str = Field(description="Workflow identifier.")
     owner_id: str = Field(description="Owner principal identifier.")
     org_id: str = Field(default="", description="Owner organization identifier.")
     supplier_id: str = Field(default="", description="Supplier identifier.")
-    source: str = Field(description="Original workflow source (YAML or JSON).")
+    source: str = Field(
+        validation_alias=AliasChoices("source", "raw_yaml"),
+        description="Original workflow source (YAML or JSON).",
+    )
     task: TaskEnvelopeTemplate = Field(description="Task template.")
     status: str = Field(default=TaskStatus.PENDING, description="Task status.")
     task_type: str | None = Field(default=None, description="Task type.")

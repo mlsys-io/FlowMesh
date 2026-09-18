@@ -1,13 +1,15 @@
-"""Redaction of API credentials before a task record is serialized.
+"""Redacts credential-shaped fields from an object before it is serialized.
 
-The in-memory ``TaskRecord`` keeps the real credential so dispatch works; the
-serializer applies this module so that every dump to Redis is redacted.
+Applies a key-based rule: any header, parameter, or nested field whose name
+looks like a credential (see ``is_sensitive_key``) has its value replaced with
+a fixed marker. Callers keep an unredacted copy for in-process use and apply
+this module only at the serialization boundary.
 
-The ``source`` field is re-emitted via ``yaml.safe_dump``, which does not
-preserve comments, key order or original formatting. That is an accepted cost:
-the field is a stored record and is never re-parsed, so losing formatting is
-fine. If the YAML cannot be parsed, the whole field is redacted rather than
-storing text that might contain a key.
+Raw YAML text is redacted by parsing and re-emitting it via
+``yaml.safe_dump``, which does not preserve comments, key order or original
+formatting. That is an accepted cost for a value that is stored and never
+re-parsed. If the YAML cannot be parsed, the whole field is redacted rather
+than storing text that might contain a key.
 """
 
 from typing import Any

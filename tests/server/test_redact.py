@@ -180,3 +180,39 @@ class TestTaskRecordSerializer:
                     == REDACTED
                 )
         assert spy.call_count == 1
+
+
+class TestSourceFieldAlias:
+    def test_old_key_populates_source(self) -> None:
+        rec = TaskRecord.model_validate(
+            {
+                "task_id": "tsk-1",
+                "workflow_id": "wfl-1",
+                "owner_id": "owner",
+                "raw_yaml": "model: gpt-4o\n",
+                "task": _api_task({"url": "http://x"}),
+            }
+        )
+        assert rec.source == "model: gpt-4o\n"
+
+    def test_new_key_populates_source(self) -> None:
+        rec = TaskRecord.model_validate(
+            {
+                "task_id": "tsk-1",
+                "workflow_id": "wfl-1",
+                "owner_id": "owner",
+                "source": "model: gpt-4o\n",
+                "task": _api_task({"url": "http://x"}),
+            }
+        )
+        assert rec.source == "model: gpt-4o\n"
+
+    def test_constructed_with_source_kwarg(self) -> None:
+        rec = TaskRecord(
+            task_id="tsk-1",
+            workflow_id="wfl-1",
+            owner_id="owner",
+            source="model: gpt-4o\n",
+            task=_api_task({"url": "http://x"}),
+        )
+        assert rec.source == "model: gpt-4o\n"
