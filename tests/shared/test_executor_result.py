@@ -194,14 +194,8 @@ def test_upstream_results_preserve_subclass_payload_over_the_wire() -> None:
 
 
 def test_api_item_round_trip_construct_serialize_validate() -> None:
-    """An APIItem constructed by field name must round-trip through the worker's
-    serialization and the server's ingest validation.
-
-    The executor builds ``APIItem(response_json=...)`` by field name; the worker
-    writes it with ``model_dump_json()`` (no ``by_alias``); the server re-validates
-    it on ingest. Without ``populate_by_name`` the field name is rejected as extra
-    (the field's validation name is the ``json`` alias), so this round trip breaks.
-    """
+    """An APIItem built by field name round-trips through the worker's
+    serialization and the server's ingest validation."""
     # mypy cannot see populate_by_name; the field's declared name is the json alias.
     item = APIItem(  # type: ignore[call-arg]
         index=0,
