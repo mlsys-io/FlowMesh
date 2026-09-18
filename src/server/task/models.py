@@ -4,16 +4,18 @@ from typing import Any
 from pydantic import (
     BaseModel,
     Field,
+    PrivateAttr,
     SerializerFunctionWrapHandler,
     computed_field,
     model_serializer,
 )
 
 from shared.tasks import TaskEnvelopeTemplate
+from shared.tasks.specs import ApiSpecStrict, ApiSpecTemplate
 from shared.tasks.worker_message import HardwareUsage
+from shared.utils.redact import redact_api, redact_raw_yaml
 
 from ..utils.time import now_iso
-from .redact import redact_api, redact_raw_yaml
 
 TRAINING_TASK_TYPES = {
     "sft",
@@ -81,7 +83,7 @@ class TaskRecord(BaseModel):
     owner_id: str = Field(description="Owner principal identifier.")
     org_id: str = Field(default="", description="Owner organization identifier.")
     supplier_id: str = Field(default="", description="Supplier identifier.")
-    raw_yaml: str = Field(description="Original workflow YAML.")
+    source: str = Field(description="Original workflow source (YAML or JSON).")
     task: TaskEnvelopeTemplate = Field(description="Task template.")
     status: str = Field(default=TaskStatus.PENDING, description="Task status.")
     task_type: str | None = Field(default=None, description="Task type.")
@@ -168,14 +170,30 @@ class TaskRecord(BaseModel):
         """The most recent worker to have failed this task."""
         return self.failed_workers[-1] if self.failed_workers else None
 
+    _redacted_source: str | None = PrivateAttr(default=None)
+    _redacted_api: dict[str, Any] | None = PrivateAttr(default=None)
+
+    def _redact_source(self) -> str:
+        if self._redacted_source is None:
+            self._redacted_source = redact_raw_yaml(self.source)
+        return self._redacted_source
+
+    def _redact_api(self) -> dict[str, Any] | None:
+        if self._redacted_api is None:
+            spec = self.task.spec
+            if isinstance(spec, (ApiSpecStrict, ApiSpecTemplate)):
+                self._redacted_api = redact_api(spec.api)
+            else:
+                self._redacted_api = None
+        return self._redacted_api
+
     @model_serializer(mode="wrap")
     def _serialize(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
         data = handler(self)
-        data["raw_yaml"] = redact_raw_yaml(self.raw_yaml)
-        spec = self.task.spec
-        api = getattr(spec, "api", None)
-        if isinstance(api, dict):
-            data["task"]["spec"]["api"] = redact_api(api)
+        data["source"] = self._redact_source()
+        redacted_api = self._redact_api()
+        if redacted_api is not None:
+            data["task"]["spec"]["api"] = redacted_api
         return data
 
 

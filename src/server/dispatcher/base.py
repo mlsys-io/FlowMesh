@@ -31,13 +31,13 @@ from shared.tasks.specs import (
     SSHSpecTemplate,
 )
 from shared.tasks.worker_message import WorkerStatus, WorkerTaskMessage
+from shared.utils.redact import contains_redacted
 
 from ..clients.redis import REDIS_CONN_ERRORS
 from ..registries.worker import Worker, WorkerRegistry
 from ..services.metrics import MetricsRecorder
 from ..task.metadata import extract_model_dataset_names
 from ..task.models import TaskRecord, TaskStatus
-from ..task.redact import REDACTED
 from ..task.runtime import TaskRuntime
 from ..utils.time import now_iso
 from .worker_selector import DEFAULT_WORKER_SELECTION, select_worker
@@ -1078,10 +1078,17 @@ class Dispatcher:
         api = spec.api
         if api is None:
             return False
-        headers = api.get("headers")
-        if not isinstance(headers, dict):
-            return False
-        return any(value == REDACTED for value in headers.values())
+        for field in ("headers", "params", "body", "json", "data"):
+            value = api.get(field)
+            if isinstance(value, dict):
+                candidates: list[Any] = list(value.values())
+            elif isinstance(value, list):
+                candidates = value
+            else:
+                continue
+            if any(contains_redacted(item) for item in candidates):
+                return True
+        return False
 
     def _resolve_upstream_task_ids(
         self, record: TaskRecord, spec: TaskSpecStrict

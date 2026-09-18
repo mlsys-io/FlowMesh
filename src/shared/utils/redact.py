@@ -3,11 +3,11 @@
 The in-memory ``TaskRecord`` keeps the real credential so dispatch works; the
 serializer applies this module so that every dump to Redis is redacted.
 
-``raw_yaml`` is re-emitted via ``yaml.safe_dump``, which does not preserve
-comments, key order or original formatting. That is an accepted cost: the field
-is a stored record and is never re-parsed, so losing formatting is fine. If the
-YAML cannot be parsed, the whole field is redacted rather than storing text
-that might contain a key.
+The ``source`` field is re-emitted via ``yaml.safe_dump``, which does not
+preserve comments, key order or original formatting. That is an accepted cost:
+the field is a stored record and is never re-parsed, so losing formatting is
+fine. If the YAML cannot be parsed, the whole field is redacted rather than
+storing text that might contain a key.
 """
 
 from typing import Any
@@ -33,7 +33,8 @@ _SENSITIVE_KEYS = frozenset(
 _SENSITIVE_SUFFIXES = ("_key", "-key", "_token", "-token")
 
 
-def _is_sensitive_key(name: str) -> bool:
+def is_sensitive_key(name: str) -> bool:
+    """Whether a header/param name carries a credential value."""
     lowered = name.lower()
     if lowered in _SENSITIVE_KEYS:
         return True
@@ -44,12 +45,23 @@ def _redact_value(value: Any) -> Any:
     """Recursively redact credential values by key name at any depth."""
     if isinstance(value, dict):
         return {
-            key: (REDACTED if _is_sensitive_key(str(key)) else _redact_value(val))
+            key: (REDACTED if is_sensitive_key(str(key)) else _redact_value(val))
             for key, val in value.items()
         }
     if isinstance(value, list):
         return [_redact_value(item) for item in value]
     return value
+
+
+def contains_redacted(value: Any) -> bool:
+    """Whether a value contains a redacted placeholder at any depth."""
+    if value == REDACTED:
+        return True
+    if isinstance(value, dict):
+        return any(contains_redacted(item) for item in value.values())
+    if isinstance(value, list):
+        return any(contains_redacted(item) for item in value)
+    return False
 
 
 def redact_api(api: dict[str, Any] | None) -> dict[str, Any] | None:

@@ -1,11 +1,12 @@
 """Tests for API credential redaction at serialization time."""
 
 import json
+from unittest import mock
 
 from server.task.models import TaskRecord
-from server.task.redact import REDACTED, _is_sensitive_key, redact_api, redact_raw_yaml
 from shared.tasks import TaskEnvelopeTemplate
 from shared.tasks.specs import ApiSpecTemplate
+from shared.utils.redact import REDACTED, is_sensitive_key, redact_api, redact_raw_yaml
 
 
 def _api_task(api: dict) -> TaskEnvelopeTemplate:
@@ -19,12 +20,12 @@ def _api_task(api: dict) -> TaskEnvelopeTemplate:
     )
 
 
-def _record(api: dict, raw_yaml: str = "") -> TaskRecord:
+def _record(api: dict, source: str = "") -> TaskRecord:
     return TaskRecord(
         task_id="tsk-1",
         workflow_id="wfl-1",
         owner_id="owner",
-        raw_yaml=raw_yaml,
+        source=source,
         task=_api_task(api),
     )
 
@@ -45,11 +46,11 @@ class TestSensitiveKey:
             "my_token",
             "my_key",
         ):
-            assert _is_sensitive_key(key), key
+            assert is_sensitive_key(key), key
 
     def test_innocent_keys_do_not_match(self) -> None:
         for key in ("monkey", "turkey", "keyword", "keys", "model", "messages"):
-            assert not _is_sensitive_key(key), key
+            assert not is_sensitive_key(key), key
 
 
 class TestRedactApi:
@@ -142,13 +143,13 @@ class TestTaskRecordSerializer:
         dumped = json.loads(rec.model_dump_json())
         assert dumped["task"]["spec"]["api"]["headers"]["Authorization"] == REDACTED
 
-    def test_raw_yaml_redacted_in_dump(self) -> None:
+    def test_source_redacted_in_dump(self) -> None:
         rec = _record(
             {"headers": {"Authorization": "Bearer SECRET"}},
-            raw_yaml="api:\n  headers:\n    Authorization: Bearer SECRET\n",
+            source="api:\n  headers:\n    Authorization: Bearer SECRET\n",
         )
         dumped = rec.model_dump()
-        assert "SECRET" not in dumped["raw_yaml"]
+        assert "SECRET" not in dumped["source"]
 
     def test_in_memory_keeps_real_credential(self) -> None:
         rec = _record({"headers": {"Authorization": "Bearer SECRET"}})
@@ -161,3 +162,21 @@ class TestTaskRecordSerializer:
         rec = _record(api)
         dumped = rec.model_dump()
         assert dumped["task"]["spec"]["api"] == api
+
+    def test_redaction_cached_across_dumps(self) -> None:
+        rec = _record(
+            {"headers": {"Authorization": "Bearer SECRET"}},
+            source="api:\n  headers:\n    Authorization: Bearer SECRET\n",
+        )
+        with mock.patch(
+            "server.task.models.redact_raw_yaml",
+            wraps=redact_raw_yaml,
+        ) as spy:
+            for _ in range(3):
+                dumped = rec.model_dump()
+                assert dumped["source"] != "SECRET"
+                assert (
+                    dumped["task"]["spec"]["api"]["headers"]["Authorization"]
+                    == REDACTED
+                )
+        assert spy.call_count == 1

@@ -27,7 +27,7 @@ class TaskInfo(BaseModel):
     owner_id: str
     org_id: str
     supplier_id: str
-    raw_yaml: str
+    source: str
     task: dict[str, Any]
     status: TaskStatus
     task_type: str | None = None
