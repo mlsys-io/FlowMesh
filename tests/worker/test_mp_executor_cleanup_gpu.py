@@ -19,7 +19,7 @@ from worker.executors.vllm_executor import VLLMExecutor
 def _nvml() -> Iterator[None]:
     try:
         pynvml.nvmlInit()
-    except Exception:
+    except pynvml.NVMLError:
         pytest.skip("NVML unavailable (no GPU)")
     yield
     pynvml.nvmlShutdown()
