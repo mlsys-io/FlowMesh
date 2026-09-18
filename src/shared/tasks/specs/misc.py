@@ -12,11 +12,13 @@ from .common import (
 class ApiSpecStrict(TaskSpecStrictBase):
     taskType: Literal[TaskType.API]
     api: dict[str, Any] | None = None
+    data: dict[str, Any] | None = None
 
 
 class ApiSpecTemplate(TaskSpecTemplateBase):
     taskType: Literal[TaskType.API]
     api: dict[str, Any] | None = None
+    data: dict[str, Any] | None = None
 
 
 class EchoSpecStrict(TaskSpecStrictBase):

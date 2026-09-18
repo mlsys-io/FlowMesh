@@ -1,3 +1,4 @@
+import json
 import logging
 import os
 import threading
@@ -6,21 +7,32 @@ from typing import Any, ClassVar
 
 import httpx
 
-from shared.schemas.result import APIResult
+from shared.schemas.result import APIItem, APIResult
 from shared.tasks.specs import ApiSpecStrict
 from shared.tasks.task_type import TaskType
 from shared.utils.redact import is_sensitive_key
 
 from .base_executor import ExecutionError, Executor, ExecutorTask
+from .mixins.data import DataMixin
 
 logger = logging.getLogger(__name__)
 
 # Cache key: (base_url, timeout_seconds, verify_tls, follow_redirects)
 _ClientKey = tuple[str, float, bool, bool]
 
+# Worker-side per-row slot in a batched request body. Server-side stage
+# references are ${...}; this is a worker-side token, hence {{...}}.
+_PROMPT_PLACEHOLDER = "{{prompt}}"
 
-class APIExecutor(Executor):
-    """Performs a single HTTP request defined by task YAML.
+
+class APIExecutor(DataMixin, Executor):
+    """Performs HTTP requests defined by task YAML.
+
+    A single-request task issues one request from ``spec.api`` and returns one
+    ``APIResult`` with the scalar fields populated. When ``spec.data`` is
+    present the task batches: each row's prompt is substituted for the
+    ``{{prompt}}`` placeholder in the request body and one request is issued
+    per row, returned row-aligned in ``APIResult.items``.
 
     Defaults to the Nebula endpoint via ``NEBULA_API_BASE_URL`` and authenticates
     with ``NEBULA_API_TOKEN``. ``spec.api.url`` overrides the endpoint and
@@ -94,6 +106,123 @@ class APIExecutor(Executor):
         """Close the connection pool when the runner deactivates this executor."""
         self.close_all_clients()
 
+    @staticmethod
+    def _prompt_to_str(prompt: Any) -> str:
+        """Render a row's prompt as a string for body substitution."""
+        if isinstance(prompt, str):
+            return prompt
+        return json.dumps(prompt)
+
+    @classmethod
+    def _substitute_prompt(cls, value: Any, prompt: str) -> Any:
+        """Replace ``{{prompt}}`` in the request body with a row's prompt."""
+        if isinstance(value, str):
+            if value == _PROMPT_PLACEHOLDER:
+                return prompt
+            return value.replace(_PROMPT_PLACEHOLDER, prompt)
+        if isinstance(value, dict):
+            return {k: cls._substitute_prompt(v, prompt) for k, v in value.items()}
+        if isinstance(value, list):
+            return [cls._substitute_prompt(v, prompt) for v in value]
+        return value
+
+    def _build_request_kwargs(
+        self, api_cfg: dict[str, Any], prompt: str | None
+    ) -> dict[str, Any]:
+        """Build httpx request kwargs from ``spec.api``, substituting the row
+        prompt when batching."""
+        json_payload = api_cfg.get("json")
+        body = api_cfg.get("body")
+        data_payload = api_cfg.get("data")
+
+        if json_payload is not None and body is not None:
+            raise ExecutionError(
+                "spec.api.json and spec.api.body are mutually exclusive"
+            )
+
+        request_kwargs: dict[str, Any] = {}
+        if json_payload is not None:
+            request_kwargs["json"] = (
+                self._substitute_prompt(json_payload, prompt)
+                if prompt is not None
+                else json_payload
+            )
+        elif body is not None:
+            if isinstance(body, (dict, list)):
+                request_kwargs["json"] = (
+                    self._substitute_prompt(body, prompt)
+                    if prompt is not None
+                    else body
+                )
+            else:
+                request_kwargs["content"] = (
+                    self._substitute_prompt(body, prompt)
+                    if prompt is not None
+                    else body
+                )
+        elif data_payload is not None:
+            request_kwargs["data"] = (
+                self._substitute_prompt(data_payload, prompt)
+                if prompt is not None
+                else data_payload
+            )
+        return request_kwargs
+
+    def _parse_response(
+        self,
+        resp: httpx.Response,
+        *,
+        response_cfg: dict[str, Any],
+        max_body_bytes: int,
+    ) -> tuple[APIItem, str | None]:
+        """Turn one HTTP response into an APIItem, applying response config.
+
+        Returns the item and the raw body text (used for error messages).
+        """
+        body_bytes = resp.content
+        truncated = False
+        if max_body_bytes is not None and len(body_bytes) > max_body_bytes:
+            body_bytes = body_bytes[:max_body_bytes]
+            truncated = True
+
+        item = APIItem(
+            index=0,
+            url=str(resp.url),
+            status_code=resp.status_code,
+            truncated=truncated,
+        )
+
+        if response_cfg.get("include_headers", False):
+            item.headers = dict(resp.headers)
+
+        body_text: str | None = None
+        if response_cfg.get("return_body", True):
+            encoding = resp.encoding or "utf-8"
+            body_text = body_bytes.decode(encoding, errors="replace")
+
+        if response_cfg.get("parse_json", True):
+            item.response_json = resp.json()
+            if not isinstance(item.response_json, dict):
+                raise ExecutionError("Response is not a valid JSON mapping")
+            usage = item.response_json.get("usage")
+            if not isinstance(usage, dict):
+                raise ExecutionError(
+                    "spec.api.response.parse_json is true but response JSON "
+                    f"does not contain usage info: {item.response_json}"
+                )
+            item.usage = usage
+            try:
+                item.text = item.response_json["choices"][0]["message"]["content"]
+            except Exception as exc:
+                raise ExecutionError(
+                    "spec.api.response.parse_json is true but response JSON "
+                    f"does not contain message.content: {item.response_json}"
+                ) from exc
+        elif response_cfg.get("return_body", True):
+            item.text = body_text
+
+        return item, body_text
+
     def run(self, task: ExecutorTask, out_dir: Path) -> APIResult:
         spec = self.require_spec(task, ApiSpecStrict)
         api_cfg = spec.api or {}
@@ -133,99 +262,105 @@ class APIExecutor(Executor):
         verify_tls = api_cfg.get("verify_tls", True)
         follow_redirects = api_cfg.get("follow_redirects", True)
 
-        body = api_cfg.get("body")
-        json_payload = api_cfg.get("json")
-        data_payload = api_cfg.get("data")
-
-        if json_payload is not None and body is not None:
-            raise ExecutionError(
-                "spec.api.json and spec.api.body are mutually exclusive"
-            )
-
-        request_kwargs: dict[str, Any] = {}
-        if json_payload is not None:
-            request_kwargs["json"] = json_payload
-        elif body is not None:
-            if isinstance(body, (dict, list)):
-                request_kwargs["json"] = body
-            else:
-                request_kwargs["content"] = body
-        elif data_payload is not None:
-            request_kwargs["data"] = data_payload
-
         response_cfg = api_cfg.get("response") or {}
         if response_cfg and not isinstance(response_cfg, dict):
             raise ExecutionError("spec.api.response must be a mapping")
 
-        include_headers = bool(response_cfg.get("include_headers", False))
-        # return_body is a JSON backdoor: keep raw text when JSON isn't usable.
-        return_body = bool(response_cfg.get("return_body", True))
-        parse_json = bool(response_cfg.get("parse_json", True))
-        raise_for_status = bool(response_cfg.get("raise_for_status", True))
         max_body_bytes = int(response_cfg.get("max_body_bytes", 200000))
+        raise_for_status = bool(response_cfg.get("raise_for_status", True))
 
-        try:
-            base = self._base_url(str(url))
-            client = self._get_client(base, timeout, verify_tls, follow_redirects)
-            resp = client.request(
-                method,
-                str(url),
-                headers=headers,
-                params=params,
-                **request_kwargs,
+        base = self._base_url(str(url))
+        client = self._get_client(base, timeout, verify_tls, follow_redirects)
+
+        data_cfg = spec.data
+        if data_cfg is None:
+            # Single-request path: build kwargs once, issue one request.
+            request_kwargs = self._build_request_kwargs(api_cfg, None)
+            try:
+                resp = client.request(
+                    method,
+                    str(url),
+                    headers=headers,
+                    params=params,
+                    **request_kwargs,
+                )
+            except httpx.RequestError as exc:
+                raise ExecutionError(
+                    f"API request failed: {exc}", retryable=True
+                ) from exc
+
+            item, body_text = self._parse_response(
+                resp,
+                response_cfg=response_cfg,
+                max_body_bytes=max_body_bytes,
             )
-        except httpx.RequestError as exc:
-            raise ExecutionError(f"API request failed: {exc}", retryable=True) from exc
+            result = APIResult(
+                ok=resp.is_success,
+                executor=self.name,
+                method=method,
+                url=str(resp.url),
+                status_code=resp.status_code,
+                truncated=item.truncated,
+                headers=item.headers,
+                text=item.text,
+            )
+            result.response_json = item.response_json
+            result.usage = item.usage
 
-        body_bytes = resp.content
-        truncated = False
-        if max_body_bytes is not None and len(body_bytes) > max_body_bytes:
-            body_bytes = body_bytes[:max_body_bytes]
-            truncated = True
+            if raise_for_status and resp.is_error:
+                message = f"API request returned status {resp.status_code}"
+                if body_text:
+                    message = f"{message}: {body_text[:200]}"
+                retryable = resp.status_code >= 500 or resp.status_code in (408, 429)
+                raise ExecutionError(message, retryable=retryable)
 
-        result = APIResult(
-            ok=resp.is_success,
+            return result
+
+        # Batch path: one request per row, row-aligned in items.
+        entry = self._collect_prompts_for_spec(spec, task_id=task.task_id)
+        prompts = entry.prompts
+        if not prompts:
+            raise ExecutionError("spec.data produced no rows to batch")
+
+        items: list[APIItem] = []
+        for idx, prompt in enumerate(prompts):
+            prompt_str = self._prompt_to_str(prompt)
+            request_kwargs = self._build_request_kwargs(api_cfg, prompt_str)
+            try:
+                resp = client.request(
+                    method,
+                    str(url),
+                    headers=headers,
+                    params=params,
+                    **request_kwargs,
+                )
+            except httpx.RequestError as exc:
+                raise ExecutionError(
+                    f"API request failed (row {idx}): {exc}", retryable=True
+                ) from exc
+
+            item, body_text = self._parse_response(
+                resp,
+                response_cfg=response_cfg,
+                max_body_bytes=max_body_bytes,
+            )
+            item.index = idx
+            item.prompt = prompt_str
+            items.append(item)
+
+            if raise_for_status and resp.is_error:
+                message = f"API request returned status {resp.status_code} (row {idx})"
+                if body_text:
+                    message = f"{message}: {body_text[:200]}"
+                retryable = resp.status_code >= 500 or resp.status_code in (408, 429)
+                raise ExecutionError(message, retryable=retryable)
+
+        return APIResult(
+            ok=True,
             executor=self.name,
             method=method,
-            url=str(resp.url),
-            status_code=resp.status_code,
-            truncated=truncated,
+            url=str(url),
+            status_code=items[0].status_code,
+            truncated=any(item.truncated for item in items),
+            items=items,
         )
-
-        if include_headers:
-            result.headers = dict(resp.headers)
-
-        body_text: str | None = None
-        if return_body:
-            encoding = resp.encoding or "utf-8"
-            body_text = body_bytes.decode(encoding, errors="replace")
-
-        if parse_json:
-            result.response_json = resp.json()
-            if not isinstance(result.response_json, dict):
-                raise ExecutionError("Response is not a valid JSON mapping")
-            usage = result.response_json.get("usage")
-            if not isinstance(usage, dict):
-                raise ExecutionError(
-                    "spec.api.response.parse_json is true but response JSON "
-                    f"does not contain usage info: {result.response_json}"
-                )
-            result.usage = usage
-            try:
-                result.text = result.response_json["choices"][0]["message"]["content"]
-            except Exception as exc:
-                raise ExecutionError(
-                    "spec.api.response.parse_json is true but response JSON "
-                    f"does not contain message.content: {result.response_json}"
-                ) from exc
-        elif return_body:
-            result.text = body_text
-
-        if raise_for_status and resp.is_error:
-            message = f"API request returned status {resp.status_code}"
-            if body_text:
-                message = f"{message}: {body_text[:200]}"
-            retryable = resp.status_code >= 500 or resp.status_code in (408, 429)
-            raise ExecutionError(message, retryable=retryable)
-
-        return result

@@ -93,6 +93,34 @@ spec:
       parse_json: true
 ```
 
+### Batching
+
+When `spec.data` is present, the task batches: one request is issued per row,
+and the results are returned row-aligned in `APIResult.items`. Each row's
+prompt is substituted for the `{{prompt}}` placeholder in the request body.
+Server-side stage references are `${...}`; `{{prompt}}` is a worker-side
+per-row slot, so it is not touched by server-side resolution. A failure in any
+row fails the whole task rather than shifting the remaining rows.
+
+```yaml
+spec:
+  taskType: api
+  data:
+    type: list
+    items:
+      - Explain vector databases
+      - Explain attention
+  api:
+    method: POST
+    body:
+      model: gpt-4o
+      messages:
+        - role: user
+          content: "{{prompt}}"
+    response:
+      parse_json: true
+```
+
 ## data_retrieval: type lumid
 
 `type: lumid` routes the retrieval through lumid-data-app (HTTP). Three
