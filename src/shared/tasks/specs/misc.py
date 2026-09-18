@@ -1,6 +1,6 @@
 from typing import Any, Literal, Self
 
-from ...utils.redact import contains_redacted_credential, redact_value
+from ...utils.redact import has_redacted_credential_fields, redact_credential_fields
 from ..task_type import TaskType
 from .common import (
     ModelSpecStrict,
@@ -10,22 +10,15 @@ from .common import (
 )
 
 
-def redact_api(api: dict[str, Any] | None) -> dict[str, Any] | None:
-    """Return a copy of an API spec with credential values replaced."""
-    if not isinstance(api, dict):
-        return api
-    return redact_value(api)
-
-
 class ApiSpecStrict(TaskSpecStrictBase):
     taskType: Literal[TaskType.API]
     api: dict[str, Any] | None = None
 
     def redact_credentials(self) -> Self:
-        return self.model_copy(update={"api": redact_api(self.api)})
+        return self.model_copy(update={"api": redact_credential_fields(self.api)})
 
     def has_redacted_credentials(self) -> bool:
-        return contains_redacted_credential({"api": self.api})
+        return has_redacted_credential_fields(self.api)
 
 
 class ApiSpecTemplate(TaskSpecTemplateBase):
@@ -33,10 +26,10 @@ class ApiSpecTemplate(TaskSpecTemplateBase):
     api: dict[str, Any] | None = None
 
     def redact_credentials(self) -> Self:
-        return self.model_copy(update={"api": redact_api(self.api)})
+        return self.model_copy(update={"api": redact_credential_fields(self.api)})
 
     def has_redacted_credentials(self) -> bool:
-        return contains_redacted_credential({"api": self.api})
+        return has_redacted_credential_fields(self.api)
 
 
 class EchoSpecStrict(TaskSpecStrictBase):
@@ -82,10 +75,10 @@ class DataRetrievalSpecStrict(TaskSpecStrictBase):
     data: dict[str, Any] | None = None
 
     def redact_credentials(self) -> Self:
-        return self.model_copy(update={"data": redact_value(self.data)})
+        return self.model_copy(update={"data": redact_credential_fields(self.data)})
 
     def has_redacted_credentials(self) -> bool:
-        return contains_redacted_credential({"data": self.data})
+        return has_redacted_credential_fields(self.data)
 
 
 class DataRetrievalSpecTemplate(TaskSpecTemplateBase):
@@ -93,10 +86,10 @@ class DataRetrievalSpecTemplate(TaskSpecTemplateBase):
     data: dict[str, Any] | None = None
 
     def redact_credentials(self) -> Self:
-        return self.model_copy(update={"data": redact_value(self.data)})
+        return self.model_copy(update={"data": redact_credential_fields(self.data)})
 
     def has_redacted_credentials(self) -> bool:
-        return contains_redacted_credential({"data": self.data})
+        return has_redacted_credential_fields(self.data)
 
 
 class EmbeddingSpecStrict(ModelSpecStrict):

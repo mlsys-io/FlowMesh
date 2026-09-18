@@ -3,7 +3,7 @@ from typing import Any, Self
 from pydantic import Field, SerializeAsAny, model_validator
 
 from ...schemas.result import BaseExecutorResult
-from ...utils.redact import contains_redacted_credential, redact_value
+from ...utils.redact import has_redacted_credential_fields, redact_credential_fields
 from .._base import StrictBaseModel, TemplateBaseModel
 from ..components import (
     AdapterConfig,
@@ -163,7 +163,9 @@ def _redact_model_config(
     adapters = model.adapters
     redacted_adapters = (
         [
-            adapter.model_copy(update={"headers": redact_value(adapter.headers)})
+            adapter.model_copy(
+                update={"headers": redact_credential_fields(adapter.headers)}
+            )
             for adapter in adapters
         ]
         if adapters is not None
@@ -171,10 +173,10 @@ def _redact_model_config(
     )
     return model.model_copy(
         update={
-            "config": redact_value(model.config),
-            "vllm": redact_value(model.vllm),
-            "transformers": redact_value(model.transformers),
-            "diffusers": redact_value(model.diffusers),
+            "config": redact_credential_fields(model.config),
+            "vllm": redact_credential_fields(model.vllm),
+            "transformers": redact_credential_fields(model.transformers),
+            "diffusers": redact_credential_fields(model.diffusers),
             "adapters": redacted_adapters,
         }
     )
@@ -183,7 +185,7 @@ def _redact_model_config(
 def _model_has_redacted_credentials(
     model: ModelConfig | ModelConfigTemplate | None,
 ) -> bool:
-    return model is not None and contains_redacted_credential(
+    return model is not None and has_redacted_credential_fields(
         model.model_dump(mode="python")
     )
 

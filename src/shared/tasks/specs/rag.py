@@ -1,6 +1,6 @@
 from typing import Any, Literal, Self
 
-from ...utils.redact import contains_redacted_credential, redact_value
+from ...utils.redact import has_redacted_credential_fields, redact_credential_fields
 from ..task_type import TaskType
 from .common import TaskSpecStrictBase, TaskSpecTemplateBase
 
@@ -17,15 +17,15 @@ class RagSpecStrict(TaskSpecStrictBase):
     def redact_credentials(self) -> Self:
         return self.model_copy(
             update={
-                "qdrant": redact_value(self.qdrant),
-                "embedding": redact_value(self.embedding),
-                "search": redact_value(self.search),
-                "data": redact_value(self.data),
+                "qdrant": redact_credential_fields(self.qdrant),
+                "embedding": redact_credential_fields(self.embedding),
+                "search": redact_credential_fields(self.search),
+                "data": redact_credential_fields(self.data),
             }
         )
 
     def has_redacted_credentials(self) -> bool:
-        return contains_redacted_credential(
+        return has_redacted_credential_fields(
             {
                 "qdrant": self.qdrant,
                 "embedding": self.embedding,
@@ -47,15 +47,15 @@ class RagSpecTemplate(TaskSpecTemplateBase):
     def redact_credentials(self) -> Self:
         return self.model_copy(
             update={
-                "qdrant": redact_value(self.qdrant),
-                "embedding": redact_value(self.embedding),
-                "search": redact_value(self.search),
-                "data": redact_value(self.data),
+                "qdrant": redact_credential_fields(self.qdrant),
+                "embedding": redact_credential_fields(self.embedding),
+                "search": redact_credential_fields(self.search),
+                "data": redact_credential_fields(self.data),
             }
         )
 
     def has_redacted_credentials(self) -> bool:
-        return contains_redacted_credential(
+        return has_redacted_credential_fields(
             {
                 "qdrant": self.qdrant,
                 "embedding": self.embedding,

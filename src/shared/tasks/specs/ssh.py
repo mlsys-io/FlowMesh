@@ -4,9 +4,9 @@ from pydantic import model_validator
 
 from ...utils.redact import (
     contains_redacted,
-    contains_redacted_credential,
+    has_redacted_credential_fields,
     redact_credential,
-    redact_value,
+    redact_credential_fields,
 )
 from .._base import StrictBaseModel, TemplateBaseModel
 from ..placeholders import TemplateInt
@@ -128,12 +128,12 @@ class SSHSpecStrict(TaskSpecStrictBase):
         return self.model_copy(
             update={
                 "authorizedKeys": redact_credential(self.authorizedKeys),
-                "env": redact_value(self.env),
+                "env": redact_credential_fields(self.env),
             }
         )
 
     def has_redacted_credentials(self) -> bool:
-        return contains_redacted(self.authorizedKeys) or contains_redacted_credential(
+        return contains_redacted(self.authorizedKeys) or has_redacted_credential_fields(
             self.env
         )
 
@@ -164,12 +164,12 @@ class SSHSpecTemplate(TaskSpecTemplateBase):
         return self.model_copy(
             update={
                 "authorizedKeys": redact_credential(self.authorizedKeys),
-                "env": redact_value(self.env),
+                "env": redact_credential_fields(self.env),
             }
         )
 
     def has_redacted_credentials(self) -> bool:
-        return contains_redacted(self.authorizedKeys) or contains_redacted_credential(
+        return contains_redacted(self.authorizedKeys) or has_redacted_credential_fields(
             self.env
         )
 

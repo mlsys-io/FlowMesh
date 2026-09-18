@@ -8,13 +8,12 @@ import pytest
 from server.task.models import TaskRecord
 from shared.tasks import TaskEnvelopeTemplate
 from shared.tasks.specs import ApiSpecTemplate, RagSpecTemplate
-from shared.tasks.specs.misc import redact_api
 from shared.utils.redact import (
     REDACTED,
-    is_sensitive_key,
+    is_credential_key,
     redact_credential,
+    redact_credential_fields,
     redact_raw_yaml,
-    redact_value,
 )
 
 
@@ -54,8 +53,8 @@ def _task(task_type: str, **fields: object) -> TaskEnvelopeTemplate:
     )
 
 
-class TestSensitiveKey:
-    def test_sensitive_keys_match(self) -> None:
+class TestCredentialKey:
+    def test_credential_keys_match(self) -> None:
         for key in (
             "Authorization",
             "authorization",
@@ -76,58 +75,22 @@ class TestSensitiveKey:
             "client_secret",
             "password",
         ):
-            assert is_sensitive_key(key), key
+            assert is_credential_key(key), key
 
-    def test_innocent_keys_do_not_match(self) -> None:
+    def test_non_credential_keys_do_not_match(self) -> None:
         for key in ("monkey", "turkey", "keyword", "keys", "model", "messages"):
-            assert not is_sensitive_key(key), key
-
-
-class TestRedactApi:
-    def test_headers_redacted(self) -> None:
-        out = redact_api({"headers": {"Authorization": "Bearer SECRET"}})
-        assert out is not None
-        assert out["headers"]["Authorization"] == REDACTED
-
-    def test_nested_in_dict_redacted(self) -> None:
-        out = redact_api({"json": {"auth": {"token": "SECRET-NESTED"}}})
-        assert out is not None
-        assert out["json"]["auth"]["token"] == REDACTED
-
-    def test_nested_in_list_redacted(self) -> None:
-        out = redact_api({"json": [{"token": "SECRET"}]})
-        assert out is not None
-        assert out["json"][0]["token"] == REDACTED
-
-    def test_all_five_locations_redacted(self) -> None:
-        api = {
-            "headers": {"Authorization": "Bearer H"},
-            "params": {"api_key": "P"},
-            "body": {"secret": "B"},
-            "json": {"token": "J"},
-            "data": {"access_token": "D"},
-        }
-        out = redact_api(api)
-        assert out is not None
-        for field in ("headers", "params", "body", "json", "data"):
-            assert list(out[field].values()) == [REDACTED], field
-
-    def test_innocent_values_preserved(self) -> None:
-        out = redact_api({"json": {"model": "gpt", "monkey": "x"}})
-        assert out is not None
-        assert out["json"]["model"] == "gpt"
-        assert out["json"]["monkey"] == "x"
-
-    def test_original_not_mutated(self) -> None:
-        api = {"headers": {"Authorization": "Bearer SECRET"}}
-        redact_api(api)
-        assert api["headers"]["Authorization"] == "Bearer SECRET"
+            assert not is_credential_key(key), key
 
 
 class TestRedactTask:
     @pytest.mark.parametrize(
         ("task_type", "fields", "path"),
         [
+            (
+                "api",
+                {"api": {"headers": {"Authorization": "Bearer api-secret"}}},
+                ("api", "headers", "Authorization"),
+            ),
             (
                 "data_retrieval",
                 {"data": {"lumid_data_token": "lumid-secret"}},
@@ -168,7 +131,7 @@ class TestRedactTask:
             "env": {"AWS_ACCESS_KEY_ID": "access-secret"},
             "model": {"adapters": [{"headers": {"Authorization": "header-secret"}}]},
         }
-        redacted = redact_value(value)
+        redacted = redact_credential_fields(value)
         assert redacted == {
             "authorizedKeys": [REDACTED],
             "connection_string": REDACTED,
