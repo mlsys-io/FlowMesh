@@ -495,8 +495,8 @@ class TestTraceModels:
 
 class TestAPIItem:
     def test_construct_by_name_serialize_revalidate(self) -> None:
-        """An SDK APIItem built by field name round-trips through the worker's
-        serialization and the server's ingest validation."""
+        """An SDK APIItem built by field name round-trips through the SDK's own
+        serialization and revalidation."""
         item = APIItem.model_validate(
             {
                 "index": 0,
