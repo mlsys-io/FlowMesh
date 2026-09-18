@@ -1,12 +1,20 @@
-"""Tests for API credential redaction at serialization time."""
+"""Tests for task credential redaction at serialization time."""
 
 import json
 from unittest import mock
 
+import pytest
+
 from server.task.models import TaskRecord
 from shared.tasks import TaskEnvelopeTemplate
-from shared.tasks.specs import ApiSpecTemplate
-from shared.utils.redact import REDACTED, is_sensitive_key, redact_api, redact_raw_yaml
+from shared.tasks.specs import ApiSpecTemplate, RagSpecTemplate
+from shared.utils.redact import (
+    REDACTED,
+    is_sensitive_key,
+    redact_api,
+    redact_raw_yaml,
+    redact_value,
+)
 
 
 def _api_task(api: dict) -> TaskEnvelopeTemplate:
@@ -21,12 +29,27 @@ def _api_task(api: dict) -> TaskEnvelopeTemplate:
 
 
 def _record(api: dict, source: str = "") -> TaskRecord:
+    return _record_for_task(_api_task(api), source=source)
+
+
+def _record_for_task(task: TaskEnvelopeTemplate, source: str = "") -> TaskRecord:
     return TaskRecord(
         task_id="tsk-1",
         workflow_id="wfl-1",
         owner_id="owner",
         source=source,
-        task=_api_task(api),
+        task=task,
+    )
+
+
+def _task(task_type: str, **fields: object) -> TaskEnvelopeTemplate:
+    return TaskEnvelopeTemplate.model_validate(
+        {
+            "apiVersion": "flowmesh/v1",
+            "kind": "Task",
+            "metadata": {"name": "t"},
+            "spec": {"taskType": task_type, **fields},
+        }
     )
 
 
@@ -45,6 +68,12 @@ class TestSensitiveKey:
             "x-api-key",
             "my_token",
             "my_key",
+            "authorizedKeys",
+            "connection_string",
+            "cert_data",
+            "AWS_ACCESS_KEY_ID",
+            "client_secret",
+            "password",
         ):
             assert is_sensitive_key(key), key
 
@@ -92,6 +121,86 @@ class TestRedactApi:
         api = {"headers": {"Authorization": "Bearer SECRET"}}
         redact_api(api)
         assert api["headers"]["Authorization"] == "Bearer SECRET"
+
+
+class TestRedactTask:
+    @pytest.mark.parametrize(
+        ("task_type", "fields", "path"),
+        [
+            (
+                "data_retrieval",
+                {"data": {"lumid_data_token": "lumid-secret"}},
+                ("data", "lumid_data_token"),
+            ),
+            (
+                "rag",
+                {"qdrant": {"api_key": "qdrant-secret"}},
+                ("qdrant", "api_key"),
+            ),
+            (
+                "serve",
+                {
+                    "apiKey": "serve-secret",
+                    "model": {"source": {"identifier": "model"}},
+                    "resources": {"hardware": {"gpu": {"count": 1}}},
+                },
+                ("apiKey",),
+            ),
+        ],
+    )
+    def test_task_record_redacts_credentials(
+        self, task_type: str, fields: dict[str, object], path: tuple[str, ...]
+    ) -> None:
+        record = _record_for_task(_task(task_type, **fields))
+        dumped = record.model_dump()
+        value: object = dumped["task"]["spec"]
+        for key in path:
+            assert isinstance(value, dict)
+            value = value[key]
+        assert value == REDACTED
+
+    def test_nested_shared_credentials_redacted(self) -> None:
+        value = {
+            "authorizedKeys": ["ssh-secret"],
+            "connection_string": "postgres://user:secret@db/app",
+            "cert_data": "certificate-secret",
+            "env": {"AWS_ACCESS_KEY_ID": "access-secret"},
+            "model": {"adapters": [{"headers": {"Authorization": "header-secret"}}]},
+        }
+        redacted = redact_value(value)
+        assert redacted == {
+            "authorizedKeys": [REDACTED],
+            "connection_string": REDACTED,
+            "cert_data": REDACTED,
+            "env": {"AWS_ACCESS_KEY_ID": REDACTED},
+            "model": {"adapters": [{"headers": {"Authorization": REDACTED}}]},
+        }
+
+    def test_in_memory_task_keeps_non_api_credentials(self) -> None:
+        task = _task(
+            "rag",
+            qdrant={"api_key": "qdrant-secret"},
+        )
+        record = _record_for_task(task)
+        assert isinstance(record.task.spec, RagSpecTemplate)
+        assert record.task.spec.qdrant == {"api_key": "qdrant-secret"}
+        assert record.model_dump()["task"]["spec"]["qdrant"]["api_key"] == REDACTED
+
+    def test_ssh_credentials_are_redacted_with_valid_shape(self) -> None:
+        record = _record_for_task(
+            _task(
+                "ssh",
+                authorizedKeys=["ssh-secret"],
+                env={"SERVICE_TOKEN": "env-secret"},
+            )
+        )
+        dumped = record.model_dump()["task"]["spec"]
+        assert dumped["authorizedKeys"] == [REDACTED]
+        assert dumped["env"] == {"SERVICE_TOKEN": REDACTED}
+
+    def test_base_spec_redaction_is_a_no_op(self) -> None:
+        record = _record_for_task(_task("echo", data={"token": "echo-data"}))
+        assert record.model_dump()["task"]["spec"]["data"]["token"] == "echo-data"
 
 
 class TestRedactRawYaml:

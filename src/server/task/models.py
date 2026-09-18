@@ -12,10 +12,9 @@ from pydantic import (
     model_serializer,
 )
 
-from shared.tasks import TaskEnvelopeTemplate
-from shared.tasks.specs import ApiSpecStrict, ApiSpecTemplate
+from shared.tasks import TaskEnvelopeTemplate, TaskSpecTemplate
 from shared.tasks.worker_message import HardwareUsage
-from shared.utils.redact import redact_api, redact_raw_yaml
+from shared.utils.redact import redact_raw_yaml
 
 from ..utils.time import now_iso
 
@@ -178,29 +177,23 @@ class TaskRecord(BaseModel):
         return self.failed_workers[-1] if self.failed_workers else None
 
     _redacted_source: str | None = PrivateAttr(default=None)
-    _redacted_api: dict[str, Any] | None = PrivateAttr(default=None)
+    _redacted_spec: TaskSpecTemplate | None = PrivateAttr(default=None)
 
     def _redact_source(self) -> str:
         if self._redacted_source is None:
             self._redacted_source = redact_raw_yaml(self.source)
         return self._redacted_source
 
-    def _redact_api(self) -> dict[str, Any] | None:
-        if self._redacted_api is None:
-            spec = self.task.spec
-            if isinstance(spec, (ApiSpecStrict, ApiSpecTemplate)):
-                self._redacted_api = redact_api(spec.api)
-            else:
-                self._redacted_api = None
-        return self._redacted_api
+    def _redact_spec(self) -> TaskSpecTemplate:
+        if self._redacted_spec is None:
+            self._redacted_spec = self.task.spec.redact_credentials()
+        return self._redacted_spec
 
     @model_serializer(mode="wrap")
     def _serialize(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
         data = handler(self)
         data["source"] = self._redact_source()
-        redacted_api = self._redact_api()
-        if redacted_api is not None:
-            data["task"]["spec"]["api"] = redacted_api
+        data["task"]["spec"] = self._redact_spec().model_dump(mode="python")
         return data
 
 

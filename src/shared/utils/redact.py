@@ -22,17 +22,45 @@ REDACTED = "[REDACTED]"
 _SENSITIVE_KEYS = frozenset(
     {
         "authorization",
+        "authorizedkeys",
+        "cert_data",
+        "certificate",
+        "connection_string",
         "token",
         "api-key",
         "api_key",
         "apikey",
+        "credential",
+        "credentials",
+        "password",
+        "passwd",
+        "private_key",
         "secret",
         "access_token",
         "bearer",
         "x-api-key",
     }
 )
-_SENSITIVE_SUFFIXES = ("_key", "-key", "_token", "-token")
+_SENSITIVE_SUFFIXES = (
+    "_key",
+    "-key",
+    "_password",
+    "-password",
+    "_secret",
+    "-secret",
+    "_token",
+    "-token",
+)
+_SENSITIVE_COMBINATIONS = frozenset(
+    {
+        "access_key",
+        "api_key",
+        "auth_key",
+        "credential_key",
+        "private_key",
+        "secret_key",
+    }
+)
 
 
 def is_sensitive_key(name: str) -> bool:
@@ -40,18 +68,25 @@ def is_sensitive_key(name: str) -> bool:
     lowered = name.lower()
     if lowered in _SENSITIVE_KEYS:
         return True
-    return any(lowered.endswith(suffix) for suffix in _SENSITIVE_SUFFIXES)
+    if any(lowered.endswith(suffix) for suffix in _SENSITIVE_SUFFIXES):
+        return True
+    normalized = lowered.replace("-", "_")
+    return any(combination in normalized for combination in _SENSITIVE_COMBINATIONS)
 
 
-def _redact_value(value: Any) -> Any:
+def redact_value(value: Any) -> Any:
     """Recursively redact credential values by key name at any depth."""
     if isinstance(value, dict):
         return {
-            key: (REDACTED if is_sensitive_key(str(key)) else _redact_value(val))
+            key: (
+                [REDACTED]
+                if is_sensitive_key(str(key)) and isinstance(val, list)
+                else REDACTED if is_sensitive_key(str(key)) else redact_value(val)
+            )
             for key, val in value.items()
         }
     if isinstance(value, list):
-        return [_redact_value(item) for item in value]
+        return [redact_value(item) for item in value]
     return value
 
 
@@ -66,20 +101,30 @@ def contains_redacted(value: Any) -> bool:
     return False
 
 
+def contains_redacted_credential(value: Any) -> bool:
+    """Whether a redacted placeholder occurs under a credential-shaped key."""
+    if isinstance(value, dict):
+        return any(
+            (
+                contains_redacted(item)
+                if is_sensitive_key(str(key))
+                else contains_redacted_credential(item)
+            )
+            for key, item in value.items()
+        )
+    if isinstance(value, list):
+        return any(contains_redacted_credential(item) for item in value)
+    return False
+
+
 def redact_api(api: dict[str, Any] | None) -> dict[str, Any] | None:
     """Return a copy of an api spec with credential values replaced.
 
-    Only the five credential-bearing locations are touched; the rest of the
-    spec is returned unchanged. The original mapping is never mutated.
+    The original mapping is never mutated.
     """
     if not isinstance(api, dict):
         return api
-    redacted = dict(api)
-    for field in ("headers", "params", "body", "json", "data"):
-        value = redacted.get(field)
-        if isinstance(value, (dict, list)):
-            redacted[field] = _redact_value(value)
-    return redacted
+    return redact_value(api)
 
 
 def redact_raw_yaml(raw_yaml: str) -> str:
@@ -95,4 +140,4 @@ def redact_raw_yaml(raw_yaml: str) -> str:
         return REDACTED
     if tree is None:
         return raw_yaml
-    return yaml.safe_dump(_redact_value(tree), sort_keys=False)
+    return yaml.safe_dump(redact_value(tree), sort_keys=False)

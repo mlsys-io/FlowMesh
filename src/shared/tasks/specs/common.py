@@ -1,8 +1,9 @@
-from typing import Any
+from typing import Any, Self
 
 from pydantic import Field, SerializeAsAny, model_validator
 
 from ...schemas.result import BaseExecutorResult
+from ...utils.redact import contains_redacted_credential, redact_value
 from .._base import StrictBaseModel, TemplateBaseModel
 from ..components import (
     AdapterConfig,
@@ -99,6 +100,14 @@ class TaskSpecStrictBase(StrictBaseModel):
         """
         return None
 
+    def redact_credentials(self) -> Self:
+        """Return this spec unchanged when it has no known credentials."""
+        return self
+
+    def has_redacted_credentials(self) -> bool:
+        """Whether this spec contains a redacted credential marker."""
+        return False
+
 
 class TaskSpecTemplateBase(TemplateBaseModel):
     resources: ResourcesSpec | None = None
@@ -134,12 +143,59 @@ class TaskSpecTemplateBase(TemplateBaseModel):
         """
         return None
 
+    def redact_credentials(self) -> Self:
+        """Return this spec unchanged when it has no known credentials."""
+        return self
+
+    def has_redacted_credentials(self) -> bool:
+        """Whether this spec contains a redacted credential marker."""
+        return False
+
 
 type TaskSpecBase = TaskSpecStrictBase | TaskSpecTemplateBase
 
 
+def _redact_model_config(
+    model: ModelConfig | ModelConfigTemplate | None,
+) -> ModelConfig | ModelConfigTemplate | None:
+    if model is None:
+        return None
+    adapters = model.adapters
+    redacted_adapters = (
+        [
+            adapter.model_copy(update={"headers": redact_value(adapter.headers)})
+            for adapter in adapters
+        ]
+        if adapters is not None
+        else None
+    )
+    return model.model_copy(
+        update={
+            "config": redact_value(model.config),
+            "vllm": redact_value(model.vllm),
+            "transformers": redact_value(model.transformers),
+            "diffusers": redact_value(model.diffusers),
+            "adapters": redacted_adapters,
+        }
+    )
+
+
+def _model_has_redacted_credentials(
+    model: ModelConfig | ModelConfigTemplate | None,
+) -> bool:
+    return model is not None and contains_redacted_credential(
+        model.model_dump(mode="python")
+    )
+
+
 class ModelSpecStrict(TaskSpecStrictBase):
     model: ModelConfig | None = None
+
+    def redact_credentials(self) -> Self:
+        return self.model_copy(update={"model": _redact_model_config(self.model)})
+
+    def has_redacted_credentials(self) -> bool:
+        return _model_has_redacted_credentials(self.model)
 
     @property
     def model_name(self) -> str | None:
@@ -163,6 +219,12 @@ class ModelSpecStrict(TaskSpecStrictBase):
 
 class ModelSpecTemplate(TaskSpecTemplateBase):
     model: ModelConfigTemplate | None = None
+
+    def redact_credentials(self) -> Self:
+        return self.model_copy(update={"model": _redact_model_config(self.model)})
+
+    def has_redacted_credentials(self) -> bool:
+        return _model_has_redacted_credentials(self.model)
 
     @property
     def model_name(self) -> str | None:

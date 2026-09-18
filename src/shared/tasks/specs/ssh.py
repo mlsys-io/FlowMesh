@@ -1,7 +1,8 @@
-from typing import Any, Literal
+from typing import Any, Literal, Self
 
 from pydantic import model_validator
 
+from ...utils.redact import contains_redacted_credential, redact_value
 from .._base import StrictBaseModel, TemplateBaseModel
 from ..placeholders import TemplateInt
 from ..task_type import TaskType
@@ -118,6 +119,22 @@ class SSHSpecStrict(TaskSpecStrictBase):
     sshOutput: SSHOutputSpec | None = None
     env: dict[str, Any] | None = None
 
+    def redact_credentials(self) -> Self:
+        redacted = redact_value(
+            {"authorizedKeys": self.authorizedKeys, "env": self.env}
+        )
+        return self.model_copy(
+            update={
+                "authorizedKeys": redacted["authorizedKeys"],
+                "env": redacted["env"],
+            }
+        )
+
+    def has_redacted_credentials(self) -> bool:
+        return contains_redacted_credential(
+            {"authorizedKeys": self.authorizedKeys, "env": self.env}
+        )
+
     @model_validator(mode="after")
     def _resolve_and_validate(self) -> "SSHSpecStrict":
         _resolve_interactive(self)
@@ -140,6 +157,22 @@ class SSHSpecTemplate(TaskSpecTemplateBase):
     inputs: list[SSHInputSpec] | None = None
     sshOutput: SSHOutputSpecTemplate | None = None
     env: dict[str, Any] | None = None
+
+    def redact_credentials(self) -> Self:
+        redacted = redact_value(
+            {"authorizedKeys": self.authorizedKeys, "env": self.env}
+        )
+        return self.model_copy(
+            update={
+                "authorizedKeys": redacted["authorizedKeys"],
+                "env": redacted["env"],
+            }
+        )
+
+    def has_redacted_credentials(self) -> bool:
+        return contains_redacted_credential(
+            {"authorizedKeys": self.authorizedKeys, "env": self.env}
+        )
 
     @model_validator(mode="after")
     def _resolve_and_validate(self) -> "SSHSpecTemplate":

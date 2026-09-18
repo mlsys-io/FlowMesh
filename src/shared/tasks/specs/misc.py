@@ -1,5 +1,6 @@
-from typing import Any, Literal
+from typing import Any, Literal, Self
 
+from ...utils.redact import contains_redacted_credential, redact_api, redact_value
 from ..task_type import TaskType
 from .common import (
     ModelSpecStrict,
@@ -13,10 +14,22 @@ class ApiSpecStrict(TaskSpecStrictBase):
     taskType: Literal[TaskType.API]
     api: dict[str, Any] | None = None
 
+    def redact_credentials(self) -> Self:
+        return self.model_copy(update={"api": redact_api(self.api)})
+
+    def has_redacted_credentials(self) -> bool:
+        return contains_redacted_credential({"api": self.api})
+
 
 class ApiSpecTemplate(TaskSpecTemplateBase):
     taskType: Literal[TaskType.API]
     api: dict[str, Any] | None = None
+
+    def redact_credentials(self) -> Self:
+        return self.model_copy(update={"api": redact_api(self.api)})
+
+    def has_redacted_credentials(self) -> bool:
+        return contains_redacted_credential({"api": self.api})
 
 
 class EchoSpecStrict(TaskSpecStrictBase):
@@ -61,10 +74,22 @@ class DataRetrievalSpecStrict(TaskSpecStrictBase):
     taskType: Literal[TaskType.DATA_RETRIEVAL]
     data: dict[str, Any] | None = None
 
+    def redact_credentials(self) -> Self:
+        return self.model_copy(update={"data": redact_value(self.data)})
+
+    def has_redacted_credentials(self) -> bool:
+        return contains_redacted_credential({"data": self.data})
+
 
 class DataRetrievalSpecTemplate(TaskSpecTemplateBase):
     taskType: Literal[TaskType.DATA_RETRIEVAL]
     data: dict[str, Any] | None = None
+
+    def redact_credentials(self) -> Self:
+        return self.model_copy(update={"data": redact_value(self.data)})
+
+    def has_redacted_credentials(self) -> bool:
+        return contains_redacted_credential({"data": self.data})
 
 
 class EmbeddingSpecStrict(ModelSpecStrict):

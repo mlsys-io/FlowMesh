@@ -1,7 +1,8 @@
-from typing import Annotated, Literal
+from typing import Annotated, Literal, Self
 
 from pydantic import Field
 
+from ...utils.redact import contains_redacted_credential, redact_value
 from ..task_type import TaskType
 from .common import ModelSpecStrict, ModelSpecTemplate
 
@@ -14,6 +15,16 @@ class ServeSpecStrict(ModelSpecStrict):
     port: Annotated[int, Field(ge=1, le=65535)] | None = None
     apiKey: str | None = Field(default=None, min_length=1)
 
+    def redact_credentials(self) -> Self:
+        spec = super().redact_credentials()
+        redacted = redact_value({"apiKey": self.apiKey})
+        return spec.model_copy(update={"apiKey": redacted["apiKey"]})
+
+    def has_redacted_credentials(self) -> bool:
+        return super().has_redacted_credentials() or contains_redacted_credential(
+            {"apiKey": self.apiKey}
+        )
+
     def validate_dispatchable(self) -> None:
         _validate_serve_dispatchable(self)
 
@@ -25,6 +36,16 @@ class ServeSpecTemplate(ModelSpecTemplate):
     accessMode: Literal["direct", "forward", "proxy"] | None = None
     port: Annotated[int, Field(ge=1, le=65535)] | None = None
     apiKey: str | None = Field(default=None, min_length=1)
+
+    def redact_credentials(self) -> Self:
+        spec = super().redact_credentials()
+        redacted = redact_value({"apiKey": self.apiKey})
+        return spec.model_copy(update={"apiKey": redacted["apiKey"]})
+
+    def has_redacted_credentials(self) -> bool:
+        return super().has_redacted_credentials() or contains_redacted_credential(
+            {"apiKey": self.apiKey}
+        )
 
     def validate_dispatchable(self) -> None:
         _validate_serve_dispatchable(self)
