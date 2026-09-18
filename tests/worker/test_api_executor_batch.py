@@ -1,7 +1,9 @@
 """Tests for the API executor's batch mode (one task, N row-aligned requests)."""
 
+import json
 import time
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 import httpx
@@ -12,7 +14,7 @@ from worker.executors.api_executor import APIExecutor
 from worker.executors.base_executor import ExecutionError
 
 
-def _task_message(**spec_updates: object) -> WorkerTaskMessage:
+def _task_message(**spec_updates: Any) -> WorkerTaskMessage:
     payload = {
         "task_id": "task-api-batch",
         "workflow_id": "wf-1",
@@ -37,7 +39,7 @@ def _task_message(**spec_updates: object) -> WorkerTaskMessage:
 
 
 class _RecordingTransport(httpx.MockTransport):
-    """MockTransport that records every request it served, in order."""
+    """MockTransport that echoes each row's prompt back as its response text."""
 
     def __init__(self) -> None:
         self.requests: list[httpx.Request] = []
@@ -45,25 +47,30 @@ class _RecordingTransport(httpx.MockTransport):
 
     def _handler(self, request: httpx.Request) -> httpx.Response:
         self.requests.append(request)
+        body = request.read()
+        prompt = json.loads(body)["messages"][0]["content"]
         return httpx.Response(
             200,
             json={
-                "choices": [{"message": {"content": "hello"}}],
+                "choices": [{"message": {"content": f"echo:{prompt}"}}],
                 "usage": {"total_tokens": 3},
             },
         )
 
 
 def _run(
-    executor: APIExecutor, task: WorkerTaskMessage, transport: httpx.MockTransport
+    executor: APIExecutor,
+    task: WorkerTaskMessage,
+    transport: httpx.MockTransport,
+    out_dir: Path,
 ):
     with patch.object(
         APIExecutor, "_get_client", return_value=httpx.Client(transport=transport)
     ):
-        return executor.run(task, Path("/tmp/out"))
+        return executor.run(task, out_dir)
 
 
-def _batch_task(items: list[object]) -> WorkerTaskMessage:
+def _batch_task(items: list[Any], **api_updates: Any) -> WorkerTaskMessage:
     payload = {
         "task_id": "task-api-batch",
         "workflow_id": "wf-1",
@@ -79,6 +86,7 @@ def _batch_task(items: list[object]) -> WorkerTaskMessage:
                 "api": {
                     "method": "POST",
                     "body": {"messages": [{"role": "user", "content": "{{prompt}}"}]},
+                    **api_updates,
                 },
                 "data": {"type": "list", "items": items},
             },
@@ -93,36 +101,80 @@ class TestBatch:
         monkeypatch.setenv("NEBULA_API_BASE_URL", "https://nebula.example.com")
         monkeypatch.setenv("NEBULA_API_TOKEN", "nebula-token")
 
-    def test_issues_one_request_per_row_in_order(self) -> None:
+    def test_issues_one_request_per_row_in_order(self, tmp_path: Path) -> None:
         task = _batch_task(["first", "second", "third"])
         transport = _RecordingTransport()
-        result = _run(APIExecutor.__new__(APIExecutor), task, transport)
+        result = _run(APIExecutor.__new__(APIExecutor), task, transport, tmp_path)
         assert len(transport.requests) == 3
-        # Row order is preserved: request i carries row i's prompt.
         for idx, prompt in enumerate(["first", "second", "third"]):
             body = transport.requests[idx].read()
             assert prompt.encode() in body
-        assert [item.index for item in result.items] == [0, 1, 2]
-        assert [item.text for item in result.items] == ["hello"] * 3
+            item = result.items[idx]
+            assert item.index == idx
+            assert item.prompt == prompt
+            assert item.text == f"echo:{prompt}"
+            assert item.response_json["choices"][0]["message"]["content"] == (
+                f"echo:{prompt}"
+            )
 
-    def test_single_row_batches_to_one_item(self) -> None:
-        task = _batch_task(["only"])
-        transport = _RecordingTransport()
-        result = _run(APIExecutor.__new__(APIExecutor), task, transport)
-        assert len(transport.requests) == 1
-        assert len(result.items) == 1
-        assert result.items[0].index == 0
-        assert result.items[0].prompt == "only"
+    def test_rows_stay_aligned_when_requests_complete_out_of_order(
+        self, tmp_path: Path
+    ) -> None:
+        """Output row i corresponds to input row i even when requests finish
+        in reverse order."""
 
-    def test_row_failure_fails_whole_task_without_shifting(self) -> None:
-        class _FailSecond(httpx.MockTransport):
+        class _ReverseTransport(httpx.MockTransport):
             def __init__(self) -> None:
                 self.requests: list[httpx.Request] = []
                 super().__init__(self._handler)
 
             def _handler(self, request: httpx.Request) -> httpx.Response:
                 self.requests.append(request)
-                if len(self.requests) == 2:
+                prompt = json.loads(request.read())["messages"][0]["content"]
+                delay = {"a": 0.3, "b": 0.2, "c": 0.1}[prompt]
+                time.sleep(delay)
+                return httpx.Response(
+                    200,
+                    json={
+                        "choices": [{"message": {"content": f"echo:{prompt}"}}],
+                        "usage": {"total_tokens": 3},
+                    },
+                )
+
+        task = _batch_task(["a", "b", "c"])
+        transport = _ReverseTransport()
+        result = _run(APIExecutor.__new__(APIExecutor), task, transport, tmp_path)
+        for idx, prompt in enumerate(["a", "b", "c"]):
+            item = result.items[idx]
+            assert item.index == idx
+            assert item.prompt == prompt
+            assert item.text == f"echo:{prompt}"
+            assert item.response_json["choices"][0]["message"]["content"] == (
+                f"echo:{prompt}"
+            )
+
+    def test_single_row_batches_to_one_item(self, tmp_path: Path) -> None:
+        task = _batch_task(["only"])
+        transport = _RecordingTransport()
+        result = _run(APIExecutor.__new__(APIExecutor), task, transport, tmp_path)
+        assert len(transport.requests) == 1
+        assert len(result.items) == 1
+        assert result.items[0].index == 0
+        assert result.items[0].prompt == "only"
+
+    def test_row_failure_fails_whole_task_without_shifting(
+        self, tmp_path: Path
+    ) -> None:
+        class _FailRow(httpx.MockTransport):
+            def __init__(self, failing_prompt: str) -> None:
+                self.failing_prompt = failing_prompt
+                self.requests: list[httpx.Request] = []
+                super().__init__(self._handler)
+
+            def _handler(self, request: httpx.Request) -> httpx.Response:
+                self.requests.append(request)
+                prompt = json.loads(request.read())["messages"][0]["content"]
+                if prompt == self.failing_prompt:
                     return httpx.Response(
                         500,
                         json={
@@ -139,14 +191,12 @@ class TestBatch:
                 )
 
         task = _batch_task(["a", "b", "c"])
-        transport = _FailSecond()
+        transport = _FailRow("b")
         with pytest.raises(ExecutionError, match="row 1"):
-            _run(APIExecutor.__new__(APIExecutor), task, transport)
-        # All rows are issued in parallel; the failing row aborts the task and
-        # no partial result is returned.
+            _run(APIExecutor.__new__(APIExecutor), task, transport, tmp_path)
         assert len(transport.requests) == 3
 
-    def test_placeholder_not_required_for_scalar_body(self) -> None:
+    def test_placeholder_not_required_for_scalar_body(self, tmp_path: Path) -> None:
         """A batch task whose body has no placeholder still issues N requests."""
         payload = {
             "task_id": "task-api-batch",
@@ -170,16 +220,21 @@ class TestBatch:
         }
         task = WorkerTaskMessage.model_validate(payload)
         transport = _RecordingTransport()
-        result = _run(APIExecutor.__new__(APIExecutor), task, transport)
+        result = _run(APIExecutor.__new__(APIExecutor), task, transport, tmp_path)
         assert len(transport.requests) == 2
         assert len(result.items) == 2
 
-    def test_no_rows_raises(self) -> None:
+    def test_no_rows_raises(self, tmp_path: Path) -> None:
         task = _batch_task([])
         with pytest.raises(ExecutionError, match="no rows"):
-            _run(APIExecutor.__new__(APIExecutor), task, _RecordingTransport())
+            _run(
+                APIExecutor.__new__(APIExecutor),
+                task,
+                _RecordingTransport(),
+                tmp_path,
+            )
 
-    def test_missing_data_raises(self) -> None:
+    def test_missing_data_raises(self, tmp_path: Path) -> None:
         """spec.data is required; an api task without it fails closed."""
         payload = {
             "task_id": "task-api-batch",
@@ -202,15 +257,15 @@ class TestBatch:
         }
         task = WorkerTaskMessage.model_validate(payload)
         with pytest.raises(ExecutionError, match="spec.data is required"):
-            _run(APIExecutor.__new__(APIExecutor), task, _RecordingTransport())
+            _run(
+                APIExecutor.__new__(APIExecutor),
+                task,
+                _RecordingTransport(),
+                tmp_path,
+            )
 
-    def test_requests_issue_in_parallel(self) -> None:
-        """N rows must take ~one row's latency, not N x, on a network-bound path.
-
-        A transport that sleeps per request proves the requests overlap: with
-        serial issue this would take N x the sleep, with parallel issue it takes
-        roughly one sleep (plus scheduling overhead).
-        """
+    def test_requests_issue_in_parallel(self, tmp_path: Path) -> None:
+        """N rows take ~one row's latency, not N x, on a network-bound path."""
 
         class _SlowTransport(httpx.MockTransport):
             def __init__(self) -> None:
@@ -232,17 +287,14 @@ class TestBatch:
         task = _batch_task([f"row-{i}" for i in range(n_rows)])
         transport = _SlowTransport()
         start = time.monotonic()
-        result = _run(APIExecutor.__new__(APIExecutor), task, transport)
+        result = _run(APIExecutor.__new__(APIExecutor), task, transport, tmp_path)
         elapsed = time.monotonic() - start
 
         assert len(transport.requests) == n_rows
-        # Serial issue would take ~0.8s; parallel takes ~0.2s. Allow generous
-        # headroom for thread scheduling while still failing a serial loop.
         assert elapsed < 0.2 * n_rows * 0.6
-        # Row order is preserved regardless of completion order.
         assert [item.index for item in result.items] == list(range(n_rows))
 
-    def test_request_skeleton_constructed_once(self) -> None:
+    def test_request_skeleton_constructed_once(self, tmp_path: Path) -> None:
         """The request template is built once, not once per row."""
         task = _batch_task(["a", "b", "c"])
         transport = _RecordingTransport()
@@ -259,9 +311,54 @@ class TestBatch:
             ) as mock_build,
         ):
             mock_build.side_effect = lambda *a, **k: real_build(*a, **k)
-            APIExecutor.__new__(APIExecutor).run(task, Path("/tmp/out"))
+            APIExecutor.__new__(APIExecutor).run(task, tmp_path)
 
-        # One call with prompt=None (the skeleton); per-row substitution happens
-        # in _substitute_prompt, not by rebuilding the request.
         assert mock_build.call_count == 1
         assert mock_build.call_args.args[2] is None
+
+    @pytest.mark.parametrize("concurrency", [1, 4, 8])
+    def test_client_pool_sized_to_concurrency(self, concurrency: int) -> None:
+        """The connection pool matches the effective concurrency."""
+        APIExecutor.close_all_clients()
+        try:
+            client = APIExecutor._get_client(
+                "https://example.com",
+                httpx.Timeout(60),
+                True,
+                True,
+                concurrency,
+            )
+            pool = client._transport._pool  # type: ignore[attr-defined]
+            assert pool._max_connections == concurrency
+            assert pool._max_keepalive_connections == concurrency
+        finally:
+            APIExecutor.close_all_clients()
+
+    def test_concurrency_capped_at_max(self, tmp_path: Path) -> None:
+        """A configured concurrency above the cap is clamped to the cap."""
+        task = _batch_task(["a", "b", "c"], concurrency=100)
+        captured: dict[str, Any] = {}
+
+        def _fake_get_client(*args: Any, **kwargs: Any) -> httpx.Client:
+            captured["concurrency"] = kwargs.get("concurrency", args[4])
+            return httpx.Client(transport=_RecordingTransport())
+
+        with patch.object(APIExecutor, "_get_client", side_effect=_fake_get_client):
+            APIExecutor.__new__(APIExecutor).run(task, tmp_path)
+
+        assert captured["concurrency"] == 8
+
+    def test_client_cache_key_includes_concurrency(self) -> None:
+        """Pools built for different concurrency values are not shared."""
+        APIExecutor.close_all_clients()
+        try:
+            c1 = APIExecutor._get_client(
+                "https://example.com", httpx.Timeout(60), True, True, 1
+            )
+            c4 = APIExecutor._get_client(
+                "https://example.com", httpx.Timeout(60), True, True, 4
+            )
+            assert c1 is not c4
+            assert len(APIExecutor._clients) == 2
+        finally:
+            APIExecutor.close_all_clients()
