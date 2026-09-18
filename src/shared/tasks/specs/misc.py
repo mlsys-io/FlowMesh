@@ -64,10 +64,22 @@ class DataProfilingSpecStrict(TaskSpecStrictBase):
     taskType: Literal[TaskType.DATA_PROFILING]
     data: dict[str, Any] | None = None
 
+    def redact_credentials(self) -> Self:
+        return self.model_copy(update={"data": redact_credential_fields(self.data)})
+
+    def has_redacted_credentials(self) -> bool:
+        return has_redacted_credential_fields(self.data)
+
 
 class DataProfilingSpecTemplate(TaskSpecTemplateBase):
     taskType: Literal[TaskType.DATA_PROFILING]
     data: dict[str, Any] | None = None
+
+    def redact_credentials(self) -> Self:
+        return self.model_copy(update={"data": redact_credential_fields(self.data)})
+
+    def has_redacted_credentials(self) -> bool:
+        return has_redacted_credential_fields(self.data)
 
 
 class DataRetrievalSpecStrict(TaskSpecStrictBase):
@@ -96,7 +108,25 @@ class EmbeddingSpecStrict(ModelSpecStrict):
     taskType: Literal[TaskType.EMBEDDING]
     data: dict[str, Any] | None = None
 
+    def redact_credentials(self) -> Self:
+        spec = super().redact_credentials()
+        return spec.model_copy(update={"data": redact_credential_fields(spec.data)})
+
+    def has_redacted_credentials(self) -> bool:
+        return super().has_redacted_credentials() or has_redacted_credential_fields(
+            self.data
+        )
+
 
 class EmbeddingSpecTemplate(ModelSpecTemplate):
     taskType: Literal[TaskType.EMBEDDING]
     data: dict[str, Any] | None = None
+
+    def redact_credentials(self) -> Self:
+        spec = super().redact_credentials()
+        return spec.model_copy(update={"data": redact_credential_fields(spec.data)})
+
+    def has_redacted_credentials(self) -> bool:
+        return super().has_redacted_credentials() or has_redacted_credential_fields(
+            self.data
+        )

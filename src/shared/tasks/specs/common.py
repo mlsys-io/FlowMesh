@@ -254,9 +254,47 @@ class ModelInferSpecStrict(ModelSpecStrict):
     checkpoint: dict[str, Any] | None = None
     postprocess: PostprocessSpec | None = None
 
+    def redact_credentials(self) -> Self:
+        spec = super().redact_credentials()
+        return spec.model_copy(
+            update={
+                "data": redact_credential_fields(spec.data),
+                "inference": redact_credential_fields(spec.inference),
+                "checkpoint": redact_credential_fields(spec.checkpoint),
+            }
+        )
+
+    def has_redacted_credentials(self) -> bool:
+        return super().has_redacted_credentials() or has_redacted_credential_fields(
+            {
+                "data": self.data,
+                "inference": self.inference,
+                "checkpoint": self.checkpoint,
+            }
+        )
+
 
 class ModelInferSpecTemplate(ModelSpecTemplate):
     data: dict[str, Any] | None = None
     inference: dict[str, Any] | None = None
     checkpoint: dict[str, Any] | None = None
     postprocess: PostprocessSpecTemplate | None = None
+
+    def redact_credentials(self) -> Self:
+        spec = super().redact_credentials()
+        return spec.model_copy(
+            update={
+                "data": redact_credential_fields(spec.data),
+                "inference": redact_credential_fields(spec.inference),
+                "checkpoint": redact_credential_fields(spec.checkpoint),
+            }
+        )
+
+    def has_redacted_credentials(self) -> bool:
+        return super().has_redacted_credentials() or has_redacted_credential_fields(
+            {
+                "data": self.data,
+                "inference": self.inference,
+                "checkpoint": self.checkpoint,
+            }
+        )

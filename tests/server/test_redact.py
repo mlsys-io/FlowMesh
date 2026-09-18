@@ -7,7 +7,7 @@ import pytest
 
 from server.task.models import TaskRecord
 from shared.tasks import TaskEnvelopeTemplate
-from shared.tasks.specs import ApiSpecTemplate, RagSpecTemplate
+from shared.tasks.specs import ApiSpecTemplate, RagSpecTemplate, SFTSpecTemplate
 from shared.utils.redact import (
     REDACTED,
     is_credential_key,
@@ -110,6 +110,31 @@ class TestRedactTask:
                 },
                 ("apiKey",),
             ),
+            (
+                "data_profiling",
+                {"data": {"connection_string": "postgres://u:secret@db/app"}},
+                ("data", "connection_string"),
+            ),
+            (
+                "inference",
+                {"data": {"connection_string": "s3://u:secret@host/bucket"}},
+                ("data", "connection_string"),
+            ),
+            (
+                "embedding",
+                {"data": {"connection_string": "s3://u:secret@host/bucket"}},
+                ("data", "connection_string"),
+            ),
+            (
+                "sft",
+                {"data": {"connection_string": "s3://u:secret@host/bucket"}},
+                ("data", "connection_string"),
+            ),
+            (
+                "sft",
+                {"checkpoint": {"load": {"headers": {"Authorization": "Bearer x"}}}},
+                ("checkpoint", "load", "headers", "Authorization"),
+            ),
         ],
     )
     def test_task_record_redacts_credentials(
@@ -149,6 +174,21 @@ class TestRedactTask:
         assert isinstance(record.task.spec, RagSpecTemplate)
         assert record.task.spec.qdrant == {"api_key": "qdrant-secret"}
         assert record.model_dump()["task"]["spec"]["qdrant"]["api_key"] == REDACTED
+
+    def test_in_memory_training_spec_keeps_credentials(self) -> None:
+        task = _task(
+            "sft",
+            checkpoint={"load": {"headers": {"Authorization": "Bearer keep"}}},
+        )
+        record = _record_for_task(task)
+        assert isinstance(record.task.spec, SFTSpecTemplate)
+        assert record.task.spec.checkpoint is not None
+        assert (
+            record.task.spec.checkpoint["load"]["headers"]["Authorization"]
+            == "Bearer keep"
+        )
+        dumped = record.model_dump()["task"]["spec"]
+        assert dumped["checkpoint"]["load"]["headers"]["Authorization"] == REDACTED
 
     def test_ssh_credentials_are_redacted_with_valid_shape(self) -> None:
         record = _record_for_task(
