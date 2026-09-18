@@ -161,6 +161,8 @@ class EchoItem(StrictModel):
 
 
 class APIItem(StrictModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
     index: int
     url: str
     status_code: int
