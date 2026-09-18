@@ -207,3 +207,21 @@ class EchoItem(StrictModel):
     """One echoed value."""
 
     output: JsonValue = None
+
+
+class APIItem(StrictModel):
+    """One row's HTTP response in a batched API task.
+
+    Mirrors the per-response fields of :class:`APIResult`; ``response_json`` is
+    the upstream API's own payload and stays an open mapping.
+    """
+
+    index: int
+    url: str
+    status_code: int
+    truncated: bool = False
+    headers: dict[str, str] | None = None
+    response_json: Any = Field(default=None, alias="json")
+    usage: dict[str, Any] | None = None
+    text: str | None = None
+    prompt: str | None = None
