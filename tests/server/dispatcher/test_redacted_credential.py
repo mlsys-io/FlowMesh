@@ -17,7 +17,7 @@ from .helpers import make_capturing_dispatcher
 def _strict_api_task(api: dict) -> TaskEnvelopeStrict:
     return TaskEnvelopeStrict.model_validate(
         {
-            "apiVersion": "mloc/v1",
+            "apiVersion": "flowmesh/v1",
             "kind": "Task",
             "metadata": {"name": "t"},
             "spec": {"taskType": "api", "api": api},
