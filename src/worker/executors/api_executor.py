@@ -227,19 +227,12 @@ class APIExecutor(DataMixin, Executor):
             if not isinstance(item.response_json, dict):
                 raise ExecutionError("Response is not a valid JSON mapping")
             usage = item.response_json.get("usage")
-            if not isinstance(usage, dict):
-                raise ExecutionError(
-                    "spec.api.response.parse_json is true but response JSON "
-                    f"does not contain usage info: {item.response_json}"
-                )
-            item.usage = usage
+            if isinstance(usage, dict):
+                item.usage = usage
             try:
                 item.text = item.response_json["choices"][0]["message"]["content"]
-            except Exception as exc:
-                raise ExecutionError(
-                    "spec.api.response.parse_json is true but response JSON "
-                    f"does not contain message.content: {item.response_json}"
-                ) from exc
+            except Exception:
+                item.text = None
         elif response_cfg.get("return_body", True):
             item.text = body_text
 
@@ -320,20 +313,21 @@ class APIExecutor(DataMixin, Executor):
                     f"API request failed (row {idx}): {exc}", retryable=True
                 ) from exc
 
-            item, body_text = self._parse_response(
+            if raise_for_status and resp.is_error:
+                message = f"API request returned status {resp.status_code} (row {idx})"
+                body_text = resp.text[:200]
+                if body_text:
+                    message = f"{message}: {body_text}"
+                retryable = resp.status_code >= 500 or resp.status_code in (408, 429)
+                raise ExecutionError(message, retryable=retryable)
+
+            item, _ = self._parse_response(
                 resp,
                 response_cfg=response_cfg,
                 max_body_bytes=max_body_bytes,
             )
             item.index = idx
             item.prompt = prompt_str
-
-            if raise_for_status and resp.is_error:
-                message = f"API request returned status {resp.status_code} (row {idx})"
-                if body_text:
-                    message = f"{message}: {body_text[:200]}"
-                retryable = resp.status_code >= 500 or resp.status_code in (408, 429)
-                raise ExecutionError(message, retryable=retryable)
 
             return item
 

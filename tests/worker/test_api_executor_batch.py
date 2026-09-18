@@ -437,3 +437,61 @@ class TestBatch:
             assert len(APIExecutor._clients) == 2
         finally:
             APIExecutor.close_all_clients()
+
+    def test_no_usage_2xx_produces_aligned_item(self, tmp_path: Path) -> None:
+        """A 2xx response without usage still yields a row-aligned item."""
+
+        class _NoUsage(httpx.MockTransport):
+            def __init__(self) -> None:
+                super().__init__(self._handler)
+
+            def _handler(self, request: httpx.Request) -> httpx.Response:
+                return httpx.Response(
+                    200,
+                    json={"choices": [{"message": {"content": "ok"}}]},
+                )
+
+        task = _batch_task(["a", "b"])
+        result = _run(APIExecutor.__new__(APIExecutor), task, _NoUsage(), tmp_path)
+        assert len(result.items) == 2
+        assert result.items[0].text == "ok"
+        assert result.items[0].usage is None
+
+    def test_5xx_with_raise_for_status_false_produces_aligned_item(
+        self, tmp_path: Path
+    ) -> None:
+        """A 5xx with raise_for_status false still yields a row-aligned item."""
+
+        class _ErrorBody(httpx.MockTransport):
+            def __init__(self) -> None:
+                super().__init__(self._handler)
+
+            def _handler(self, request: httpx.Request) -> httpx.Response:
+                return httpx.Response(
+                    503,
+                    json={"error": {"message": "overloaded"}},
+                )
+
+        task = _batch_task(["a", "b"], response={"raise_for_status": False})
+        result = _run(APIExecutor.__new__(APIExecutor), task, _ErrorBody(), tmp_path)
+        assert len(result.items) == 2
+        assert result.items[0].status_code == 503
+        assert result.items[0].response_json == {"error": {"message": "overloaded"}}
+
+    def test_retryable_503_raises_retryable(self, tmp_path: Path) -> None:
+        """A 503 is classified retryable even without a success payload."""
+
+        class _ErrorBody(httpx.MockTransport):
+            def __init__(self) -> None:
+                super().__init__(self._handler)
+
+            def _handler(self, request: httpx.Request) -> httpx.Response:
+                return httpx.Response(
+                    503,
+                    json={"error": {"message": "overloaded"}},
+                )
+
+        task = _batch_task(["a", "b"], response={"raise_for_status": True})
+        with pytest.raises(ExecutionError, match="row 0") as excinfo:
+            _run(APIExecutor.__new__(APIExecutor), task, _ErrorBody(), tmp_path)
+        assert excinfo.value.retryable is True
