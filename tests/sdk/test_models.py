@@ -497,12 +497,14 @@ class TestAPIItem:
     def test_construct_by_name_serialize_revalidate(self) -> None:
         """An SDK APIItem built by field name round-trips through the worker's
         serialization and the server's ingest validation."""
-        item = APIItem(  # type: ignore[call-arg]
-            index=0,
-            url="http://example.com/v1/chat/completions",
-            status_code=200,
-            response_json={"choices": [{"message": {"content": "hello"}}]},
-            text="hello",
+        item = APIItem.model_validate(
+            {
+                "index": 0,
+                "url": "http://example.com/v1/chat/completions",
+                "status_code": 200,
+                "response_json": {"choices": [{"message": {"content": "hello"}}]},
+                "text": "hello",
+            }
         )
         wire = item.model_dump_json()
         reloaded = APIItem.model_validate_json(wire)

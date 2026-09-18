@@ -29,7 +29,8 @@ _PROMPT_PLACEHOLDER = "{{prompt}}"
 _RETRY_BACKOFF_SEC = 1.0
 
 # Default cap on parallel row requests and the client connection pool. The
-# pool is sized to this so parallel requests never queue on connections.
+# pool is sized to the effective concurrency, capped at this value so parallel
+# requests never queue on connections.
 _MAX_CONCURRENCY = 8
 
 
