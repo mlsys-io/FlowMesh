@@ -28,9 +28,6 @@ _PROMPT_PLACEHOLDER = "{{prompt}}"
 # Fixed delay between retry attempts.
 _RETRY_BACKOFF_SEC = 1.0
 
-# Default cap on parallel row requests and the client connection pool. The
-# pool is sized to the effective concurrency, capped at this value so parallel
-# requests never queue on connections.
 _MAX_CONCURRENCY = 8
 
 
@@ -53,6 +50,10 @@ class APIExecutor(DataMixin, Executor):
     ``X-API-Key``, etc.) directly. A custom ``spec.api.url`` may be
     unauthenticated; the Nebula token is never sent to an endpoint the caller
     chose.
+
+    Parallel row requests and the HTTP connection pool are capped at
+    ``_MAX_CONCURRENCY``; the pool is sized to the effective concurrency so
+    parallel requests never queue on connections.
     """
 
     name = "api"
