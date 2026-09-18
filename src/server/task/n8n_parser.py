@@ -414,7 +414,9 @@ def _inject_dependency_prompt(prompt_text: str, placeholder: str) -> str:
 
 def _dependency_placeholder(dep_name: str, dep_task_type: str) -> str:
     if dep_task_type == "api":
-        return f"${{{dep_name}.text}}"
+        # APIResult is batch-only: text lives per row, so a dependent stage
+        # reads the first row's text.
+        return f"${{{dep_name}.items.0.text}}"
     if dep_task_type == "inference":
         return f"${{{dep_name}.items.0.output}}"
     raise ValueError(

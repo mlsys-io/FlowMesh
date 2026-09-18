@@ -10,8 +10,12 @@
 # by server-side resolution.
 #
 # Stage 1 fans out over three rows and calls a chat completion endpoint.
-# Stage 2 consumes Stage 1's returned text (${stage-1.text}) as the next
-# prompt, so the two-stage character is kept while exercising the batch path.
+# Stage 2 consumes Stage 1's returned text as the next prompt, so the
+# two-stage character is kept while exercising the batch path. A dependent
+# stage reads a single upstream value: APIResult is batch-only, so the
+# reference addresses one row explicitly (${stage-1.items.0.text} is the
+# first row's text), and stage-2's one-row spec.data supplies that value as
+# its prompt.
 
 apiVersion: flowmesh/v1
 kind: APITask
@@ -43,7 +47,6 @@ spec:
                 content: "{{prompt}}"
           response:
             parse_json: false
-            # return_body is a JSON backdoor: keep raw text when JSON isn't usable.
             return_body: true
             raise_for_status: true
 
@@ -52,7 +55,7 @@ spec:
         data:
           type: list
           items:
-            - "The previous stage's response is as follows. Please provide a simpler explanation: \n${stage-1.text}"
+            - "The previous stage's response is as follows. Please provide a simpler explanation: \n${stage-1.items.0.text}"
         api:
           method: POST
           headers:
@@ -64,7 +67,6 @@ spec:
                 content: "{{prompt}}"
           response:
             parse_json: true
-            # return_body is a JSON backdoor: keep raw text when JSON isn't usable.
             return_body: true
             raise_for_status: true
 
