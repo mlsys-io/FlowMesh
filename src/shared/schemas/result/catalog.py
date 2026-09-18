@@ -248,9 +248,8 @@ class APIResult(StrictExecutorResult):
     """HTTP request output. ``response_json``/``usage``/``headers`` are the
     upstream API's own payloads and stay open mappings.
 
-    ``items`` carries one entry per row when the task batches multiple requests
-    (``spec.data`` present); a single-request task leaves it empty and populates
-    the scalar fields instead."""
+    ``items`` carries one entry per row: every API task batches over
+    ``spec.data``, so even a single request yields one item."""
 
     task_type: Literal[TaskType.API] = TaskType.API
     executor: str
