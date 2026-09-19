@@ -113,7 +113,7 @@ def _batch_task(items: list[Any], **api_updates: Any) -> WorkerTaskMessage:
         "assigned_worker": "worker-1",
         "dispatched_at": "2026-03-22T00:00:00Z",
         "task": {
-            "apiVersion": "mloc/v1",
+            "apiVersion": "flowmesh/v1",
             "kind": "Task",
             "metadata": {"name": "wf:api"},
             "spec": {
@@ -447,7 +447,7 @@ class TestBatch:
             "assigned_worker": "worker-1",
             "dispatched_at": "2026-03-22T00:00:00Z",
             "task": {
-                "apiVersion": "mloc/v1",
+                "apiVersion": "flowmesh/v1",
                 "kind": "Task",
                 "metadata": {"name": "wf:api"},
                 "spec": {
@@ -485,7 +485,7 @@ class TestBatch:
             "assigned_worker": "worker-1",
             "dispatched_at": "2026-03-22T00:00:00Z",
             "task": {
-                "apiVersion": "mloc/v1",
+                "apiVersion": "flowmesh/v1",
                 "kind": "Task",
                 "metadata": {"name": "wf:api"},
                 "spec": {
