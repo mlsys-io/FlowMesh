@@ -413,10 +413,7 @@ def _inject_dependency_prompt(prompt_text: str, placeholder: str) -> str:
 
 
 def _dependency_placeholder(dep_name: str, dep_task_type: str) -> str:
-    """Return the stage reference a dependent node injects for an upstream task.
-
-    APIResult is batch-only, so an api dependency reads the first row's text
-    (``items.0.text``) rather than a scalar ``text`` field."""
+    """Return the stage reference a dependent node injects for an upstream task."""
     if dep_task_type == "api":
         return f"${{{dep_name}.items.0.text}}"
     if dep_task_type == "inference":

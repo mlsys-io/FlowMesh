@@ -25,8 +25,7 @@ logger = logging.getLogger(__name__)
 
 _ClientKey = tuple[str, float, bool, bool, int]
 
-# Worker-side per-row slot in a batched request body. Server-side stage
-# references are ${...}; this is a worker-side token, hence {{...}}.
+# Worker-side per-row slot; server-side stage references are ${...}.
 _PROMPT_PLACEHOLDER = "{{prompt}}"
 
 _MAX_CONCURRENCY = 8
@@ -89,11 +88,10 @@ class APIExecutor(DataMixin, Executor):
         follow_redirects: bool,
         concurrency: int,
     ) -> httpx.Client:
-        """Return a cached client or create a new one for the given parameters.
+        """Return a cached client or create one for the given parameters.
 
-        The cache key is ``(base_url, timeout_sec, verify_tls, follow_redirects,
-        concurrency)``; the pool is sized to ``concurrency`` so parallel row
-        requests never queue on connections."""
+        The pool is sized to ``concurrency`` so parallel row requests never
+        queue on connections."""
         timeout_sec = timeout.connect  # all four fields are set to same value
         if timeout_sec is None:
             timeout_sec = 0.0

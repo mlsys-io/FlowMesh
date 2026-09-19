@@ -210,9 +210,9 @@ class EchoItem(StrictModel):
 class APIItem(StrictModel):
     """One row's HTTP response in a batched API task.
 
-    Mirrors the per-response fields of :class:`APIResult`; ``response_json`` is
-    the upstream API's own payload and stays an open mapping. ``populate_by_name``
-    lets code construct by field name while the wire key stays ``json``.
+    ``response_json`` is the upstream API's own payload and stays an open
+    mapping; ``populate_by_name`` lets code construct by field name while the
+    wire key stays ``json``.
     """
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
