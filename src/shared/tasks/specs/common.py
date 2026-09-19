@@ -227,10 +227,13 @@ class ModelSpecStrict(TaskSpecStrictBase):
     model: ModelConfig | None = None
 
     def redact_credentials(self) -> Self:
-        return self.model_copy(update={"model": _redact_model_config(self.model)})
+        spec = super().redact_credentials()
+        return spec.model_copy(update={"model": _redact_model_config(spec.model)})
 
     def has_redacted_credentials(self) -> bool:
-        return _model_has_redacted_credentials(self.model)
+        return super().has_redacted_credentials() or _model_has_redacted_credentials(
+            self.model
+        )
 
     @property
     def model_name(self) -> str | None:
@@ -256,10 +259,13 @@ class ModelSpecTemplate(TaskSpecTemplateBase):
     model: ModelConfigTemplate | None = None
 
     def redact_credentials(self) -> Self:
-        return self.model_copy(update={"model": _redact_model_config(self.model)})
+        spec = super().redact_credentials()
+        return spec.model_copy(update={"model": _redact_model_config(spec.model)})
 
     def has_redacted_credentials(self) -> bool:
-        return _model_has_redacted_credentials(self.model)
+        return super().has_redacted_credentials() or _model_has_redacted_credentials(
+            self.model
+        )
 
     @property
     def model_name(self) -> str | None:

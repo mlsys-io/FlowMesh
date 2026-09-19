@@ -7,7 +7,13 @@ import pytest
 
 from server.task.models import TaskRecord
 from shared.tasks import TaskEnvelopeTemplate
-from shared.tasks.specs import ApiSpecTemplate, RagSpecTemplate, SFTSpecTemplate
+from shared.tasks.specs import (
+    ApiSpecTemplate,
+    RagSpecTemplate,
+    SFTSpecTemplate,
+    TaskSpecStrictBase,
+    TaskSpecTemplateBase,
+)
 from shared.utils.redact import (
     REDACTED,
     is_credential_key,
@@ -402,3 +408,66 @@ class TestSourceFieldAlias:
             task=_api_task({"url": "http://x"}),
         )
         assert rec.source == "model: gpt-4o\n"
+
+
+_SpecClass = type[TaskSpecStrictBase] | type[TaskSpecTemplateBase]
+
+
+def _concrete_spec_classes() -> list[_SpecClass]:
+    """Every leaf spec class (identified by a concrete ``taskType`` field)."""
+    found: list[_SpecClass] = []
+    stack: list[type] = []
+    stack.extend(TaskSpecStrictBase.__subclasses__())
+    stack.extend(TaskSpecTemplateBase.__subclasses__())
+    while stack:
+        cls = stack.pop()
+        stack.extend(cls.__subclasses__())
+        if (
+            issubclass(cls, (TaskSpecStrictBase, TaskSpecTemplateBase))
+            and "taskType" in cls.model_fields
+        ):
+            found.append(cls)
+    return found
+
+
+_SPEC_CLASSES = _concrete_spec_classes()
+
+
+class TestSpecRedactionChainsToBase:
+    """Redaction of shared fields (e.g. the output destination) lives on the
+    base spec, so every override must chain ``super()``; a missing call would
+    silently drop that coverage for a whole family of task types."""
+
+    @pytest.mark.parametrize("spec_cls", _SPEC_CLASSES, ids=lambda cls: cls.__name__)
+    def test_redact_credentials_chains_to_base(self, spec_cls: _SpecClass) -> None:
+        base = (
+            TaskSpecStrictBase
+            if issubclass(spec_cls, TaskSpecStrictBase)
+            else TaskSpecTemplateBase
+        )
+        with mock.patch.object(
+            base,
+            "redact_credentials",
+            autospec=True,
+            wraps=base.redact_credentials,
+        ) as spy:
+            spec_cls.model_construct().redact_credentials()
+        spy.assert_called_once()
+
+    @pytest.mark.parametrize("spec_cls", _SPEC_CLASSES, ids=lambda cls: cls.__name__)
+    def test_has_redacted_credentials_chains_to_base(
+        self, spec_cls: _SpecClass
+    ) -> None:
+        base = (
+            TaskSpecStrictBase
+            if issubclass(spec_cls, TaskSpecStrictBase)
+            else TaskSpecTemplateBase
+        )
+        with mock.patch.object(
+            base,
+            "has_redacted_credentials",
+            autospec=True,
+            wraps=base.has_redacted_credentials,
+        ) as spy:
+            spec_cls.model_construct().has_redacted_credentials()
+        spy.assert_called_once()
