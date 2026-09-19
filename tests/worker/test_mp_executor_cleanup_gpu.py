@@ -2,11 +2,10 @@ import logging
 import tempfile
 import time
 import uuid
-from collections.abc import Iterator
 from pathlib import Path
 
 import psutil
-import pynvml  # type: ignore[import-not-found]
+import pynvml  # type: ignore
 import pytest
 
 from shared.tasks.worker_message import WorkerTaskMessage
@@ -14,15 +13,7 @@ from tests.worker.factories import make_live_worker_config, make_worker_hardware
 from worker.executors.mp_executor import MPExecutor
 from worker.executors.vllm_executor import VLLMExecutor
 
-
-@pytest.fixture(scope="module")
-def _nvml() -> Iterator[None]:
-    try:
-        pynvml.nvmlInit()
-    except pynvml.NVMLError:
-        pytest.skip("NVML unavailable (no GPU)")
-    yield
-    pynvml.nvmlShutdown()
+pynvml.nvmlInit()
 
 
 def _descendants_of(pid: int) -> set[int]:
@@ -34,7 +25,7 @@ def _descendants_of(pid: int) -> set[int]:
 
 
 @pytest.mark.gpu
-def test_mp_executor_cleans_up_vllm(caplog, tmp_path: Path, _nvml: None) -> None:
+def test_mp_executor_cleans_up_vllm(caplog, tmp_path: Path) -> None:
     """Start MPExecutor with the real executors, run a minimal task to
     trigger engine startup, and ensure cleanup removes the worker process
     and any descendants it spawned.
@@ -71,7 +62,7 @@ def test_mp_executor_cleans_up_vllm(caplog, tmp_path: Path, _nvml: None) -> None
             "assigned_worker": "test-worker",
             "dispatched_at": "2026-03-01T00:00:00Z",
             "task": {
-                "apiVersion": "flowmesh/v1",
+                "apiVersion": "mloc/v1",
                 "kind": "InferenceTask",
                 "spec": {
                     "taskType": "inference",

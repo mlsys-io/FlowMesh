@@ -196,7 +196,7 @@ def test_upstream_results_preserve_subclass_payload_over_the_wire() -> None:
 def test_api_item_round_trip_construct_serialize_validate() -> None:
     """An APIItem built by field name round-trips through the worker's
     serialization and the server's ingest validation."""
-    # mypy cannot see populate_by_name; the field's declared name is the json alias.
+    # mypy cannot see populate_by_name; the declared name is the json alias.
     item = APIItem(  # type: ignore[call-arg]
         index=0,
         url="http://example.com/v1/chat/completions",
@@ -204,14 +204,12 @@ def test_api_item_round_trip_construct_serialize_validate() -> None:
         response_json={"choices": [{"message": {"content": "hello"}}]},
         text="hello",
     )
-    # Serialize the way the worker does (envelope.model_dump_json, no by_alias).
     wire = item.model_dump_json()
-    # Re-validate the way the server does on ingest.
     reloaded = APIItem.model_validate_json(wire)
     assert reloaded.index == 0
     assert reloaded.response_json["choices"][0]["message"]["content"] == "hello"
     assert reloaded.text == "hello"
-    # The wire alias is still accepted on input (backward compatible).
+    # The wire alias is still accepted on input.
     by_alias = APIItem.model_validate(
         {"index": 1, "url": "u", "status_code": 200, "json": {"a": 1}}
     )

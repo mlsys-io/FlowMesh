@@ -97,8 +97,7 @@ def _run(
 
 
 def _executor() -> APIExecutor:
-    """Construct an APIExecutor without a WorkerConfig, mirroring __init__'s
-    cancellation state so run()/cancel() work under __new__."""
+    """Build an APIExecutor with cancellation state, without a WorkerConfig."""
     executor = APIExecutor.__new__(APIExecutor)
     executor._cancel_event = threading.Event()
     executor._cancel_task_id = None
@@ -906,12 +905,7 @@ class TestBatch:
         assert transport.requests == []
 
     def test_cancel_during_run_setup_not_lost(self, tmp_path: Path) -> None:
-        """A cancel arriving while run() is mid check-and-clear is not dropped.
-
-        run() checks the event, then clears it under the lock; cancel() sets it
-        under the same lock. Pausing run() inside clear() and firing cancel()
-        while it is paused must still cancel the run (via the in-flight guards),
-        not let it complete as if never cancelled."""
+        """A cancel landing mid check-and-clear is not dropped."""
         executor = _executor()
         task = _batch_task(["a", "b"])
         transport = _EchoTransport()
