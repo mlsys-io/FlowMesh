@@ -195,12 +195,15 @@ class TaskRecord(BaseModel):
         self, handler: SerializerFunctionWrapHandler, info: SerializationInfo
     ) -> dict[str, Any]:
         data = handler(self)
-        data["source"] = self._redact_source()
-        data["task"]["spec"] = self._redact_spec().model_dump(
-            mode=info.mode,
-            by_alias=info.by_alias,
-            exclude_none=info.exclude_none,
-        )
+        if "source" in data:
+            data["source"] = self._redact_source()
+        task = data.get("task")
+        if isinstance(task, dict) and "spec" in task:
+            task["spec"] = self._redact_spec().model_dump(
+                mode=info.mode,
+                by_alias=info.by_alias,
+                exclude_none=info.exclude_none,
+            )
         return data
 
 
