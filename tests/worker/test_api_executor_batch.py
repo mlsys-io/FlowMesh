@@ -610,10 +610,11 @@ class TestBatch:
         assert isinstance(errors[0], TaskCancelledError)
         assert submitted == []
 
-    def test_cancel_during_in_flight_requests_not_done(self, tmp_path: Path) -> None:
-        """A cancel arriving while requests are in flight fails the task rather
-        than returning DONE, even when every row already passed the pre-request
-        guard."""
+    def test_cancel_after_requests_complete_before_collection_not_done(
+        self, tmp_path: Path
+    ) -> None:
+        """A cancel arriving after every request has completed but before results
+        are collected fails the task rather than returning DONE."""
 
         class _RecordingTransport(httpx.MockTransport):
             def __init__(self) -> None:
@@ -690,27 +691,40 @@ class TestBatch:
             _run(executor, task, transport, tmp_path)
         assert transport.requests == []
 
-    def test_cancel_during_run_setup_not_lost(self) -> None:
-        """A cancel arriving while run() holds the lock across check-and-clear
-        is not dropped: cancel() blocks on the same lock and sets the event
-        once run() releases it."""
+    def test_cancel_during_run_setup_not_lost(self, tmp_path: Path) -> None:
+        """A cancel arriving while run() is mid check-and-clear is not dropped.
+
+        run() checks the event, then clears it under the lock; cancel() sets it
+        under the same lock. Pausing run() inside clear() and firing cancel()
+        while it is paused must still cancel the run (via the in-flight guards),
+        not let it complete as if never cancelled."""
         executor = _executor()
         task = _batch_task(["a", "b"])
+        transport = _RecordingTransport()
+        errors: list[BaseException] = []
+        in_clear = threading.Event()
+        release_clear = threading.Event()
+        real_clear = executor._cancel_event.clear
 
-        executor._cancel_lock.acquire()
-        cancelled: list[bool] = []
+        def _blocking_clear() -> None:
+            in_clear.set()
+            release_clear.wait(timeout=5)
+            real_clear()
 
-        def _cancel_in_thread() -> None:
-            executor.cancel(task.task_id)
-            cancelled.append(executor._cancel_event.is_set())
+        executor._cancel_event.clear = _blocking_clear  # type: ignore[method-assign]
 
-        thread = threading.Thread(target=_cancel_in_thread)
+        def _run_in_thread() -> None:
+            try:
+                _run(executor, task, transport, tmp_path)
+            except BaseException as exc:  # noqa: BLE001 - captured for assertion
+                errors.append(exc)
+
+        thread = threading.Thread(target=_run_in_thread)
         thread.start()
-        thread.join(timeout=0.2)
-        assert not cancelled
-        executor._cancel_lock.release()
-        thread.join(timeout=5)
+        assert in_clear.wait(timeout=5)
+        executor.cancel(task.task_id)
+        release_clear.set()
+        thread.join(timeout=10)
 
-        assert cancelled == [True]
-        assert executor._cancel_event.is_set()
-        assert executor._cancel_task_id == task.task_id
+        assert len(errors) == 1
+        assert isinstance(errors[0], TaskCancelledError)

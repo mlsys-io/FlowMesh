@@ -112,8 +112,9 @@ per-row slot, so it is not touched by server-side resolution. A failure in any
 row fails the whole task rather than shifting the remaining rows.
 `spec.api.concurrency` bounds the number of in-flight requests and is capped
 at 8 (the default); values above 8 are clamped down. Cancelling the task
-aborts both in-flight and not-yet-started rows rather than letting them
-complete.
+prevents not-yet-started rows from issuing and marks the task cancelled once
+in-flight requests return; a request already inside the HTTP call is not
+interrupted.
 
 ```yaml
 spec:
