@@ -461,6 +461,21 @@ class Dispatcher:
                         payload={"error": str(exc)},
                     )
                     return True
+                if resolved_child_task.spec.has_redacted_credentials():
+                    self._runtime.release_merge(task_id)
+                    self.fail_task(
+                        task_id,
+                        "credential_not_retained",
+                        payload={
+                            "error": (
+                                "a merged child task credential was not retained "
+                                "across the server restart; resubmit the workflow "
+                                "with the credential"
+                            ),
+                            "child_task_id": child_id,
+                        },
+                    )
+                    return True
                 try:
                     rendered_children.append(
                         MergedChildTaskStrict(
