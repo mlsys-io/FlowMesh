@@ -9,7 +9,7 @@ import httpx
 from shared.schemas.result import APIResult
 from shared.tasks.specs import ApiSpecStrict
 from shared.tasks.task_type import TaskType
-from shared.utils.redact import is_sensitive_key
+from shared.utils.redact import is_credential_key
 
 from .base_executor import ExecutionError, Executor, ExecutorTask
 
@@ -112,7 +112,7 @@ class APIExecutor(Executor):
                 raise ExecutionError("spec.api.url or NEBULA_API_BASE_URL is required")
             url = url.rstrip("/") + "/v1/chat/completions"
 
-            if not any(is_sensitive_key(k) for k in headers):
+            if not any(is_credential_key(k) for k in headers):
                 token = os.getenv("NEBULA_API_TOKEN")
                 if not token:
                     raise ExecutionError(

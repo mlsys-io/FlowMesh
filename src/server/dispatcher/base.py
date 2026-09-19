@@ -25,13 +25,11 @@ from shared.tasks import (
 )
 from shared.tasks.placeholders import PLACEHOLDER_PATTERN
 from shared.tasks.specs import (
-    ApiSpecStrict,
     ConditionSpec,
     SSHSpecStrict,
     SSHSpecTemplate,
 )
 from shared.tasks.worker_message import WorkerStatus, WorkerTaskMessage
-from shared.utils.redact import contains_redacted
 
 from ..clients.redis import REDIS_CONN_ERRORS
 from ..registries.worker import Worker, WorkerRegistry
@@ -395,14 +393,14 @@ class Dispatcher:
             )
             return True
 
-        if self._has_redacted_credential(rendered_task.spec):
+        if rendered_task.spec.has_redacted_credentials():
             self._runtime.release_merge(task_id)
             self.fail_task(
                 task_id,
                 "credential_not_retained",
                 payload={
                     "error": (
-                        "the API credential was not retained across the server "
+                        "a task credential was not retained across the server "
                         "restart; resubmit the workflow with the credential"
                     )
                 },
@@ -461,6 +459,21 @@ class Dispatcher:
                         task_id,
                         f"Failed to resolve merged child {child_id}: {exc}",
                         payload={"error": str(exc)},
+                    )
+                    return True
+                if resolved_child_task.spec.has_redacted_credentials():
+                    self._runtime.release_merge(task_id)
+                    self.fail_task(
+                        task_id,
+                        "credential_not_retained",
+                        payload={
+                            "error": (
+                                "a merged child task credential was not retained "
+                                "across the server restart; resubmit the workflow "
+                                "with the credential"
+                            ),
+                            "child_task_id": child_id,
+                        },
                     )
                     return True
                 try:
@@ -1070,25 +1083,6 @@ class Dispatcher:
                 continue
             results[name] = envelope.result
         return results
-
-    def _has_redacted_credential(self, spec: TaskSpecStrict) -> bool:
-        """Whether an api spec carries a redacted credential placeholder."""
-        if not isinstance(spec, ApiSpecStrict):
-            return False
-        api = spec.api
-        if api is None:
-            return False
-        for field in ("headers", "params", "body", "json", "data"):
-            value = api.get(field)
-            if isinstance(value, dict):
-                candidates: list[Any] = list(value.values())
-            elif isinstance(value, list):
-                candidates = value
-            else:
-                continue
-            if any(contains_redacted(item) for item in candidates):
-                return True
-        return False
 
     def _resolve_upstream_task_ids(
         self, record: TaskRecord, spec: TaskSpecStrict

@@ -1,38 +1,25 @@
-"""Tests for the dispatcher's redacted-credential detection.
+"""Tests for task-spec redacted-credential detection.
 
-The dispatcher refuses to dispatch an api task whose credential was not
+The dispatcher refuses to dispatch a task whose credential was not
 retained across a server restart (it was redacted to ``[REDACTED]`` at
-persist time). Detection must cover every location that redaction touches,
-not just headers.
+persist time). Detection is implemented by each credential-bearing spec.
 """
 
-from server.dispatcher import Dispatcher
-from shared.tasks import TaskEnvelopeStrict
-from shared.tasks.specs import ApiSpecStrict
+import pytest
+
+from shared.tasks import TaskEnvelopeStrict, TaskSpecStrict
 from shared.utils.redact import REDACTED, contains_redacted
 
-from .helpers import make_capturing_dispatcher
 
-
-def _strict_api_task(api: dict) -> TaskEnvelopeStrict:
+def _strict_spec_for(task_type: str, **fields: object) -> TaskSpecStrict:
     return TaskEnvelopeStrict.model_validate(
         {
             "apiVersion": "flowmesh/v1",
             "kind": "Task",
             "metadata": {"name": "t"},
-            "spec": {"taskType": "api", "api": api},
+            "spec": {"taskType": task_type, **fields},
         }
-    )
-
-
-def _strict_spec(api: dict) -> ApiSpecStrict:
-    spec = _strict_api_task(api).spec
-    assert isinstance(spec, ApiSpecStrict)
-    return spec
-
-
-def _dispatcher() -> Dispatcher:
-    return make_capturing_dispatcher()
+    ).spec
 
 
 class TestContainsRedacted:
@@ -52,50 +39,72 @@ class TestContainsRedacted:
         assert not contains_redacted({"model": "gpt", "monkey": "x"})
 
 
-class TestHasRedactedCredential:
-    def test_headers_redacted_detected(self) -> None:
-        spec = _strict_spec({"headers": {"Authorization": REDACTED}})
-        assert _dispatcher()._has_redacted_credential(spec)
+class TestTaskSpecCredentialDetection:
+    @pytest.mark.parametrize(
+        ("task_type", "fields"),
+        [
+            ("api", {"api": {"headers": {"Authorization": REDACTED}}}),
+            ("api", {"api": {"params": {"api_key": REDACTED}}}),
+            ("api", {"api": {"body": {"secret": REDACTED}}}),
+            ("api", {"api": {"json": {"token": REDACTED}}}),
+            ("api", {"api": {"data": {"access_token": REDACTED}}}),
+            ("api", {"api": {"json": {"auth": {"token": REDACTED}}}}),
+            ("api", {"api": {"json": [{"token": REDACTED}]}}),
+            ("data_retrieval", {"data": {"lumid_data_token": REDACTED}}),
+            ("rag", {"qdrant": {"api_key": REDACTED}}),
+            (
+                "serve",
+                {
+                    "apiKey": REDACTED,
+                    "model": {"source": {"identifier": "model"}},
+                    "resources": {"hardware": {"gpu": {"count": 1}}},
+                },
+            ),
+            ("ssh", {"authorizedKeys": [REDACTED]}),
+            (
+                "echo",
+                {
+                    "output": {
+                        "destination": {
+                            "type": "http",
+                            "headers": {"Authorization": REDACTED},
+                        }
+                    }
+                },
+            ),
+        ],
+        ids=[
+            "api_headers",
+            "api_params",
+            "api_body",
+            "api_json",
+            "api_data",
+            "api_nested",
+            "api_list",
+            "data_retrieval",
+            "rag",
+            "serve",
+            "ssh",
+            "output_headers",
+        ],
+    )
+    def test_redacted_credential_is_detected(
+        self, task_type: str, fields: dict[str, object]
+    ) -> None:
+        spec = _strict_spec_for(task_type, **fields)
+        assert spec.has_redacted_credentials()
 
-    def test_params_redacted_detected(self) -> None:
-        spec = _strict_spec({"params": {"api_key": REDACTED}})
-        assert _dispatcher()._has_redacted_credential(spec)
-
-    def test_body_redacted_detected(self) -> None:
-        spec = _strict_spec({"body": {"secret": REDACTED}})
-        assert _dispatcher()._has_redacted_credential(spec)
-
-    def test_json_redacted_detected(self) -> None:
-        spec = _strict_spec({"json": {"token": REDACTED}})
-        assert _dispatcher()._has_redacted_credential(spec)
-
-    def test_data_redacted_detected(self) -> None:
-        spec = _strict_spec({"data": {"access_token": REDACTED}})
-        assert _dispatcher()._has_redacted_credential(spec)
-
-    def test_nested_redacted_detected(self) -> None:
-        spec = _strict_spec({"json": {"auth": {"token": REDACTED}}})
-        assert _dispatcher()._has_redacted_credential(spec)
-
-    def test_redacted_in_list_detected(self) -> None:
-        spec = _strict_spec({"json": [{"token": REDACTED}]})
-        assert _dispatcher()._has_redacted_credential(spec)
-
-    def test_no_credential_not_detected(self) -> None:
-        spec = _strict_spec({"json": {"model": "gpt"}})
-        assert not _dispatcher()._has_redacted_credential(spec)
-
-    def test_real_credential_not_detected(self) -> None:
-        spec = _strict_spec({"headers": {"Authorization": "Bearer SECRET"}})
-        assert not _dispatcher()._has_redacted_credential(spec)
-
-    def test_non_api_spec_not_detected(self) -> None:
-        spec = TaskEnvelopeStrict.model_validate(
-            {
-                "apiVersion": "flowmesh/v1",
-                "kind": "Task",
-                "metadata": {"name": "t"},
-                "spec": {"taskType": "echo", "data": {"token": REDACTED}},
-            }
-        ).spec
-        assert not _dispatcher()._has_redacted_credential(spec)
+    @pytest.mark.parametrize(
+        ("task_type", "fields"),
+        [
+            ("api", {"api": {"json": {"model": "gpt"}}}),
+            ("api", {"api": {"headers": {"Authorization": "Bearer SECRET"}}}),
+            ("echo", {"data": {"token": REDACTED}}),
+        ],
+        ids=["no_credential", "real_credential", "generic_task"],
+    )
+    def test_non_redacted_credentials_are_not_detected(
+        self, task_type: str, fields: dict[str, object]
+    ) -> None:
+        spec = _strict_spec_for(task_type, **fields)
+        assert not spec.has_redacted_credentials()

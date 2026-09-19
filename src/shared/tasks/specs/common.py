@@ -1,8 +1,9 @@
-from typing import Any
+from typing import Any, Self
 
 from pydantic import Field, SerializeAsAny, model_validator
 
 from ...schemas.result import BaseExecutorResult
+from ...utils.redact import has_redacted_credential_fields, redact_credential_fields
 from .._base import StrictBaseModel, TemplateBaseModel
 from ..components import (
     AdapterConfig,
@@ -17,6 +18,7 @@ from ..components import (
     ShardSpec,
     ShardSpecTemplate,
 )
+from ..components.output import OutputDestinationHTTP, OutputDestinationHTTPTemplate
 from ..placeholders import TemplateBool, TemplateInt
 
 
@@ -65,6 +67,32 @@ def _validate_condition_depends_on[T: "TaskSpecStrictBase | TaskSpecTemplateBase
     return spec
 
 
+def _redact_output(
+    output: OutputSpec | OutputSpecTemplate | None,
+) -> OutputSpec | OutputSpecTemplate | None:
+    if output is None:
+        return output
+    dest = output.destination
+    if (
+        isinstance(dest, (OutputDestinationHTTP, OutputDestinationHTTPTemplate))
+        and dest.headers is not None
+    ):
+        redacted_dest = dest.model_copy(
+            update={"headers": redact_credential_fields(dest.headers)}
+        )
+        return output.model_copy(update={"destination": redacted_dest})
+    return output
+
+
+def _output_has_redacted_credentials(
+    output: OutputSpec | OutputSpecTemplate | None,
+) -> bool:
+    dest = output.destination if output else None
+    if isinstance(dest, (OutputDestinationHTTP, OutputDestinationHTTPTemplate)):
+        return has_redacted_credential_fields(dest.headers)
+    return False
+
+
 class TaskSpecStrictBase(StrictBaseModel):
     resources: ResourcesSpec | None = None
     output: OutputSpec | None = None
@@ -98,6 +126,17 @@ class TaskSpecStrictBase(StrictBaseModel):
         for misconfigurations.
         """
         return None
+
+    def redact_credentials(self) -> Self:
+        """Redact credential-shaped headers in the output destination, if any."""
+        redacted_output = _redact_output(self.output)
+        if redacted_output is self.output:
+            return self
+        return self.model_copy(update={"output": redacted_output})
+
+    def has_redacted_credentials(self) -> bool:
+        """Whether this spec contains a redacted credential marker."""
+        return _output_has_redacted_credentials(self.output)
 
 
 class TaskSpecTemplateBase(TemplateBaseModel):
@@ -134,12 +173,67 @@ class TaskSpecTemplateBase(TemplateBaseModel):
         """
         return None
 
+    def redact_credentials(self) -> Self:
+        """Redact credential-shaped headers in the output destination, if any."""
+        redacted_output = _redact_output(self.output)
+        if redacted_output is self.output:
+            return self
+        return self.model_copy(update={"output": redacted_output})
+
+    def has_redacted_credentials(self) -> bool:
+        """Whether this spec contains a redacted credential marker."""
+        return _output_has_redacted_credentials(self.output)
+
 
 type TaskSpecBase = TaskSpecStrictBase | TaskSpecTemplateBase
 
 
+def _redact_model_config(
+    model: ModelConfig | ModelConfigTemplate | None,
+) -> ModelConfig | ModelConfigTemplate | None:
+    if model is None:
+        return None
+    adapters = model.adapters
+    redacted_adapters = (
+        [
+            adapter.model_copy(
+                update={"headers": redact_credential_fields(adapter.headers)}
+            )
+            for adapter in adapters
+        ]
+        if adapters is not None
+        else None
+    )
+    return model.model_copy(
+        update={
+            "config": redact_credential_fields(model.config),
+            "vllm": redact_credential_fields(model.vllm),
+            "transformers": redact_credential_fields(model.transformers),
+            "diffusers": redact_credential_fields(model.diffusers),
+            "adapters": redacted_adapters,
+        }
+    )
+
+
+def _model_has_redacted_credentials(
+    model: ModelConfig | ModelConfigTemplate | None,
+) -> bool:
+    return model is not None and has_redacted_credential_fields(
+        model.model_dump(mode="python")
+    )
+
+
 class ModelSpecStrict(TaskSpecStrictBase):
     model: ModelConfig | None = None
+
+    def redact_credentials(self) -> Self:
+        spec = super().redact_credentials()
+        return spec.model_copy(update={"model": _redact_model_config(spec.model)})
+
+    def has_redacted_credentials(self) -> bool:
+        return super().has_redacted_credentials() or _model_has_redacted_credentials(
+            self.model
+        )
 
     @property
     def model_name(self) -> str | None:
@@ -163,6 +257,15 @@ class ModelSpecStrict(TaskSpecStrictBase):
 
 class ModelSpecTemplate(TaskSpecTemplateBase):
     model: ModelConfigTemplate | None = None
+
+    def redact_credentials(self) -> Self:
+        spec = super().redact_credentials()
+        return spec.model_copy(update={"model": _redact_model_config(spec.model)})
+
+    def has_redacted_credentials(self) -> bool:
+        return super().has_redacted_credentials() or _model_has_redacted_credentials(
+            self.model
+        )
 
     @property
     def model_name(self) -> str | None:
@@ -190,9 +293,47 @@ class ModelInferSpecStrict(ModelSpecStrict):
     checkpoint: dict[str, Any] | None = None
     postprocess: PostprocessSpec | None = None
 
+    def redact_credentials(self) -> Self:
+        spec = super().redact_credentials()
+        return spec.model_copy(
+            update={
+                "data": redact_credential_fields(spec.data),
+                "inference": redact_credential_fields(spec.inference),
+                "checkpoint": redact_credential_fields(spec.checkpoint),
+            }
+        )
+
+    def has_redacted_credentials(self) -> bool:
+        return super().has_redacted_credentials() or has_redacted_credential_fields(
+            {
+                "data": self.data,
+                "inference": self.inference,
+                "checkpoint": self.checkpoint,
+            }
+        )
+
 
 class ModelInferSpecTemplate(ModelSpecTemplate):
     data: dict[str, Any] | None = None
     inference: dict[str, Any] | None = None
     checkpoint: dict[str, Any] | None = None
     postprocess: PostprocessSpecTemplate | None = None
+
+    def redact_credentials(self) -> Self:
+        spec = super().redact_credentials()
+        return spec.model_copy(
+            update={
+                "data": redact_credential_fields(spec.data),
+                "inference": redact_credential_fields(spec.inference),
+                "checkpoint": redact_credential_fields(spec.checkpoint),
+            }
+        )
+
+    def has_redacted_credentials(self) -> bool:
+        return super().has_redacted_credentials() or has_redacted_credential_fields(
+            {
+                "data": self.data,
+                "inference": self.inference,
+                "checkpoint": self.checkpoint,
+            }
+        )

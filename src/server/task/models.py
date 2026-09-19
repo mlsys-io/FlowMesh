@@ -1,5 +1,5 @@
 import time
-from typing import Any
+from typing import Any, cast
 
 from pydantic import (
     AliasChoices,
@@ -7,17 +7,35 @@ from pydantic import (
     ConfigDict,
     Field,
     PrivateAttr,
+    SerializationInfo,
     SerializerFunctionWrapHandler,
     computed_field,
     model_serializer,
 )
+from pydantic.main import IncEx
+from pydantic_core.core_schema import IncExCall
 
-from shared.tasks import TaskEnvelopeTemplate
-from shared.tasks.specs import ApiSpecStrict, ApiSpecTemplate
+from shared.tasks import TaskEnvelopeTemplate, TaskSpecTemplate
 from shared.tasks.worker_message import HardwareUsage
-from shared.utils.redact import redact_api, redact_raw_yaml
+from shared.utils.redact import redact_raw_yaml
 
 from ..utils.time import now_iso
+
+
+def _descend_field_filter(selector: IncExCall, *path: str) -> IncExCall:
+    """Descend a pydantic exclude selector to a nested field path.
+
+    Return the sub-selector at ``path`` only when it is a set or mapping that
+    ``model_dump`` accepts; otherwise None — the field is unfiltered, or
+    excluded wholesale (handled by the caller's presence check) and never a
+    bare bool, which ``model_dump`` rejects as a selector.
+    """
+    for key in path:
+        if not isinstance(selector, dict):
+            return None
+        selector = selector.get(key)
+    return selector if isinstance(selector, (set, dict)) else None
+
 
 TRAINING_TASK_TYPES = {
     "sft",
@@ -178,29 +196,38 @@ class TaskRecord(BaseModel):
         return self.failed_workers[-1] if self.failed_workers else None
 
     _redacted_source: str | None = PrivateAttr(default=None)
-    _redacted_api: dict[str, Any] | None = PrivateAttr(default=None)
+    _redacted_spec: TaskSpecTemplate | None = PrivateAttr(default=None)
 
     def _redact_source(self) -> str:
         if self._redacted_source is None:
             self._redacted_source = redact_raw_yaml(self.source)
         return self._redacted_source
 
-    def _redact_api(self) -> dict[str, Any] | None:
-        if self._redacted_api is None:
-            spec = self.task.spec
-            if isinstance(spec, (ApiSpecStrict, ApiSpecTemplate)):
-                self._redacted_api = redact_api(spec.api)
-            else:
-                self._redacted_api = None
-        return self._redacted_api
+    def _redact_spec(self) -> TaskSpecTemplate:
+        if self._redacted_spec is None:
+            self._redacted_spec = self.task.spec.redact_credentials()
+        return self._redacted_spec
 
     @model_serializer(mode="wrap")
-    def _serialize(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+    def _serialize(
+        self, handler: SerializerFunctionWrapHandler, info: SerializationInfo
+    ) -> dict[str, Any]:
         data = handler(self)
-        data["source"] = self._redact_source()
-        redacted_api = self._redact_api()
-        if redacted_api is not None:
-            data["task"]["spec"]["api"] = redacted_api
+        if "source" in data:
+            data["source"] = self._redact_source()
+        task = data.get("task")
+        if isinstance(task, dict) and "spec" in task:
+            task["spec"] = self._redact_spec().model_dump(
+                mode=info.mode,
+                by_alias=info.by_alias,
+                exclude_none=info.exclude_none,
+                # info.exclude is typed IncExCall; model_dump expects the
+                # equivalent IncEx — same runtime shapes, distinct aliases.
+                exclude=cast(
+                    IncEx | None,
+                    _descend_field_filter(info.exclude, "task", "spec"),
+                ),
+            )
         return data
 
 
