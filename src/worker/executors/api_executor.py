@@ -55,11 +55,13 @@ class APIExecutor(DataMixin, Executor):
     name = "api"
     supported_task_types = frozenset({TaskType.API})
 
-    def __init__(self, *args: object, **kwargs: object) -> None:
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self._cancel_event = threading.Event()
+        self._cancel_task_id: str | None = None
 
     def cancel(self, task_id: str) -> None:
+        self._cancel_task_id = task_id
         self._cancel_event.set()
 
     # ---- Class-level connection pool (shared across all instances) ----
@@ -251,7 +253,15 @@ class APIExecutor(DataMixin, Executor):
         return item, body_text
 
     def run(self, task: ExecutorTask, out_dir: Path) -> APIResult:
+        cancel_event = getattr(self, "_cancel_event", None)
+        if (
+            cancel_event is not None
+            and cancel_event.is_set()
+            and self._cancel_task_id == task.task_id
+        ):
+            raise TaskCancelledError("API task cancelled")
         self._cancel_event = threading.Event()
+        self._cancel_task_id = None
         spec = self.require_spec(task, ApiSpecStrict)
         api_cfg = spec.api or {}
         if not isinstance(api_cfg, dict):
@@ -344,6 +354,9 @@ class APIExecutor(DataMixin, Executor):
             item.index = idx
             item.prompt = prompt_str
 
+            if self._cancel_event.is_set():
+                raise TaskCancelledError("API task cancelled")
+
             return item
 
         results: dict[int, APIItem] = {}
@@ -355,6 +368,8 @@ class APIExecutor(DataMixin, Executor):
                 futures[pool.submit(_issue, idx, prompt)] = idx
             for future in as_completed(futures):
                 idx = futures[future]
+                if self._cancel_event.is_set():
+                    raise TaskCancelledError("API task cancelled")
                 results[idx] = future.result()
 
         items = [results[idx] for idx in range(len(prompts))]
