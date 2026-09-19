@@ -110,7 +110,10 @@ prompt is substituted for the `{{prompt}}` placeholder in the request body.
 Server-side stage references are `${...}`; `{{prompt}}` is a worker-side
 per-row slot, so it is not touched by server-side resolution. A failure in any
 row fails the whole task rather than shifting the remaining rows.
-`spec.api.concurrency` bounds the number of in-flight requests (default 8).
+`spec.api.concurrency` bounds the number of in-flight requests and is capped
+at 8 (the default); values above 8 are clamped down. Cancelling the task
+aborts both in-flight and not-yet-started rows rather than letting them
+complete.
 
 ```yaml
 spec:
