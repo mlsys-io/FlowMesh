@@ -35,6 +35,7 @@ class InferenceItem(StrictModel):
     output: JsonValue
     finish_reason: str | list[str | None] | None
     metadata: dict[str, Any] | None = None
+    diagnostics: dict[str, Any] | None = None
 
 
 class OmniImageItem(StrictModel):
