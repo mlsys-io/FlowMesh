@@ -15,10 +15,13 @@ class ApiSpecStrict(TaskSpecStrictBase):
     api: dict[str, Any] | None = None
 
     def redact_credentials(self) -> Self:
-        return self.model_copy(update={"api": redact_credential_fields(self.api)})
+        spec = super().redact_credentials()
+        return spec.model_copy(update={"api": redact_credential_fields(spec.api)})
 
     def has_redacted_credentials(self) -> bool:
-        return has_redacted_credential_fields(self.api)
+        return super().has_redacted_credentials() or has_redacted_credential_fields(
+            self.api
+        )
 
 
 class ApiSpecTemplate(TaskSpecTemplateBase):
@@ -26,10 +29,13 @@ class ApiSpecTemplate(TaskSpecTemplateBase):
     api: dict[str, Any] | None = None
 
     def redact_credentials(self) -> Self:
-        return self.model_copy(update={"api": redact_credential_fields(self.api)})
+        spec = super().redact_credentials()
+        return spec.model_copy(update={"api": redact_credential_fields(spec.api)})
 
     def has_redacted_credentials(self) -> bool:
-        return has_redacted_credential_fields(self.api)
+        return super().has_redacted_credentials() or has_redacted_credential_fields(
+            self.api
+        )
 
 
 class EchoSpecStrict(TaskSpecStrictBase):
@@ -65,10 +71,13 @@ class DataProfilingSpecStrict(TaskSpecStrictBase):
     data: dict[str, Any] | None = None
 
     def redact_credentials(self) -> Self:
-        return self.model_copy(update={"data": redact_credential_fields(self.data)})
+        spec = super().redact_credentials()
+        return spec.model_copy(update={"data": redact_credential_fields(spec.data)})
 
     def has_redacted_credentials(self) -> bool:
-        return has_redacted_credential_fields(self.data)
+        return super().has_redacted_credentials() or has_redacted_credential_fields(
+            self.data
+        )
 
 
 class DataProfilingSpecTemplate(TaskSpecTemplateBase):
@@ -76,10 +85,13 @@ class DataProfilingSpecTemplate(TaskSpecTemplateBase):
     data: dict[str, Any] | None = None
 
     def redact_credentials(self) -> Self:
-        return self.model_copy(update={"data": redact_credential_fields(self.data)})
+        spec = super().redact_credentials()
+        return spec.model_copy(update={"data": redact_credential_fields(spec.data)})
 
     def has_redacted_credentials(self) -> bool:
-        return has_redacted_credential_fields(self.data)
+        return super().has_redacted_credentials() or has_redacted_credential_fields(
+            self.data
+        )
 
 
 class DataRetrievalSpecStrict(TaskSpecStrictBase):
@@ -87,10 +99,13 @@ class DataRetrievalSpecStrict(TaskSpecStrictBase):
     data: dict[str, Any] | None = None
 
     def redact_credentials(self) -> Self:
-        return self.model_copy(update={"data": redact_credential_fields(self.data)})
+        spec = super().redact_credentials()
+        return spec.model_copy(update={"data": redact_credential_fields(spec.data)})
 
     def has_redacted_credentials(self) -> bool:
-        return has_redacted_credential_fields(self.data)
+        return super().has_redacted_credentials() or has_redacted_credential_fields(
+            self.data
+        )
 
 
 class DataRetrievalSpecTemplate(TaskSpecTemplateBase):
@@ -98,10 +113,13 @@ class DataRetrievalSpecTemplate(TaskSpecTemplateBase):
     data: dict[str, Any] | None = None
 
     def redact_credentials(self) -> Self:
-        return self.model_copy(update={"data": redact_credential_fields(self.data)})
+        spec = super().redact_credentials()
+        return spec.model_copy(update={"data": redact_credential_fields(spec.data)})
 
     def has_redacted_credentials(self) -> bool:
-        return has_redacted_credential_fields(self.data)
+        return super().has_redacted_credentials() or has_redacted_credential_fields(
+            self.data
+        )
 
 
 class EmbeddingSpecStrict(ModelSpecStrict):

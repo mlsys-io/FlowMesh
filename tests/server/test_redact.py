@@ -206,6 +206,44 @@ class TestRedactTask:
         record = _record_for_task(_task("echo", data={"token": "echo-data"}))
         assert record.model_dump()["task"]["spec"]["data"]["token"] == "echo-data"
 
+    def test_output_destination_headers_redacted(self) -> None:
+        record = _record_for_task(
+            _task(
+                "echo",
+                output={
+                    "destination": {
+                        "type": "http",
+                        "url": "http://x",
+                        "headers": {
+                            "Authorization": "Bearer out-secret",
+                            "Content-Type": "application/json",
+                        },
+                    }
+                },
+            )
+        )
+        spec = record.model_dump()["task"]["spec"]
+        headers = spec["output"]["destination"]["headers"]
+        assert headers["Authorization"] == REDACTED
+        assert headers["Content-Type"] == "application/json"
+
+    def test_output_headers_redacted_alongside_spec_fields(self) -> None:
+        record = _record_for_task(
+            _task(
+                "api",
+                api={"headers": {"api_key": "api-secret"}},
+                output={
+                    "destination": {
+                        "type": "http",
+                        "headers": {"Authorization": "Bearer out-secret"},
+                    }
+                },
+            )
+        )
+        spec = record.model_dump()["task"]["spec"]
+        assert spec["api"]["headers"]["api_key"] == REDACTED
+        assert spec["output"]["destination"]["headers"]["Authorization"] == REDACTED
+
 
 class TestRedactCredential:
     @pytest.mark.parametrize(

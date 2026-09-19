@@ -61,6 +61,17 @@ class TestTaskSpecCredentialDetection:
                 },
             ),
             ("ssh", {"authorizedKeys": [REDACTED]}),
+            (
+                "echo",
+                {
+                    "output": {
+                        "destination": {
+                            "type": "http",
+                            "headers": {"Authorization": REDACTED},
+                        }
+                    }
+                },
+            ),
         ],
         ids=[
             "api_headers",
@@ -74,6 +85,7 @@ class TestTaskSpecCredentialDetection:
             "rag",
             "serve",
             "ssh",
+            "output_headers",
         ],
     )
     def test_redacted_credential_is_detected(

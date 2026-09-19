@@ -125,16 +125,19 @@ class SSHSpecStrict(TaskSpecStrictBase):
     env: dict[str, Any] | None = None
 
     def redact_credentials(self) -> Self:
-        return self.model_copy(
+        spec = super().redact_credentials()
+        return spec.model_copy(
             update={
-                "authorizedKeys": redact_credential(self.authorizedKeys),
-                "env": redact_credential_fields(self.env),
+                "authorizedKeys": redact_credential(spec.authorizedKeys),
+                "env": redact_credential_fields(spec.env),
             }
         )
 
     def has_redacted_credentials(self) -> bool:
-        return contains_redacted(self.authorizedKeys) or has_redacted_credential_fields(
-            self.env
+        return (
+            super().has_redacted_credentials()
+            or contains_redacted(self.authorizedKeys)
+            or has_redacted_credential_fields(self.env)
         )
 
     @model_validator(mode="after")
@@ -161,16 +164,19 @@ class SSHSpecTemplate(TaskSpecTemplateBase):
     env: dict[str, Any] | None = None
 
     def redact_credentials(self) -> Self:
-        return self.model_copy(
+        spec = super().redact_credentials()
+        return spec.model_copy(
             update={
-                "authorizedKeys": redact_credential(self.authorizedKeys),
-                "env": redact_credential_fields(self.env),
+                "authorizedKeys": redact_credential(spec.authorizedKeys),
+                "env": redact_credential_fields(spec.env),
             }
         )
 
     def has_redacted_credentials(self) -> bool:
-        return contains_redacted(self.authorizedKeys) or has_redacted_credential_fields(
-            self.env
+        return (
+            super().has_redacted_credentials()
+            or contains_redacted(self.authorizedKeys)
+            or has_redacted_credential_fields(self.env)
         )
 
     @model_validator(mode="after")

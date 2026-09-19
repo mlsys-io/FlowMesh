@@ -18,6 +18,7 @@ from ..components import (
     ShardSpec,
     ShardSpecTemplate,
 )
+from ..components.output import OutputDestinationHTTP, OutputDestinationHTTPTemplate
 from ..placeholders import TemplateBool, TemplateInt
 
 
@@ -66,6 +67,32 @@ def _validate_condition_depends_on[T: "TaskSpecStrictBase | TaskSpecTemplateBase
     return spec
 
 
+def _redact_output(
+    output: OutputSpec | OutputSpecTemplate | None,
+) -> OutputSpec | OutputSpecTemplate | None:
+    if output is None:
+        return output
+    dest = output.destination
+    if (
+        isinstance(dest, (OutputDestinationHTTP, OutputDestinationHTTPTemplate))
+        and dest.headers is not None
+    ):
+        redacted_dest = dest.model_copy(
+            update={"headers": redact_credential_fields(dest.headers)}
+        )
+        return output.model_copy(update={"destination": redacted_dest})
+    return output
+
+
+def _output_has_redacted_credentials(
+    output: OutputSpec | OutputSpecTemplate | None,
+) -> bool:
+    dest = output.destination if output else None
+    if isinstance(dest, (OutputDestinationHTTP, OutputDestinationHTTPTemplate)):
+        return has_redacted_credential_fields(dest.headers)
+    return False
+
+
 class TaskSpecStrictBase(StrictBaseModel):
     resources: ResourcesSpec | None = None
     output: OutputSpec | None = None
@@ -101,12 +128,15 @@ class TaskSpecStrictBase(StrictBaseModel):
         return None
 
     def redact_credentials(self) -> Self:
-        """Return this spec unchanged when it has no known credentials."""
-        return self
+        """Redact credential-shaped headers in the output destination, if any."""
+        redacted_output = _redact_output(self.output)
+        if redacted_output is self.output:
+            return self
+        return self.model_copy(update={"output": redacted_output})
 
     def has_redacted_credentials(self) -> bool:
         """Whether this spec contains a redacted credential marker."""
-        return False
+        return _output_has_redacted_credentials(self.output)
 
 
 class TaskSpecTemplateBase(TemplateBaseModel):
@@ -144,12 +174,15 @@ class TaskSpecTemplateBase(TemplateBaseModel):
         return None
 
     def redact_credentials(self) -> Self:
-        """Return this spec unchanged when it has no known credentials."""
-        return self
+        """Redact credential-shaped headers in the output destination, if any."""
+        redacted_output = _redact_output(self.output)
+        if redacted_output is self.output:
+            return self
+        return self.model_copy(update={"output": redacted_output})
 
     def has_redacted_credentials(self) -> bool:
         """Whether this spec contains a redacted credential marker."""
-        return False
+        return _output_has_redacted_credentials(self.output)
 
 
 type TaskSpecBase = TaskSpecStrictBase | TaskSpecTemplateBase

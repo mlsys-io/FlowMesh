@@ -15,17 +15,18 @@ class RagSpecStrict(TaskSpecStrictBase):
     query: str | None = None
 
     def redact_credentials(self) -> Self:
-        return self.model_copy(
+        spec = super().redact_credentials()
+        return spec.model_copy(
             update={
-                "qdrant": redact_credential_fields(self.qdrant),
-                "embedding": redact_credential_fields(self.embedding),
-                "search": redact_credential_fields(self.search),
-                "data": redact_credential_fields(self.data),
+                "qdrant": redact_credential_fields(spec.qdrant),
+                "embedding": redact_credential_fields(spec.embedding),
+                "search": redact_credential_fields(spec.search),
+                "data": redact_credential_fields(spec.data),
             }
         )
 
     def has_redacted_credentials(self) -> bool:
-        return has_redacted_credential_fields(
+        return super().has_redacted_credentials() or has_redacted_credential_fields(
             {
                 "qdrant": self.qdrant,
                 "embedding": self.embedding,
@@ -45,17 +46,18 @@ class RagSpecTemplate(TaskSpecTemplateBase):
     query: str | None = None
 
     def redact_credentials(self) -> Self:
-        return self.model_copy(
+        spec = super().redact_credentials()
+        return spec.model_copy(
             update={
-                "qdrant": redact_credential_fields(self.qdrant),
-                "embedding": redact_credential_fields(self.embedding),
-                "search": redact_credential_fields(self.search),
-                "data": redact_credential_fields(self.data),
+                "qdrant": redact_credential_fields(spec.qdrant),
+                "embedding": redact_credential_fields(spec.embedding),
+                "search": redact_credential_fields(spec.search),
+                "data": redact_credential_fields(spec.data),
             }
         )
 
     def has_redacted_credentials(self) -> bool:
-        return has_redacted_credential_fields(
+        return super().has_redacted_credentials() or has_redacted_credential_fields(
             {
                 "qdrant": self.qdrant,
                 "embedding": self.embedding,
