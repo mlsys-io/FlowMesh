@@ -431,6 +431,9 @@ class APIExecutor(DataMixin, Executor):
             item.index = idx
             item.prompt = prompt_str
 
+            if self._cancel_event.is_set():
+                raise TaskCancelledError("API task cancelled")
+
             return item
 
         results: dict[int, APIItem] = {}
@@ -442,6 +445,8 @@ class APIExecutor(DataMixin, Executor):
                 futures[pool.submit(_issue, idx, prompt)] = idx
             for future in as_completed(futures):
                 idx = futures[future]
+                if self._cancel_event.is_set():
+                    raise TaskCancelledError("API task cancelled")
                 results[idx] = future.result()
 
         items = [results[idx] for idx in range(len(prompts))]

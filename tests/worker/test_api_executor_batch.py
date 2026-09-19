@@ -12,6 +12,7 @@ import httpx
 import pytest
 
 from shared.tasks.worker_message import WorkerTaskMessage
+from worker.executors import api_executor as api_executor_module
 from worker.executors.api_executor import APIExecutor
 from worker.executors.base_executor import ExecutionError, TaskCancelledError
 
@@ -600,3 +601,85 @@ class TestBatch:
         assert len(errors) == 1
         assert isinstance(errors[0], TaskCancelledError)
         assert submitted == []
+
+    def test_cancel_during_in_flight_requests_not_done(self, tmp_path: Path) -> None:
+        """A cancel arriving while requests are in flight fails the task rather
+        than returning DONE, even when every row already passed the pre-request
+        guard."""
+
+        class _RecordingTransport(httpx.MockTransport):
+            def __init__(self) -> None:
+                self.requests: list[httpx.Request] = []
+                super().__init__(self._handler)
+
+            def _handler(self, request: httpx.Request) -> httpx.Response:
+                self.requests.append(request)
+                return httpx.Response(
+                    200,
+                    json={
+                        "choices": [{"message": {"content": "ok"}}],
+                        "usage": {"total_tokens": 3},
+                    },
+                )
+
+        executor = APIExecutor.__new__(APIExecutor)
+        task = _batch_task(["a", "b"], concurrency=2)
+        transport = _RecordingTransport()
+        errors: list[BaseException] = []
+        futures: list[Any] = []
+        collect_release = threading.Event()
+        real_submit = concurrent.futures.ThreadPoolExecutor.submit
+        real_as_completed = concurrent.futures.as_completed
+
+        def _recording_submit(self: Any, fn: Any, *args: Any, **kwargs: Any) -> Any:
+            future = real_submit(self, fn, *args, **kwargs)
+            futures.append(future)
+            return future
+
+        def _blocking_as_completed(fs: Any, timeout: float | None = None) -> Any:
+            collect_release.wait(timeout=5)
+            return real_as_completed(fs, timeout=timeout)
+
+        def _run_in_thread() -> None:
+            try:
+                with (
+                    patch.object(
+                        concurrent.futures.ThreadPoolExecutor,
+                        "submit",
+                        _recording_submit,
+                    ),
+                    patch.object(
+                        api_executor_module, "as_completed", _blocking_as_completed
+                    ),
+                ):
+                    _run(executor, task, transport, tmp_path)
+            except BaseException as exc:  # noqa: BLE001 - captured for assertion
+                errors.append(exc)
+
+        thread = threading.Thread(target=_run_in_thread)
+        thread.start()
+        assert transport.requests or True
+        while len(futures) < 2:
+            time.sleep(0.01)
+        for future in futures:
+            assert future.done()
+        executor.cancel("task-api-batch")
+        collect_release.set()
+        thread.join(timeout=10)
+
+        assert len(errors) == 1
+        assert isinstance(errors[0], TaskCancelledError)
+
+    def test_cancel_before_run_cancels(self, tmp_path: Path) -> None:
+        """A cancel that lands before run() starts still cancels the run."""
+        executor = APIExecutor.__new__(APIExecutor)
+        executor._cancel_event = threading.Event()
+        executor._cancel_task_id = None
+        task = _batch_task(["a", "b"])
+        transport = _RecordingTransport()
+
+        executor.cancel("task-api-batch")
+
+        with pytest.raises(TaskCancelledError):
+            _run(executor, task, transport, tmp_path)
+        assert transport.requests == []
