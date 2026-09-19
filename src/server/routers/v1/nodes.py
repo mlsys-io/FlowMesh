@@ -328,7 +328,9 @@ async def _fetch_node_workers(
             match record.status:
                 case WorkerStatus.STARTING | WorkerStatus.UNKNOWN:
                     new_status = NodeWorkerStatus.STARTING
-                case WorkerStatus.BUSY:
+                case WorkerStatus.BUSY | WorkerStatus.UNAVAILABLE:
+                    # UNAVAILABLE: idle, but its GPU is held outside FlowMesh.
+                    # Shown as BUSY so node clients need no new enum value.
                     new_status = NodeWorkerStatus.BUSY
                 case WorkerStatus.IDLE:
                     new_status = NodeWorkerStatus.IDLE
