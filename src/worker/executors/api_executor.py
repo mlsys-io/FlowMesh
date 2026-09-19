@@ -59,10 +59,12 @@ class APIExecutor(DataMixin, Executor):
         super().__init__(*args, **kwargs)
         self._cancel_event = threading.Event()
         self._cancel_task_id: str | None = None
+        self._cancel_lock = threading.Lock()
 
     def cancel(self, task_id: str) -> None:
-        self._cancel_task_id = task_id
-        self._cancel_event.set()
+        with self._cancel_lock:
+            self._cancel_task_id = task_id
+            self._cancel_event.set()
 
     # ---- Class-level connection pool (shared across all instances) ----
     _clients: ClassVar[dict[_ClientKey, httpx.Client]] = {}
@@ -253,15 +255,11 @@ class APIExecutor(DataMixin, Executor):
         return item, body_text
 
     def run(self, task: ExecutorTask, out_dir: Path) -> APIResult:
-        cancel_event = getattr(self, "_cancel_event", None)
-        if (
-            cancel_event is not None
-            and cancel_event.is_set()
-            and self._cancel_task_id == task.task_id
-        ):
-            raise TaskCancelledError("API task cancelled")
-        self._cancel_event = threading.Event()
-        self._cancel_task_id = None
+        with self._cancel_lock:
+            if self._cancel_event.is_set() and self._cancel_task_id == task.task_id:
+                raise TaskCancelledError("API task cancelled")
+            self._cancel_event.clear()
+            self._cancel_task_id = None
         spec = self.require_spec(task, ApiSpecStrict)
         api_cfg = spec.api or {}
         if not isinstance(api_cfg, dict):

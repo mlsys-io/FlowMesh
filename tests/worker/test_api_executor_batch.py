@@ -75,6 +75,16 @@ def _run(
         return executor.run(task, out_dir)
 
 
+def _executor() -> APIExecutor:
+    """Construct an APIExecutor without a WorkerConfig, mirroring __init__'s
+    cancellation state so run()/cancel() work under __new__."""
+    executor = APIExecutor.__new__(APIExecutor)
+    executor._cancel_event = threading.Event()
+    executor._cancel_task_id = None
+    executor._cancel_lock = threading.Lock()
+    return executor
+
+
 def _batch_task(items: list[Any], **api_updates: Any) -> WorkerTaskMessage:
     payload = {
         "task_id": "task-api-batch",
@@ -113,7 +123,7 @@ class TestBatch:
     def test_issues_one_request_per_row_in_order(self, tmp_path: Path) -> None:
         task = _batch_task(["first", "second", "third"])
         transport = _RecordingTransport()
-        result = _run(APIExecutor.__new__(APIExecutor), task, transport, tmp_path)
+        result = _run(_executor(), task, transport, tmp_path)
         assert len(transport.requests) == 3
         issued = {
             json.loads(req.read())["messages"][0]["content"]
@@ -159,7 +169,7 @@ class TestBatch:
 
         task = _batch_task(["a", "b", "c"])
         transport = _ReverseTransport()
-        result = _run(APIExecutor.__new__(APIExecutor), task, transport, tmp_path)
+        result = _run(_executor(), task, transport, tmp_path)
         for idx, prompt in enumerate(["a", "b", "c"]):
             item = result.items[idx]
             assert item.index == idx
@@ -175,7 +185,7 @@ class TestBatch:
     def test_single_row_batches_to_one_item(self, tmp_path: Path) -> None:
         task = _batch_task(["only"])
         transport = _RecordingTransport()
-        result = _run(APIExecutor.__new__(APIExecutor), task, transport, tmp_path)
+        result = _run(_executor(), task, transport, tmp_path)
         assert len(transport.requests) == 1
         assert len(result.items) == 1
         assert result.items[0].index == 0
@@ -212,7 +222,7 @@ class TestBatch:
         task = _batch_task(["a", "b", "c"], response={"raise_for_status": True})
         transport = _FailRow("b")
         with pytest.raises(ExecutionError, match="row 1"):
-            _run(APIExecutor.__new__(APIExecutor), task, transport, tmp_path)
+            _run(_executor(), task, transport, tmp_path)
         assert len(transport.requests) == 3
 
     def test_placeholder_not_required_for_scalar_body(self, tmp_path: Path) -> None:
@@ -239,7 +249,7 @@ class TestBatch:
         }
         task = WorkerTaskMessage.model_validate(payload)
         transport = _RecordingTransport()
-        result = _run(APIExecutor.__new__(APIExecutor), task, transport, tmp_path)
+        result = _run(_executor(), task, transport, tmp_path)
         assert len(transport.requests) == 2
         assert len(result.items) == 2
 
@@ -247,7 +257,7 @@ class TestBatch:
         task = _batch_task([])
         with pytest.raises(ExecutionError, match="no rows"):
             _run(
-                APIExecutor.__new__(APIExecutor),
+                _executor(),
                 task,
                 _RecordingTransport(),
                 tmp_path,
@@ -277,7 +287,7 @@ class TestBatch:
         task = WorkerTaskMessage.model_validate(payload)
         with pytest.raises(ExecutionError, match="spec.data is required"):
             _run(
-                APIExecutor.__new__(APIExecutor),
+                _executor(),
                 task,
                 _RecordingTransport(),
                 tmp_path,
@@ -306,7 +316,7 @@ class TestBatch:
         task = _batch_task([f"row-{i}" for i in range(n_rows)])
         transport = _SlowTransport()
         start = time.monotonic()
-        result = _run(APIExecutor.__new__(APIExecutor), task, transport, tmp_path)
+        result = _run(_executor(), task, transport, tmp_path)
         elapsed = time.monotonic() - start
 
         assert len(transport.requests) == n_rows
@@ -340,7 +350,7 @@ class TestBatch:
 
         task = _batch_task(["a", "b", "c", "d"], concurrency=1)
         transport = _OverlapTransport()
-        _run(APIExecutor.__new__(APIExecutor), task, transport, tmp_path)
+        _run(_executor(), task, transport, tmp_path)
         assert transport.max_in_flight == 1
 
     def test_request_skeleton_constructed_once(self, tmp_path: Path) -> None:
@@ -360,7 +370,7 @@ class TestBatch:
             ) as mock_build,
         ):
             mock_build.side_effect = lambda *a, **k: real_build(*a, **k)
-            APIExecutor.__new__(APIExecutor).run(task, tmp_path)
+            _executor().run(task, tmp_path)
 
         assert mock_build.call_count == 1
         assert mock_build.call_args.args[2] is None
@@ -393,7 +403,7 @@ class TestBatch:
             return httpx.Client(transport=_RecordingTransport())
 
         with patch.object(APIExecutor, "_get_client", side_effect=_fake_get_client):
-            APIExecutor.__new__(APIExecutor).run(task, tmp_path)
+            _executor().run(task, tmp_path)
 
         assert captured["concurrency"] == 8
 
@@ -410,7 +420,7 @@ class TestBatch:
             return httpx.Client(transport=_RecordingTransport())
 
         with patch.object(APIExecutor, "_get_client", side_effect=_fake_get_client):
-            APIExecutor.__new__(APIExecutor).run(task, tmp_path)
+            _executor().run(task, tmp_path)
 
         assert captured["concurrency"] == concurrency
 
@@ -421,9 +431,7 @@ class TestBatch:
         """A configured concurrency below 1 is rejected."""
         task = _batch_task(["a", "b", "c"], concurrency=concurrency)
         with pytest.raises(ExecutionError, match="spec.api.concurrency must be >= 1"):
-            _run(
-                APIExecutor.__new__(APIExecutor), task, _RecordingTransport(), tmp_path
-            )
+            _run(_executor(), task, _RecordingTransport(), tmp_path)
 
     def test_client_cache_key_includes_concurrency(self) -> None:
         """Pools built for different concurrency values are not shared."""
@@ -454,7 +462,7 @@ class TestBatch:
                 )
 
         task = _batch_task(["a", "b"])
-        result = _run(APIExecutor.__new__(APIExecutor), task, _NoUsage(), tmp_path)
+        result = _run(_executor(), task, _NoUsage(), tmp_path)
         assert len(result.items) == 2
         assert result.items[0].text == "ok"
         assert result.items[0].usage is None
@@ -475,7 +483,7 @@ class TestBatch:
                 )
 
         task = _batch_task(["a", "b"], response={"raise_for_status": False})
-        result = _run(APIExecutor.__new__(APIExecutor), task, _ErrorBody(), tmp_path)
+        result = _run(_executor(), task, _ErrorBody(), tmp_path)
         assert len(result.items) == 2
         assert result.items[0].status_code == 503
         assert result.items[0].response_json == {"error": {"message": "overloaded"}}
@@ -495,7 +503,7 @@ class TestBatch:
 
         task = _batch_task(["a", "b"], response={"raise_for_status": True})
         with pytest.raises(ExecutionError, match="status 503") as excinfo:
-            _run(APIExecutor.__new__(APIExecutor), task, _ErrorBody(), tmp_path)
+            _run(_executor(), task, _ErrorBody(), tmp_path)
         assert excinfo.value.retryable is True
 
     def test_cancel_prevents_queued_rows_from_issuing(self, tmp_path: Path) -> None:
@@ -520,7 +528,7 @@ class TestBatch:
                     },
                 )
 
-        executor = APIExecutor.__new__(APIExecutor)
+        executor = _executor()
         task = _batch_task(["a", "b", "c", "d"], concurrency=1)
         transport = _BlockingTransport()
         errors: list[BaseException] = []
@@ -560,7 +568,7 @@ class TestBatch:
     def test_cancel_before_submission_prevents_any_future(self, tmp_path: Path) -> None:
         """Cancelling before futures are submitted surfaces TaskCancelledError
         without submitting any future."""
-        executor = APIExecutor.__new__(APIExecutor)
+        executor = _executor()
         task = _batch_task(["a", "b", "c", "d"])
         transport = _RecordingTransport()
         errors: list[BaseException] = []
@@ -622,7 +630,7 @@ class TestBatch:
                     },
                 )
 
-        executor = APIExecutor.__new__(APIExecutor)
+        executor = _executor()
         task = _batch_task(["a", "b"], concurrency=2)
         transport = _RecordingTransport()
         errors: list[BaseException] = []
@@ -672,9 +680,7 @@ class TestBatch:
 
     def test_cancel_before_run_cancels(self, tmp_path: Path) -> None:
         """A cancel that lands before run() starts still cancels the run."""
-        executor = APIExecutor.__new__(APIExecutor)
-        executor._cancel_event = threading.Event()
-        executor._cancel_task_id = None
+        executor = _executor()
         task = _batch_task(["a", "b"])
         transport = _RecordingTransport()
 
@@ -683,3 +689,28 @@ class TestBatch:
         with pytest.raises(TaskCancelledError):
             _run(executor, task, transport, tmp_path)
         assert transport.requests == []
+
+    def test_cancel_during_run_setup_not_lost(self) -> None:
+        """A cancel arriving while run() holds the lock across check-and-clear
+        is not dropped: cancel() blocks on the same lock and sets the event
+        once run() releases it."""
+        executor = _executor()
+        task = _batch_task(["a", "b"])
+
+        executor._cancel_lock.acquire()
+        cancelled: list[bool] = []
+
+        def _cancel_in_thread() -> None:
+            executor.cancel(task.task_id)
+            cancelled.append(executor._cancel_event.is_set())
+
+        thread = threading.Thread(target=_cancel_in_thread)
+        thread.start()
+        thread.join(timeout=0.2)
+        assert not cancelled
+        executor._cancel_lock.release()
+        thread.join(timeout=5)
+
+        assert cancelled == [True]
+        assert executor._cancel_event.is_set()
+        assert executor._cancel_task_id == task.task_id

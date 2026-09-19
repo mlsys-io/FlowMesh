@@ -1,5 +1,6 @@
 """Tests for the API executor url override and Nebula credential handling."""
 
+import threading
 from pathlib import Path
 from unittest.mock import patch
 
@@ -63,6 +64,16 @@ def _run(
         executor.run(task, Path("/tmp/out"))
 
 
+def _executor() -> APIExecutor:
+    """Construct an APIExecutor without a WorkerConfig, mirroring __init__'s
+    cancellation state so run() works under __new__."""
+    executor = APIExecutor.__new__(APIExecutor)
+    executor._cancel_event = threading.Event()
+    executor._cancel_task_id = None
+    executor._cancel_lock = threading.Lock()
+    return executor
+
+
 class TestNebulaPath:
     def test_no_url_no_header_uses_nebula_url_and_token(
         self, monkeypatch: pytest.MonkeyPatch
@@ -71,7 +82,7 @@ class TestNebulaPath:
         monkeypatch.setenv("NEBULA_API_TOKEN", "nebula-token")
         task = _task_message()
         transport = _RecordingTransport()
-        _run(APIExecutor.__new__(APIExecutor), task, transport)
+        _run(_executor(), task, transport)
         assert transport.request is not None
         assert transport.request.url == "https://nebula.example.com/v1/chat/completions"
         assert transport.request.headers["Authorization"] == "Bearer nebula-token"
@@ -83,7 +94,7 @@ class TestNebulaPath:
         monkeypatch.setenv("NEBULA_API_TOKEN", "nebula-token")
         task = _task_message(headers={"Authorization": "Bearer custom"})
         transport = _RecordingTransport()
-        _run(APIExecutor.__new__(APIExecutor), task, transport)
+        _run(_executor(), task, transport)
         assert transport.request is not None
         assert transport.request.url == "https://nebula.example.com/v1/chat/completions"
         assert transport.request.headers["Authorization"] == "Bearer custom"
@@ -94,7 +105,7 @@ class TestNebulaPath:
         monkeypatch.delenv("NEBULA_API_BASE_URL", raising=False)
         task = _task_message()
         with pytest.raises(ExecutionError, match="spec.api.url or NEBULA_API_BASE_URL"):
-            _run(APIExecutor.__new__(APIExecutor), task, _RecordingTransport())
+            _run(_executor(), task, _RecordingTransport())
 
 
 class TestCustomUrl:
@@ -111,7 +122,7 @@ class TestCustomUrl:
         monkeypatch.setenv("NEBULA_API_TOKEN", "nebula-token")
         task = _task_message(url="https://custom.example.com/v1/chat/completions")
         transport = _RecordingTransport()
-        _run(APIExecutor.__new__(APIExecutor), task, transport)
+        _run(_executor(), task, transport)
         assert transport.request is not None
         assert transport.request.url == "https://custom.example.com/v1/chat/completions"
         assert "Authorization" not in transport.request.headers
@@ -125,7 +136,7 @@ class TestCustomUrl:
             headers={"Authorization": "Bearer custom"},
         )
         transport = _RecordingTransport()
-        _run(APIExecutor.__new__(APIExecutor), task, transport)
+        _run(_executor(), task, transport)
         assert transport.request is not None
         assert transport.request.url == "https://custom.example.com/v1/chat/completions"
         assert transport.request.headers["Authorization"] == "Bearer custom"
@@ -140,7 +151,7 @@ class TestCustomUrl:
             headers={"X-API-Key": "custom-key"},
         )
         transport = _RecordingTransport()
-        _run(APIExecutor.__new__(APIExecutor), task, transport)
+        _run(_executor(), task, transport)
         assert transport.request is not None
         assert transport.request.url == "https://custom.example.com/v1/chat/completions"
         assert transport.request.headers["X-API-Key"] == "custom-key"
@@ -159,7 +170,7 @@ class TestCustomUrl:
             headers={"Content-Type": "application/json"},
         )
         transport = _RecordingTransport()
-        _run(APIExecutor.__new__(APIExecutor), task, transport)
+        _run(_executor(), task, transport)
         assert transport.request is not None
         assert transport.request.headers["Content-Type"] == "application/json"
         assert "Authorization" not in transport.request.headers
