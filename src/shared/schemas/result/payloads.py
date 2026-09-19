@@ -34,7 +34,8 @@ class InferenceItem(StrictModel):
 
     ``output`` is polymorphic: a plain string, a structured JSON value when a
     template schema is applied, or a list of grouped outputs (table / grouped-
-    image modes). ``metadata`` is open dataset/user passthrough.
+    image modes). ``metadata`` is open dataset/user passthrough; ``diagnostics``
+    is engine-emitted (e.g. ``auto_cap``), not caller-set.
     """
 
     index: int
@@ -42,6 +43,7 @@ class InferenceItem(StrictModel):
     output: JsonValue
     finish_reason: str | list[str | None] | None
     metadata: dict[str, Any] | None = None
+    diagnostics: dict[str, Any] | None = None
 
 
 class OmniImageItem(StrictModel):

@@ -92,16 +92,22 @@ logger = logging.getLogger(__name__)
 # clamping max_tokens, to absorb chat-template / special tokens not present in
 # the raw rendered string we tokenize, plus a token of slack.
 _AUTO_CAP_MARGIN = 16
-# Never clamp the output budget below this. If the window cannot even fit this
-# much output after the prompt, the prompt itself is at/over the window and
-# vLLM will raise its own "maximum context length" error — which is the honest
-# signal, not something to paper over with a 1-token generation.
+# Never clamp the output budget below this. Once the fitting budget drops under
+# the floor, the prompt is effectively at the window, so we stop trying to fit
+# and hand the request back at the floor: vLLM then either produces a minimal
+# generation (prompt still leaves a sliver of room) or raises its own "maximum
+# context length" error (prompt at/over the window). Either is the honest
+# outcome, not something to paper over.
 _AUTO_CAP_MIN_OUTPUT = 16
 
 
 def _auto_capped_max_tokens(
-    requested: int, prompt_tokens: int, window: int | None, *,
-    margin: int = _AUTO_CAP_MARGIN, floor: int = _AUTO_CAP_MIN_OUTPUT,
+    requested: int,
+    prompt_tokens: int,
+    window: int | None,
+    *,
+    margin: int = _AUTO_CAP_MARGIN,
+    floor: int = _AUTO_CAP_MIN_OUTPUT,
 ) -> int:
     """Clamp a requested max_tokens to what the model window can actually hold.
 
@@ -112,16 +118,15 @@ def _auto_capped_max_tokens(
     bounded below by ``floor`` and never above what was requested.
 
     Returns ``requested`` unchanged when the window is unknown (``None`` / <= 0)
-    — a missing window must not silently shrink a caller's budget. When the
-    fitting budget is below ``floor`` the prompt is effectively at the window,
-    so ``floor`` is returned and vLLM is left to raise the real error.
+    — a missing window must not silently shrink a caller's budget. The floor
+    keeps the result a valid, non-degenerate ``max_tokens`` (never <= 0, never a
+    1-token generation): once the fitting budget drops below it the prompt is at
+    the window, so vLLM is left to raise the real error.
     """
     if not window or window <= 0:
         return requested
     budget = window - max(0, prompt_tokens) - margin
-    if budget < floor:
-        return floor
-    return min(requested, budget)
+    return min(requested, max(budget, floor))
 
 
 class _RawJsonSchema:
@@ -754,47 +759,56 @@ Summary:"""
         max_model_len was left unset). Returns None on any shape it does not
         recognise, so a version skew degrades to "no clamp", never a crash.
         """
-        engine = getattr(self._llm, "llm_engine", None)
-        model_config = getattr(engine, "model_config", None)
-        window = getattr(model_config, "max_model_len", None)
-        try:
-            window = int(window) if window is not None else None
-        except (TypeError, ValueError):
+        if self._llm is None:
             return None
-        return window if window and window > 0 else None
+        try:
+            window = int(self._llm.llm_engine.model_config.max_model_len)
+        except (AttributeError, TypeError, ValueError):
+            return None
+        return window if window > 0 else None
 
     def _auto_cap_sampling_params(
         self, sampling_params: "SamplingParams"
-    ) -> "SamplingParams | list[SamplingParams]":
+    ) -> tuple["SamplingParams | list[SamplingParams]", dict[int, dict[str, int]]]:
         """Clamp max_tokens per prompt to what the model window can hold.
 
-        No-ops (returns the shared object) when the window is unknown, no
-        tokenizer is available, or nothing would actually be clamped — so the
-        hot path keeps passing a single SamplingParams. Multimodal prompts are
-        left at the requested budget: the raw text undercounts image tokens, so
-        clamping on text alone could permit MORE than fits; preserving today's
-        behaviour there is the safe choice.
+        Returns the params to hand to ``generate`` — the shared object, or a
+        per-prompt list once a clamp bites — plus a per-index record of what was
+        clamped (``{index: {"max_tokens": eff, "requested": req}}``) for the
+        result builder to surface as diagnostics.
+
+        No-ops (returns the shared object and an empty record) when the window
+        is unknown, no tokenizer is available, or nothing would actually be
+        clamped — so the hot path keeps passing a single SamplingParams.
+        Multimodal prompts are left at the requested budget: the raw text
+        undercounts image tokens, so clamping on text alone could permit MORE
+        than fits; preserving today's behaviour there is the safe choice.
         """
         window = self._resolve_max_model_len()
         if not window:
-            return sampling_params
+            return sampling_params, {}
         tokenizer = self._get_tokenizer()
         if tokenizer is None:
-            return sampling_params
-        requested = int(getattr(sampling_params, "max_tokens", 0) or 0)
+            return sampling_params, {}
+        requested = int(sampling_params.max_tokens or 0)
         if requested <= 0:
-            return sampling_params
+            return sampling_params, {}
 
-        per_prompt: "list[SamplingParams]" = []
-        clamped_any = False
-        for inp in self._batched_inputs:
+        capped_by_index: dict[int, dict[str, int]] = {}
+        per_prompt: list[SamplingParams] = []
+        for idx, inp in enumerate(self._batched_inputs):
             # Skip multimodal TextPrompt entries — see docstring.
             if not isinstance(inp, str):
                 per_prompt.append(sampling_params)
                 continue
             try:
                 n_prompt = len(tokenizer.encode(inp))
-            except Exception:
+            except Exception as exc:
+                logger.debug(
+                    "auto-cap: tokenization failed for prompt %d, skipping clamp: %s",
+                    idx,
+                    exc,
+                )
                 per_prompt.append(sampling_params)
                 continue
             eff = _auto_capped_max_tokens(requested, n_prompt, window)
@@ -804,12 +818,19 @@ Summary:"""
             clamped = sampling_params.clone()
             clamped.max_tokens = eff
             per_prompt.append(clamped)
-            clamped_any = True
-            logger.info(
-                "auto-capped max_tokens %d -> %d (prompt=%d tok, window=%d)",
-                requested, eff, n_prompt, window,
-            )
-        return per_prompt if clamped_any else sampling_params
+            capped_by_index[idx] = {"max_tokens": eff, "requested": requested}
+        if not capped_by_index:
+            return sampling_params, {}
+        logger.info(
+            "auto-capped max_tokens for %d/%d prompts (requested=%d, window=%d, "
+            "min_eff=%d)",
+            len(capped_by_index),
+            len(self._batched_inputs),
+            requested,
+            window,
+            min(cap["max_tokens"] for cap in capped_by_index.values()),
+        )
+        return per_prompt, capped_by_index
 
     def _remap_grouped_outputs(
         self,
@@ -845,6 +866,8 @@ Summary:"""
             grouped_items = items[cursor : cursor + group_size]
             outputs: list[str] = []
             finish_reasons: list[str | None] = []
+            auto_caps: list[int | None] = []
+            requested: int | None = None
             for item in grouped_items:
                 output = item.get("output")
                 if not isinstance(output, str):
@@ -860,6 +883,17 @@ Summary:"""
                         f"(task={task_id}, row={idx})."
                     )
                 finish_reasons.append(finish_reason)
+                diagnostics = item.get("diagnostics")
+                auto_cap = (
+                    diagnostics["auto_cap"]
+                    if isinstance(diagnostics, dict) and "auto_cap" in diagnostics
+                    else None
+                )
+                if auto_cap is not None:
+                    requested = auto_cap["requested"]
+                    auto_caps.append(auto_cap["max_tokens"])
+                else:
+                    auto_caps.append(None)
             payload: dict[str, Any] = {
                 "index": idx,
                 "prompt": base_prompts[idx],
@@ -869,6 +903,13 @@ Summary:"""
             metadata = base_metadata[idx]
             if metadata:
                 payload["metadata"] = metadata
+            # Mirror finish_reason: a per-member list, entries None where that
+            # member was not clamped. Only emitted when some member was (which
+            # is exactly when a member carried a requested budget).
+            if requested is not None:
+                payload["diagnostics"] = {
+                    "auto_cap": {"max_tokens": auto_caps, "requested": requested}
+                }
             remapped.append(payload)
             cursor += group_size
         return remapped
@@ -1166,7 +1207,9 @@ Summary:"""
         # one SamplingParams for the whole batch or a per-prompt list; we build
         # the list only when a clamp actually bites, so the common case keeps
         # sharing a single object. See _auto_capped_max_tokens.
-        sampling_params = self._auto_cap_sampling_params(sampling_params)
+        gen_sampling_params, capped_by_index = self._auto_cap_sampling_params(
+            sampling_params
+        )
 
         generate_kwargs = self._build_generate_kwargs(spec, out_dir)
 
@@ -1181,7 +1224,7 @@ Summary:"""
         ):
             outputs = self._llm.generate(
                 self._batched_inputs,
-                sampling_params=sampling_params,
+                sampling_params=gen_sampling_params,
                 **generate_kwargs,
             )  # type: ignore[attr-defined]
         latency = time.time() - t0
@@ -1249,6 +1292,9 @@ Summary:"""
                 }
                 if metadata_entry:
                     payload["metadata"] = metadata_entry
+                auto_cap = capped_by_index.get(idx)
+                if auto_cap is not None:
+                    payload["diagnostics"] = {"auto_cap": auto_cap}
                 owner_items.append(payload)
 
                 prompt_token_ids = getattr(out, "prompt_token_ids", None) or []
