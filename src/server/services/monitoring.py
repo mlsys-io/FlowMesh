@@ -720,6 +720,21 @@ class EventMonitor:
                 success = self._worker_registry.update_worker_hb(
                     worker_id, event.ts, event.payload.get("ttl_sec", 120)
                 )
+                # Free-VRAM reading, when the worker reports one. Best-effort and
+                # deliberately after the heartbeat write: this is scheduling
+                # advice, and losing it must never cost the worker its liveness.
+                gpu_free = (event.metrics or {}).get("gpu_memory_free_bytes")
+                if success and isinstance(gpu_free, dict) and gpu_free:
+                    try:
+                        self._worker_registry.record_gpu_free_memory(
+                            worker_id, gpu_free, event.ts
+                        )
+                    except Exception:
+                        self._logger.debug(
+                            "Could not record GPU free memory for %s",
+                            worker_id,
+                            exc_info=True,
+                        )
                 if not success:
                     self._logger.warning(
                         "Heartbeat from unknown worker %s; ignoring", worker_id

@@ -95,6 +95,35 @@ def _device_uses_unified_memory(device_index: int, name: str) -> bool:
     return _is_unified_memory_gpu(name)
 
 
+def sample_gpu_free_bytes() -> dict[str, int]:
+    """Live free VRAM per GPU UUID, sampled fresh. ``{}`` when NVML is absent.
+
+    Registration-time hardware is not enough for this. A GPU can be handed to a
+    Kubernetes pod by the NVIDIA device plugin at any moment, long after the
+    worker registered -- that is exactly what happened on luyao0 on 2026-09-19,
+    where the worker came up at 14:01 and a sandbox took the card at 15:36. A
+    snapshot taken at registration would still have reported the card free and
+    the scheduler would still have placed work on it.
+
+    Keyed by UUID rather than index because the index is only meaningful
+    relative to whatever CUDA_VISIBLE_DEVICES the worker was started with.
+    """
+    free: dict[str, int] = {}
+    try:
+        pynvml.nvmlInit()
+        for idx in range(pynvml.nvmlDeviceGetCount()):
+            handle = pynvml.nvmlDeviceGetHandleByIndex(idx)
+            uuid_raw = pynvml.nvmlDeviceGetUUID(handle)
+            uuid = uuid_raw.decode() if isinstance(uuid_raw, bytes) else uuid_raw
+            try:
+                free[uuid] = int(pynvml.nvmlDeviceGetMemoryInfo(handle).free)
+            except pynvml.NVMLError:
+                continue
+    except pynvml.NVMLError:
+        return {}
+    return free
+
+
 def collect_hw(*, bandwidth_bytes_per_sec: float | None = None) -> WorkerHardware:
     # CPU
     cpu = CPUInfo(
@@ -129,19 +158,26 @@ def collect_hw(*, bandwidth_bytes_per_sec: float | None = None) -> WorkerHardwar
             gpu_uses_unified_memory = _device_uses_unified_memory(idx, name)
             unified_memory = unified_memory or gpu_uses_unified_memory
             mem_total: int | None = None
+            mem_free: int | None = None
             if not gpu_uses_unified_memory:
                 try:
-                    mem_total_raw = pynvml.nvmlDeviceGetMemoryInfo(handle).total
+                    info = pynvml.nvmlDeviceGetMemoryInfo(handle)
+                    mem_total_raw = info.total
+                    mem_free_raw = info.free
                 except pynvml.NVMLError:
                     mem_total_raw = None
+                    mem_free_raw = None
                 if mem_total_raw:
                     mem_total = int(mem_total_raw)
+                if mem_free_raw is not None:
+                    mem_free = int(mem_free_raw)
             devices.append(
                 GpuInfo(
                     index=idx,
                     name=name,
                     uuid=uuid,
                     memory_total_bytes=mem_total,
+                    memory_free_bytes=mem_free,
                 )
             )
     except pynvml.NVMLError:

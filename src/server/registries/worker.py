@@ -1,3 +1,4 @@
+import datetime
 import json
 from collections.abc import Iterable, Sequence
 from typing import Any
@@ -19,6 +20,7 @@ from shared.tasks.worker_message import (
     WorkerTaskMessage,
 )
 from shared.utils import new_worker_id, now_iso, parse_mem_to_bytes
+from shared.utils.time import parse_iso_datetime
 from shared.utils.hardware import (
     normalize_gpu_type,
     parse_gpu_memory_bytes,
@@ -56,6 +58,47 @@ end
 redis.call('HSET', KEYS[2], unpack(ARGV, 2))
 return 1
 """
+
+
+# How long a free-VRAM reading stays usable. Deliberately generous relative to
+# the heartbeat interval: a worker that has gone quiet is about to be reaped
+# anyway, and treating a merely-late reading as authoritative would exclude a
+# perfectly good GPU. When the reading expires we fall back to the
+# registration-time view, i.e. exactly the behaviour before this existed.
+GPU_FREE_MEMORY_TTL_SEC = 300
+
+
+def _merge_gpu_free_memory(
+    hardware: "WorkerHardware | None",
+    free_by_uuid: dict[str, Any],
+    ts: str | None,
+) -> None:
+    """Apply a heartbeat's free-VRAM reading onto the worker's device list.
+
+    No-op when the reading is missing or stale, so an older worker that never
+    reports it, or one whose heartbeats stopped, schedules exactly as before.
+    """
+    if hardware is None or not free_by_uuid or not ts:
+        return
+    try:
+        seen = parse_iso_datetime(ts)
+        if seen is None:
+            return
+        if seen.tzinfo is None:
+            seen = seen.replace(tzinfo=datetime.UTC)
+        age = (datetime.datetime.now(datetime.UTC) - seen).total_seconds()
+    except Exception:
+        return
+    if age < 0 or age > GPU_FREE_MEMORY_TTL_SEC:
+        return
+    for device in hardware.gpu.devices:
+        raw = free_by_uuid.get(device.uuid)
+        if raw is None:
+            continue
+        try:
+            device.memory_free_bytes = int(raw)
+        except (TypeError, ValueError):
+            continue
 
 
 def _flatten_fields(mapping: dict[str, str]) -> list[str]:
@@ -508,6 +551,27 @@ class WorkerRegistry:
         seq = await self._rds.asyncio.incr(WORKER_ID_SEQ_KEY)
         return new_worker_id(seq)
 
+    def record_gpu_free_memory(
+        self, worker_id: str, free_by_uuid: dict[str, int], ts: str
+    ) -> bool:
+        """Store the live free-VRAM reading that rode in on a heartbeat.
+
+        Kept OUT of ``hardware_json`` on purpose. That blob is the worker's
+        registration-time description of itself and should stay immutable; this
+        is a fast-moving observation with a timestamp, and merging them only at
+        read time (see ``_merge_gpu_free_memory``) means a stale reading expires
+        instead of silently becoming part of the worker's identity.
+        """
+        if not free_by_uuid:
+            return False
+        return self._set_worker_fields(
+            worker_id,
+            {
+                "gpu_free_json": json.dumps(free_by_uuid, ensure_ascii=False),
+                "gpu_free_ts": ts,
+            },
+        )
+
     def _set_worker_fields(self, worker_id: str, mapping: dict[str, str]) -> bool:
         wrote = self._rds.sync.eval(
             _SET_FIELDS_IF_REGISTERED,
@@ -717,6 +781,11 @@ def _parse_worker_from_redis(
         None
         if hardware_json is None
         else WorkerHardware.model_validate_json(hardware_json)
+    )
+    _merge_gpu_free_memory(
+        hardware,
+        _loads(value.get("gpu_free_json"), {}),
+        value.get("gpu_free_ts"),
     )
     capabilities_json = value.get("capabilities_json")
     capabilities = (

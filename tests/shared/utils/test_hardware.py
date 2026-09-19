@@ -12,6 +12,7 @@ from shared.tasks.worker_message import (
     WorkerHardware,
 )
 from shared.utils.hardware import (
+    gpu_device_is_claimed,
     gpu_device_matches,
     gpu_type_pattern,
     normalize_gpu_type,
@@ -81,6 +82,72 @@ class TestParseGpuMemoryBytes:
 
     def test_unparsable_string_returns_none(self) -> None:
         assert parse_gpu_memory_bytes("garbage") is None
+
+
+class TestClaimedGpuIsNotOffered:
+    """Regression for the 2026-09-19 office incident.
+
+    The NVIDIA device plugin gave luyao0's GPU 0 to the sandbox pod
+    `sbx-official-dev`, which held 43.63 of 47.37 GiB. FlowMesh counts only its
+    own tasks, so `wkr-141` still reported IDLE and the node still reported
+    `current_gpu_count: 0`. Three Lumilake jobs in a row were placed there and
+    died in vLLM init, while `wkr-140` -- the same box, same card, GPU 1 -- sat
+    free with 4 MiB used.
+    """
+
+    def _device(
+        self,
+        *,
+        total: int = 48 * 1024**3,
+        free: int | None = None,
+        name: str = "NVIDIA RTX 6000 Ada Generation",
+    ) -> GpuInfo:
+        return GpuInfo(
+            index=0,
+            name=name,
+            uuid="GPU-da09fb0d",
+            memory_total_bytes=total,
+            memory_free_bytes=free,
+        )
+
+    def test_the_incident_card_is_refused_with_no_memory_constraint(self) -> None:
+        # The jobs that failed carried NO gpu_memory requirement. A check that
+        # only compares against `min_memory_bytes` short-circuits on None and
+        # admits this card, which is exactly what happened.
+        claimed = self._device(free=18 * 1024**2)  # 18.94 MiB free, measured
+        assert gpu_device_is_claimed(claimed) is True
+        assert gpu_device_matches(claimed) is False
+
+    def test_its_free_sibling_is_still_offered(self) -> None:
+        free_card = self._device(free=49_000 * 1024**2)  # GPU 1, 4 MiB used
+        assert gpu_device_is_claimed(free_card) is False
+        assert gpu_device_matches(free_card) is True
+
+    def test_unreported_free_memory_changes_nothing(self) -> None:
+        # Older workers and hosts without NVML report None. They must schedule
+        # exactly as before, or this fix strands the fleet it was meant to help.
+        legacy = self._device(free=None)
+        assert gpu_device_is_claimed(legacy) is False
+        assert gpu_device_matches(legacy) is True
+        assert gpu_device_matches(legacy, min_memory_bytes=40 * 1024**3) is True
+
+    def test_free_memory_beats_total_when_a_size_is_requested(self) -> None:
+        # 48 GiB card with 8 GiB left: big enough on paper, not in reality.
+        partly_used = self._device(free=8 * 1024**3)
+        assert gpu_device_matches(partly_used, min_memory_bytes=40 * 1024**3) is False
+        assert gpu_device_matches(partly_used, min_memory_bytes=4 * 1024**3) is True
+
+    def test_claimed_beats_a_satisfiable_request(self) -> None:
+        # Even a tiny request must not land on a card someone else holds.
+        claimed = self._device(free=18 * 1024**2)
+        assert gpu_device_matches(claimed, min_memory_bytes=1024) is False
+
+    def test_scheduler_skips_the_claimed_card_and_picks_the_free_one(self) -> None:
+        devices = [
+            self._device(free=18 * 1024**2),  # GPU 0 -- sandbox holds it
+            self._device(free=49_000 * 1024**2),  # GPU 1 -- free
+        ]
+        assert select_matching_gpu_indices(devices, GPURequirements(count=1)) == [1]
 
 
 class TestGpuDeviceMatches:

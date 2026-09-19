@@ -15,6 +15,8 @@ from shared.schemas.worker import SSHLimits, WorkerCapabilities
 from shared.tasks.worker_message import WorkerHardware, WorkerStatus
 from shared.utils.time import now_iso
 
+from .hw import sample_gpu_free_bytes
+
 from .power import PowerMonitor
 from .relay import EndpointRegistry, RelayClient
 from .supervisor_client import SupervisorClient
@@ -49,6 +51,18 @@ class Lifecycle:
 
     def _metrics(self) -> dict[str, Any]:
         metrics: dict[str, Any] = {}
+        # Live free VRAM per GPU UUID. The scheduler uses this to skip a card
+        # that something outside FlowMesh is already holding -- a Kubernetes
+        # sandbox pod, typically, since the NVIDIA device plugin allocates whole
+        # GPUs and never tells FlowMesh. Sampled every heartbeat because the
+        # claim can appear hours after the worker registered. Best-effort: a
+        # failure here must never cost us a heartbeat, or the worker gets reaped.
+        try:
+            gpu_free = sample_gpu_free_bytes()
+            if gpu_free:
+                metrics["gpu_memory_free_bytes"] = gpu_free
+        except Exception:
+            pass
         uptime = None
         if self._started_ts is not None:
             uptime = max(0.0, time.time() - self._started_ts)
