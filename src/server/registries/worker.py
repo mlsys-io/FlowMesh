@@ -686,6 +686,20 @@ def dedicated_gpu_memory_total_bytes(hw: WorkerHardware | None) -> int:
     return total
 
 
+def _parse_status(raw: str | None) -> WorkerStatus:
+    """Parse a stored status, mapping values this host does not know to UNKNOWN.
+
+    Workers can run a newer build than the host. Raising here would make every
+    registry read of that worker fail — including the dispatcher's candidate
+    scan — so an unrecognised status degrades to UNKNOWN, which is simply not
+    dispatchable.
+    """
+    try:
+        return WorkerStatus(raw or "UNKNOWN")
+    except ValueError:
+        return WorkerStatus.UNKNOWN
+
+
 def _parse_worker_from_redis(
     worker_id: str, value: dict[str, Any] | None
 ) -> Worker | None:
@@ -755,7 +769,7 @@ def _parse_worker_from_redis(
         node_id=value.get("node_id", ""),
         node_alias=value.get("node_alias", ""),
         version=value.get("version"),
-        status=WorkerStatus(value.get("status", "UNKNOWN")),
+        status=_parse_status(value.get("status")),
         started_at=value.get("started_at"),
         pid=pid,
         env=env,

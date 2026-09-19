@@ -10,6 +10,10 @@ class WorkerStatus(StrEnum):
     STARTING = "STARTING"
     IDLE = "IDLE"
     BUSY = "BUSY"
+    # No task running, but the GPU is held by a process outside FlowMesh (a
+    # Kubernetes pod, a bare vLLM server, a training script). Not dispatchable:
+    # the dispatcher only picks IDLE workers. See worker/gpu_occupancy.py.
+    UNAVAILABLE = "UNAVAILABLE"
 
 
 class SSHBackendName(StrEnum):
