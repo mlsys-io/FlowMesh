@@ -20,13 +20,13 @@ from shared.tasks.worker_message import (
     WorkerTaskMessage,
 )
 from shared.utils import new_worker_id, now_iso, parse_mem_to_bytes
-from shared.utils.time import parse_iso_datetime
 from shared.utils.hardware import (
     normalize_gpu_type,
     parse_gpu_memory_bytes,
     select_matching_gpu_indices,
     unified_gpu_memory_satisfies,
 )
+from shared.utils.time import parse_iso_datetime
 
 from ..clients.redis import (
     WORKER_EVENT_CHANNEL,

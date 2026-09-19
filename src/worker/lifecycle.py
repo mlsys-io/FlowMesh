@@ -16,7 +16,6 @@ from shared.tasks.worker_message import WorkerHardware, WorkerStatus
 from shared.utils.time import now_iso
 
 from .hw import sample_gpu_free_bytes
-
 from .power import PowerMonitor
 from .relay import EndpointRegistry, RelayClient
 from .supervisor_client import SupervisorClient
