@@ -8,6 +8,7 @@ from pydantic import Field, ValidationError
 
 from shared.schemas.artifact import ArtifactContext, ArtifactRef
 from shared.schemas.result import (
+    APIItem,
     APIResult,
     BaseExecutorResult,
     DataRetrievalItem,
@@ -190,3 +191,26 @@ def test_upstream_results_preserve_subclass_payload_over_the_wire() -> None:
     assert reloaded.upstreamResults is not None
     injected = reloaded.upstreamResults["echo-a"]
     assert injected.model_dump()["items"][0]["output"] == "literal_from_a"
+
+
+def test_api_item_round_trip_construct_serialize_validate() -> None:
+    """An APIItem built by field name round-trips through the worker's
+    serialization and the server's ingest validation."""
+    # mypy cannot see populate_by_name; the declared name is the json alias.
+    item = APIItem(  # type: ignore[call-arg]
+        index=0,
+        url="http://example.com/v1/chat/completions",
+        status_code=200,
+        response_json={"choices": [{"message": {"content": "hello"}}]},
+        text="hello",
+    )
+    wire = item.model_dump_json()
+    reloaded = APIItem.model_validate_json(wire)
+    assert reloaded.index == 0
+    assert reloaded.response_json["choices"][0]["message"]["content"] == "hello"
+    assert reloaded.text == "hello"
+    # The wire alias is still accepted on input.
+    by_alias = APIItem.model_validate(
+        {"index": 1, "url": "u", "status_code": 200, "json": {"a": 1}}
+    )
+    assert by_alias.response_json == {"a": 1}

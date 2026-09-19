@@ -71,24 +71,43 @@ contract.
 
 ## API task
 
-`taskType: api` performs a single HTTP request. By default it routes to the Nebula endpoint and authenticates with the worker's `NEBULA_API_TOKEN`.
+`taskType: api` issues one HTTP request per row of `spec.data`, in parallel,
+and returns the responses row-aligned in `APIResult.items`. A single request
+is a one-row `spec.data`. `spec.data` is required, exactly as for the vLLM
+executor; it supports the same data types (`list`, `dataset`, `graph_template`,
+`dataframe`).
+
+By default it routes to the Nebula endpoint and authenticates with the worker's `NEBULA_API_TOKEN`.
 
 `spec.api.url` overrides the endpoint; when absent, the executor uses `NEBULA_API_BASE_URL` (appending `/v1/chat/completions`). `spec.api.headers` may supply an `Authorization` header directly.
 
 Credential handling: a caller-supplied `Authorization` header is always used as-is and never overwritten. With no header, `NEBULA_API_TOKEN` is injected only when the call is on the Nebula url (no custom `spec.api.url`) — the Nebula token is never sent to a custom endpoint. A Nebula-path call with no token available fails closed.
 
+Each row's prompt is substituted for the `{{prompt}}` placeholder in the
+request body. Server-side stage references are `${...}`; `{{prompt}}` is a
+worker-side per-row slot, so it is not touched by server-side resolution. A
+failure in any row fails the whole task rather than shifting the remaining
+rows. `spec.api.concurrency` bounds the number of in-flight requests and is
+capped at 8 (the default); values above 8 are clamped down. Cancelling the
+task prevents not-yet-started rows from issuing and marks the task cancelled
+once in-flight requests return; a request already inside the HTTP call is not
+interrupted.
+
 ```yaml
 spec:
   taskType: api
+  data:
+    type: list
+    items:
+      - Explain vector databases
+      - Explain attention
   api:
     method: POST
-    headers:
-      Content-Type: application/json
     body:
       model: gpt-4o
       messages:
         - role: user
-          content: Hello
+          content: "{{prompt}}"
     response:
       parse_json: true
 ```
