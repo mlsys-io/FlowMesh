@@ -451,12 +451,7 @@ def test_api_dependent_stage_resolves_first_row_text(tmp_path: Path) -> None:
 
 
 def test_translated_n8n_dependent_api_stage_resolves(tmp_path: Path) -> None:
-    """A translated n8n workflow's dependent API stage resolves end to end.
-
-    The injected ${Upstream.items.0.text} placeholder reads the upstream
-    stage's first-row text through the dispatcher, covering the n8n
-    production change through to stage resolution.
-    """
+    """A translated n8n workflow's dependent API stage resolves end to end."""
     payload = {
         "nodes": [
             {

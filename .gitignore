@@ -181,5 +181,3 @@ dump.rdb
 
 plugins/
 plugin-data/
-# Isolated e2e stack env (contains a live credential)
-.env.apibatch
