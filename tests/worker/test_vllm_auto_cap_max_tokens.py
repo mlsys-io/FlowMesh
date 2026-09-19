@@ -1,8 +1,5 @@
-"""Tests for vLLM max_tokens auto-capping.
-
-The pure clamp (``_auto_capped_max_tokens``) is builtins-only and runs without
-vllm/torch. The wiring (``_auto_cap_sampling_params``) is exercised with a bare
-instance + fakes, so it also needs no GPU deps.
+"""Tests for vLLM max_tokens auto-capping — the pure clamp, plus the wiring
+around it, which runs on a bare instance with fakes and needs no GPU deps.
 """
 
 from collections.abc import Callable
@@ -19,7 +16,7 @@ from worker.executors.vllm_executor import (
 
 # ── pure clamp ───────────────────────────────────────────────────────────
 def test_clamp_fits_output_to_window() -> None:
-    # the field bug: 65536 requested on a 40960 window with an 8193-tok prompt
+    # the field bug: 65536 requested, 40960 window, 8193-tok prompt
     assert _auto_capped_max_tokens(65536, 8193, 40960) == 40960 - 8193 - 16
 
 
@@ -33,14 +30,11 @@ def test_clamp_untouched_when_request_already_fits() -> None:
 
 
 def test_clamp_floors_when_prompt_at_or_over_window() -> None:
-    # prompt at/over the window → floor; vLLM then raises the honest
-    # "maximum context length" error rather than us hiding it.
     assert _auto_capped_max_tokens(65536, 40960, 40960) == _AUTO_CAP_MIN_OUTPUT
     assert _auto_capped_max_tokens(65536, 50000, 40960) == _AUTO_CAP_MIN_OUTPUT
 
 
 def test_clamp_never_exceeds_requested_even_below_floor() -> None:
-    # a below-floor request stays capped at the request, never raised to floor
     assert _auto_capped_max_tokens(8, 40950, 40960) == 8
 
 
@@ -57,7 +51,6 @@ def _executor_with(
     )
 
     def _encode(s: str) -> list[int]:
-        # tok_len may be a constant or a per-prompt callable.
         return [0] * (tok_len(s) if callable(tok_len) else tok_len)
 
     ex._get_tokenizer = lambda: SimpleNamespace(  # type: ignore[method-assign]
@@ -69,8 +62,7 @@ def _executor_with(
 def _sp(max_tokens: int) -> MagicMock:
     sp = MagicMock()
     sp.max_tokens = max_tokens
-    # A fresh clone per call, mirroring SamplingParams.clone()'s deep copy —
-    # a shared mock would let one clamp overwrite another.
+    # fresh clone per call; a shared mock would let one clamp overwrite another
     sp.clone.side_effect = lambda: SimpleNamespace(max_tokens=None)
     return sp
 
@@ -84,7 +76,8 @@ def test_wiring_returns_shared_object_when_window_unknown() -> None:
 
 
 def test_wiring_returns_shared_object_when_nothing_clamped() -> None:
-    ex = _executor_with(40960, ["a", "b"], 10)  # 10 + 512 << 40960
+    # short prompts and a small request sit well within the window
+    ex = _executor_with(40960, ["a", "b"], 10)
     sp = _sp(512)
     out, capped = ex._auto_cap_sampling_params(sp)
     assert out is sp
@@ -101,7 +94,7 @@ def test_wiring_builds_per_prompt_list_and_clamps() -> None:
 
 
 def test_wiring_leaves_multimodal_prompts_at_requested() -> None:
-    # non-str (TextPrompt-shaped) entries keep the requested budget
+    # non-str entries are multimodal and keep the requested budget
     ex = _executor_with(40960, [{"prompt": "x", "multi_modal_data": {}}], 8193)
     sp = _sp(65536)
     out, capped = ex._auto_cap_sampling_params(sp)
@@ -110,8 +103,7 @@ def test_wiring_leaves_multimodal_prompts_at_requested() -> None:
 
 
 def test_wiring_clamps_only_the_oversized_prompt_in_a_mixed_batch() -> None:
-    # requested=35000 fits after the 10-tok prompt but not the 8193-tok one, so
-    # "big" clamps while "small" fits and shares the original object.
+    # requested=35000 fits after the 10-tok prompt but not the 8193-tok one
     ex = _executor_with(40960, ["big", "small"], lambda s: 8193 if s == "big" else 10)
     sp = _sp(35000)
     out, capped = ex._auto_cap_sampling_params(sp)
