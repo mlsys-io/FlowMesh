@@ -79,6 +79,16 @@ class GpuInfo(BaseModel):
     name: str = Field(description="GPU name.")
     uuid: str = Field(description="GPU UUID.")
     memory_total_bytes: int | None = Field(description="Total GPU memory in bytes.")
+    memory_free_bytes: int | None = Field(
+        default=None,
+        description=(
+            "Free GPU memory in bytes as of the worker's last heartbeat, or None "
+            "when the worker does not report it (older workers, or NVML "
+            "unavailable). This is what makes a co-tenanted card visible: the "
+            "device plugin can hand a GPU to a Kubernetes pod without FlowMesh "
+            "knowing, and only the free-memory reading reveals it."
+        ),
+    )
 
 
 class GpuPlatformInfo(BaseModel):

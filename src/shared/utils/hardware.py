@@ -37,6 +37,32 @@ def parse_gpu_memory_bytes(value: str | int | float | None) -> int | None:
     return int(value)
 
 
+# A card with less than this free is treated as claimed by something outside
+# FlowMesh and is not offered to the scheduler. Nothing we run fits in under a
+# gigabyte -- vLLM cannot even build its KV cache -- so excluding such a device
+# can never cost us a placement that would have succeeded.
+GPU_CLAIMED_FREE_FLOOR_BYTES = 1 << 30
+
+
+def gpu_device_is_claimed(device: GpuInfo) -> bool:
+    """True when another tenant already holds this GPU.
+
+    FlowMesh does not allocate GPUs on these nodes; the NVIDIA device plugin
+    hands whole cards to Kubernetes pods and tells FlowMesh nothing. A worker
+    therefore reports itself IDLE with a card that is entirely spoken for, and
+    the scheduler -- which counted only its own tasks -- kept placing work on it.
+    Free VRAM is the one signal visible from inside the worker's container: it
+    cannot see pod identity, but it can see that the memory is gone.
+
+    Unknown (``None``) means "not reported", NOT "claimed". Older workers and
+    hosts without NVML must keep scheduling exactly as they did.
+    """
+    free = device.memory_free_bytes
+    if free is None:
+        return False
+    return free < GPU_CLAIMED_FREE_FLOOR_BYTES
+
+
 def gpu_device_matches(
     device: GpuInfo,
     *,
@@ -46,9 +72,20 @@ def gpu_device_matches(
     """Per-device predicate; ``None`` arg means 'no constraint'."""
     if type_pattern is not None and not type_pattern.search(device.name or ""):
         return False
-    return (
-        min_memory_bytes is None or (device.memory_total_bytes or 0) >= min_memory_bytes
-    )
+    # Checked BEFORE the memory constraint, and independently of it. The jobs
+    # that exposed this carried no `gpu_memory` requirement at all, so a purely
+    # threshold-based test short-circuits on `min_memory_bytes is None` and
+    # admits a card with 19 MiB free.
+    if gpu_device_is_claimed(device):
+        return False
+    if min_memory_bytes is None:
+        return True
+    # Prefer what is actually available; fall back to total when the worker
+    # does not report free memory.
+    available = device.memory_free_bytes
+    if available is None:
+        available = device.memory_total_bytes or 0
+    return available >= min_memory_bytes
 
 
 def unified_gpu_memory_satisfies(
