@@ -1,5 +1,5 @@
 import time
-from typing import Any
+from typing import Any, cast
 
 from pydantic import (
     AliasChoices,
@@ -12,12 +12,30 @@ from pydantic import (
     computed_field,
     model_serializer,
 )
+from pydantic.main import IncEx
+from pydantic_core.core_schema import IncExCall
 
 from shared.tasks import TaskEnvelopeTemplate, TaskSpecTemplate
 from shared.tasks.worker_message import HardwareUsage
 from shared.utils.redact import redact_raw_yaml
 
 from ..utils.time import now_iso
+
+
+def _descend_field_filter(selector: IncExCall, *path: str) -> IncExCall:
+    """Descend a pydantic exclude selector to a nested field path.
+
+    Return the sub-selector at ``path`` only when it is a set or mapping that
+    ``model_dump`` accepts; otherwise None — the field is unfiltered, or
+    excluded wholesale (handled by the caller's presence check) and never a
+    bare bool, which ``model_dump`` rejects as a selector.
+    """
+    for key in path:
+        if not isinstance(selector, dict):
+            return None
+        selector = selector.get(key)
+    return selector if isinstance(selector, (set, dict)) else None
+
 
 TRAINING_TASK_TYPES = {
     "sft",
@@ -203,6 +221,12 @@ class TaskRecord(BaseModel):
                 mode=info.mode,
                 by_alias=info.by_alias,
                 exclude_none=info.exclude_none,
+                # info.exclude is typed IncExCall; model_dump expects the
+                # equivalent IncEx — same runtime shapes, distinct aliases.
+                exclude=cast(
+                    IncEx | None,
+                    _descend_field_filter(info.exclude, "task", "spec"),
+                ),
             )
         return data
 

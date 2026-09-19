@@ -337,6 +337,20 @@ class TestTaskRecordSerializer:
         assert "source" not in dumped
         assert dumped["task"]["spec"]["api"]["headers"]["Authorization"] == REDACTED
 
+    def test_dump_honors_nested_exclude_within_spec(self) -> None:
+        rec = _record({"headers": {"Authorization": "Bearer SECRET"}})
+        dumped = rec.model_dump(exclude={"task": {"spec": {"api"}}})["task"]["spec"]
+        assert "api" not in dumped
+
+    def test_nested_exclude_keeps_other_fields_redacted(self) -> None:
+        rec = _record({"headers": {"Authorization": "Bearer SECRET"}})
+        dumped = rec.model_dump(exclude={"task": {"spec": {"output"}}})["task"]["spec"]
+        assert dumped["api"]["headers"]["Authorization"] == REDACTED
+
+    def test_nested_exclude_true_drops_whole_spec_field(self) -> None:
+        rec = _record({"headers": {"Authorization": "Bearer SECRET"}})
+        assert "spec" not in rec.model_dump(exclude={"task": {"spec": True}})["task"]
+
     def test_spec_dump_honors_by_alias(self) -> None:
         rec = _record({"headers": {"Authorization": "Bearer SECRET"}})
         spec = rec.model_dump(by_alias=True)["task"]["spec"]
