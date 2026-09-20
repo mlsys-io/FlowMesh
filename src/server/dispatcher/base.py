@@ -415,6 +415,7 @@ class Dispatcher:
         rendered_children: list[MergedChildTaskStrict] | None = None
         if record.merged_children:
             rendered_children = []
+            redacted_children: list[str] = []
             for child_id in record.merged_children:
                 if not child_id:
                     self._runtime.release_merge(task_id)
@@ -462,20 +463,8 @@ class Dispatcher:
                     )
                     return True
                 if resolved_child_task.spec.has_redacted_credentials():
-                    self._runtime.release_merge(task_id)
-                    self.fail_task(
-                        task_id,
-                        "credential_not_retained",
-                        payload={
-                            "error": (
-                                "a merged child task credential was not retained "
-                                "across the server restart; resubmit the workflow "
-                                "with the credential"
-                            ),
-                            "child_task_id": child_id,
-                        },
-                    )
-                    return True
+                    redacted_children.append(child_id)
+                    continue
                 try:
                     rendered_children.append(
                         MergedChildTaskStrict(
@@ -494,6 +483,23 @@ class Dispatcher:
                         payload={"error": str(exc), "child_task_id": child_id},
                     )
                     return True
+
+            # Fail only the redacted child and dispatch the parent with its
+            # remaining valid children, rather than sinking the whole batch.
+            for child_id in redacted_children:
+                self._runtime.drop_merged_child(task_id, child_id)
+                self.fail_task(
+                    child_id,
+                    "credential_not_retained",
+                    payload={
+                        "error": (
+                            "a task credential was not retained across the server "
+                            "restart; resubmit the workflow with the credential"
+                        )
+                    },
+                )
+            if not rendered_children:
+                rendered_children = None
 
         # 7. Build WorkerTaskMessage
         message = WorkerTaskMessage(

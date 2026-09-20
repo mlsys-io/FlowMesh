@@ -803,6 +803,29 @@ class TaskRuntime:
         self._persist_locked(task_id, *children)
         self._cv.notify_all()
 
+    def drop_merged_child(self, parent_id: str, child_id: str) -> None:
+        """Sever a merged child from its parent without requeuing it.
+
+        The caller is expected to terminate the child independently; this only
+        unlinks it so the parent dispatches with its remaining children.
+        """
+        with self._cv:
+            children = self._merge_children_map.get(parent_id)
+            if children and child_id in children:
+                children.remove(child_id)
+                if not children:
+                    self._merge_children_map.pop(parent_id, None)
+            parent = self._tasks.get(parent_id)
+            if parent and parent.merged_children:
+                remaining = [c for c in parent.merged_children if c != child_id]
+                parent.merged_children = remaining or None
+            self._merge_parent_map.pop(child_id, None)
+            child_record = self._tasks.get(child_id)
+            if child_record:
+                child_record.merged_parent_id = None
+                child_record.merge_slice = None
+            self._persist_locked(parent_id)
+
     def _finalize_merged_child_success(
         self,
         child_id: str,
