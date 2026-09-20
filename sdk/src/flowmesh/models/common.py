@@ -41,12 +41,17 @@ TERMINAL_WORKFLOW_STATUSES = frozenset(
 
 
 class WorkerStatus(StrEnum):
+    UNKNOWN = "UNKNOWN"
     STARTING = "STARTING"
     IDLE = "IDLE"
     BUSY = "BUSY"
+    UNAVAILABLE = "UNAVAILABLE"
     STOPPING = "STOPPING"
     STOPPED = "STOPPED"
-    UNKNOWN = "UNKNOWN"
+
+    @classmethod
+    def _missing_(cls, value: object) -> Any:
+        return cls.UNKNOWN
 
 
 class TaskType(StrEnum):

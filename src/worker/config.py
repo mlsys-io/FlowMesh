@@ -19,6 +19,7 @@ from shared.utils.parsing import (
     parse_mem_to_bytes,
 )
 
+from .gpu_occupancy import GpuGateConfig
 from .utils.health import get_hb_config
 
 
@@ -53,6 +54,7 @@ class WorkerConfig:
     ssh_session_backend: str = "auto"
     ssh_direct_host: str | None = None
     enable_unisolated_ssh_session: bool = False
+    foreign_gpu_gate: GpuGateConfig = GpuGateConfig()
 
     @staticmethod
     def from_env() -> "WorkerConfig":
@@ -159,6 +161,12 @@ class WorkerConfig:
         enable_unisolated_ssh_session = parse_bool_env(
             "ENABLE_UNISOLATED_SSH_SESSION", False
         )
+        foreign_gpu_gate = GpuGateConfig(
+            enabled=parse_bool_env("WORKER_FOREIGN_GPU_GATE", True),
+            threshold_mib=max(1, parse_int_env("WORKER_FOREIGN_GPU_MEM_MIB", 1024)),
+            consecutive=max(1, parse_int_env("WORKER_FOREIGN_GPU_CONSECUTIVE", 2)),
+            grace_sec=max(0.0, parse_float_env("WORKER_FOREIGN_GPU_GRACE_SEC", 90.0)),
+        )
 
         return WorkerConfig(
             worker_token=worker_token,
@@ -190,4 +198,5 @@ class WorkerConfig:
             ssh_session_backend=ssh_session_backend,
             ssh_direct_host=ssh_direct_host,
             enable_unisolated_ssh_session=enable_unisolated_ssh_session,
+            foreign_gpu_gate=foreign_gpu_gate,
         )

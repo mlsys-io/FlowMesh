@@ -268,6 +268,14 @@ def test_enum_members_match(server_enum: type, sdk_enum: type) -> None:
 
 def test_worker_status_superset() -> None:
     """SDK WorkerStatus covers all expected values."""
-    expected = {"STARTING", "IDLE", "BUSY", "STOPPING", "STOPPED", "UNKNOWN"}
+    expected = {
+        "STARTING",
+        "IDLE",
+        "BUSY",
+        "UNAVAILABLE",
+        "STOPPING",
+        "STOPPED",
+        "UNKNOWN",
+    }
     sdk_values = {m.value for m in WorkerStatus}
     assert expected <= sdk_values

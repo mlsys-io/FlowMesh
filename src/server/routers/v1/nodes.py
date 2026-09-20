@@ -313,7 +313,11 @@ async def _fetch_node_workers(
     for worker in raw_workers:
         worker["node_id"] = node_id
 
-    # Convert registered worker status
+    # Only workers that have a registry id are remapped from their registry
+    # status below. A worker without one is not registered yet: its node-reported
+    # supervisor status passes through as-is, and any value NodeWorkerStatus does
+    # not know (e.g. the supervisor's RUNNING) degrades to UNKNOWN rather than
+    # failing validation.
     registered_workers: list[dict[str, Any]] = [
         worker for worker in raw_workers if worker["id"] is not None
     ]
@@ -326,10 +330,14 @@ async def _fetch_node_workers(
         else:
             worker["version"] = record.version
             match record.status:
-                case WorkerStatus.STARTING | WorkerStatus.UNKNOWN:
+                case WorkerStatus.UNKNOWN:
+                    new_status = NodeWorkerStatus.UNKNOWN
+                case WorkerStatus.STARTING:
                     new_status = NodeWorkerStatus.STARTING
                 case WorkerStatus.BUSY:
                     new_status = NodeWorkerStatus.BUSY
+                case WorkerStatus.UNAVAILABLE:
+                    new_status = NodeWorkerStatus.UNAVAILABLE
                 case WorkerStatus.IDLE:
                     new_status = NodeWorkerStatus.IDLE
                 case _:

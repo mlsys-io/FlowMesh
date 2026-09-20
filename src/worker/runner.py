@@ -78,6 +78,15 @@ class Runner:
         self._cancel_lock = threading.Lock()
         self._shutdown_requested = threading.Event()
 
+    def has_active_executor(self) -> bool:
+        """Whether an executor is currently loaded.
+
+        Executors stay warm between tasks (indefinitely when idle cleanup is
+        off), so an active one may still be holding GPU memory of its own. Read
+        lock-free: the foreign-GPU gate only needs a best-effort snapshot.
+        """
+        return self._active_executor is not None
+
     def _cancel_active_executor(self) -> None:
         with self._active_executor_lock:
             executor = self._active_executor

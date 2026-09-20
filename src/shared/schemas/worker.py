@@ -1,4 +1,5 @@
 from enum import StrEnum
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -10,6 +11,13 @@ class WorkerStatus(StrEnum):
     STARTING = "STARTING"
     IDLE = "IDLE"
     BUSY = "BUSY"
+    # Registered and alive, but temporarily not dispatchable. The dispatcher
+    # only picks IDLE workers.
+    UNAVAILABLE = "UNAVAILABLE"
+
+    @classmethod
+    def _missing_(cls, value: object) -> Any:
+        return cls.UNKNOWN
 
 
 class SSHBackendName(StrEnum):

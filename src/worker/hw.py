@@ -88,7 +88,11 @@ def _cuda_device_is_integrated(device_index: int) -> bool | None:
     return bool(value.value)
 
 
-def _device_uses_unified_memory(device_index: int, name: str) -> bool:
+def device_uses_unified_memory(device_index: int, name: str) -> bool:
+    """Return whether a visible GPU uses the host's shared memory pool.
+
+    CUDA's integrated-device attribute takes precedence over the device-name fallback.
+    """
     integrated = _cuda_device_is_integrated(device_index)
     if integrated is not None:
         return integrated
@@ -126,7 +130,7 @@ def collect_hw(*, bandwidth_bytes_per_sec: float | None = None) -> WorkerHardwar
             uuid_raw = pynvml.nvmlDeviceGetUUID(handle)
             name = name_raw.decode() if isinstance(name_raw, bytes) else name_raw
             uuid = uuid_raw.decode() if isinstance(uuid_raw, bytes) else uuid_raw
-            gpu_uses_unified_memory = _device_uses_unified_memory(idx, name)
+            gpu_uses_unified_memory = device_uses_unified_memory(idx, name)
             unified_memory = unified_memory or gpu_uses_unified_memory
             mem_total: int | None = None
             if not gpu_uses_unified_memory:

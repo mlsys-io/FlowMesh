@@ -593,6 +593,39 @@ STACK_ENV_SCHEMA = EnvSchema(
                 EnvVar(
                     "CUDA_VISIBLE_DEVICES", "all", var_type=EnvVarType.CSV_INTS_OR_ALL
                 ),
+                EnvVar(
+                    "WORKER_FOREIGN_GPU_GATE",
+                    "true",
+                    description=[
+                        "Report an idle worker as unavailable when another process "
+                        "uses its GPU.",
+                    ],
+                    var_type=EnvVarType.BOOL,
+                ),
+                EnvVar(
+                    "WORKER_FOREIGN_GPU_MEM_MIB",
+                    "1024",
+                    description="Foreign GPU-memory threshold in MiB.",
+                    var_type=EnvVarType.INT,
+                    min_value=1,
+                ),
+                EnvVar(
+                    "WORKER_FOREIGN_GPU_CONSECUTIVE",
+                    "2",
+                    description=[
+                        "Consecutive occupancy readings required to change "
+                        "availability.",
+                    ],
+                    var_type=EnvVarType.INT,
+                    min_value=1,
+                ),
+                EnvVar(
+                    "WORKER_FOREIGN_GPU_GRACE_SEC",
+                    "90",
+                    description="Delay occupancy checks after a worker task completes.",
+                    var_type=EnvVarType.FLOAT,
+                    min_value=0,
+                ),
                 EnvVar("WORKER_UPLOAD_RESULTS", "false", var_type=EnvVarType.BOOL),
                 EnvVar(
                     "WORKER_EXECUTOR_IDLE_CLEANUP_SEC",
