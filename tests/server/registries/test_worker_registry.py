@@ -6,6 +6,7 @@ from server.registries.worker import (
     capability_satisfies,
     hw_satisfies,
 )
+from server.schemas.node import NodeWorkerStatus
 from shared.schemas.worker import SSHLimits, WorkerCapabilities, WorkerStatus
 from shared.tasks import TaskEnvelopeStrict
 from shared.tasks.components.resources import (
@@ -312,3 +313,9 @@ class TestParseStatus:
         w = _parse_worker_from_redis("w-1", {"status": "SOME_FUTURE_STATE"})
         assert w is not None
         assert w.status is WorkerStatus.UNKNOWN
+
+    def test_node_worker_status_degrades_instead_of_raising(self) -> None:
+        # Node worker listings validate an unregistered worker's status
+        # straight from the node's report, so an unrecognised value must
+        # degrade rather than 500 the endpoint.
+        assert NodeWorkerStatus("RUNNING") is NodeWorkerStatus.UNKNOWN

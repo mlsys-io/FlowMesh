@@ -15,11 +15,17 @@ class WorkerRegisterResponse(BaseModel):
 
 
 class NodeWorkerStatus(StrEnum):
+    UNKNOWN = "UNKNOWN"
     STARTING = "STARTING"
     IDLE = "IDLE"
     BUSY = "BUSY"
+    UNAVAILABLE = "UNAVAILABLE"
     STOPPING = "STOPPING"
     STOPPED = "STOPPED"
+
+    @classmethod
+    def _missing_(cls, value: object) -> Any:
+        return cls.UNKNOWN
 
 
 class CPUInfo(BaseModel):
