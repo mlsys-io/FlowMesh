@@ -267,6 +267,24 @@ class TestDockerWorkerRuntimeSelection:
 
         assert environment["DOCKER_GPU_RUNTIME"] == "nvidia"
 
+    def test_worker_environment_forwards_foreign_gpu_gate_settings(self) -> None:
+        worker = self._worker()
+        worker.config = DockerWorkerConfig(
+            worker_type=WorkerType.GPU,
+            cuda_devices=[3],
+            foreign_gpu_gate=False,
+            foreign_gpu_mem_mib=2048,
+            foreign_gpu_consecutive=5,
+            foreign_gpu_grace_sec=12.0,
+        )
+
+        environment = worker._base_environment()
+
+        assert environment["WORKER_FOREIGN_GPU_GATE"] == "0"
+        assert environment["WORKER_FOREIGN_GPU_MEM_MIB"] == "2048"
+        assert environment["WORKER_FOREIGN_GPU_CONSECUTIVE"] == "5"
+        assert environment["WORKER_FOREIGN_GPU_GRACE_SEC"] == "12.0"
+
 
 class TestCapacityChangeReporting:
     def _run(self, coro: object) -> object:  # type: ignore[return]

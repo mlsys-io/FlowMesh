@@ -75,6 +75,15 @@ class WorkerConfig(BaseModel):
     is unspecified."""
     executor_idle_cleanup_sec: float = env.WORKER_EXECUTOR_IDLE_CLEANUP_SEC
     """Seconds an executor may sit idle before the worker unloads it"""
+    foreign_gpu_gate: bool = env.WORKER_FOREIGN_GPU_GATE
+    """Whether an idle GPU worker reports UNAVAILABLE when its GPU is held
+    by a process outside FlowMesh"""
+    foreign_gpu_mem_mib: int = env.WORKER_FOREIGN_GPU_MEM_MIB
+    """Foreign GPU-memory threshold in MiB above which the gate trips"""
+    foreign_gpu_consecutive: int = env.WORKER_FOREIGN_GPU_CONSECUTIVE
+    """Consecutive occupancy readings required to change availability"""
+    foreign_gpu_grace_sec: float = env.WORKER_FOREIGN_GPU_GRACE_SEC
+    """Seconds to skip occupancy checks after a task ends"""
 
 
 WorkerTokenType = NewType("WorkerTokenType", str)
@@ -167,6 +176,12 @@ class WorkerAdapter(ABC):
             "WORKER_EXECUTOR_IDLE_CLEANUP_SEC": to_env_str(
                 config.executor_idle_cleanup_sec
             ),
+            "WORKER_FOREIGN_GPU_GATE": to_env_str(config.foreign_gpu_gate),
+            "WORKER_FOREIGN_GPU_MEM_MIB": to_env_str(config.foreign_gpu_mem_mib),
+            "WORKER_FOREIGN_GPU_CONSECUTIVE": to_env_str(
+                config.foreign_gpu_consecutive
+            ),
+            "WORKER_FOREIGN_GPU_GRACE_SEC": to_env_str(config.foreign_gpu_grace_sec),
             "DOCKER_GPU_RUNTIME": to_env_str(env.DOCKER_GPU_RUNTIME),
             "FLOWMESH_API_KEY": to_env_str(env.FLOWMESH_API_KEY),
             "WORKER_OWNER_PRINCIPAL_JSON": self.owner.model_dump_json(),
