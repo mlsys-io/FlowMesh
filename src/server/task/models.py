@@ -14,6 +14,7 @@ from pydantic import (
 
 from shared.tasks import TaskEnvelopeTemplate, TaskSpecTemplate
 from shared.tasks.worker_message import HardwareUsage
+from shared.utils.pydantic_utils import copy_preserving_fields_set
 from shared.utils.redact import redact_raw_yaml
 
 from ..utils.time import now_iso
@@ -197,11 +198,14 @@ class TaskRecord(BaseModel):
         task untouched while every dump option — ``by_alias``, ``exclude``/``include``,
         ``exclude_unset``, ``exclude_none`` — applies to the redacted output natively.
         """
-        redacted = self.model_copy(
-            update={
+        redacted = copy_preserving_fields_set(
+            self,
+            {
                 "source": self._redact_source(),
-                "task": self.task.model_copy(update={"spec": self._redact_spec()}),
-            }
+                "task": copy_preserving_fields_set(
+                    self.task, {"spec": self._redact_spec()}
+                ),
+            },
         )
         return handler(redacted)
 

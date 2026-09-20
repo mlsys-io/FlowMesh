@@ -1,8 +1,9 @@
 from typing import Any, Self
 
-from pydantic import BaseModel, Field, SerializeAsAny, model_validator
+from pydantic import Field, SerializeAsAny, model_validator
 
 from ...schemas.result import BaseExecutorResult
+from ...utils.pydantic_utils import copy_preserving_fields_set
 from ...utils.redact import has_redacted_credential_fields, redact_credential_fields
 from .._base import StrictBaseModel, TemplateBaseModel
 from ..components import (
@@ -65,22 +66,6 @@ def _validate_condition_depends_on[T: "TaskSpecStrictBase | TaskSpecTemplateBase
     if node not in dependency_names:
         raise ValueError(f"condition.node '{condition.node}' must appear in dependsOn.")
     return spec
-
-
-def copy_preserving_fields_set[M: BaseModel](model: M, update: dict[str, Any]) -> M:
-    """``model_copy(update=...)`` that preserves the original fields-set.
-
-    Redaction only rewrites values of fields that already exist, so the copy must
-    not report new fields as set — otherwise ``exclude_unset`` dumps would surface
-    fields the caller never set.
-    """
-    copy = model.model_copy(update=update)
-    # Bypass pydantic's __setattr__ (which rejects writes to the internal
-    # __pydantic_fields_set__) to set it directly, as pydantic does internally.
-    object.__setattr__(
-        copy, "__pydantic_fields_set__", set(model.__pydantic_fields_set__)
-    )
-    return copy
 
 
 def _redact_output(

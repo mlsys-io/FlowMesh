@@ -1,8 +1,9 @@
 from typing import Any, Literal, Self
 
+from ...utils.pydantic_utils import copy_preserving_fields_set
 from ...utils.redact import has_redacted_credential_fields, redact_credential_fields
 from ..task_type import TaskType
-from .common import TaskSpecStrictBase, TaskSpecTemplateBase, copy_preserving_fields_set
+from .common import TaskSpecStrictBase, TaskSpecTemplateBase
 
 
 class RagSpecStrict(TaskSpecStrictBase):

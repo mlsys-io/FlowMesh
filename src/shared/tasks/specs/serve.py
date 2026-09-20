@@ -2,9 +2,10 @@ from typing import Annotated, Literal, Self
 
 from pydantic import Field
 
+from ...utils.pydantic_utils import copy_preserving_fields_set
 from ...utils.redact import contains_redacted, redact_credential
 from ..task_type import TaskType
-from .common import ModelSpecStrict, ModelSpecTemplate, copy_preserving_fields_set
+from .common import ModelSpecStrict, ModelSpecTemplate
 
 
 class ServeSpecStrict(ModelSpecStrict):

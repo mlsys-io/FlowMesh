@@ -2,6 +2,7 @@ from typing import Any, Literal, Self
 
 from pydantic import model_validator
 
+from ...utils.pydantic_utils import copy_preserving_fields_set
 from ...utils.redact import (
     contains_redacted,
     has_redacted_credential_fields,
@@ -11,7 +12,7 @@ from ...utils.redact import (
 from .._base import StrictBaseModel, TemplateBaseModel
 from ..placeholders import TemplateInt
 from ..task_type import TaskType
-from .common import TaskSpecStrictBase, TaskSpecTemplateBase, copy_preserving_fields_set
+from .common import TaskSpecStrictBase, TaskSpecTemplateBase
 
 
 class SSHInputSpec(StrictBaseModel):

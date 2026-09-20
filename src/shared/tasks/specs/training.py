@@ -2,10 +2,11 @@ from typing import Any, Literal, Self
 
 from pydantic import model_validator
 
+from ...utils.pydantic_utils import copy_preserving_fields_set
 from ...utils.redact import has_redacted_credential_fields, redact_credential_fields
 from ..placeholders import TemplateInt
 from ..task_type import TaskType
-from .common import ModelSpecStrict, ModelSpecTemplate, copy_preserving_fields_set
+from .common import ModelSpecStrict, ModelSpecTemplate
 
 
 class TrainingSpecStrict(ModelSpecStrict):
