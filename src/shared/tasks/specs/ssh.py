@@ -1,7 +1,14 @@
-from typing import Any, Literal
+from typing import Any, Literal, Self
 
 from pydantic import model_validator
 
+from ...utils.pydantic_utils import copy_preserving_fields_set
+from ...utils.redact import (
+    contains_redacted,
+    has_redacted_credential_fields,
+    redact_credential,
+    redact_credential_fields,
+)
 from .._base import StrictBaseModel, TemplateBaseModel
 from ..placeholders import TemplateInt
 from ..task_type import TaskType
@@ -118,6 +125,23 @@ class SSHSpecStrict(TaskSpecStrictBase):
     sshOutput: SSHOutputSpec | None = None
     env: dict[str, Any] | None = None
 
+    def redact_credentials(self) -> Self:
+        spec = super().redact_credentials()
+        return copy_preserving_fields_set(
+            spec,
+            {
+                "authorizedKeys": redact_credential(spec.authorizedKeys),
+                "env": redact_credential_fields(spec.env),
+            },
+        )
+
+    def has_redacted_credentials(self) -> bool:
+        return (
+            super().has_redacted_credentials()
+            or contains_redacted(self.authorizedKeys)
+            or has_redacted_credential_fields(self.env)
+        )
+
     @model_validator(mode="after")
     def _resolve_and_validate(self) -> "SSHSpecStrict":
         _resolve_interactive(self)
@@ -140,6 +164,23 @@ class SSHSpecTemplate(TaskSpecTemplateBase):
     inputs: list[SSHInputSpec] | None = None
     sshOutput: SSHOutputSpecTemplate | None = None
     env: dict[str, Any] | None = None
+
+    def redact_credentials(self) -> Self:
+        spec = super().redact_credentials()
+        return copy_preserving_fields_set(
+            spec,
+            {
+                "authorizedKeys": redact_credential(spec.authorizedKeys),
+                "env": redact_credential_fields(spec.env),
+            },
+        )
+
+    def has_redacted_credentials(self) -> bool:
+        return (
+            super().has_redacted_credentials()
+            or contains_redacted(self.authorizedKeys)
+            or has_redacted_credential_fields(self.env)
+        )
 
     @model_validator(mode="after")
     def _resolve_and_validate(self) -> "SSHSpecTemplate":

@@ -752,6 +752,7 @@ class TaskRuntime:
 
         record.merged_children = siblings
         self._merge_children_map[task_id] = siblings.copy()
+        dispatched_by_workflow: dict[str, list[str]] = defaultdict(list)
         for sibling in siblings:
             self._merge_parent_map[sibling] = task_id
             self._remove_from_ready_locked(sibling)
@@ -762,11 +763,21 @@ class TaskRuntime:
                 sibling_record.merged_parent_id = task_id
                 sibling_record.assigned_worker = None
                 sibling_record.merge_slice = None
-        self._workflow_registry.commit_transition(
-            record.workflow_id,
-            records=self._records_locked(task_id, *siblings),
-            dispatched=siblings,
-        )
+                dispatched_by_workflow[sibling_record.workflow_id].append(sibling)
+        # Siblings can belong to other workflows, so each workflow's dispatch
+        # membership commits under that workflow; the parent's record rides in its
+        # own workflow's commit.
+        for workflow_id, ids in dispatched_by_workflow.items():
+            record_ids = [task_id, *ids] if workflow_id == record.workflow_id else ids
+            self._workflow_registry.commit_transition(
+                workflow_id,
+                records=self._records_locked(*record_ids),
+                dispatched=ids,
+            )
+        if record.workflow_id not in dispatched_by_workflow:
+            self._workflow_registry.commit_transition(
+                record.workflow_id, records=self._records_locked(task_id)
+            )
 
         return siblings
 
@@ -802,6 +813,53 @@ class TaskRuntime:
                 self._enqueue_ready_locked(child_id, front=True)
         self._persist_locked(task_id, *children)
         self._cv.notify_all()
+
+    def fail_merged_children(
+        self, parent_id: str, child_ids: list[str], reason: str
+    ) -> tuple[list[str], list[tuple[str, str]]]:
+        """Unlink the named merged children from their parent and fail them.
+
+        Each child is failed with its dependent-failure cascade. The failed records
+        persist before the parent's unlink (children-first), and failures spanning
+        workflows commit one transaction each, so a crash can only leave a child
+        durably failed while the parent still lists it as merged — reconciled on the
+        parent's next dispatch — never the parent unlinked from a child not yet
+        failed. Returns the failed child ids and the impacted ``(dependent_id,
+        reason)`` pairs so the caller can emit events.
+        """
+        finished_ts = time.time()
+        with self._cv:
+            parent = self._tasks.get(parent_id)
+            children_map = self._merge_children_map.get(parent_id)
+            drop_ids = set(child_ids)
+            failed: list[str] = []
+            impacted: list[tuple[str, str]] = []
+            for child_id in child_ids:
+                if children_map and child_id in children_map:
+                    children_map.remove(child_id)
+                child_record = self._tasks.get(child_id)
+                if not child_record or child_record.status in TERMINAL_TASK_STATUSES:
+                    self._merge_parent_map.pop(child_id, None)
+                    continue
+                impacted.extend(
+                    self._finalize_merged_child_failure(
+                        child_id, reason, finished_ts, None, None
+                    )
+                )
+                failed.append(child_id)
+            if children_map is not None and not children_map:
+                self._merge_children_map.pop(parent_id, None)
+            if parent and parent.merged_children:
+                parent.merged_children = [
+                    c for c in parent.merged_children if c not in drop_ids
+                ] or None
+            # Children can span workflows, so persist each workflow's failures
+            # atomically, then the parent's unlink last (children-first is crash-safe).
+            self._persist_terminal_locked(*failed, *(dep for dep, _ in impacted))
+            if parent is not None:
+                self._persist_locked(parent_id)
+            self._cv.notify_all()
+            return failed, impacted
 
     def _finalize_merged_child_success(
         self,

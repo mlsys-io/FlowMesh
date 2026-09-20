@@ -1,7 +1,7 @@
 """Redacts credential-shaped fields from an object before it is serialized.
 
 Applies a key-based rule: any header, parameter, or nested field whose name
-looks like a credential (see ``is_sensitive_key``) has its value replaced with
+looks like a credential (see ``is_credential_key``) has its value replaced with
 a fixed marker. Callers keep an unredacted copy for in-process use and apply
 this module only at the serialization boundary.
 
@@ -19,39 +19,83 @@ import yaml
 REDACTED = "[REDACTED]"
 
 # Whole-key matches; a bare substring test would over-redact (e.g. "monkey").
-_SENSITIVE_KEYS = frozenset(
+_CREDENTIAL_KEYS = frozenset(
     {
         "authorization",
+        "authorizedkeys",
+        "cert_data",
+        "certificate",
+        "connection_string",
         "token",
         "api-key",
         "api_key",
         "apikey",
+        "credential",
+        "credentials",
+        "password",
+        "passwd",
+        "private_key",
         "secret",
         "access_token",
         "bearer",
         "x-api-key",
     }
 )
-_SENSITIVE_SUFFIXES = ("_key", "-key", "_token", "-token")
+_CREDENTIAL_SUFFIXES = (
+    "_key",
+    "-key",
+    "_password",
+    "-password",
+    "_secret",
+    "-secret",
+    "_token",
+    "-token",
+)
+_CREDENTIAL_COMBINATIONS = frozenset(
+    {
+        "access_key",
+        "api_key",
+        "auth_key",
+        "credential_key",
+        "private_key",
+        "secret_key",
+    }
+)
 
 
-def is_sensitive_key(name: str) -> bool:
+def is_credential_key(name: str) -> bool:
     """Whether a header/param name carries a credential value."""
     lowered = name.lower()
-    if lowered in _SENSITIVE_KEYS:
+    if lowered in _CREDENTIAL_KEYS:
         return True
-    return any(lowered.endswith(suffix) for suffix in _SENSITIVE_SUFFIXES)
+    if any(lowered.endswith(suffix) for suffix in _CREDENTIAL_SUFFIXES):
+        return True
+    normalized = lowered.replace("-", "_")
+    return any(combination in normalized for combination in _CREDENTIAL_COMBINATIONS)
 
 
-def _redact_value(value: Any) -> Any:
+def redact_credential(value: Any) -> Any:
+    """Redact a known credential while preserving omission and list shape."""
+    if value is None:
+        return None
+    if isinstance(value, list):
+        return [REDACTED]
+    return REDACTED
+
+
+def redact_credential_fields(value: Any) -> Any:
     """Recursively redact credential values by key name at any depth."""
     if isinstance(value, dict):
         return {
-            key: (REDACTED if is_sensitive_key(str(key)) else _redact_value(val))
+            key: (
+                redact_credential(val)
+                if is_credential_key(str(key))
+                else redact_credential_fields(val)
+            )
             for key, val in value.items()
         }
     if isinstance(value, list):
-        return [_redact_value(item) for item in value]
+        return [redact_credential_fields(item) for item in value]
     return value
 
 
@@ -66,20 +110,20 @@ def contains_redacted(value: Any) -> bool:
     return False
 
 
-def redact_api(api: dict[str, Any] | None) -> dict[str, Any] | None:
-    """Return a copy of an api spec with credential values replaced.
-
-    Only the five credential-bearing locations are touched; the rest of the
-    spec is returned unchanged. The original mapping is never mutated.
-    """
-    if not isinstance(api, dict):
-        return api
-    redacted = dict(api)
-    for field in ("headers", "params", "body", "json", "data"):
-        value = redacted.get(field)
-        if isinstance(value, (dict, list)):
-            redacted[field] = _redact_value(value)
-    return redacted
+def has_redacted_credential_fields(value: Any) -> bool:
+    """Whether a redacted placeholder occurs under a credential-shaped key."""
+    if isinstance(value, dict):
+        return any(
+            (
+                contains_redacted(item)
+                if is_credential_key(str(key))
+                else has_redacted_credential_fields(item)
+            )
+            for key, item in value.items()
+        )
+    if isinstance(value, list):
+        return any(has_redacted_credential_fields(item) for item in value)
+    return False
 
 
 def redact_raw_yaml(raw_yaml: str) -> str:
@@ -95,4 +139,4 @@ def redact_raw_yaml(raw_yaml: str) -> str:
         return REDACTED
     if tree is None:
         return raw_yaml
-    return yaml.safe_dump(_redact_value(tree), sort_keys=False)
+    return yaml.safe_dump(redact_credential_fields(tree), sort_keys=False)

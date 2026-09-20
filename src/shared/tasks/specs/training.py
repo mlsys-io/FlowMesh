@@ -1,7 +1,9 @@
-from typing import Any, Literal
+from typing import Any, Literal, Self
 
 from pydantic import model_validator
 
+from ...utils.pydantic_utils import copy_preserving_fields_set
+from ...utils.redact import has_redacted_credential_fields, redact_credential_fields
 from ..placeholders import TemplateInt
 from ..task_type import TaskType
 from .common import ModelSpecStrict, ModelSpecTemplate
@@ -11,10 +13,40 @@ class TrainingSpecStrict(ModelSpecStrict):
     data: dict[str, Any] | None = None
     training: dict[str, Any] | None = None
 
+    def redact_credentials(self) -> Self:
+        spec = super().redact_credentials()
+        return copy_preserving_fields_set(
+            spec,
+            {
+                "data": redact_credential_fields(spec.data),
+                "training": redact_credential_fields(spec.training),
+            },
+        )
+
+    def has_redacted_credentials(self) -> bool:
+        return super().has_redacted_credentials() or has_redacted_credential_fields(
+            {"data": self.data, "training": self.training}
+        )
+
 
 class TrainingSpecTemplate(ModelSpecTemplate):
     data: dict[str, Any] | None = None
     training: dict[str, Any] | None = None
+
+    def redact_credentials(self) -> Self:
+        spec = super().redact_credentials()
+        return copy_preserving_fields_set(
+            spec,
+            {
+                "data": redact_credential_fields(spec.data),
+                "training": redact_credential_fields(spec.training),
+            },
+        )
+
+    def has_redacted_credentials(self) -> bool:
+        return super().has_redacted_credentials() or has_redacted_credential_fields(
+            {"data": self.data, "training": self.training}
+        )
 
 
 class SFTSpecStrict(TrainingSpecStrict):
@@ -22,11 +54,33 @@ class SFTSpecStrict(TrainingSpecStrict):
 
     checkpoint: dict[str, Any] | None = None
 
+    def redact_credentials(self) -> Self:
+        spec = super().redact_credentials()
+        return copy_preserving_fields_set(
+            spec, {"checkpoint": redact_credential_fields(spec.checkpoint)}
+        )
+
+    def has_redacted_credentials(self) -> bool:
+        return super().has_redacted_credentials() or has_redacted_credential_fields(
+            self.checkpoint
+        )
+
 
 class SFTSpecTemplate(TrainingSpecTemplate):
     taskType: Literal[TaskType.SFT]
 
     checkpoint: dict[str, Any] | None = None
+
+    def redact_credentials(self) -> Self:
+        spec = super().redact_credentials()
+        return copy_preserving_fields_set(
+            spec, {"checkpoint": redact_credential_fields(spec.checkpoint)}
+        )
+
+    def has_redacted_credentials(self) -> bool:
+        return super().has_redacted_credentials() or has_redacted_credential_fields(
+            self.checkpoint
+        )
 
 
 class LoRASFTSpecStrict(TrainingSpecStrict):
@@ -36,6 +90,21 @@ class LoRASFTSpecStrict(TrainingSpecStrict):
     checkpoint: dict[str, Any] | None = None
     sloSeconds: int | None = None
 
+    def redact_credentials(self) -> Self:
+        spec = super().redact_credentials()
+        return copy_preserving_fields_set(
+            spec,
+            {
+                "lora": redact_credential_fields(spec.lora),
+                "checkpoint": redact_credential_fields(spec.checkpoint),
+            },
+        )
+
+    def has_redacted_credentials(self) -> bool:
+        return super().has_redacted_credentials() or has_redacted_credential_fields(
+            {"lora": self.lora, "checkpoint": self.checkpoint}
+        )
+
 
 class LoRASFTSpecTemplate(TrainingSpecTemplate):
     taskType: Literal[TaskType.LORA_SFT]
@@ -44,6 +113,21 @@ class LoRASFTSpecTemplate(TrainingSpecTemplate):
     checkpoint: dict[str, Any] | None = None
     sloSeconds: TemplateInt | None = None
 
+    def redact_credentials(self) -> Self:
+        spec = super().redact_credentials()
+        return copy_preserving_fields_set(
+            spec,
+            {
+                "lora": redact_credential_fields(spec.lora),
+                "checkpoint": redact_credential_fields(spec.checkpoint),
+            },
+        )
+
+    def has_redacted_credentials(self) -> bool:
+        return super().has_redacted_credentials() or has_redacted_credential_fields(
+            {"lora": self.lora, "checkpoint": self.checkpoint}
+        )
+
 
 class PPOSpecStrict(TrainingSpecStrict):
     taskType: Literal[TaskType.PPO]
@@ -51,12 +135,42 @@ class PPOSpecStrict(TrainingSpecStrict):
     reward_model: dict[str, Any] | None = None
     generation: dict[str, Any] | None = None
 
+    def redact_credentials(self) -> Self:
+        spec = super().redact_credentials()
+        return copy_preserving_fields_set(
+            spec,
+            {
+                "reward_model": redact_credential_fields(spec.reward_model),
+                "generation": redact_credential_fields(spec.generation),
+            },
+        )
+
+    def has_redacted_credentials(self) -> bool:
+        return super().has_redacted_credentials() or has_redacted_credential_fields(
+            {"reward_model": self.reward_model, "generation": self.generation}
+        )
+
 
 class PPOSpecTemplate(TrainingSpecTemplate):
     taskType: Literal[TaskType.PPO]
 
     reward_model: dict[str, Any] | None = None
     generation: dict[str, Any] | None = None
+
+    def redact_credentials(self) -> Self:
+        spec = super().redact_credentials()
+        return copy_preserving_fields_set(
+            spec,
+            {
+                "reward_model": redact_credential_fields(spec.reward_model),
+                "generation": redact_credential_fields(spec.generation),
+            },
+        )
+
+    def has_redacted_credentials(self) -> bool:
+        return super().has_redacted_credentials() or has_redacted_credential_fields(
+            {"reward_model": self.reward_model, "generation": self.generation}
+        )
 
 
 class DPOSpecStrict(TrainingSpecStrict):
@@ -79,6 +193,17 @@ class ImageClassificationTrainingSpecStrict(TrainingSpecStrict):
 
     checkpoint: dict[str, Any] | None = None
 
+    def redact_credentials(self) -> Self:
+        spec = super().redact_credentials()
+        return copy_preserving_fields_set(
+            spec, {"checkpoint": redact_credential_fields(spec.checkpoint)}
+        )
+
+    def has_redacted_credentials(self) -> bool:
+        return super().has_redacted_credentials() or has_redacted_credential_fields(
+            self.checkpoint
+        )
+
     @model_validator(mode="after")
     def _require_model(self) -> "ImageClassificationTrainingSpecStrict":
         _require_image_classification_model(self.model_name)
@@ -89,6 +214,17 @@ class ImageClassificationTrainingSpecTemplate(TrainingSpecTemplate):
     taskType: Literal[TaskType.IMAGE_CLASSIFICATION_TRAINING]
 
     checkpoint: dict[str, Any] | None = None
+
+    def redact_credentials(self) -> Self:
+        spec = super().redact_credentials()
+        return copy_preserving_fields_set(
+            spec, {"checkpoint": redact_credential_fields(spec.checkpoint)}
+        )
+
+    def has_redacted_credentials(self) -> bool:
+        return super().has_redacted_credentials() or has_redacted_credential_fields(
+            self.checkpoint
+        )
 
     @model_validator(mode="after")
     def _require_model(self) -> "ImageClassificationTrainingSpecTemplate":
