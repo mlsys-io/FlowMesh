@@ -75,6 +75,10 @@ Spark), set `DOCKER_GPU_RUNTIME=` in the stack env.
 | `WORKER_COST_PER_HOUR` | `1.0` | Cost metadata |
 | `WORKER_UPLOAD_RESULTS` | `false` | Upload results when no destination set |
 | `WORKER_EXECUTOR_IDLE_CLEANUP_SEC` | `60` | Seconds a worker waits before unloading an idle executor to release the resources it holds; higher values avoid reload thrash between tasks but keep those resources reserved while idle |
+| `WORKER_FOREIGN_GPU_GATE` | `true` | Report `UNAVAILABLE` when an idle worker GPU is in use outside FlowMesh |
+| `WORKER_FOREIGN_GPU_MEM_MIB` | `1024` | Foreign GPU-memory threshold in MiB |
+| `WORKER_FOREIGN_GPU_CONSECUTIVE` | `2` | Consecutive readings required before changing availability |
+| `WORKER_FOREIGN_GPU_GRACE_SEC` | `90` | Seconds to wait after a task ends before checking occupancy |
 | `HF_CACHE_DIR` | – | Shared HuggingFace cache mount |
 | `HEARTBEAT_INTERVAL_SEC` | `30` | Heartbeat cadence |
 | `SERVE_DEFAULT_TTL_SEC` | `3600` | Default vLLM serve session TTL when `spec.ttlSeconds` is unset |
