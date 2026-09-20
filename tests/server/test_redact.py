@@ -369,6 +369,21 @@ class TestTaskRecordSerializer:
         assert "resources" not in spec  # never set on this task
         assert spec["api"]["headers"]["Authorization"] == REDACTED
 
+        # Model-based specs redact via model_copy(update=...) on optional fields;
+        # that must not mark unset ones (data/inference/checkpoint, nested model
+        # config) as set, or they would surface here.
+        rec = _record_for_task(
+            _task(
+                "inference",
+                model={"source": {"identifier": "llama"}},
+                data={"lumid_data_token": "SECRET"},
+            )
+        )
+        spec = rec.model_dump(exclude_unset=True)["task"]["spec"]
+        assert set(spec) == {"taskType", "model", "data"}
+        assert spec["data"]["lumid_data_token"] == REDACTED  # set field still redacted
+        assert set(spec["model"]) == {"source"}  # nested config not spuriously set
+
     def test_spec_dump_honors_exclude_defaults(self) -> None:
         rec = _record({"headers": {"Authorization": "Bearer SECRET"}})
         spec = rec.model_dump(exclude_defaults=True)["task"]["spec"]

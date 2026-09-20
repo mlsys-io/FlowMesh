@@ -5,7 +5,7 @@ from pydantic import model_validator
 from ...utils.redact import has_redacted_credential_fields, redact_credential_fields
 from ..placeholders import TemplateInt
 from ..task_type import TaskType
-from .common import ModelSpecStrict, ModelSpecTemplate
+from .common import ModelSpecStrict, ModelSpecTemplate, redacted_copy
 
 
 class TrainingSpecStrict(ModelSpecStrict):
@@ -14,11 +14,12 @@ class TrainingSpecStrict(ModelSpecStrict):
 
     def redact_credentials(self) -> Self:
         spec = super().redact_credentials()
-        return spec.model_copy(
-            update={
+        return redacted_copy(
+            spec,
+            {
                 "data": redact_credential_fields(spec.data),
                 "training": redact_credential_fields(spec.training),
-            }
+            },
         )
 
     def has_redacted_credentials(self) -> bool:
@@ -33,11 +34,12 @@ class TrainingSpecTemplate(ModelSpecTemplate):
 
     def redact_credentials(self) -> Self:
         spec = super().redact_credentials()
-        return spec.model_copy(
-            update={
+        return redacted_copy(
+            spec,
+            {
                 "data": redact_credential_fields(spec.data),
                 "training": redact_credential_fields(spec.training),
-            }
+            },
         )
 
     def has_redacted_credentials(self) -> bool:
@@ -53,8 +55,8 @@ class SFTSpecStrict(TrainingSpecStrict):
 
     def redact_credentials(self) -> Self:
         spec = super().redact_credentials()
-        return spec.model_copy(
-            update={"checkpoint": redact_credential_fields(spec.checkpoint)}
+        return redacted_copy(
+            spec, {"checkpoint": redact_credential_fields(spec.checkpoint)}
         )
 
     def has_redacted_credentials(self) -> bool:
@@ -70,8 +72,8 @@ class SFTSpecTemplate(TrainingSpecTemplate):
 
     def redact_credentials(self) -> Self:
         spec = super().redact_credentials()
-        return spec.model_copy(
-            update={"checkpoint": redact_credential_fields(spec.checkpoint)}
+        return redacted_copy(
+            spec, {"checkpoint": redact_credential_fields(spec.checkpoint)}
         )
 
     def has_redacted_credentials(self) -> bool:
@@ -89,11 +91,12 @@ class LoRASFTSpecStrict(TrainingSpecStrict):
 
     def redact_credentials(self) -> Self:
         spec = super().redact_credentials()
-        return spec.model_copy(
-            update={
+        return redacted_copy(
+            spec,
+            {
                 "lora": redact_credential_fields(spec.lora),
                 "checkpoint": redact_credential_fields(spec.checkpoint),
-            }
+            },
         )
 
     def has_redacted_credentials(self) -> bool:
@@ -111,11 +114,12 @@ class LoRASFTSpecTemplate(TrainingSpecTemplate):
 
     def redact_credentials(self) -> Self:
         spec = super().redact_credentials()
-        return spec.model_copy(
-            update={
+        return redacted_copy(
+            spec,
+            {
                 "lora": redact_credential_fields(spec.lora),
                 "checkpoint": redact_credential_fields(spec.checkpoint),
-            }
+            },
         )
 
     def has_redacted_credentials(self) -> bool:
@@ -132,11 +136,12 @@ class PPOSpecStrict(TrainingSpecStrict):
 
     def redact_credentials(self) -> Self:
         spec = super().redact_credentials()
-        return spec.model_copy(
-            update={
+        return redacted_copy(
+            spec,
+            {
                 "reward_model": redact_credential_fields(spec.reward_model),
                 "generation": redact_credential_fields(spec.generation),
-            }
+            },
         )
 
     def has_redacted_credentials(self) -> bool:
@@ -153,11 +158,12 @@ class PPOSpecTemplate(TrainingSpecTemplate):
 
     def redact_credentials(self) -> Self:
         spec = super().redact_credentials()
-        return spec.model_copy(
-            update={
+        return redacted_copy(
+            spec,
+            {
                 "reward_model": redact_credential_fields(spec.reward_model),
                 "generation": redact_credential_fields(spec.generation),
-            }
+            },
         )
 
     def has_redacted_credentials(self) -> bool:
@@ -188,8 +194,8 @@ class ImageClassificationTrainingSpecStrict(TrainingSpecStrict):
 
     def redact_credentials(self) -> Self:
         spec = super().redact_credentials()
-        return spec.model_copy(
-            update={"checkpoint": redact_credential_fields(spec.checkpoint)}
+        return redacted_copy(
+            spec, {"checkpoint": redact_credential_fields(spec.checkpoint)}
         )
 
     def has_redacted_credentials(self) -> bool:
@@ -210,8 +216,8 @@ class ImageClassificationTrainingSpecTemplate(TrainingSpecTemplate):
 
     def redact_credentials(self) -> Self:
         spec = super().redact_credentials()
-        return spec.model_copy(
-            update={"checkpoint": redact_credential_fields(spec.checkpoint)}
+        return redacted_copy(
+            spec, {"checkpoint": redact_credential_fields(spec.checkpoint)}
         )
 
     def has_redacted_credentials(self) -> bool:

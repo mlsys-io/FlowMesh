@@ -11,7 +11,7 @@ from ...utils.redact import (
 from .._base import StrictBaseModel, TemplateBaseModel
 from ..placeholders import TemplateInt
 from ..task_type import TaskType
-from .common import TaskSpecStrictBase, TaskSpecTemplateBase
+from .common import TaskSpecStrictBase, TaskSpecTemplateBase, redacted_copy
 
 
 class SSHInputSpec(StrictBaseModel):
@@ -126,11 +126,12 @@ class SSHSpecStrict(TaskSpecStrictBase):
 
     def redact_credentials(self) -> Self:
         spec = super().redact_credentials()
-        return spec.model_copy(
-            update={
+        return redacted_copy(
+            spec,
+            {
                 "authorizedKeys": redact_credential(spec.authorizedKeys),
                 "env": redact_credential_fields(spec.env),
-            }
+            },
         )
 
     def has_redacted_credentials(self) -> bool:
@@ -165,11 +166,12 @@ class SSHSpecTemplate(TaskSpecTemplateBase):
 
     def redact_credentials(self) -> Self:
         spec = super().redact_credentials()
-        return spec.model_copy(
-            update={
+        return redacted_copy(
+            spec,
+            {
                 "authorizedKeys": redact_credential(spec.authorizedKeys),
                 "env": redact_credential_fields(spec.env),
-            }
+            },
         )
 
     def has_redacted_credentials(self) -> bool:

@@ -2,7 +2,7 @@ from typing import Any, Literal, Self
 
 from ...utils.redact import has_redacted_credential_fields, redact_credential_fields
 from ..task_type import TaskType
-from .common import ModelInferSpecStrict, ModelInferSpecTemplate
+from .common import ModelInferSpecStrict, ModelInferSpecTemplate, redacted_copy
 
 
 class OmniSpecStrict(ModelInferSpecStrict):
@@ -11,11 +11,12 @@ class OmniSpecStrict(ModelInferSpecStrict):
 
     def redact_credentials(self) -> Self:
         spec = super().redact_credentials()
-        return spec.model_copy(
-            update={
+        return redacted_copy(
+            spec,
+            {
                 "omni": redact_credential_fields(spec.omni),
                 "storyboard": redact_credential_fields(spec.storyboard),
-            }
+            },
         )
 
     def has_redacted_credentials(self) -> bool:
@@ -30,11 +31,12 @@ class OmniSpecTemplate(ModelInferSpecTemplate):
 
     def redact_credentials(self) -> Self:
         spec = super().redact_credentials()
-        return spec.model_copy(
-            update={
+        return redacted_copy(
+            spec,
+            {
                 "omni": redact_credential_fields(spec.omni),
                 "storyboard": redact_credential_fields(spec.storyboard),
-            }
+            },
         )
 
     def has_redacted_credentials(self) -> bool:

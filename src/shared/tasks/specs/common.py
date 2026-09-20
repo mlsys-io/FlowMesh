@@ -1,6 +1,6 @@
 from typing import Any, Self
 
-from pydantic import Field, SerializeAsAny, model_validator
+from pydantic import BaseModel, Field, SerializeAsAny, model_validator
 
 from ...schemas.result import BaseExecutorResult
 from ...utils.redact import has_redacted_credential_fields, redact_credential_fields
@@ -67,6 +67,20 @@ def _validate_condition_depends_on[T: "TaskSpecStrictBase | TaskSpecTemplateBase
     return spec
 
 
+def redacted_copy[M: BaseModel](model: M, update: dict[str, Any]) -> M:
+    """``model_copy(update=...)`` that preserves the original fields-set.
+
+    Redaction only rewrites values of fields that already exist, so the copy must
+    not report new fields as set — otherwise ``exclude_unset`` dumps would surface
+    fields the caller never set.
+    """
+    copy = model.model_copy(update=update)
+    object.__setattr__(
+        copy, "__pydantic_fields_set__", set(model.__pydantic_fields_set__)
+    )
+    return copy
+
+
 def _redact_output(
     output: OutputSpec | OutputSpecTemplate | None,
 ) -> OutputSpec | OutputSpecTemplate | None:
@@ -77,10 +91,10 @@ def _redact_output(
         isinstance(dest, (OutputDestinationHTTP, OutputDestinationHTTPTemplate))
         and dest.headers is not None
     ):
-        redacted_dest = dest.model_copy(
-            update={"headers": redact_credential_fields(dest.headers)}
+        redacted_dest = redacted_copy(
+            dest, {"headers": redact_credential_fields(dest.headers)}
         )
-        return output.model_copy(update={"destination": redacted_dest})
+        return redacted_copy(output, {"destination": redacted_dest})
     return output
 
 
@@ -132,7 +146,7 @@ class TaskSpecStrictBase(StrictBaseModel):
         redacted_output = _redact_output(self.output)
         if redacted_output is self.output:
             return self
-        return self.model_copy(update={"output": redacted_output})
+        return redacted_copy(self, {"output": redacted_output})
 
     def has_redacted_credentials(self) -> bool:
         """Whether this spec contains a redacted credential marker."""
@@ -178,7 +192,7 @@ class TaskSpecTemplateBase(TemplateBaseModel):
         redacted_output = _redact_output(self.output)
         if redacted_output is self.output:
             return self
-        return self.model_copy(update={"output": redacted_output})
+        return redacted_copy(self, {"output": redacted_output})
 
     def has_redacted_credentials(self) -> bool:
         """Whether this spec contains a redacted credential marker."""
@@ -196,22 +210,23 @@ def _redact_model_config(
     adapters = model.adapters
     redacted_adapters = (
         [
-            adapter.model_copy(
-                update={"headers": redact_credential_fields(adapter.headers)}
+            redacted_copy(
+                adapter, {"headers": redact_credential_fields(adapter.headers)}
             )
             for adapter in adapters
         ]
         if adapters is not None
         else None
     )
-    return model.model_copy(
-        update={
+    return redacted_copy(
+        model,
+        {
             "config": redact_credential_fields(model.config),
             "vllm": redact_credential_fields(model.vllm),
             "transformers": redact_credential_fields(model.transformers),
             "diffusers": redact_credential_fields(model.diffusers),
             "adapters": redacted_adapters,
-        }
+        },
     )
 
 
@@ -228,7 +243,7 @@ class ModelSpecStrict(TaskSpecStrictBase):
 
     def redact_credentials(self) -> Self:
         spec = super().redact_credentials()
-        return spec.model_copy(update={"model": _redact_model_config(spec.model)})
+        return redacted_copy(spec, {"model": _redact_model_config(spec.model)})
 
     def has_redacted_credentials(self) -> bool:
         return super().has_redacted_credentials() or _model_has_redacted_credentials(
@@ -260,7 +275,7 @@ class ModelSpecTemplate(TaskSpecTemplateBase):
 
     def redact_credentials(self) -> Self:
         spec = super().redact_credentials()
-        return spec.model_copy(update={"model": _redact_model_config(spec.model)})
+        return redacted_copy(spec, {"model": _redact_model_config(spec.model)})
 
     def has_redacted_credentials(self) -> bool:
         return super().has_redacted_credentials() or _model_has_redacted_credentials(
@@ -295,12 +310,13 @@ class ModelInferSpecStrict(ModelSpecStrict):
 
     def redact_credentials(self) -> Self:
         spec = super().redact_credentials()
-        return spec.model_copy(
-            update={
+        return redacted_copy(
+            spec,
+            {
                 "data": redact_credential_fields(spec.data),
                 "inference": redact_credential_fields(spec.inference),
                 "checkpoint": redact_credential_fields(spec.checkpoint),
-            }
+            },
         )
 
     def has_redacted_credentials(self) -> bool:
@@ -321,12 +337,13 @@ class ModelInferSpecTemplate(ModelSpecTemplate):
 
     def redact_credentials(self) -> Self:
         spec = super().redact_credentials()
-        return spec.model_copy(
-            update={
+        return redacted_copy(
+            spec,
+            {
                 "data": redact_credential_fields(spec.data),
                 "inference": redact_credential_fields(spec.inference),
                 "checkpoint": redact_credential_fields(spec.checkpoint),
-            }
+            },
         )
 
     def has_redacted_credentials(self) -> bool:

@@ -2,7 +2,7 @@ from typing import Any, Literal, Self
 
 from ...utils.redact import has_redacted_credential_fields, redact_credential_fields
 from ..task_type import TaskType
-from .common import TaskSpecStrictBase, TaskSpecTemplateBase
+from .common import TaskSpecStrictBase, TaskSpecTemplateBase, redacted_copy
 
 
 class RagSpecStrict(TaskSpecStrictBase):
@@ -16,13 +16,14 @@ class RagSpecStrict(TaskSpecStrictBase):
 
     def redact_credentials(self) -> Self:
         spec = super().redact_credentials()
-        return spec.model_copy(
-            update={
+        return redacted_copy(
+            spec,
+            {
                 "qdrant": redact_credential_fields(spec.qdrant),
                 "embedding": redact_credential_fields(spec.embedding),
                 "search": redact_credential_fields(spec.search),
                 "data": redact_credential_fields(spec.data),
-            }
+            },
         )
 
     def has_redacted_credentials(self) -> bool:
@@ -47,13 +48,14 @@ class RagSpecTemplate(TaskSpecTemplateBase):
 
     def redact_credentials(self) -> Self:
         spec = super().redact_credentials()
-        return spec.model_copy(
-            update={
+        return redacted_copy(
+            spec,
+            {
                 "qdrant": redact_credential_fields(spec.qdrant),
                 "embedding": redact_credential_fields(spec.embedding),
                 "search": redact_credential_fields(spec.search),
                 "data": redact_credential_fields(spec.data),
-            }
+            },
         )
 
     def has_redacted_credentials(self) -> bool:
