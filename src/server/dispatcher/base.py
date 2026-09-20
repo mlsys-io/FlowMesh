@@ -45,6 +45,12 @@ _SENTINEL: Any = object()
 _NO_WORKER_BACKOFF_SEC = 0.5
 _ERROR_BACKOFF_SEC = 1.0
 
+_CREDENTIAL_NOT_RETAINED = "credential_not_retained"
+_CREDENTIAL_NOT_RETAINED_MESSAGE = (
+    "a task credential was not retained across the server restart; "
+    "resubmit the workflow with the credential"
+)
+
 
 class StageReferenceNotReady(Exception):
     """Raised when a task references a stage whose artifacts are not yet available."""
@@ -397,13 +403,8 @@ class Dispatcher:
             self._runtime.release_merge(task_id)
             self.fail_task(
                 task_id,
-                "credential_not_retained",
-                payload={
-                    "error": (
-                        "a task credential was not retained across the server "
-                        "restart; resubmit the workflow with the credential"
-                    )
-                },
+                _CREDENTIAL_NOT_RETAINED,
+                payload={"error": _CREDENTIAL_NOT_RETAINED_MESSAGE},
             )
             return True
 
@@ -484,20 +485,30 @@ class Dispatcher:
                     )
                     return True
 
-            # Fail only the redacted child and dispatch the parent with its
-            # remaining valid children, rather than sinking the whole batch.
-            for child_id in redacted_children:
-                self._runtime.drop_merged_child(task_id, child_id)
-                self.fail_task(
-                    child_id,
-                    "credential_not_retained",
-                    payload={
-                        "error": (
-                            "a task credential was not retained across the server "
-                            "restart; resubmit the workflow with the credential"
-                        )
-                    },
+            # Fail every redacted child and its dependents, then dispatch the parent
+            # with its remaining valid children rather than sinking the whole batch.
+            if redacted_children:
+                failed_children, impacted = self._runtime.fail_merged_children(
+                    task_id, redacted_children, _CREDENTIAL_NOT_RETAINED
                 )
+                for child_id in failed_children:
+                    self._emit_task_event(
+                        "TASK_FAILED",
+                        child_id,
+                        payload={
+                            "error": _CREDENTIAL_NOT_RETAINED_MESSAGE,
+                            "is_child_task": True,
+                        },
+                        error=_CREDENTIAL_NOT_RETAINED,
+                        is_child=True,
+                    )
+                for dep_id, dep_reason in impacted:
+                    self._emit_task_event(
+                        "TASK_FAILED",
+                        dep_id,
+                        payload={"error": dep_reason},
+                        error=dep_reason,
+                    )
             if not rendered_children:
                 rendered_children = None
 

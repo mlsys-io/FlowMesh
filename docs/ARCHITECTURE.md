@@ -119,7 +119,14 @@ scripts/dev/            compile_protos, sync_requirements, check_env_examples
   Merged children ride on `WorkerTaskMessage.merged_children`; the worker
   writes per-child results into `result.children`; the dispatcher fans
   out synthetic `TASK_SUCCEEDED` / `TASK_FAILED` events. Disable with
-  `ENABLE_TASK_MERGE=false`.
+  `ENABLE_TASK_MERGE=false`. When only some children of a batch fail, they
+  fail individually with their dependents and the parent dispatches with its
+  remaining valid children. The failed children are persisted before the
+  parent's linkage update (children-first); durable state is per-workflow and a
+  batch can span workflows, so this cannot always be one atomic write. A crash
+  can then only leave a child durably failed while the parent still lists it as
+  merged — reconciled on the parent's next dispatch — never a live child
+  stranded under a parent that no longer lists it.
 - **Stage stickiness** (`ENABLE_STAGE_WEIGHT_STICKINESS=true`) — the
   dispatcher pins stages that reference an upstream stage's checkpoint
   to the worker that produced it, falling back to normal selection when

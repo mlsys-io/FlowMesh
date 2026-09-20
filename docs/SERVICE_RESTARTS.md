@@ -54,12 +54,13 @@ restart safe:
   A transition's task records, workflow status-set membership, and schedule
   snapshot are written as a single atomic Redis transaction
   (`WorkflowRegistry.commit_transition`), so a crash mid-persist commits the whole
-  transition or none of it. Credential-shaped values in task specs and
-  source are redacted in these durable records; a task whose credential was
-  redacted cannot be resumed after restart and fails with
-  `credential_not_retained`, so resubmit it with the credential. Event-driven
-  transitions are additionally healed by replay;
-  the API-driven workflow cancel relies on this atomicity alone.
+  transition or none of it. Credential-shaped values in task specs and source are
+  redacted in these durable records; a task whose credential was redacted cannot
+  be resumed after restart and fails with `credential_not_retained`, so resubmit
+  it with the credential. When it was a merged child, only that child and its
+  dependents fail while the parent dispatches its remaining valid children.
+  Event-driven transitions are additionally healed by replay; the API-driven
+  workflow cancel relies on this atomicity alone.
 - **Replayable task events.** Task lifecycle events flow through a durable Redis
   stream consumed from a persisted cursor. The ordering is what makes replay
   safe: a transition is written to durable scheduler state *before* its event is
