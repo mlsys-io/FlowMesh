@@ -5,7 +5,7 @@ from pydantic import model_validator
 from ...utils.redact import has_redacted_credential_fields, redact_credential_fields
 from ..placeholders import TemplateInt
 from ..task_type import TaskType
-from .common import ModelSpecStrict, ModelSpecTemplate, redacted_copy
+from .common import ModelSpecStrict, ModelSpecTemplate, copy_preserving_fields_set
 
 
 class TrainingSpecStrict(ModelSpecStrict):
@@ -14,7 +14,7 @@ class TrainingSpecStrict(ModelSpecStrict):
 
     def redact_credentials(self) -> Self:
         spec = super().redact_credentials()
-        return redacted_copy(
+        return copy_preserving_fields_set(
             spec,
             {
                 "data": redact_credential_fields(spec.data),
@@ -34,7 +34,7 @@ class TrainingSpecTemplate(ModelSpecTemplate):
 
     def redact_credentials(self) -> Self:
         spec = super().redact_credentials()
-        return redacted_copy(
+        return copy_preserving_fields_set(
             spec,
             {
                 "data": redact_credential_fields(spec.data),
@@ -55,7 +55,7 @@ class SFTSpecStrict(TrainingSpecStrict):
 
     def redact_credentials(self) -> Self:
         spec = super().redact_credentials()
-        return redacted_copy(
+        return copy_preserving_fields_set(
             spec, {"checkpoint": redact_credential_fields(spec.checkpoint)}
         )
 
@@ -72,7 +72,7 @@ class SFTSpecTemplate(TrainingSpecTemplate):
 
     def redact_credentials(self) -> Self:
         spec = super().redact_credentials()
-        return redacted_copy(
+        return copy_preserving_fields_set(
             spec, {"checkpoint": redact_credential_fields(spec.checkpoint)}
         )
 
@@ -91,7 +91,7 @@ class LoRASFTSpecStrict(TrainingSpecStrict):
 
     def redact_credentials(self) -> Self:
         spec = super().redact_credentials()
-        return redacted_copy(
+        return copy_preserving_fields_set(
             spec,
             {
                 "lora": redact_credential_fields(spec.lora),
@@ -114,7 +114,7 @@ class LoRASFTSpecTemplate(TrainingSpecTemplate):
 
     def redact_credentials(self) -> Self:
         spec = super().redact_credentials()
-        return redacted_copy(
+        return copy_preserving_fields_set(
             spec,
             {
                 "lora": redact_credential_fields(spec.lora),
@@ -136,7 +136,7 @@ class PPOSpecStrict(TrainingSpecStrict):
 
     def redact_credentials(self) -> Self:
         spec = super().redact_credentials()
-        return redacted_copy(
+        return copy_preserving_fields_set(
             spec,
             {
                 "reward_model": redact_credential_fields(spec.reward_model),
@@ -158,7 +158,7 @@ class PPOSpecTemplate(TrainingSpecTemplate):
 
     def redact_credentials(self) -> Self:
         spec = super().redact_credentials()
-        return redacted_copy(
+        return copy_preserving_fields_set(
             spec,
             {
                 "reward_model": redact_credential_fields(spec.reward_model),
@@ -194,7 +194,7 @@ class ImageClassificationTrainingSpecStrict(TrainingSpecStrict):
 
     def redact_credentials(self) -> Self:
         spec = super().redact_credentials()
-        return redacted_copy(
+        return copy_preserving_fields_set(
             spec, {"checkpoint": redact_credential_fields(spec.checkpoint)}
         )
 
@@ -216,7 +216,7 @@ class ImageClassificationTrainingSpecTemplate(TrainingSpecTemplate):
 
     def redact_credentials(self) -> Self:
         spec = super().redact_credentials()
-        return redacted_copy(
+        return copy_preserving_fields_set(
             spec, {"checkpoint": redact_credential_fields(spec.checkpoint)}
         )
 

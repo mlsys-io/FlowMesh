@@ -2,7 +2,11 @@ from typing import Any, Literal, Self
 
 from ...utils.redact import has_redacted_credential_fields, redact_credential_fields
 from ..task_type import TaskType
-from .common import ModelInferSpecStrict, ModelInferSpecTemplate, redacted_copy
+from .common import (
+    ModelInferSpecStrict,
+    ModelInferSpecTemplate,
+    copy_preserving_fields_set,
+)
 
 
 class OmniSpecStrict(ModelInferSpecStrict):
@@ -11,7 +15,7 @@ class OmniSpecStrict(ModelInferSpecStrict):
 
     def redact_credentials(self) -> Self:
         spec = super().redact_credentials()
-        return redacted_copy(
+        return copy_preserving_fields_set(
             spec,
             {
                 "omni": redact_credential_fields(spec.omni),
@@ -31,7 +35,7 @@ class OmniSpecTemplate(ModelInferSpecTemplate):
 
     def redact_credentials(self) -> Self:
         spec = super().redact_credentials()
-        return redacted_copy(
+        return copy_preserving_fields_set(
             spec,
             {
                 "omni": redact_credential_fields(spec.omni),

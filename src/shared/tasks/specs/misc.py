@@ -7,7 +7,7 @@ from .common import (
     ModelSpecTemplate,
     TaskSpecStrictBase,
     TaskSpecTemplateBase,
-    redacted_copy,
+    copy_preserving_fields_set,
 )
 
 
@@ -17,7 +17,9 @@ class ApiSpecStrict(TaskSpecStrictBase):
 
     def redact_credentials(self) -> Self:
         spec = super().redact_credentials()
-        return redacted_copy(spec, {"api": redact_credential_fields(spec.api)})
+        return copy_preserving_fields_set(
+            spec, {"api": redact_credential_fields(spec.api)}
+        )
 
     def has_redacted_credentials(self) -> bool:
         return super().has_redacted_credentials() or has_redacted_credential_fields(
@@ -31,7 +33,9 @@ class ApiSpecTemplate(TaskSpecTemplateBase):
 
     def redact_credentials(self) -> Self:
         spec = super().redact_credentials()
-        return redacted_copy(spec, {"api": redact_credential_fields(spec.api)})
+        return copy_preserving_fields_set(
+            spec, {"api": redact_credential_fields(spec.api)}
+        )
 
     def has_redacted_credentials(self) -> bool:
         return super().has_redacted_credentials() or has_redacted_credential_fields(
@@ -73,7 +77,9 @@ class DataProfilingSpecStrict(TaskSpecStrictBase):
 
     def redact_credentials(self) -> Self:
         spec = super().redact_credentials()
-        return redacted_copy(spec, {"data": redact_credential_fields(spec.data)})
+        return copy_preserving_fields_set(
+            spec, {"data": redact_credential_fields(spec.data)}
+        )
 
     def has_redacted_credentials(self) -> bool:
         return super().has_redacted_credentials() or has_redacted_credential_fields(
@@ -87,7 +93,9 @@ class DataProfilingSpecTemplate(TaskSpecTemplateBase):
 
     def redact_credentials(self) -> Self:
         spec = super().redact_credentials()
-        return redacted_copy(spec, {"data": redact_credential_fields(spec.data)})
+        return copy_preserving_fields_set(
+            spec, {"data": redact_credential_fields(spec.data)}
+        )
 
     def has_redacted_credentials(self) -> bool:
         return super().has_redacted_credentials() or has_redacted_credential_fields(
@@ -101,7 +109,9 @@ class DataRetrievalSpecStrict(TaskSpecStrictBase):
 
     def redact_credentials(self) -> Self:
         spec = super().redact_credentials()
-        return redacted_copy(spec, {"data": redact_credential_fields(spec.data)})
+        return copy_preserving_fields_set(
+            spec, {"data": redact_credential_fields(spec.data)}
+        )
 
     def has_redacted_credentials(self) -> bool:
         return super().has_redacted_credentials() or has_redacted_credential_fields(
@@ -115,7 +125,9 @@ class DataRetrievalSpecTemplate(TaskSpecTemplateBase):
 
     def redact_credentials(self) -> Self:
         spec = super().redact_credentials()
-        return redacted_copy(spec, {"data": redact_credential_fields(spec.data)})
+        return copy_preserving_fields_set(
+            spec, {"data": redact_credential_fields(spec.data)}
+        )
 
     def has_redacted_credentials(self) -> bool:
         return super().has_redacted_credentials() or has_redacted_credential_fields(
@@ -129,7 +141,9 @@ class EmbeddingSpecStrict(ModelSpecStrict):
 
     def redact_credentials(self) -> Self:
         spec = super().redact_credentials()
-        return redacted_copy(spec, {"data": redact_credential_fields(spec.data)})
+        return copy_preserving_fields_set(
+            spec, {"data": redact_credential_fields(spec.data)}
+        )
 
     def has_redacted_credentials(self) -> bool:
         return super().has_redacted_credentials() or has_redacted_credential_fields(
@@ -143,7 +157,9 @@ class EmbeddingSpecTemplate(ModelSpecTemplate):
 
     def redact_credentials(self) -> Self:
         spec = super().redact_credentials()
-        return redacted_copy(spec, {"data": redact_credential_fields(spec.data)})
+        return copy_preserving_fields_set(
+            spec, {"data": redact_credential_fields(spec.data)}
+        )
 
     def has_redacted_credentials(self) -> bool:
         return super().has_redacted_credentials() or has_redacted_credential_fields(

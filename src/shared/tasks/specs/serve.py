@@ -4,7 +4,7 @@ from pydantic import Field
 
 from ...utils.redact import contains_redacted, redact_credential
 from ..task_type import TaskType
-from .common import ModelSpecStrict, ModelSpecTemplate, redacted_copy
+from .common import ModelSpecStrict, ModelSpecTemplate, copy_preserving_fields_set
 
 
 class ServeSpecStrict(ModelSpecStrict):
@@ -17,7 +17,9 @@ class ServeSpecStrict(ModelSpecStrict):
 
     def redact_credentials(self) -> Self:
         spec = super().redact_credentials()
-        return redacted_copy(spec, {"apiKey": redact_credential(self.apiKey)})
+        return copy_preserving_fields_set(
+            spec, {"apiKey": redact_credential(self.apiKey)}
+        )
 
     def has_redacted_credentials(self) -> bool:
         return super().has_redacted_credentials() or contains_redacted(self.apiKey)
@@ -36,7 +38,9 @@ class ServeSpecTemplate(ModelSpecTemplate):
 
     def redact_credentials(self) -> Self:
         spec = super().redact_credentials()
-        return redacted_copy(spec, {"apiKey": redact_credential(self.apiKey)})
+        return copy_preserving_fields_set(
+            spec, {"apiKey": redact_credential(self.apiKey)}
+        )
 
     def has_redacted_credentials(self) -> bool:
         return super().has_redacted_credentials() or contains_redacted(self.apiKey)
