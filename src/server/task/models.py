@@ -1,5 +1,5 @@
 import time
-from typing import Any, cast
+from typing import Any
 
 from pydantic import (
     AliasChoices,
@@ -7,35 +7,16 @@ from pydantic import (
     ConfigDict,
     Field,
     PrivateAttr,
-    SerializationInfo,
     SerializerFunctionWrapHandler,
     computed_field,
     model_serializer,
 )
-from pydantic.main import IncEx
-from pydantic_core.core_schema import IncExCall
 
 from shared.tasks import TaskEnvelopeTemplate, TaskSpecTemplate
 from shared.tasks.worker_message import HardwareUsage
 from shared.utils.redact import redact_raw_yaml
 
 from ..utils.time import now_iso
-
-
-def _descend_field_filter(selector: IncExCall, *path: str) -> IncExCall:
-    """Descend a pydantic exclude selector to a nested field path.
-
-    Return the sub-selector at ``path`` only when it is a set or mapping that
-    ``model_dump`` accepts; otherwise None — the field is unfiltered, or
-    excluded wholesale (handled by the caller's presence check) and never a
-    bare bool, which ``model_dump`` rejects as a selector.
-    """
-    for key in path:
-        if not isinstance(selector, dict):
-            return None
-        selector = selector.get(key)
-    return selector if isinstance(selector, (set, dict)) else None
-
 
 TRAINING_TASK_TYPES = {
     "sft",
@@ -209,26 +190,20 @@ class TaskRecord(BaseModel):
         return self._redacted_spec
 
     @model_serializer(mode="wrap")
-    def _serialize(
-        self, handler: SerializerFunctionWrapHandler, info: SerializationInfo
-    ) -> dict[str, Any]:
-        data = handler(self)
-        if "source" in data:
-            data["source"] = self._redact_source()
-        task = data.get("task")
-        if isinstance(task, dict) and "spec" in task:
-            task["spec"] = self._redact_spec().model_dump(
-                mode=info.mode,
-                by_alias=info.by_alias,
-                exclude_none=info.exclude_none,
-                # info.exclude is typed IncExCall; model_dump expects the
-                # equivalent IncEx — same runtime shapes, distinct aliases.
-                exclude=cast(
-                    IncEx | None,
-                    _descend_field_filter(info.exclude, "task", "spec"),
-                ),
-            )
-        return data
+    def _serialize(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        """Serialize a credential-redacted copy of the record.
+
+        Redacting a copy and letting the default handler walk it keeps the live
+        task untouched while every dump option — ``by_alias``, ``exclude``/``include``,
+        ``exclude_unset``, ``exclude_none`` — applies to the redacted output natively.
+        """
+        redacted = self.model_copy(
+            update={
+                "source": self._redact_source(),
+                "task": self.task.model_copy(update={"spec": self._redact_spec()}),
+            }
+        )
+        return handler(redacted)
 
 
 class TaskInfo(TaskRecord):
