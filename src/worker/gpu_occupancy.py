@@ -1,18 +1,18 @@
 """Detect GPU memory held by processes outside this worker.
 
-A worker's GPU can be claimed by things FlowMesh cannot see: a Kubernetes pod
-handed the same card by the NVIDIA device plugin, a bare ``vllm serve``
-container, an ad-hoc training script. The worker kept reporting ``IDLE``
-throughout, so the dispatcher sent it tasks that then failed to fit (on
-2026-09-19 a sandbox pod held 44.7 GiB of a 48 GiB card while its worker
-advertised itself as free).
+A worker's GPU can be claimed by a process FlowMesh cannot see: a Kubernetes
+pod handed the same card by the NVIDIA device plugin, a bare ``vllm serve``
+container, an ad-hoc training script. Such a worker is still idle from
+FlowMesh's view, so the dispatcher would send it GPU tasks that cannot fit.
+Reporting ``UNAVAILABLE`` keeps it out of the pool until the GPU frees.
 
-Signal: device memory in use while this worker runs no task. NVML's
-per-process list is not usable for attribution here — inside a container it
-reports host PIDs that cannot be mapped back to the worker's own processes —
-but the worker tears its executors down after every task (``mp_executor``
-runs one subprocess per task), so an idle worker's own footprint is only a
-CUDA context at most. Anything well above that belongs to someone else.
+Signal: device memory in use while the worker runs nothing of its own —
+neither a task nor a loaded executor, which stays warm between tasks and may
+still hold GPU memory. The caller gates the check on both (see
+``Lifecycle._evaluate_gpu_gate``), so any usage the probe then sees belongs to
+another tenant. NVML's per-process list cannot attribute memory here — inside a
+container it reports host PIDs that do not map back to the worker's own
+processes — hence the coarse device-memory signal.
 
 The check fails OPEN: if NVML cannot be read, the worker keeps its current
 status rather than taking itself out of the pool.

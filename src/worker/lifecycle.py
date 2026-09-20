@@ -9,6 +9,7 @@ import logging
 import os
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -55,6 +56,7 @@ class Lifecycle:
         self._reported: WorkerStatus = WorkerStatus.STARTING
         self._last_task_end: float = 0.0
         self._gpu_gate = gpu_gate
+        self._active_executor_probe: Callable[[], bool] | None = None
         if gpu_gate is not None:
             gate_cfg = gpu_gate.config
             logger.info(
@@ -64,6 +66,15 @@ class Lifecycle:
                 gate_cfg.consecutive,
                 gate_cfg.grace_sec,
             )
+
+    def set_active_executor_probe(self, probe: Callable[[], bool]) -> None:
+        """Register a probe reporting whether an executor is loaded, so the
+        foreign-GPU gate skips a reading its own executor may be part of."""
+        self._active_executor_probe = probe
+
+    def _executor_active(self) -> bool:
+        probe = self._active_executor_probe
+        return probe is not None and probe()
 
     @property
     def worker_id(self) -> str:
@@ -151,19 +162,21 @@ class Lifecycle:
             return
         cfg = gpu_gate.config
         with self._status_lock:
-            if self._active_task is not None or self._reported not in (
-                WorkerStatus.IDLE,
-                WorkerStatus.UNAVAILABLE,
+            if (
+                self._active_task is not None
+                or self._reported not in (WorkerStatus.IDLE, WorkerStatus.UNAVAILABLE)
+                or self._executor_active()
             ):
                 return
             if time.time() - self._last_task_end < cfg.grace_sec:
                 return
         with gpu_gate.step() as next_state, self._status_lock:
-            if self._active_task is not None or self._reported not in (
-                WorkerStatus.IDLE,
-                WorkerStatus.UNAVAILABLE,
+            if (
+                self._active_task is not None
+                or self._reported not in (WorkerStatus.IDLE, WorkerStatus.UNAVAILABLE)
+                or self._executor_active()
             ):
-                raise GpuGateCancelled("a task arrived while we were reading")
+                raise GpuGateCancelled("worker took on work while reading")
             if next_state is None:
                 return
             used_mib = round(next_state.used_mib or 0.0)

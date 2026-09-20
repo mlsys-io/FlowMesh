@@ -185,6 +185,22 @@ def test_task_end_resets_gate_to_idle(tmp_path: Path) -> None:
     assert lc._last_task_end <= time.time()
 
 
+def test_resident_executor_suppresses_gate(tmp_path: Path) -> None:
+    # A warm executor's own GPU memory must not read as foreign, even past the
+    # grace period: idle cleanup may be disabled, keeping the executor resident
+    # for the worker's whole idle stretch.
+    lc, client = _lifecycle(tmp_path, [44_000, 44_000])
+    resident = {"loaded": True}
+    lc.set_active_executor_probe(lambda: resident["loaded"])
+    lc._evaluate_gpu_gate()
+    lc._evaluate_gpu_gate()
+    assert client.statuses == []  # own executor holds the card; never gated
+    resident["loaded"] = False  # executor idle-cleaned up; memory now foreign
+    lc._evaluate_gpu_gate()
+    lc._evaluate_gpu_gate()
+    assert client.statuses[-1][0] is WorkerStatus.UNAVAILABLE
+
+
 def test_disabled_gate_is_inert(tmp_path: Path) -> None:
     client = FakeClient()
     gpu_gate = GpuGate(GpuGateConfig(enabled=False), lambda: pytest.fail("probed"))

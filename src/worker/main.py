@@ -272,6 +272,7 @@ def main() -> None:
         network_bandwidth_bytes_per_sec=cfg.network_bandwidth_bytes_per_sec,
         executor_idle_cleanup_sec=cfg.executor_idle_cleanup_sec,
     )
+    lifecycle.set_active_executor_probe(runner.has_active_executor)
 
     # Install signal handlers to allow graceful shutdown
     def handle_exit_signal(signum: int, _) -> None:
