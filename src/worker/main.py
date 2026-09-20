@@ -11,8 +11,8 @@ from .config import WorkerConfig
 from .executors import EXECUTOR_REGISTRY, IMPORT_ERRORS, get_executor_class_name
 from .executors.base_executor import Executor
 from .executors.mp_executor import MPExecutor
-from .gpu_occupancy import NvmlUsageProbe
-from .hw import _device_uses_unified_memory, collect_hw
+from .gpu_occupancy import GpuGate, NvmlUsageProbe
+from .hw import collect_hw, device_uses_unified_memory
 from .lifecycle import Lifecycle
 from .power import PowerMonitor
 from .relay import EndpointRegistry, RelayClient
@@ -212,6 +212,16 @@ def main() -> None:
     relay_client = RelayClient(supervisor_client, endpoints)
     supervisor_client.set_relay_handler(relay_client.handle_request)
 
+    hardware = collect_hw(bandwidth_bytes_per_sec=cfg.network_bandwidth_bytes_per_sec)
+    logger.info("Collected hardware info: %s", hardware)
+    gpu_gate = (
+        GpuGate(
+            cfg.foreign_gpu_gate,
+            NvmlUsageProbe(device_uses_unified_memory),
+        )
+        if hardware.gpu.devices
+        else None
+    )
     lifecycle = Lifecycle(
         supervisor_client,
         cfg.hb_interval_sec,
@@ -221,13 +231,8 @@ def main() -> None:
         power_monitor=PowerMonitor(),
         endpoints=endpoints,
         relay_client=relay_client,
+        gpu_gate=gpu_gate,
     )
-    hardware = collect_hw(bandwidth_bytes_per_sec=cfg.network_bandwidth_bytes_per_sec)
-    logger.info("Collected hardware info: %s", hardware)
-    if hardware.gpu.devices:
-        lifecycle.configure_gpu_gate(
-            cfg.foreign_gpu_gate, NvmlUsageProbe(_device_uses_unified_memory)
-        )
 
     executors, default_executor = initialize_executors(
         cfg,

@@ -2,12 +2,20 @@
 
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
 from shared.schemas.worker import WorkerStatus
-from worker.gpu_occupancy import GateConfig, GateState, decide
+from worker.gpu_occupancy import (
+    MIB,
+    GateState,
+    GpuGate,
+    GpuGateConfig,
+    NvmlUsageProbe,
+    decide,
+)
 from worker.lifecycle import Lifecycle
 
 THRESH = 1024
@@ -20,30 +28,30 @@ THRESH = 1024
 
 def test_needs_consecutive_observations_to_enter() -> None:
     s = decide(40_000, False, THRESH, 2, GateState())
-    assert s == GateState(unavailable=False, streak=1)
+    assert s == GateState(unavailable=False, used_mib=40_000, streak=1)
     s = decide(40_000, False, THRESH, 2, s)
-    assert s == GateState(unavailable=True, streak=0)
+    assert s == GateState(unavailable=True, used_mib=40_000, streak=0)
 
 
 def test_needs_consecutive_observations_to_leave() -> None:
     s = decide(0, False, THRESH, 2, GateState(unavailable=True))
     assert s.unavailable is True
     s = decide(0, False, THRESH, 2, s)
-    assert s == GateState(unavailable=False, streak=0)
+    assert s == GateState(unavailable=False, used_mib=0, streak=0)
 
 
 def test_single_spike_does_not_flip() -> None:
     s = decide(40_000, False, THRESH, 2, GateState())
     s = decide(10, False, THRESH, 2, s)  # back under before the streak completes
-    assert s == GateState(unavailable=False, streak=0)
+    assert s == GateState(unavailable=False, used_mib=10, streak=0)
 
 
 def test_active_task_never_flips_and_resets_streak() -> None:
     # Memory used during this worker's own task is its own, never foreign.
     s = decide(40_000, True, THRESH, 2, GateState(streak=1))
-    assert s == GateState(unavailable=False, streak=0)
+    assert s == GateState(unavailable=False, used_mib=40_000, streak=0)
     s = decide(0, True, THRESH, 2, GateState(unavailable=True, streak=1))
-    assert s == GateState(unavailable=True, streak=0)
+    assert s == GateState(unavailable=True, used_mib=0, streak=0)
 
 
 def test_unreadable_nvml_keeps_state() -> None:
@@ -64,6 +72,35 @@ def test_consecutive_one_flips_immediately() -> None:
     assert decide(40_000, False, THRESH, 1, GateState()).unavailable is True
 
 
+def test_nvml_probe_skips_unified_devices_and_keeps_zero_readings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeNvml:
+        @staticmethod
+        def nvmlInit() -> None:
+            return None
+
+        @staticmethod
+        def nvmlDeviceGetCount() -> int:
+            return 2
+
+        @staticmethod
+        def nvmlDeviceGetHandleByIndex(index: int) -> int:
+            return index
+
+        @staticmethod
+        def nvmlDeviceGetName(handle: int) -> str:
+            return "unified" if handle == 0 else "dedicated"
+
+        @staticmethod
+        def nvmlDeviceGetMemoryInfo(handle: int) -> Any:
+            return SimpleNamespace(used=40_000 * MIB if handle == 0 else 0)
+
+    monkeypatch.setattr("worker.gpu_occupancy.pynvml", FakeNvml)
+
+    assert NvmlUsageProbe(lambda index, _name: index == 0)() == 0.0
+
+
 # --------------------------------------------------------------------------- #
 # Lifecycle integration: what the supervisor is actually told
 # --------------------------------------------------------------------------- #
@@ -81,11 +118,20 @@ def _lifecycle(
     tmp_path: Path, readings: list[float | None], grace: float = 0.0
 ) -> tuple[Lifecycle, FakeClient]:
     client = FakeClient()
-    lc = Lifecycle(client, 30, 120, tmp_path / "hb", cost_per_hour=0.0)  # type: ignore[arg-type]
     it = iter(readings)
-    lc.configure_gpu_gate(
-        GateConfig(enabled=True, threshold_mib=THRESH, consecutive=2, grace_sec=grace),
+    gpu_gate = GpuGate(
+        GpuGateConfig(
+            enabled=True, threshold_mib=THRESH, consecutive=2, grace_sec=grace
+        ),
         lambda: next(it),
+    )
+    lc = Lifecycle(
+        client,  # type: ignore[arg-type]
+        30,
+        120,
+        tmp_path / "hb",
+        cost_per_hour=0.0,
+        gpu_gate=gpu_gate,
     )
     lc._reported = WorkerStatus.IDLE  # as after start()
     return lc, client
@@ -134,14 +180,22 @@ def test_task_end_resets_gate_to_idle(tmp_path: Path) -> None:
     lc.set_busy("tsk-2")
     lc.set_idle("tsk-2")
     assert lc._reported is WorkerStatus.IDLE
-    assert lc._gate_state.unavailable is False
+    assert lc._gpu_gate is not None
+    assert lc._gpu_gate.state.unavailable is False
     assert lc._last_task_end <= time.time()
 
 
 def test_disabled_gate_is_inert(tmp_path: Path) -> None:
     client = FakeClient()
-    lc = Lifecycle(client, 30, 120, tmp_path / "hb", cost_per_hour=0.0)  # type: ignore[arg-type]
-    lc.configure_gpu_gate(GateConfig(enabled=False), lambda: pytest.fail("probed"))
+    gpu_gate = GpuGate(GpuGateConfig(enabled=False), lambda: pytest.fail("probed"))
+    lc = Lifecycle(
+        client,  # type: ignore[arg-type]
+        30,
+        120,
+        tmp_path / "hb",
+        cost_per_hour=0.0,
+        gpu_gate=gpu_gate,
+    )
     lc._reported = WorkerStatus.IDLE
     lc._evaluate_gpu_gate()
     assert client.statuses == []

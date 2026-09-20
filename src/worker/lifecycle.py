@@ -9,7 +9,6 @@ import logging
 import os
 import threading
 import time
-from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -17,7 +16,7 @@ from shared.schemas.worker import SSHLimits, WorkerCapabilities
 from shared.tasks.worker_message import WorkerHardware, WorkerStatus
 from shared.utils.time import now_iso
 
-from .gpu_occupancy import GateConfig, GateState, decide
+from .gpu_occupancy import GpuGate, GpuGateCancelled
 from .power import PowerMonitor
 from .relay import EndpointRegistry, RelayClient
 from .supervisor_client import SupervisorClient
@@ -36,6 +35,7 @@ class Lifecycle:
         power_monitor: PowerMonitor | None = None,
         endpoints: EndpointRegistry | None = None,
         relay_client: RelayClient | None = None,
+        gpu_gate: GpuGate | None = None,
     ):
         self.client = client
         self.endpoints = endpoints or EndpointRegistry()
@@ -47,16 +47,23 @@ class Lifecycle:
         self.power_monitor = power_monitor or PowerMonitor()
         self._stop_event = threading.Event()
         self._started_ts: float | None = None
-        # Foreign-GPU gate (see gpu_occupancy.py). Off until configure_gpu_gate().
-        # _status_lock serialises status sends between the heartbeat thread and
-        # the task runner, so a gate flip can never overwrite a BUSY that raced it.
+        # Foreign-GPU gate. _status_lock serialises status sends between the heartbeat
+        # thread and the task runner, so a gate flip can never overwrite a BUSY that
+        # raced it.
         self._status_lock = threading.Lock()
         self._active_task: str | None = None
         self._reported: WorkerStatus = WorkerStatus.STARTING
         self._last_task_end: float = 0.0
-        self._gate_cfg: GateConfig | None = None
-        self._gate_probe: Callable[[], float | None] | None = None
-        self._gate_state = GateState()
+        self._gpu_gate = gpu_gate
+        if gpu_gate is not None:
+            gate_cfg = gpu_gate.config
+            logger.info(
+                "foreign-GPU gate on: UNAVAILABLE when >%d MiB is used with no task "
+                "(%d consecutive checks, %.0fs grace after a task)",
+                gate_cfg.threshold_mib,
+                gate_cfg.consecutive,
+                gate_cfg.grace_sec,
+            )
 
     @property
     def worker_id(self) -> str:
@@ -138,26 +145,11 @@ class Lifecycle:
                 logger.debug("foreign-GPU gate evaluation failed", exc_info=True)
             self._stop_event.wait(self.hb_sec)
 
-    def configure_gpu_gate(
-        self, cfg: GateConfig, probe: Callable[[], float | None]
-    ) -> None:
-        """Enable the foreign-GPU gate. Call once, before start(), on GPU workers."""
-        if not cfg.enabled:
-            return
-        self._gate_cfg = cfg
-        self._gate_probe = probe
-        logger.info(
-            "foreign-GPU gate on: UNAVAILABLE when >%d MiB is used with no task "
-            "(%d consecutive checks, %.0fs grace after a task)",
-            cfg.threshold_mib,
-            cfg.consecutive,
-            cfg.grace_sec,
-        )
-
     def _evaluate_gpu_gate(self) -> None:
-        cfg, probe = self._gate_cfg, self._gate_probe
-        if cfg is None or probe is None:
+        gpu_gate = self._gpu_gate
+        if gpu_gate is None:
             return
+        cfg = gpu_gate.config
         with self._status_lock:
             if self._active_task is not None or self._reported not in (
                 WorkerStatus.IDLE,
@@ -166,20 +158,16 @@ class Lifecycle:
                 return
             if time.time() - self._last_task_end < cfg.grace_sec:
                 return
-        used = probe()  # NVML read, outside the lock
-        with self._status_lock:
+        with gpu_gate.step() as next_state, self._status_lock:
             if self._active_task is not None or self._reported not in (
                 WorkerStatus.IDLE,
                 WorkerStatus.UNAVAILABLE,
             ):
-                return  # a task arrived while we were reading
-            prev = self._gate_state
-            nxt = decide(used, False, cfg.threshold_mib, cfg.consecutive, prev)
-            self._gate_state = nxt
-            if nxt.unavailable == prev.unavailable:
+                raise GpuGateCancelled("a task arrived while we were reading")
+            if next_state is None:
                 return
-            used_mib = round(used or 0.0)
-            if nxt.unavailable:
+            used_mib = round(next_state.used_mib or 0.0)
+            if next_state.unavailable:
                 logger.warning(
                     "foreign GPU occupancy detected: %d MiB used with no active "
                     "task -> UNAVAILABLE",
@@ -193,12 +181,8 @@ class Lifecycle:
                 )
                 status = WorkerStatus.IDLE
                 payload = {"reason": "foreign_gpu_released", "gpu_used_mib": used_mib}
-            try:
-                self.client.set_status(status, payload)
-                self._reported = status
-            except Exception:
-                # Could not tell the supervisor; retry on the next heartbeat.
-                self._gate_state = prev
+            self.client.set_status(status, payload)
+            self._reported = status
 
     def set_busy(self, task_id: str):
         with self._status_lock:
@@ -214,7 +198,8 @@ class Lifecycle:
             self._active_task = None
             self._last_task_end = time.time()
             # Back to IDLE; the gate re-checks after its grace period.
-            self._gate_state = GateState()
+            if self._gpu_gate is not None:
+                self._gpu_gate.clear()
             try:
                 self.client.set_status(WorkerStatus.IDLE, {"last_task": task_id})
                 self._reported = WorkerStatus.IDLE

@@ -19,7 +19,7 @@ from shared.utils.parsing import (
     parse_mem_to_bytes,
 )
 
-from .gpu_occupancy import GateConfig
+from .gpu_occupancy import GpuGateConfig
 from .utils.health import get_hb_config
 
 
@@ -54,7 +54,7 @@ class WorkerConfig:
     ssh_session_backend: str = "auto"
     ssh_direct_host: str | None = None
     enable_unisolated_ssh_session: bool = False
-    foreign_gpu_gate: GateConfig = GateConfig()
+    foreign_gpu_gate: GpuGateConfig = GpuGateConfig()
 
     @staticmethod
     def from_env() -> "WorkerConfig":
@@ -161,10 +161,7 @@ class WorkerConfig:
         enable_unisolated_ssh_session = parse_bool_env(
             "ENABLE_UNISOLATED_SSH_SESSION", False
         )
-        # Report UNAVAILABLE while a process outside FlowMesh holds this GPU.
-        # See worker/gpu_occupancy.py. Set WORKER_FOREIGN_GPU_GATE=false to
-        # disable, e.g. while hosts older than this change are still running.
-        foreign_gpu_gate = GateConfig(
+        foreign_gpu_gate = GpuGateConfig(
             enabled=parse_bool_env("WORKER_FOREIGN_GPU_GATE", True),
             threshold_mib=max(1, parse_int_env("WORKER_FOREIGN_GPU_MEM_MIB", 1024)),
             consecutive=max(1, parse_int_env("WORKER_FOREIGN_GPU_CONSECUTIVE", 2)),
