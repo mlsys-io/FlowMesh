@@ -266,7 +266,8 @@ def _resolve_gpu_devices(
             raise ExecutionError(
                 f"SSH task requested {requested} GPU(s) but only "
                 f"{len(host_gpu_ids)} of this worker's devices are free; the "
-                "rest are held by a process outside FlowMesh"
+                "rest are held by a process outside FlowMesh",
+                retryable=True,
             )
     if devices and len(devices) != len(host_gpu_ids):
         logger.warning(
