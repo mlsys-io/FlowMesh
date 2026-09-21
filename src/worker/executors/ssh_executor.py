@@ -115,7 +115,16 @@ class SSHExecutor(Executor):
 
     def run(self, task: ExecutorTask, out_dir: Path) -> SSHResult:
         spec = self.require_spec(task, SSHSpecStrict)
-        cfg = SSHConfig.from_spec(spec, self._config, self._hardware)
+        # A session holds its devices for as long as it lives, so it must not be
+        # handed one another tenant is already on.
+        occupied = frozenset(
+            uuid
+            for uuid, device in (
+                self._lifecycle.live_gpu_occupancy() if self._lifecycle else {}
+            ).items()
+            if device.unavailable
+        )
+        cfg = SSHConfig.from_spec(spec, self._config, self._hardware, occupied)
         access_mode = cfg.access_mode
         interactive = cfg.interactive
 

@@ -17,6 +17,7 @@ from shared.tasks.worker_message import (
 )
 from tests.worker.factories import make_worker_config, make_worker_hardware
 from worker.config import WorkerConfig
+from worker.executors.base_executor import ExecutionError
 from worker.executors.ssh_executor import SSHConfig
 
 
@@ -392,3 +393,68 @@ class TestSSHConfigResolveGpuDevices:
                 _worker_config_gpu_limit(),
                 hardware=hardware,
             )
+
+
+class TestSSHConfigSkipsHeldDevices:
+    def _hardware(self):
+        return make_worker_hardware(
+            [
+                GpuInfo(
+                    index=i,
+                    name="A100",
+                    uuid=f"a100-{i}",
+                    memory_total_bytes=80 * 1024**3,
+                )
+                for i in range(4)
+            ]
+        )
+
+    def test_a_held_first_device_does_not_hide_the_free_ones(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Selection returns positions, so held devices must be dropped before it
+        # runs. Filtering the selected positions instead would report "no
+        # satisfying device" here, with three free A100s sitting idle.
+        monkeypatch.setenv("WORKER_HOST_GPU_ID", "0,1,2,3")
+        cfg = SSHConfig.from_spec(
+            _spec({"hardware": {"gpu": {"count": 1}}}),
+            _worker_config_gpu_limit(),
+            self._hardware(),
+            frozenset({"a100-0"}),
+        )
+        assert cfg.gpu_device_ids == ["1"]
+
+    def test_host_ids_stay_aligned_after_dropping(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("WORKER_HOST_GPU_ID", "4,5,6,7")
+        cfg = SSHConfig.from_spec(
+            _spec({"hardware": {"gpu": {"count": 2}}}),
+            _worker_config_gpu_limit(),
+            self._hardware(),
+            frozenset({"a100-0", "a100-2"}),
+        )
+        assert cfg.gpu_device_ids == ["5", "7"]
+
+    def test_refuses_when_too_few_are_free(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("WORKER_HOST_GPU_ID", "0,1,2,3")
+        with pytest.raises(ExecutionError, match="held by a process outside"):
+            SSHConfig.from_spec(
+                _spec({"hardware": {"gpu": {"count": 3}}}),
+                _worker_config_gpu_limit(),
+                self._hardware(),
+                frozenset({"a100-0", "a100-1"}),
+            )
+
+    def test_no_occupancy_reported_behaves_as_before(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("WORKER_HOST_GPU_ID", "0,1,2,3")
+        cfg = SSHConfig.from_spec(
+            _spec({"hardware": {"gpu": {"count": 1}}}),
+            _worker_config_gpu_limit(),
+            self._hardware(),
+        )
+        assert cfg.gpu_device_ids == ["0"]
