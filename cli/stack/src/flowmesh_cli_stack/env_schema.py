@@ -597,8 +597,8 @@ STACK_ENV_SCHEMA = EnvSchema(
                     "WORKER_FOREIGN_GPU_GATE",
                     "true",
                     description=[
-                        "Report an idle worker as unavailable when another process "
-                        "uses its GPU.",
+                        "Report a GPU as unavailable while a process outside "
+                        "FlowMesh uses it.",
                     ],
                     var_type=EnvVarType.BOOL,
                 ),
@@ -613,8 +613,8 @@ STACK_ENV_SCHEMA = EnvSchema(
                     "WORKER_FOREIGN_GPU_CONSECUTIVE",
                     "2",
                     description=[
-                        "Consecutive occupancy readings required to change "
-                        "availability.",
+                        "Consecutive occupancy readings required before a device "
+                        "changes availability.",
                     ],
                     var_type=EnvVarType.INT,
                     min_value=1,

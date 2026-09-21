@@ -144,6 +144,22 @@ scripts/dev/            compile_protos, sync_requirements, check_env_examples
   and training or omni types require their (often GPU-only) dependencies — so a
   worker missing that executor isn't a candidate, rather than being handed a
   task it would fail.
+- **Foreign GPU occupancy.** A worker samples per-device GPU memory on each
+  heartbeat and reports any device a process outside FlowMesh is holding — a
+  Kubernetes pod the NVIDIA device plugin gave the same card, a bare `vllm
+  serve`, an ad-hoc script. The worker stays `IDLE` and keeps taking CPU work;
+  only the held devices leave the pool, filtered in `idle_satisfying_pool` and
+  never in `hw_satisfies`, so the task waits for the card instead of failing as
+  unschedulable. The worker refuses a GPU task that reaches it anyway, which
+  reroutes rather than dying in executor init. A reading is only trusted when
+  nothing of the worker's own is loaded — no task running, no GPU-using executor
+  still warm, past `WORKER_FOREIGN_GPU_GRACE_SEC` — so a worker never gates
+  itself on its own model. A suppressed reading keeps its last value; an
+  unreadable NVML clears to "no opinion", since only a fresh clear reading
+  releases a latch. Occupancy that arrives while a GPU executor is warm is
+  therefore not detected until that executor unloads, which
+  `WORKER_EXECUTOR_IDLE_CLEANUP_SEC` bounds. Disable with
+  `WORKER_FOREIGN_GPU_GATE=false`.
 - **Session relays are worker-initiated.** A `proxy` or `forward` session, and a
   proxied `serve` endpoint, are reached over a gRPC stream the *worker* opens to
   its supervisor, which bridges it to the Redis `up`/`down` streams the client
