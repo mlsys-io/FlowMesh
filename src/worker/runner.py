@@ -12,6 +12,8 @@ import requests
 
 from shared.schemas.result import BaseExecutorResult
 from shared.tasks import MergedChildTaskStrict
+from shared.tasks.envelope import TaskSpecStrict
+from shared.tasks.gpu_usage import task_uses_gpu
 from shared.tasks.specs import (
     EmbeddingSpecStrict,
     InferenceBackend,
@@ -60,6 +62,8 @@ class Runner:
         self._active_executor: Executor | None = None
         self._active_executor_key: str | None = None
         self._active_executor_last_used_at: float | None = None
+        # Whether the loaded executor has run anything GPU-bound since it came up.
+        self._active_executor_used_gpu: bool = False
         # Lock to protect concurrent access to active executor state
         self._active_executor_lock = threading.Lock()
 
@@ -78,14 +82,27 @@ class Runner:
         self._cancel_lock = threading.Lock()
         self._shutdown_requested = threading.Event()
 
-    def has_active_executor(self) -> bool:
-        """Whether an executor is currently loaded.
+    def has_active_gpu_executor(self) -> bool:
+        """Whether the loaded executor may still be holding GPU memory.
 
-        Executors stay warm between tasks (indefinitely when idle cleanup is
-        off), so an active one may still be holding GPU memory of its own. Read
-        lock-free: the foreign-GPU gate only needs a best-effort snapshot.
+        Executors stay warm between tasks (indefinitely when idle cleanup is off),
+        so occupancy read while one is resident would include our own model. The
+        flag is set from the task's own spec rather than from the executor class,
+        because the wrapper an executor is loaded behind carries no such attribute
+        and a transformers executor's device depends on the spec it ran. Read
+        lock-free: the occupancy monitor only needs a best-effort snapshot.
         """
-        return self._active_executor is not None
+        return self._active_executor is not None and self._active_executor_used_gpu
+
+    def _note_gpu_usage(self, spec: TaskSpecStrict) -> None:
+        """Record that the loaded executor has now run something GPU-bound.
+
+        Called for every task, not only when the executor is swapped in: a task
+        reusing a warm executor never re-enters the load branch, and the memory it
+        allocates outlives it. Monotone until teardown for the same reason -- a
+        later CPU task does not free what an earlier GPU task allocated.
+        """
+        self._active_executor_used_gpu |= task_uses_gpu(spec)
 
     def _cancel_active_executor(self) -> None:
         with self._active_executor_lock:
@@ -117,6 +134,7 @@ class Runner:
                 self._active_executor = None
                 self._active_executor_key = None
                 self._active_executor_last_used_at = None
+                self._active_executor_used_gpu = False
 
     def stop(self) -> None:
         self._shutdown_requested.set()
@@ -276,6 +294,7 @@ class Runner:
                 self._active_executor = None
                 self._active_executor_key = None
                 self._active_executor_last_used_at = None
+                self._active_executor_used_gpu = False
 
     def _idle_check_loop(self, stop_event: threading.Event) -> None:
         """Background loop that periodically checks for idle executors.
@@ -489,12 +508,14 @@ class Runner:
                             self._active_executor.cleanup_after_run()
                             self._active_executor = None
                             self._active_executor_key = None
+                            self._active_executor_used_gpu = False
 
                         if not self._active_executor:
                             self._active_executor = self.executors.get(
                                 desired_key, self.default_executor
                             )
                             self._active_executor_key = desired_key
+                        self._note_gpu_usage(spec)
 
                         (
                             task_log_emitter,
