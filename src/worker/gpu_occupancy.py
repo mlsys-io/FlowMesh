@@ -179,11 +179,6 @@ class GpuOccupancyMonitor:
     def config(self) -> GpuGateConfig:
         return self._config
 
-    @property
-    def measured(self) -> bool:
-        """Whether the most recent observation read any device at all."""
-        return bool(self._measured_uuids)
-
     def observe(self, measurable: bool) -> None:
         if not self._config.enabled:
             self._states, self._free_bytes = {}, {}

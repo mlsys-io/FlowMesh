@@ -163,7 +163,7 @@ class TestMonitor:
         # Nothing is probed while suppressed, so the batch list is not consumed.
         monitor.observe(False)
         assert monitor.snapshot()[GPU_A].unavailable is True
-        assert monitor.measured is False
+        assert monitor.live_snapshot() == {}
 
     def test_total_probe_failure_clears_rather_than_latching(self) -> None:
         # Only a fresh clear reading releases a latch, and a broken probe never
@@ -175,7 +175,7 @@ class TestMonitor:
         assert monitor.snapshot()[GPU_A].unavailable is True
         monitor.observe(True)
         assert monitor.snapshot() == {}
-        assert monitor.measured is False
+        assert monitor.live_snapshot() == {}
 
     def test_partial_failure_leaves_unread_devices_latched(self) -> None:
         both = {GPU_A: _reading(40_000), GPU_B: _reading(40_000)}
@@ -263,7 +263,7 @@ class TestLifecycleIntegration:
         lc.set_gpu_executor_probe(lambda: True)
         lc._observe_gpu()
         assert monitor.snapshot() == {}
-        assert monitor.measured is False
+        assert monitor.live_snapshot() == {}
 
     def test_an_active_task_suppresses_the_reading(self, tmp_path: Path) -> None:
         lc, monitor, _ = _lifecycle(tmp_path, [{GPU_A: _reading(44_000)}])

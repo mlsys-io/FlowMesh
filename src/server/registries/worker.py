@@ -682,12 +682,13 @@ def gpu_available_for(worker: Worker, task: TaskEnvelope) -> bool:
         return True
     if not any(device.gpu_unavailable for device in hw.gpu.devices):
         return True
-    declared = _declared_gpu_req(task)
-    if declared is not None and declared.count == 0:
-        return True
     # A task that asks for a GPU should get an unoccupied one whatever its type,
-    # and a task that uses one without asking still needs a free device.
-    if declared is None and not task_uses_gpu(task.spec):
+    # and a task that uses one without asking still needs a free device. An
+    # explicit count of zero asks for none, but cannot exempt a task whose type
+    # allocates VRAM regardless.
+    declared = _declared_gpu_req(task)
+    asks_for_gpus = declared is not None and declared.count != 0
+    if not asks_for_gpus and not task_uses_gpu(task.spec):
         return True
     free = unoccupied_devices(hw.gpu.devices)
     if not free:

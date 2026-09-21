@@ -500,3 +500,23 @@ class TestZeroGpusRequested:
         # count: 0 asks for nothing, so a fully held worker can still run it.
         worker = _held(_worker(gpu_count=1, gpu_mem=48 * 1024**3), 0)
         assert gpu_available_for(worker, _task(gpu_count=0)) is True
+
+
+class TestZeroCountDoesNotExemptAGpuTask:
+    def test_inference_declaring_zero_gpus_is_still_filtered(self) -> None:
+        # count: 0 asks for no devices, but a vLLM inference task allocates VRAM
+        # regardless -- the declaration cannot buy it a held card.
+        worker = _held(_worker(gpu_count=1, gpu_mem=48 * 1024**3), 0)
+        task = TaskEnvelopeStrict.model_validate(
+            {
+                "apiVersion": "flowmesh/v1",
+                "kind": "Task",
+                "spec": {
+                    "taskType": "inference",
+                    "data": {"type": "list", "items": ["hi"]},
+                    "model": {"source": {"identifier": "org/m"}},
+                    "resources": {"hardware": {"gpu": {"count": 0}}},
+                },
+            }
+        )
+        assert gpu_available_for(worker, task) is False

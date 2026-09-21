@@ -123,9 +123,8 @@ class Runner:
         if not occupancy or not devices:
             return
         declared = _declared_gpu_req(spec)
-        if declared is not None and declared.count == 0:
-            return
-        if declared is None and not task_uses_gpu(spec):
+        asks_for_gpus = declared is not None and declared.count != 0
+        if not asks_for_gpus and not task_uses_gpu(spec):
             return
         overlaid = [
             (

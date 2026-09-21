@@ -219,7 +219,7 @@ def main() -> None:
             cfg.foreign_gpu_gate,
             NvmlDeviceProbe(device_uses_unified_memory),
         )
-        if hardware.gpu.devices
+        if hardware.gpu.devices and cfg.foreign_gpu_gate.enabled
         else None
     )
     lifecycle = Lifecycle(
