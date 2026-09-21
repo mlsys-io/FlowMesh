@@ -11,8 +11,18 @@ from shared.schemas.worker import WorkerStatus
 from shared.tasks.components.model import ModelConfig, ModelSource
 from shared.tasks.specs import EchoSpecStrict, InferenceSpecStrict
 from shared.tasks.task_type import TaskType
+from shared.tasks.worker_message import (
+    CPUInfo,
+    GpuInfo,
+    GpuPlatformInfo,
+    MemoryInfo,
+    NetworkInfo,
+    WorkerHardware,
+)
+from worker.executors.base_executor import ExecutionError
 from worker.gpu_occupancy import (
     MIB,
+    DeviceOccupancy,
     DeviceReading,
     DeviceState,
     GpuGateConfig,
@@ -352,3 +362,75 @@ class TestWarmExecutorGpuFlag:
         runner._cleanup_active_executor()
         assert runner._active_executor_used_gpu is False
         assert runner.has_active_gpu_executor() is False
+
+
+class TestAdmission:
+    """``_refuse_if_gpu_is_held``: the worker's own veto on a held card."""
+
+    def _runner(
+        self, occupancy: dict[str, DeviceOccupancy], devices: int = 1
+    ) -> Runner:
+        lifecycle = MagicMock()
+        lifecycle.live_gpu_occupancy.return_value = occupancy
+        hardware = WorkerHardware(
+            cpu=CPUInfo(logical_cores=8, model="CPU"),
+            memory=MemoryInfo(total_bytes=64 * 1024**3),
+            gpu=GpuPlatformInfo(
+                driver_version=None,
+                cuda_version=None,
+                devices=[
+                    GpuInfo(
+                        index=i,
+                        name="NVIDIA RTX 6000 Ada Generation",
+                        uuid=f"GPU-{i}",
+                        memory_total_bytes=48 * 1024**3,
+                    )
+                    for i in range(devices)
+                ],
+            ),
+            network=NetworkInfo(ip=None, bandwidth_bytes_per_sec=None),
+        )
+        return Runner(
+            lifecycle=lifecycle,
+            task_stream=[],
+            results_dir=Path("/tmp/unused"),
+            hardware=hardware,
+            executors={},
+            default_executor=MagicMock(),
+            logger=MagicMock(),
+        )
+
+    def _gpu_spec(self) -> Any:
+        return InferenceSpecStrict(
+            taskType=TaskType.INFERENCE,
+            data={"type": "list", "items": ["hi"]},
+            model=ModelConfig(source=ModelSource(identifier="org/m")),
+        )
+
+    def _held(self, *uuids: str) -> dict[str, DeviceOccupancy]:
+        return {u: DeviceOccupancy(unavailable=True, free_bytes=0) for u in uuids}
+
+    def test_refuses_a_gpu_task_when_the_only_device_is_held(self) -> None:
+        runner = self._runner(self._held("GPU-0"))
+        with pytest.raises(ExecutionError) as excinfo:
+            runner._refuse_if_gpu_is_held(self._gpu_spec())
+        assert excinfo.value.retryable is True, "must reroute, not fail the task"
+
+    def test_admits_when_a_free_device_remains(self) -> None:
+        runner = self._runner(self._held("GPU-0"), devices=4)
+        runner._refuse_if_gpu_is_held(self._gpu_spec())
+
+    def test_admits_a_cpu_task_onto_a_fully_held_worker(self) -> None:
+        runner = self._runner(self._held("GPU-0"))
+        runner._refuse_if_gpu_is_held(EchoSpecStrict(taskType=TaskType.ECHO))
+
+    def test_a_stale_latch_does_not_refuse(self) -> None:
+        # live_gpu_occupancy returns {} when the last reading was suppressed.
+        runner = self._runner({})
+        runner._refuse_if_gpu_is_held(self._gpu_spec())
+
+    def test_nothing_held_admits(self) -> None:
+        runner = self._runner(
+            {"GPU-0": DeviceOccupancy(unavailable=False, free_bytes=1)}
+        )
+        runner._refuse_if_gpu_is_held(self._gpu_spec())

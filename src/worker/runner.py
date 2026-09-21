@@ -12,6 +12,7 @@ import requests
 
 from shared.schemas.result import BaseExecutorResult
 from shared.tasks import MergedChildTaskStrict
+from shared.tasks.components.resources import GPURequirements
 from shared.tasks.envelope import TaskSpecStrict
 from shared.tasks.gpu_usage import task_uses_gpu
 from shared.tasks.specs import (
@@ -21,6 +22,10 @@ from shared.tasks.specs import (
     TaskSpecStrictBase,
 )
 from shared.tasks.worker_message import HardwareUsage, WorkerHardware, WorkerTaskMessage
+from shared.utils.hardware import (
+    select_matching_gpu_indices,
+    unoccupied_devices,
+)
 from shared.utils.manifest import prepare_output_dir, sync_manifest
 from shared.utils.time import now_iso
 
@@ -28,6 +33,12 @@ from .executors.base_executor import ExecutionError, Executor, TaskCancelledErro
 from .executors.utils.checkpoints import get_http_destination, write_executor_result
 from .lifecycle import Lifecycle
 from .utils.logging import TaskLogEmitter
+
+
+def _declared_gpu_req(spec: TaskSpecStrict) -> GPURequirements | None:
+    resources = spec.resources
+    hardware = resources.hardware if resources is not None else None
+    return hardware.gpu if hardware is not None else None
 
 
 class Runner:
@@ -93,6 +104,48 @@ class Runner:
         lock-free: the occupancy monitor only needs a best-effort snapshot.
         """
         return self._active_executor is not None and self._active_executor_used_gpu
+
+    def _refuse_if_gpu_is_held(self, spec: TaskSpecStrict) -> None:
+        """Refuse a task whose GPUs another tenant is holding.
+
+        The dispatcher filters on the same signal, but it reads what this worker
+        last reported, so a task can still arrive for a device that has since been
+        taken. Failing here is retryable and reroutes to a worker that can run it,
+        which beats dying in executor init.
+
+        Only a reading just taken counts. A latched one is good enough to advise
+        the dispatcher, but refusing on it would fail tasks terminally once every
+        eligible worker had refused -- and a latch cannot clear while a GPU
+        executor stays warm.
+        """
+        occupancy = self.lifecycle.live_gpu_occupancy()
+        devices = self.hardware.gpu.devices if self.hardware else []
+        if not occupancy or not devices:
+            return
+        declared = _declared_gpu_req(spec)
+        if declared is None and not task_uses_gpu(spec):
+            return
+        overlaid = [
+            (
+                device.model_copy(update={"gpu_unavailable": reported.unavailable})
+                if (reported := occupancy.get(device.uuid)) is not None
+                else device
+            )
+            for device in devices
+        ]
+        free = unoccupied_devices(overlaid)
+        if len(free) == len(overlaid):
+            return
+        requirement = declared if declared is not None else GPURequirements(count=1)
+        needed = requirement.count or 1
+        if len(select_matching_gpu_indices(free, requirement)) >= needed:
+            return
+        raise ExecutionError(
+            f"{len(overlaid) - len(free)} of this worker's {len(overlaid)} GPU(s) "
+            "are held by a process outside FlowMesh; the rest do not satisfy the "
+            "task",
+            retryable=True,
+        )
 
     def _note_gpu_usage(self, spec: TaskSpecStrict) -> None:
         """Record that the loaded executor has now run something GPU-bound.
@@ -481,6 +534,7 @@ class Runner:
                             f"Task {task_id} was cancelled before execution"
                         )
                     self._current_task_id = task_id
+                    self._refuse_if_gpu_is_held(spec)
                     if task_type == "inference":
                         assert isinstance(spec, InferenceSpecStrict)
                         desired_key = self._select_inference_executor_key(spec)
