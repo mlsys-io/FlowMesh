@@ -333,6 +333,13 @@ class WorkerManager:
 
         started = await worker.start()
         if not started:
+            # Discarding a worker is indistinguishable from an operator stop in
+            # the destroy path's own logs, so the reason has to be recorded here.
+            self.logger.error(
+                "Worker %s failed to start; discarding it. The node keeps running "
+                "with one fewer worker than configured.",
+                worker.alias,
+            )
             await self._stop_and_destroy_worker(worker)
             self._registry.try_pop(worker.token)
             return False
