@@ -209,6 +209,10 @@ class WorkerManager:
         if init_config.init_on_start:
             started = await self._start_worker(worker)
             if not started:
+                # This call created the worker, so unwind it rather than leaving a
+                # STOPPED one holding the name against a retry.
+                await self._stop_and_destroy_worker(worker)
+                self._registry.try_pop(worker.token)
                 raise RuntimeError(f"Failed to start worker '{worker.alias}'")
         self._report_capacity_change()
         return worker.get_info()
@@ -333,9 +337,16 @@ class WorkerManager:
 
         started = await worker.start()
         if not started:
-            self.logger.error("Worker %s failed to start; discarding it", worker.alias)
-            await self._stop_and_destroy_worker(worker)
-            self._registry.try_pop(worker.token)
+            # start() resets the adapter to STOPPED, so leaving it registered keeps
+            # it listable and startable again. Destroying it here would also free
+            # its GPU reservation, which is taken at create time and not retaken by
+            # start -- a later retry would then run on a device another worker may
+            # already hold.
+            self.logger.error(
+                "Worker %s failed to start; it stays registered as STOPPED and can "
+                "be started again.",
+                worker.alias,
+            )
             return False
         return True
 

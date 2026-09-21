@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from server.supervisor.adapters.base import WorkerAdapter
+from server.supervisor.manager import WorkerInitConfig
 from server.supervisor.schemas import WorkerStatus
 from tests.server.supervisor_helpers import StubWorkerManager
 
@@ -38,18 +39,23 @@ class TestStartWorkerFailure:
 
         assert result is False
         errors = [r.getMessage() for r in caplog.records if r.levelno >= logging.ERROR]
-        assert errors == ["Worker gpu_0 failed to start; discarding it"]
+        assert errors == [
+            "Worker gpu_0 failed to start; it stays registered as STOPPED and can "
+            "be started again."
+        ]
 
     @pytest.mark.asyncio
-    async def test_failed_start_still_discards_the_worker(self) -> None:
+    async def test_failed_start_keeps_the_worker_registered(self) -> None:
         registry = MagicMock()
         wm = StubWorkerManager(registry)
         wm._stop_and_destroy_worker = AsyncMock(return_value=True)  # type: ignore[method-assign]
         worker = _worker(started=False)
 
         assert await wm._start_worker(worker) is False
-        wm._stop_and_destroy_worker.assert_awaited_once_with(worker)
-        registry.try_pop.assert_called_once_with(worker.token)
+        # Destroying it here would free a GPU reservation that start() does not
+        # retake, so a later retry could land on a device another worker holds.
+        wm._stop_and_destroy_worker.assert_not_awaited()
+        registry.try_pop.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_successful_start_logs_no_error_and_keeps_the_worker(
@@ -69,6 +75,25 @@ class TestStartWorkerFailure:
         registry.try_pop.assert_not_called()
 
 
+class TestCreateWorkerFailure:
+    @pytest.mark.asyncio
+    async def test_failed_create_unwinds_the_worker_it_made(self) -> None:
+        registry = MagicMock()
+        wm = StubWorkerManager(registry)
+        worker = _worker(started=False)
+        wm._create_worker = MagicMock(return_value=worker)  # type: ignore[method-assign]
+        wm._stop_and_destroy_worker = AsyncMock(return_value=True)  # type: ignore[method-assign]
+        wm._report_capacity_change = MagicMock()  # type: ignore[method-assign]
+
+        with pytest.raises(RuntimeError, match="gpu_0"):
+            await wm.create_worker(WorkerInitConfig(init_on_start=True))
+
+        # A worker this call created must not outlive its own failure holding the
+        # name; an already-registered one started later is a different case.
+        wm._stop_and_destroy_worker.assert_awaited_once_with(worker)
+        registry.try_pop.assert_called_once_with(worker.token)
+
+
 class TestStopAndDestroyWorkerLog:
     @pytest.mark.asyncio
     async def test_a_worker_that_failed_to_start_is_logged_as_destroyed(
@@ -77,9 +102,11 @@ class TestStopAndDestroyWorkerLog:
         wm = StubWorkerManager()
         wm._destroy_worker = MagicMock()  # type: ignore[method-assign]
         worker = _worker(started=False)
+        wm._create_worker = MagicMock(return_value=worker)  # type: ignore[method-assign]
 
         with caplog.at_level(logging.INFO, logger="test.supervisor"):
-            assert await wm._start_worker(worker) is False
+            with pytest.raises(RuntimeError):
+                await wm.create_worker(WorkerInitConfig(init_on_start=True))
 
         assert _info_messages(caplog) == [
             "Destroying worker gpu_0 that is not running.",
