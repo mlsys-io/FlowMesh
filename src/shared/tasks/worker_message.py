@@ -79,6 +79,24 @@ class GpuInfo(BaseModel):
     name: str = Field(description="GPU name.")
     uuid: str = Field(description="GPU UUID.")
     memory_total_bytes: int | None = Field(description="Total GPU memory in bytes.")
+    gpu_unavailable: bool | None = Field(
+        default=None,
+        description=(
+            "Whether a process outside FlowMesh holds this device. None means the "
+            "worker reported no observation -- an older worker, a device the probe "
+            "skipped, or a reading the worker could not trust -- and schedules "
+            "exactly as it did before. This is the only field that gates placement."
+        ),
+    )
+    memory_free_bytes: int | None = Field(
+        default=None,
+        description=(
+            "Free memory in bytes as of the worker's last usable reading, for "
+            "operators. Informational only: it never gates placement, because a "
+            "reading taken while the worker's own executor is warm cannot "
+            "distinguish our memory from another tenant's."
+        ),
+    )
 
 
 class GpuPlatformInfo(BaseModel):
