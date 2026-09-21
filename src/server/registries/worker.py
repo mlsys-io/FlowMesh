@@ -58,6 +58,31 @@ return 1
 """
 
 
+def _merge_gpu_occupancy(
+    hardware: "WorkerHardware | None", occupancy: dict[str, Any]
+) -> None:
+    """Apply a worker's reported per-device occupancy onto its device list.
+
+    Kept out of ``hardware_json`` deliberately. That blob is the worker's
+    registration-time description of itself and is never rewritten; this is a
+    fast-moving observation, so it lives in its own field and is joined by UUID at
+    read time. A device the worker said nothing about keeps ``None`` and schedules
+    exactly as it did before.
+    """
+    if hardware is None or not occupancy:
+        return
+    for device in hardware.gpu.devices:
+        reported = occupancy.get(device.uuid)
+        if not isinstance(reported, dict):
+            continue
+        unavailable = reported.get("unavailable")
+        if isinstance(unavailable, bool):
+            device.gpu_unavailable = unavailable
+        free_bytes = reported.get("free_bytes")
+        if isinstance(free_bytes, int):
+            device.memory_free_bytes = free_bytes
+
+
 def _flatten_fields(mapping: dict[str, str]) -> list[str]:
     """Flatten a hash mapping into the field/value ARGV tail HSET expects."""
     flat: list[str] = []
@@ -508,6 +533,21 @@ class WorkerRegistry:
         seq = await self._rds.asyncio.incr(WORKER_ID_SEQ_KEY)
         return new_worker_id(seq)
 
+    def record_gpu_occupancy(self, worker_id: str, occupancy: dict[str, Any]) -> bool:
+        """Store the per-device occupancy a heartbeat reported.
+
+        Latched rather than expiring: a worker that stops reporting is already
+        filtered on staleness, while a worker that is alive but currently unable to
+        take a reading -- busy, or holding a warm GPU executor -- should keep the
+        last thing it knew rather than silently reading as free.
+        """
+        if not occupancy:
+            return False
+        return self._set_worker_fields(
+            worker_id,
+            {"gpu_occupancy_json": json.dumps(occupancy, ensure_ascii=False)},
+        )
+
     def _set_worker_fields(self, worker_id: str, mapping: dict[str, str]) -> bool:
         wrote = self._rds.sync.eval(
             _SET_FIELDS_IF_REGISTERED,
@@ -718,6 +758,7 @@ def _parse_worker_from_redis(
         if hardware_json is None
         else WorkerHardware.model_validate_json(hardware_json)
     )
+    _merge_gpu_occupancy(hardware, _loads(value.get("gpu_occupancy_json"), {}))
     capabilities_json = value.get("capabilities_json")
     capabilities = (
         WorkerCapabilities()

@@ -720,7 +720,22 @@ class EventMonitor:
                 success = self._worker_registry.update_worker_hb(
                     worker_id, event.ts, event.payload.get("ttl_sec", 120)
                 )
-                if not success:
+                if success:
+                    # Scheduling advice, written after the liveness update and
+                    # never allowed to cost the worker its heartbeat.
+                    occupancy = (event.metrics or {}).get("gpu_occupancy")
+                    if isinstance(occupancy, dict) and occupancy:
+                        try:
+                            self._worker_registry.record_gpu_occupancy(
+                                worker_id, occupancy
+                            )
+                        except Exception:
+                            self._logger.debug(
+                                "Could not record GPU occupancy for %s",
+                                worker_id,
+                                exc_info=True,
+                            )
+                else:
                     self._logger.warning(
                         "Heartbeat from unknown worker %s; ignoring", worker_id
                     )

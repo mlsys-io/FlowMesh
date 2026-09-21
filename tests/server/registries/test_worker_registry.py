@@ -1,5 +1,7 @@
 """Tests for worker hardware satisfaction and sorting."""
 
+import json
+
 from server.registries.worker import (
     Worker,
     _parse_worker_from_redis,
@@ -319,3 +321,68 @@ class TestParseStatus:
         # straight from the node's report, so an unrecognised value must
         # degrade rather than 500 the endpoint.
         assert NodeWorkerStatus("RUNNING") is NodeWorkerStatus.UNKNOWN
+
+
+class TestParseGpuOccupancy:
+    def _raw(self, occupancy: dict | None = None) -> dict:
+        hardware = WorkerHardware(
+            cpu=CPUInfo(logical_cores=16, model="AMD EPYC 7543"),
+            memory=MemoryInfo(total_bytes=64 * 1024**3),
+            gpu=GpuPlatformInfo(
+                driver_version="550.0",
+                cuda_version="12.4",
+                devices=[
+                    GpuInfo(
+                        index=0,
+                        name="NVIDIA RTX 6000 Ada Generation",
+                        uuid="GPU-held",
+                        memory_total_bytes=48 * 1024**3,
+                    ),
+                    GpuInfo(
+                        index=1,
+                        name="NVIDIA RTX 6000 Ada Generation",
+                        uuid="GPU-free",
+                        memory_total_bytes=48 * 1024**3,
+                    ),
+                ],
+            ),
+            network=NetworkInfo(ip=None, bandwidth_bytes_per_sec=None),
+        )
+        raw = {"status": "IDLE", "hardware_json": hardware.model_dump_json()}
+        if occupancy is not None:
+            raw["gpu_occupancy_json"] = json.dumps(occupancy)
+        return raw
+
+    def test_occupancy_joins_onto_devices_by_uuid(self) -> None:
+        raw = self._raw(
+            {
+                "GPU-held": {"unavailable": True, "free_bytes": 19 * 1024**2},
+                "GPU-free": {"unavailable": False, "free_bytes": 47 * 1024**3},
+            }
+        )
+        w = _parse_worker_from_redis("w-1", raw)
+        assert w is not None and w.hardware is not None
+        held, free = w.hardware.gpu.devices
+        assert held.gpu_unavailable is True
+        assert held.memory_free_bytes == 19 * 1024**2
+        assert free.gpu_unavailable is False
+
+    def test_a_device_the_worker_did_not_mention_stays_unknown(self) -> None:
+        w = _parse_worker_from_redis(
+            "w-1", self._raw({"GPU-held": {"unavailable": True}})
+        )
+        assert w is not None and w.hardware is not None
+        held, free = w.hardware.gpu.devices
+        assert held.gpu_unavailable is True
+        assert free.gpu_unavailable is None, "unreported means unknown, not free"
+
+    def test_no_occupancy_field_leaves_every_device_unknown(self) -> None:
+        # An older worker, or one that has never taken a usable reading.
+        w = _parse_worker_from_redis("w-1", self._raw())
+        assert w is not None and w.hardware is not None
+        assert all(d.gpu_unavailable is None for d in w.hardware.gpu.devices)
+
+    def test_malformed_occupancy_is_ignored(self) -> None:
+        w = _parse_worker_from_redis("w-1", self._raw({"GPU-held": "nonsense"}))
+        assert w is not None and w.hardware is not None
+        assert w.hardware.gpu.devices[0].gpu_unavailable is None
