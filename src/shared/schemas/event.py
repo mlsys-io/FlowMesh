@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -56,6 +56,14 @@ class WorkerEvent(BaseEvent):
     worker_id: str = Field(..., description="Associated worker identifier.")
     status: WorkerStatus | None = Field(
         default=None, description="Worker status (IDLE/RUNNING/etc)."
+    )
+    origin: Literal["worker", "server"] = Field(
+        default="worker",
+        description=(
+            "Which side produced the event. A worker event reports the worker's own "
+            "observation and is the registry's source of truth; a server event "
+            "announces a change the server has already written to the registry."
+        ),
     )
     tags: list[str] | None = Field(default=None, description="Worker tags.")
     metrics: dict[str, Any] = Field(

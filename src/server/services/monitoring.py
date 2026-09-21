@@ -742,15 +742,19 @@ class EventMonitor:
                         "Heartbeat from unknown worker %s; ignoring", worker_id
                     )
             case "STATUS":
-                worker_id = (event.worker_id or "").strip()
-                status = event.status or WorkerStatus.UNKNOWN
-                success = self._worker_registry.set_worker_status(
-                    worker_id, status, event.ts, event.payload
-                )
-                if not success:
-                    self._logger.warning(
-                        "Status update from unknown worker %s; ignoring", worker_id
+                # A server-origin event announces a write the registry already
+                # applied inline; replaying it here lands that value again at an
+                # arbitrary later time, on top of whatever has since replaced it.
+                if event.origin == "worker":
+                    worker_id = (event.worker_id or "").strip()
+                    status = event.status or WorkerStatus.UNKNOWN
+                    success = self._worker_registry.set_worker_status(
+                        worker_id, status, event.ts, event.payload
                     )
+                    if not success:
+                        self._logger.warning(
+                            "Status update from unknown worker %s; ignoring", worker_id
+                        )
             case "UNREGISTER":
                 worker_id = (event.worker_id or "").strip()
                 self._worker_registry.unregister_workers(worker_id)
