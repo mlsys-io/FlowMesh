@@ -6,6 +6,7 @@ from server.registries.worker import (
     Worker,
     _parse_worker_from_redis,
     capability_satisfies,
+    gpu_available_for,
     hw_satisfies,
 )
 from server.schemas.node import NodeWorkerStatus
@@ -386,3 +387,95 @@ class TestParseGpuOccupancy:
         w = _parse_worker_from_redis("w-1", self._raw({"GPU-held": "nonsense"}))
         assert w is not None and w.hardware is not None
         assert w.hardware.gpu.devices[0].gpu_unavailable is None
+
+
+def _held(worker: Worker, *indices: int) -> Worker:
+    """Mark the given device indices as held by another tenant."""
+    assert worker.hardware is not None
+    for index in indices:
+        worker.hardware.gpu.devices[index].gpu_unavailable = True
+    return worker
+
+
+def _inference_task() -> TaskEnvelopeStrict:
+    """A GPU task that declares no resources -- the shape that caused the incident."""
+    return TaskEnvelopeStrict.model_validate(
+        {
+            "apiVersion": "flowmesh/v1",
+            "kind": "Task",
+            "spec": {
+                "taskType": "inference",
+                "data": {"type": "list", "items": ["hi"]},
+                "model": {"source": {"identifier": "org/m"}},
+            },
+        }
+    )
+
+
+class TestGpuAvailableFor:
+    def test_held_device_is_not_offered(self) -> None:
+        worker = _held(_worker(gpu_count=1, gpu_mem=48 * 1024**3), 0)
+        assert gpu_available_for(worker, _task(gpu_count=1)) is False
+
+    def test_a_free_sibling_still_is(self) -> None:
+        # The whole point of per-device: one held card must not write off the box.
+        worker = _held(_worker(gpu_count=4, gpu_mem=48 * 1024**3), 0)
+        assert gpu_available_for(worker, _task(gpu_count=1)) is True
+
+    def test_not_enough_free_devices(self) -> None:
+        worker = _held(_worker(gpu_count=2, gpu_mem=48 * 1024**3), 0)
+        assert gpu_available_for(worker, _task(gpu_count=2)) is False
+
+    def test_undeclared_gpu_task_is_still_filtered(self) -> None:
+        # hw_satisfies never reaches a GPU check for this task, which is why the
+        # filter cannot live there.
+        worker = _held(_worker(gpu_count=1, gpu_mem=48 * 1024**3), 0)
+        task = _inference_task()
+        assert hw_satisfies(worker, task) is True
+        assert gpu_available_for(worker, task) is False
+
+    def test_cpu_task_is_unaffected(self) -> None:
+        # Goal 1: the worker keeps earning its keep on CPU work.
+        worker = _held(_worker(gpu_count=1, gpu_mem=48 * 1024**3), 0)
+        assert gpu_available_for(worker, _task(cpu=2)) is True
+
+    def test_hw_satisfies_is_not_changed_by_occupancy(self) -> None:
+        # satisfying_workers must keep the worker, or the task fails as
+        # unschedulable instead of waiting for the card to free up.
+        worker = _held(_worker(gpu_count=1, gpu_mem=48 * 1024**3), 0)
+        assert hw_satisfies(worker, _task(gpu_count=1)) is True
+
+
+class TestGpuAvailableForOnlySubtracts:
+    def test_cpu_only_worker_is_untouched(self) -> None:
+        # No devices reported at all: this predicate must never be stricter than
+        # hw_satisfies on a worker it knows nothing about.
+        assert gpu_available_for(_worker(gpu_count=0), _inference_task()) is True
+
+    def test_worker_reporting_no_occupancy_is_untouched(self) -> None:
+        worker = _worker(gpu_count=1, gpu_mem=48 * 1024**3)
+        assert worker.hardware is not None
+        assert all(d.gpu_unavailable is None for d in worker.hardware.gpu.devices)
+        assert gpu_available_for(worker, _inference_task()) is True
+
+    def test_unified_memory_worker_is_untouched(self) -> None:
+        # The probe skips unified devices, so they never report occupied.
+        worker = _worker(
+            gpu_count=1,
+            gpu_mem=0,
+            gpu_memory_is_unified=True,
+            gpu_shared_memory_total_bytes=128 * 1024**3,
+        )
+        assert gpu_available_for(worker, _task(gpu_memory="40Gi")) is True
+
+    def test_unified_pool_still_reachable_when_another_device_is_held(self) -> None:
+        worker = _held(
+            _worker(
+                gpu_count=2,
+                gpu_mem=0,
+                gpu_memory_is_unified=True,
+                gpu_shared_memory_total_bytes=128 * 1024**3,
+            ),
+            0,
+        )
+        assert gpu_available_for(worker, _task(gpu_memory="40Gi")) is True

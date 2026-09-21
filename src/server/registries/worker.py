@@ -12,6 +12,7 @@ from shared.schemas.command import (
 from shared.schemas.worker import SSHLimits, WorkerCapabilities
 from shared.tasks import TaskEnvelope
 from shared.tasks.components.resources import GPURequirements
+from shared.tasks.gpu_usage import task_uses_gpu
 from shared.tasks.specs import SSHSpecStrict, SSHSpecTemplate
 from shared.tasks.worker_message import (
     WorkerHardware,
@@ -24,6 +25,7 @@ from shared.utils.hardware import (
     parse_gpu_memory_bytes,
     select_matching_gpu_indices,
     unified_gpu_memory_satisfies,
+    unoccupied_devices,
 )
 
 from ..clients.redis import (
@@ -445,7 +447,11 @@ class WorkerRegistry:
                 continue
             if self.is_worker_stale(worker.id):
                 continue
-            if hw_satisfies(worker, task) and capability_satisfies(worker, task):
+            if (
+                hw_satisfies(worker, task)
+                and capability_satisfies(worker, task)
+                and gpu_available_for(worker, task)
+            ):
                 available.append(worker)
         return self.sort_workers(available)
 
@@ -655,6 +661,43 @@ def hw_satisfies(worker: Worker, task: TaskEnvelope) -> bool:
             return False
 
     return True
+
+
+def gpu_available_for(worker: Worker, task: TaskEnvelope) -> bool:
+    """Whether this worker has GPUs for this task that nothing else is holding.
+
+    Applied when choosing among idle workers, never in ``hw_satisfies``. Foreign
+    occupancy is transient: a worker whose card a sandbox pod currently holds can
+    still run the task in ten minutes, so it must stay in ``satisfying_workers``
+    -- the set that answers "could anything ever run this?" -- or the task fails as
+    unschedulable instead of waiting.
+
+    Only ever subtracts. A worker that reports no devices, or no occupied device,
+    or that is being asked for CPU-only work, is returned untouched.
+    """
+    hw = worker.hardware
+    if hw is None or not hw.gpu.devices:
+        return True
+    if not any(device.gpu_unavailable for device in hw.gpu.devices):
+        return True
+    declared = _declared_gpu_req(task)
+    # A task that asks for a GPU should get an unoccupied one whatever its type,
+    # and a task that uses one without asking still needs a free device.
+    if declared is None and not task_uses_gpu(task.spec):
+        return True
+    free = unoccupied_devices(hw.gpu.devices)
+    if not free:
+        return False
+    free_hw = hw.model_copy(update={"gpu": hw.gpu.model_copy(update={"devices": free})})
+    return _gpu_meets_requirements(
+        free_hw, declared if declared is not None else GPURequirements(count=1)
+    )
+
+
+def _declared_gpu_req(task: TaskEnvelope) -> GPURequirements | None:
+    resources = task.spec.resources
+    hardware = resources.hardware if resources is not None else None
+    return hardware.gpu if hardware is not None else None
 
 
 def capability_satisfies(worker: Worker, task: TaskEnvelope) -> bool:
