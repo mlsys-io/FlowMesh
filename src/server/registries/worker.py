@@ -546,9 +546,11 @@ class WorkerRegistry:
         filtered on staleness, while a worker that is alive but currently unable to
         take a reading -- busy, or holding a warm GPU executor -- should keep the
         last thing it knew rather than silently reading as free.
+
+        An empty map is written, not skipped. It is how a worker whose probe has
+        failed says its devices are no longer known to be held, and without it a
+        stale reading would have nothing able to clear it.
         """
-        if not occupancy:
-            return False
         return self._set_worker_fields(
             worker_id,
             {"gpu_occupancy_json": json.dumps(occupancy, ensure_ascii=False)},
@@ -681,6 +683,8 @@ def gpu_available_for(worker: Worker, task: TaskEnvelope) -> bool:
     if not any(device.gpu_unavailable for device in hw.gpu.devices):
         return True
     declared = _declared_gpu_req(task)
+    if declared is not None and declared.count == 0:
+        return True
     # A task that asks for a GPU should get an unoccupied one whatever its type,
     # and a task that uses one without asking still needs a free device.
     if declared is None and not task_uses_gpu(task.spec):

@@ -79,18 +79,16 @@ class DeviceOccupancy:
 
 
 def decide(
-    used_mib: float | None,
+    used_mib: float,
     threshold_mib: int,
     consecutive: int,
     previous: DeviceState,
 ) -> DeviceState:
     """Next state for one device from one observation. Pure, for testing.
 
-    ``used_mib`` is ``None`` when the device could not be read, which never changes
-    the state.
+    Only called for a device that was actually read; a device the probe could not
+    read keeps its previous state by not being passed here at all.
     """
-    if used_mib is None:
-        return DeviceState(unavailable=previous.unavailable, used_mib=None, streak=0)
     occupied = used_mib > threshold_mib
     if occupied == previous.unavailable:
         # Observation agrees with the current state: nothing pending.
@@ -161,8 +159,9 @@ class GpuOccupancyMonitor:
     """Track per-device occupancy across heartbeats.
 
     Owned by the heartbeat thread, which calls ``observe`` once per beat. Other
-    threads may call ``snapshot`` freely: each ``observe`` rebinds its state in one
-    assignment, so a reader sees a whole reading or the previous one, never a mix.
+    threads may call ``snapshot`` freely; the dicts are rebound rather than mutated,
+    so a reader never sees a half-written one. A reader can pair new occupancy with
+    a previous ``free_bytes``, which is informational only and never gates placement.
     """
 
     def __init__(
@@ -174,7 +173,7 @@ class GpuOccupancyMonitor:
         self._probe = probe
         self._states: dict[str, DeviceState] = {}
         self._free_bytes: dict[str, int] = {}
-        self._measured = False
+        self._measured_uuids: frozenset[str] = frozenset()
 
     @property
     def config(self) -> GpuGateConfig:
@@ -182,24 +181,23 @@ class GpuOccupancyMonitor:
 
     @property
     def measured(self) -> bool:
-        """Whether the most recent observation was taken rather than suppressed.
-
-        A latched reading is good enough to advise the dispatcher, but not to refuse
-        a task outright: refusing on stale data fails tasks terminally, which is worse
-        than the blind spot it would close.
-        """
-        return self._measured
+        """Whether the most recent observation read any device at all."""
+        return bool(self._measured_uuids)
 
     def observe(self, measurable: bool) -> None:
         if not self._config.enabled:
-            self._states, self._free_bytes, self._measured = {}, {}, False
+            self._states, self._free_bytes = {}, {}
+            self._measured_uuids = frozenset()
             return
         if not measurable:
-            self._measured = False
+            self._measured_uuids = frozenset()
             return
         readings = self._probe()
         if not readings:
-            self._states, self._free_bytes, self._measured = {}, {}, False
+            # Total probe failure: drop every latch. Only a fresh clear reading
+            # releases one, and a broken probe never produces one.
+            self._states, self._free_bytes = {}, {}
+            self._measured_uuids = frozenset()
             return
         states = dict(self._states)
         free = dict(self._free_bytes)
@@ -211,10 +209,26 @@ class GpuOccupancyMonitor:
                 self._states.get(uuid, DeviceState()),
             )
             free[uuid] = reading.free_bytes
-        self._states, self._free_bytes, self._measured = states, free, True
+        self._states, self._free_bytes = states, free
+        self._measured_uuids = frozenset(readings)
+
+    def live_snapshot(self) -> dict[str, DeviceOccupancy]:
+        """Only the devices read on the most recent observation.
+
+        A device absent from the last reading keeps its latched state, which is good
+        enough to advise the dispatcher but not to refuse a task outright: a partial
+        probe failure would otherwise let one unreadable device hard-refuse work
+        forever on a reading nobody has confirmed since.
+        """
+        measured = self._measured_uuids
+        return {
+            uuid: occupancy
+            for uuid, occupancy in self.snapshot().items()
+            if uuid in measured
+        }
 
     def snapshot(self) -> dict[str, DeviceOccupancy]:
-        """Per-UUID occupancy, as last observed. Empty when nothing is known."""
+        """Per-UUID occupancy, latched from the last usable reading of each device."""
         states, free = self._states, self._free_bytes
         return {
             uuid: DeviceOccupancy(

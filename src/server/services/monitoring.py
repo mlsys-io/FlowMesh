@@ -724,7 +724,9 @@ class EventMonitor:
                     # Scheduling advice, written after the liveness update and
                     # never allowed to cost the worker its heartbeat.
                     occupancy = (event.metrics or {}).get("gpu_occupancy")
-                    if isinstance(occupancy, dict) and occupancy:
+                    # An empty map is meaningful -- it clears a stale reading -- so
+                    # only an absent key means "this worker said nothing".
+                    if isinstance(occupancy, dict):
                         try:
                             self._worker_registry.record_gpu_occupancy(
                                 worker_id, occupancy

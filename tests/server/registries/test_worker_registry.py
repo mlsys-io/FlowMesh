@@ -479,3 +479,24 @@ class TestGpuAvailableForOnlySubtracts:
             0,
         )
         assert gpu_available_for(worker, _task(gpu_memory="40Gi")) is True
+
+
+class TestClearedOccupancy:
+    def test_an_empty_map_reads_as_nothing_known(self) -> None:
+        # What a worker whose probe has failed writes. It must land the devices
+        # back on "unknown", not leave the previous reading in place.
+        raw = TestParseGpuOccupancy()._raw({})
+        w = _parse_worker_from_redis("w-1", raw)
+        assert w is not None and w.hardware is not None
+        assert all(d.gpu_unavailable is None for d in w.hardware.gpu.devices)
+
+    def test_a_cleared_worker_is_offered_again(self) -> None:
+        worker = _worker(gpu_count=1, gpu_mem=48 * 1024**3)
+        assert gpu_available_for(worker, _task(gpu_count=1)) is True
+
+
+class TestZeroGpusRequested:
+    def test_a_task_asking_for_no_gpus_is_unaffected(self) -> None:
+        # count: 0 asks for nothing, so a fully held worker can still run it.
+        worker = _held(_worker(gpu_count=1, gpu_mem=48 * 1024**3), 0)
+        assert gpu_available_for(worker, _task(gpu_count=0)) is True

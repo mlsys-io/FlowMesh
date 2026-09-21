@@ -82,9 +82,7 @@ class Lifecycle:
         caller that refuses work on this never refuses on a stale latch.
         """
         monitor = self._gpu_monitor
-        if monitor is None or not monitor.measured:
-            return {}
-        return monitor.snapshot()
+        return {} if monitor is None else monitor.live_snapshot()
 
     @property
     def worker_id(self) -> str:
@@ -118,15 +116,16 @@ class Lifecycle:
             if isinstance(energy_total, (int, float)):
                 metrics["estimated_energy_kwh"] = energy_total
         if (monitor := self._gpu_monitor) is not None:
-            occupancy = {
+            # Always sent, empty included: an empty map is how the worker says its
+            # devices are no longer known to be held. Omitting it would leave the
+            # server's last reading latched with nothing able to clear it.
+            metrics["gpu_occupancy"] = {
                 uuid: {
                     "unavailable": device.unavailable,
                     "free_bytes": device.free_bytes,
                 }
                 for uuid, device in monitor.snapshot().items()
             }
-            if occupancy:
-                metrics["gpu_occupancy"] = occupancy
         return metrics
 
     def start(
@@ -185,6 +184,11 @@ class Lifecycle:
         running, no GPU-using executor still warm, and past the grace window in
         which a finished task's subprocess may still be releasing memory. Before
         the runner registers its probe we cannot know, so we do not measure.
+
+        Measurability is sampled before the read and not re-confirmed after it, so a
+        task starting mid-probe could in principle contribute to the reading. The
+        window is a single NVML call, and ``consecutive`` readings must agree before
+        a device flips, so one such reading cannot move the state on its own.
         """
         monitor = self._gpu_monitor
         if monitor is None:

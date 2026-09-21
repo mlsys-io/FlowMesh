@@ -96,9 +96,11 @@ def _transformers_uses_gpu(model: ModelConfig | ModelConfigTemplate | None) -> b
 def _ssh_requests_gpu(spec: SSHSpecStrict | SSHSpecTemplate) -> bool:
     """An SSH session is GPU-using exactly when it asks for devices.
 
-    Any ``gpu`` block counts: a bare ``type`` or ``memory`` without ``count``
-    still resolves to one device in the session config.
+    A bare ``type`` or ``memory`` without ``count`` still resolves to one device in
+    the session config, so any ``gpu`` block counts -- except an explicit
+    ``count: 0``, which asks for none.
     """
     resources = spec.resources
     hardware = resources.hardware if resources is not None else None
-    return hardware is not None and hardware.gpu is not None
+    gpu = hardware.gpu if hardware is not None else None
+    return gpu is not None and gpu.count != 0

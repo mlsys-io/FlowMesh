@@ -58,10 +58,6 @@ class TestDecide:
         state = decide(40_000, THRESH, 2, DeviceState())
         assert decide(5, THRESH, 2, state).streak == 0
 
-    def test_unreadable_device_keeps_state(self) -> None:
-        held = DeviceState(unavailable=True)
-        assert decide(None, THRESH, 2, held).unavailable is True
-
     def test_at_threshold_is_not_occupied(self) -> None:
         assert decide(THRESH, THRESH, 1, DeviceState()).unavailable is False
 
@@ -190,6 +186,18 @@ class TestMonitor:
         snapshot = monitor.snapshot()
         assert snapshot[GPU_A].unavailable is True, "unread device keeps its state"
         assert snapshot[GPU_B].unavailable is True, "one clear reading is not enough"
+
+    def test_an_unread_device_is_latched_but_not_live(self) -> None:
+        # A device the probe could not read this tick may still advise the
+        # dispatcher, but must not hard-refuse work nobody has confirmed since.
+        both = {GPU_A: _reading(40_000), GPU_B: _reading(40_000)}
+        monitor = self._monitor([both, both, {GPU_B: _reading(40_000)}])
+        monitor.observe(True)
+        monitor.observe(True)
+        monitor.observe(True)
+        assert monitor.snapshot()[GPU_A].unavailable is True
+        assert GPU_A not in monitor.live_snapshot()
+        assert GPU_B in monitor.live_snapshot()
 
     def test_free_bytes_ride_along(self) -> None:
         monitor = self._monitor([{GPU_A: _reading(5, free_bytes=1234)}])
@@ -434,3 +442,24 @@ class TestAdmission:
             {"GPU-0": DeviceOccupancy(unavailable=False, free_bytes=1)}
         )
         runner._refuse_if_gpu_is_held(self._gpu_spec())
+
+
+class TestClearingReachesTheServer:
+    """A probe failure has to clear the server's copy, not just the worker's.
+
+    The server latches what it was last told, so if the worker simply stopped
+    mentioning a device the stale reading would sit there with nothing able to
+    release it -- the worker would be held out of GPU placement indefinitely.
+    """
+
+    def test_an_empty_reading_is_still_reported(self, tmp_path: Path) -> None:
+        lc, monitor, _ = _lifecycle(tmp_path, [{GPU_A: _reading(44_000)}, {}])
+        lc._observe_gpu()
+        assert lc._metrics()["gpu_occupancy"][GPU_A]["unavailable"] is True
+        lc._observe_gpu()  # probe fails
+        assert lc._metrics()["gpu_occupancy"] == {}
+
+    def test_a_worker_without_a_monitor_says_nothing(self, tmp_path: Path) -> None:
+        # Absent key means "no opinion offered"; an empty map means "cleared".
+        lc = Lifecycle(MagicMock(), 30, 120, tmp_path / "hb", cost_per_hour=0.0)
+        assert "gpu_occupancy" not in lc._metrics()
