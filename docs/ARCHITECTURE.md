@@ -158,8 +158,12 @@ scripts/dev/            compile_protos, sync_requirements, check_env_examples
   unreadable NVML clears to "no opinion", since only a fresh clear reading
   releases a latch. Occupancy that arrives while a GPU executor is warm is
   therefore not detected until that executor unloads, which
-  `WORKER_EXECUTOR_IDLE_CLEANUP_SEC` bounds. Disable with
-  `WORKER_FOREIGN_GPU_GATE=false`.
+  `WORKER_EXECUTOR_IDLE_CLEANUP_SEC` bounds. Each refusal also restarts the
+  post-task grace window, so a worker being handed GPU work it keeps refusing
+  takes longer to re-measure. An SSH task that declares no `gpu` block at all is
+  handed the worker's whole device set, held cards included — occupancy filters
+  which devices a *declared* request receives, not whether an undeclared session
+  sees them. Disable with `WORKER_FOREIGN_GPU_GATE=false`.
 - **Session relays are worker-initiated.** A `proxy` or `forward` session, and a
   proxied `serve` endpoint, are reached over a gRPC stream the *worker* opens to
   its supervisor, which bridges it to the Redis `up`/`down` streams the client
