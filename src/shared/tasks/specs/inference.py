@@ -54,8 +54,6 @@ class InferenceSpecTemplate(ModelInferSpecTemplate):
 
     def uses_gpu(self) -> bool:
         if self.backend() is InferenceBackend.TRANSFORMERS:
-            # Identity, not truthiness: on a template this field may hold an
-            # unresolved placeholder string, which must not read as "pinned to CPU".
             return self.model_uses_gpu(enforce_cpu=self.enforce_cpu is True)
         # VLLM always, and AUTO because the runner prefers vLLM for it.
         return True

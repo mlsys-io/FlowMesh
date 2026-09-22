@@ -57,13 +57,11 @@ class WorkerEvent(BaseEvent):
     status: WorkerStatus | None = Field(
         default=None, description="Worker status (IDLE/RUNNING/etc)."
     )
+    # A worker event reports the worker's own observation and is the registry's
+    # source of truth; a server event announces a change the server has already
+    # written, so applying it again would replay a stale value.
     origin: Literal["worker", "server"] = Field(
-        default="worker",
-        description=(
-            "Which side produced the event. A worker event reports the worker's own "
-            "observation and is the registry's source of truth; a server event "
-            "announces a change the server has already written to the registry."
-        ),
+        default="worker", description="Which side produced the event."
     )
     tags: list[str] | None = Field(default=None, description="Worker tags.")
     metrics: dict[str, Any] = Field(
