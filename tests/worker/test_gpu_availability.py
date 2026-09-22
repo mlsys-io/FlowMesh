@@ -1,4 +1,4 @@
-"""Per-device GPU occupancy: what the worker observes and what it reports."""
+"""Per-device GPU availability: what the worker observes and what it reports."""
 
 from pathlib import Path
 from types import SimpleNamespace
@@ -20,15 +20,15 @@ from shared.tasks.worker_message import (
     WorkerHardware,
 )
 from worker.executors.base_executor import ExecutionError
-from worker.gpu_occupancy import (
+from worker.gpu_availability import (
     MIB,
-    DeviceOccupancy,
+    DeviceAvailability,
     DeviceReading,
     DeviceState,
+    GpuAvailabilityMonitor,
     GpuGateConfig,
-    GpuOccupancyMonitor,
     NvmlDeviceProbe,
-    decide,
+    decide_availability,
 )
 from worker.lifecycle import Lifecycle
 from worker.runner import Runner
@@ -43,26 +43,38 @@ def _reading(used_mib: float, free_bytes: int = 0) -> DeviceReading:
 
 
 class TestDecide:
+    def _decide(
+        self, used_mib: float, previous: DeviceState, consecutive: int = 2
+    ) -> DeviceState:
+        return decide_availability(_reading(used_mib), THRESH, consecutive, previous)
+
     def test_needs_consecutive_observations_to_enter(self) -> None:
-        state = decide(40_000, THRESH, 2, DeviceState())
-        assert state.unavailable is False and state.streak == 1
-        assert decide(40_000, THRESH, 2, state).unavailable is True
+        state = self._decide(40_000, DeviceState())
+        assert state.availability.available is True and state.streak == 1
+        assert self._decide(40_000, state).availability.available is False
 
     def test_needs_consecutive_observations_to_leave(self) -> None:
-        held = DeviceState(unavailable=True)
-        state = decide(5, THRESH, 2, held)
-        assert state.unavailable is True and state.streak == 1
-        assert decide(5, THRESH, 2, state).unavailable is False
+        held = DeviceState(DeviceAvailability(available=False))
+        state = self._decide(5, held)
+        assert state.availability.available is False and state.streak == 1
+        assert self._decide(5, state).availability.available is True
 
     def test_single_spike_does_not_flip(self) -> None:
-        state = decide(40_000, THRESH, 2, DeviceState())
-        assert decide(5, THRESH, 2, state).streak == 0
+        state = self._decide(40_000, DeviceState())
+        assert self._decide(5, state).streak == 0
 
-    def test_at_threshold_is_not_occupied(self) -> None:
-        assert decide(THRESH, THRESH, 1, DeviceState()).unavailable is False
+    def test_at_threshold_is_still_available(self) -> None:
+        assert self._decide(THRESH, DeviceState()).availability.available is True
 
     def test_consecutive_one_flips_immediately(self) -> None:
-        assert decide(40_000, THRESH, 1, DeviceState()).unavailable is True
+        state = self._decide(40_000, DeviceState(), consecutive=1)
+        assert state.availability.available is False
+
+    def test_free_bytes_always_come_from_the_latest_reading(self) -> None:
+        # Even while latched mid-streak, the reported free figure is the fresh one.
+        held = DeviceState(DeviceAvailability(available=False, free_bytes=1))
+        state = decide_availability(_reading(5, free_bytes=999), THRESH, 2, held)
+        assert state.availability == DeviceAvailability(available=False, free_bytes=999)
 
 
 class TestNvmlDeviceProbe:
@@ -100,7 +112,7 @@ class TestNvmlDeviceProbe:
     def test_keys_by_uuid_not_index(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # Index is only meaningful relative to CUDA_VISIBLE_DEVICES.
         monkeypatch.setattr(
-            "worker.gpu_occupancy.pynvml",
+            "worker.gpu_availability.pynvml",
             self._fake_nvml({0: ("dedicated", GPU_A, 40_000 * MIB, 8 * MIB)}),
         )
         assert NvmlDeviceProbe()() == {GPU_A: _reading(40_000.0, free_bytes=8 * MIB)}
@@ -109,7 +121,7 @@ class TestNvmlDeviceProbe:
         # Their "used" figure is system RAM, not a card another tenant holds --
         # so they report nothing rather than reporting free.
         monkeypatch.setattr(
-            "worker.gpu_occupancy.pynvml",
+            "worker.gpu_availability.pynvml",
             self._fake_nvml(
                 {
                     0: ("unified", GPU_A, 40_000 * MIB, 0),
@@ -128,14 +140,14 @@ class TestNvmlDeviceProbe:
             def nvmlInit() -> None:
                 raise RuntimeError("driver wedged")
 
-        monkeypatch.setattr("worker.gpu_occupancy.pynvml", Broken)
+        monkeypatch.setattr("worker.gpu_availability.pynvml", Broken)
         assert NvmlDeviceProbe()() == {}
 
 
 class TestMonitor:
     def _monitor(
         self, batches: list[dict[str, DeviceReading]], **cfg: Any
-    ) -> GpuOccupancyMonitor:
+    ) -> GpuAvailabilityMonitor:
         config = GpuGateConfig(
             enabled=cfg.get("enabled", True),
             threshold_mib=THRESH,
@@ -143,7 +155,7 @@ class TestMonitor:
             grace_sec=0.0,
         )
         it = iter(batches)
-        return GpuOccupancyMonitor(config, lambda: next(it))
+        return GpuAvailabilityMonitor(config, lambda: next(it))
 
     def test_devices_are_tracked_independently(self) -> None:
         held = {GPU_A: _reading(40_000), GPU_B: _reading(5)}
@@ -151,18 +163,18 @@ class TestMonitor:
         monitor.observe(True)
         monitor.observe(True)
         snapshot = monitor.snapshot()
-        assert snapshot[GPU_A].unavailable is True
-        assert snapshot[GPU_B].unavailable is False
+        assert snapshot[GPU_A].available is False
+        assert snapshot[GPU_B].available is True
 
     def test_suppressed_observation_latches(self) -> None:
         held = {GPU_A: _reading(40_000)}
         monitor = self._monitor([held, held])
         monitor.observe(True)
         monitor.observe(True)
-        assert monitor.snapshot()[GPU_A].unavailable is True
+        assert monitor.snapshot()[GPU_A].available is False
         # Nothing is probed while suppressed, so the batch list is not consumed.
         monitor.observe(False)
-        assert monitor.snapshot()[GPU_A].unavailable is True
+        assert monitor.snapshot()[GPU_A].available is False
         assert monitor.live_snapshot() == {}
 
     def test_total_probe_failure_clears_rather_than_latching(self) -> None:
@@ -172,7 +184,7 @@ class TestMonitor:
         monitor = self._monitor([held, held, {}])
         monitor.observe(True)
         monitor.observe(True)
-        assert monitor.snapshot()[GPU_A].unavailable is True
+        assert monitor.snapshot()[GPU_A].available is False
         monitor.observe(True)
         assert monitor.snapshot() == {}
         assert monitor.live_snapshot() == {}
@@ -184,8 +196,8 @@ class TestMonitor:
         monitor.observe(True)
         monitor.observe(True)
         snapshot = monitor.snapshot()
-        assert snapshot[GPU_A].unavailable is True, "unread device keeps its state"
-        assert snapshot[GPU_B].unavailable is True, "one clear reading is not enough"
+        assert snapshot[GPU_A].available is False, "unread device keeps its state"
+        assert snapshot[GPU_B].available is False, "one clear reading is not enough"
 
     def test_an_unread_device_is_latched_but_not_live(self) -> None:
         # A device the probe could not read this tick may still advise the
@@ -195,22 +207,25 @@ class TestMonitor:
         monitor.observe(True)
         monitor.observe(True)
         monitor.observe(True)
-        assert monitor.snapshot()[GPU_A].unavailable is True
+        assert monitor.snapshot()[GPU_A].available is False
         assert GPU_A not in monitor.live_snapshot()
         assert GPU_B in monitor.live_snapshot()
+
+    def test_a_disabled_monitor_never_probes(self) -> None:
+        # The kill switch is also enforced at construction; this is the guard that
+        # survives a second construction site appearing.
+        def explode() -> dict[str, DeviceReading]:
+            pytest.fail("probed while disabled")
+
+        monitor = GpuAvailabilityMonitor(GpuGateConfig(enabled=False), explode)
+        monitor.observe(True)
+        assert monitor.snapshot() == {}
+        assert monitor.live_snapshot() == {}
 
     def test_free_bytes_ride_along(self) -> None:
         monitor = self._monitor([{GPU_A: _reading(5, free_bytes=1234)}])
         monitor.observe(True)
         assert monitor.snapshot()[GPU_A].free_bytes == 1234
-
-    def test_disabled_monitor_never_probes(self) -> None:
-        def explode() -> dict[str, DeviceReading]:
-            pytest.fail("probed while disabled")
-
-        monitor = GpuOccupancyMonitor(GpuGateConfig(enabled=False), explode)
-        monitor.observe(True)
-        assert monitor.snapshot() == {}
 
 
 class FakeClient:
@@ -223,10 +238,10 @@ class FakeClient:
 
 def _lifecycle(
     tmp_path: Path, batches: list[dict[str, DeviceReading]], grace: float = 0.0
-) -> tuple[Lifecycle, GpuOccupancyMonitor, FakeClient]:
+) -> tuple[Lifecycle, GpuAvailabilityMonitor, FakeClient]:
     client = FakeClient()
     it = iter(batches)
-    monitor = GpuOccupancyMonitor(
+    monitor = GpuAvailabilityMonitor(
         GpuGateConfig(
             enabled=True, threshold_mib=THRESH, consecutive=1, grace_sec=grace
         ),
@@ -246,15 +261,15 @@ def _lifecycle(
 
 
 class TestLifecycleIntegration:
-    def test_occupancy_is_reported_without_touching_status(
+    def test_availability_is_reported_without_touching_status(
         self, tmp_path: Path
     ) -> None:
         # The whole point of this change: the worker stays IDLE and keeps taking
-        # CPU work while its GPU is reported unavailable.
+        # CPU work while its GPU is reported as held.
         lc, _, client = _lifecycle(tmp_path, [{GPU_A: _reading(44_000)}])
         lc._observe_gpu()
         assert client.statuses == []
-        assert lc._metrics()["gpu_occupancy"][GPU_A]["unavailable"] is True
+        assert lc._metrics()["gpu_availability"][GPU_A]["available"] is False
 
     def test_a_warm_gpu_executor_suppresses_the_reading(self, tmp_path: Path) -> None:
         # Regression guard: reading our own resident model and calling it foreign
@@ -286,26 +301,26 @@ class TestLifecycleIntegration:
         lc._observe_gpu()
         assert monitor.snapshot() == {}
 
-    def test_a_finished_task_no_longer_wipes_occupancy(self, tmp_path: Path) -> None:
+    def test_a_finished_task_no_longer_wipes_availability(self, tmp_path: Path) -> None:
         # set_idle used to clear the gate, which is why admission once had to run
         # before set_busy. The latch now survives a task boundary.
         lc, monitor, _ = _lifecycle(tmp_path, [{GPU_A: _reading(44_000)}])
         lc._observe_gpu()
-        assert monitor.snapshot()[GPU_A].unavailable is True
+        assert monitor.snapshot()[GPU_A].available is False
         lc.set_busy("tsk-1")
         lc.set_idle("tsk-1")
-        assert monitor.snapshot()[GPU_A].unavailable is True
+        assert monitor.snapshot()[GPU_A].available is False
 
-    def test_live_occupancy_hides_a_stale_latch(self, tmp_path: Path) -> None:
+    def test_live_availability_hides_a_stale_latch(self, tmp_path: Path) -> None:
         # Refusing a task on a latch we cannot currently confirm would fail it
         # terminally; the advisory snapshot keeps it, the live view does not.
         lc, _, _ = _lifecycle(tmp_path, [{GPU_A: _reading(44_000)}])
         lc._observe_gpu()
-        assert lc.live_gpu_occupancy()[GPU_A].unavailable is True
+        assert lc.live_gpu_availability()[GPU_A].available is False
         lc.set_gpu_executor_probe(lambda: True)
         lc._observe_gpu()
-        assert lc.live_gpu_occupancy() == {}
-        assert lc._metrics()["gpu_occupancy"][GPU_A]["unavailable"] is True
+        assert lc.live_gpu_availability() == {}
+        assert lc._metrics()["gpu_availability"][GPU_A]["available"] is False
 
 
 class TestWarmExecutorGpuFlag:
@@ -376,10 +391,10 @@ class TestAdmission:
     """``_refuse_if_gpu_is_held``: the worker's own veto on a held card."""
 
     def _runner(
-        self, occupancy: dict[str, DeviceOccupancy], devices: int = 1
+        self, availability: dict[str, DeviceAvailability], devices: int = 1
     ) -> Runner:
         lifecycle = MagicMock()
-        lifecycle.live_gpu_occupancy.return_value = occupancy
+        lifecycle.live_gpu_availability.return_value = availability
         hardware = WorkerHardware(
             cpu=CPUInfo(logical_cores=8, model="CPU"),
             memory=MemoryInfo(total_bytes=64 * 1024**3),
@@ -415,8 +430,8 @@ class TestAdmission:
             model=ModelConfig(source=ModelSource(identifier="org/m")),
         )
 
-    def _held(self, *uuids: str) -> dict[str, DeviceOccupancy]:
-        return {u: DeviceOccupancy(unavailable=True, free_bytes=0) for u in uuids}
+    def _held(self, *uuids: str) -> dict[str, DeviceAvailability]:
+        return {u: DeviceAvailability(available=False, free_bytes=0) for u in uuids}
 
     def test_refuses_a_gpu_task_when_the_only_device_is_held(self) -> None:
         runner = self._runner(self._held("GPU-0"))
@@ -433,13 +448,13 @@ class TestAdmission:
         runner._refuse_if_gpu_is_held(EchoSpecStrict(taskType=TaskType.ECHO))
 
     def test_a_stale_latch_does_not_refuse(self) -> None:
-        # live_gpu_occupancy returns {} when the last reading was suppressed.
+        # live_gpu_availability returns {} when the last reading was suppressed.
         runner = self._runner({})
         runner._refuse_if_gpu_is_held(self._gpu_spec())
 
     def test_nothing_held_admits(self) -> None:
         runner = self._runner(
-            {"GPU-0": DeviceOccupancy(unavailable=False, free_bytes=1)}
+            {"GPU-0": DeviceAvailability(available=True, free_bytes=1)}
         )
         runner._refuse_if_gpu_is_held(self._gpu_spec())
 
@@ -455,11 +470,11 @@ class TestClearingReachesTheServer:
     def test_an_empty_reading_is_still_reported(self, tmp_path: Path) -> None:
         lc, monitor, _ = _lifecycle(tmp_path, [{GPU_A: _reading(44_000)}, {}])
         lc._observe_gpu()
-        assert lc._metrics()["gpu_occupancy"][GPU_A]["unavailable"] is True
+        assert lc._metrics()["gpu_availability"][GPU_A]["available"] is False
         lc._observe_gpu()  # probe fails
-        assert lc._metrics()["gpu_occupancy"] == {}
+        assert lc._metrics()["gpu_availability"] == {}
 
     def test_a_worker_without_a_monitor_says_nothing(self, tmp_path: Path) -> None:
         # Absent key means "no opinion offered"; an empty map means "cleared".
         lc = Lifecycle(MagicMock(), 30, 120, tmp_path / "hb", cost_per_hour=0.0)
-        assert "gpu_occupancy" not in lc._metrics()
+        assert "gpu_availability" not in lc._metrics()

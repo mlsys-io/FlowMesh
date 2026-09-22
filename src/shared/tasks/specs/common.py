@@ -128,6 +128,16 @@ class TaskSpecStrictBase(StrictBaseModel):
         """
         return None
 
+    def uses_gpu(self) -> bool:
+        """Whether executing this spec will allocate GPU memory.
+
+        The server reads this to keep GPU work off a worker whose device another
+        tenant holds, and the worker reads it both to refuse such a task and to know
+        whether its own warm executor is holding VRAM. Only specs that may reach a
+        GPU override it.
+        """
+        return False
+
     def redact_credentials(self) -> Self:
         """Redact credential-shaped headers in the output destination, if any."""
         redacted_output = _redact_output(self.output)
@@ -173,6 +183,16 @@ class TaskSpecTemplateBase(TemplateBaseModel):
         misconfigurations.
         """
         return None
+
+    def uses_gpu(self) -> bool:
+        """Whether executing this spec will allocate GPU memory.
+
+        The server reads this to keep GPU work off a worker whose device another
+        tenant holds, and the worker reads it both to refuse such a task and to know
+        whether its own warm executor is holding VRAM. Only specs that may reach a
+        GPU override it.
+        """
+        return False
 
     def redact_credentials(self) -> Self:
         """Redact credential-shaped headers in the output destination, if any."""
@@ -225,8 +245,32 @@ def _model_has_redacted_credentials(
     )
 
 
+def _model_uses_gpu(
+    model: ModelConfig | ModelConfigTemplate | None, enforce_cpu: bool
+) -> bool:
+    """Mirror of ``HFTransformersExecutor._pick_device``.
+
+    ``enforce_cpu`` outranks ``device_map`` there, and an explicit ``cpu`` map is the
+    only other way off the GPU; everything else prefers CUDA.
+    """
+    if enforce_cpu:
+        return False
+    config = model.transformers if model is not None else None
+    if not config:
+        return True
+    return config.get("device_map") != "cpu"
+
+
 class ModelSpecStrict(TaskSpecStrictBase):
     model: ModelConfig | None = None
+
+    def model_uses_gpu(self, *, enforce_cpu: bool = False) -> bool:
+        """Whether this spec's model would be loaded onto a GPU.
+
+        ``enforce_cpu`` is a field of the specs that have one rather than of the model
+        config, so a caller that has it passes it in.
+        """
+        return _model_uses_gpu(self.model, enforce_cpu)
 
     def redact_credentials(self) -> Self:
         spec = super().redact_credentials()
@@ -261,6 +305,14 @@ class ModelSpecStrict(TaskSpecStrictBase):
 
 class ModelSpecTemplate(TaskSpecTemplateBase):
     model: ModelConfigTemplate | None = None
+
+    def model_uses_gpu(self, *, enforce_cpu: bool = False) -> bool:
+        """Whether this spec's model would be loaded onto a GPU.
+
+        ``enforce_cpu`` is a field of the specs that have one rather than of the model
+        config, so a caller that has it passes it in.
+        """
+        return _model_uses_gpu(self.model, enforce_cpu)
 
     def redact_credentials(self) -> Self:
         spec = super().redact_credentials()

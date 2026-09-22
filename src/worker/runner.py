@@ -14,7 +14,6 @@ from shared.schemas.result import BaseExecutorResult
 from shared.tasks import MergedChildTaskStrict
 from shared.tasks.components.resources import GPURequirements
 from shared.tasks.envelope import TaskSpecStrict
-from shared.tasks.gpu_usage import task_uses_gpu
 from shared.tasks.specs import (
     EmbeddingSpecStrict,
     InferenceBackend,
@@ -23,8 +22,8 @@ from shared.tasks.specs import (
 )
 from shared.tasks.worker_message import HardwareUsage, WorkerHardware, WorkerTaskMessage
 from shared.utils.hardware import (
+    available_devices,
     select_matching_gpu_indices,
-    unoccupied_devices,
 )
 from shared.utils.manifest import prepare_output_dir, sync_manifest
 from shared.utils.time import now_iso
@@ -97,11 +96,11 @@ class Runner:
         """Whether the loaded executor may still be holding GPU memory.
 
         Executors stay warm between tasks (indefinitely when idle cleanup is off),
-        so occupancy read while one is resident would include our own model. The
+        so a reading taken while one is resident would include our own model. The
         flag is set from the task's own spec rather than from the executor class,
         because the wrapper an executor is loaded behind carries no such attribute
         and a transformers executor's device depends on the spec it ran. Read
-        lock-free: the occupancy monitor only needs a best-effort snapshot.
+        lock-free: the availability monitor only needs a best-effort snapshot.
         """
         return self._active_executor is not None and self._active_executor_used_gpu
 
@@ -118,23 +117,23 @@ class Runner:
         eligible worker had refused -- and a latch cannot clear while a GPU
         executor stays warm.
         """
-        occupancy = self.lifecycle.live_gpu_occupancy()
+        availability = self.lifecycle.live_gpu_availability()
         devices = self.hardware.gpu.devices if self.hardware else []
-        if not occupancy or not devices:
+        if not availability or not devices:
             return
         declared = _declared_gpu_req(spec)
         asks_for_gpus = declared is not None and declared.count != 0
-        if not asks_for_gpus and not task_uses_gpu(spec):
+        if not asks_for_gpus and not spec.uses_gpu():
             return
         overlaid = [
             (
-                device.model_copy(update={"gpu_unavailable": reported.unavailable})
-                if (reported := occupancy.get(device.uuid)) is not None
+                device.model_copy(update={"gpu_available": reported.available})
+                if (reported := availability.get(device.uuid)) is not None
                 else device
             )
             for device in devices
         ]
-        free = unoccupied_devices(overlaid)
+        free = available_devices(overlaid)
         if len(free) == len(overlaid):
             return
         requirement = declared if declared is not None else GPURequirements(count=1)
@@ -156,7 +155,7 @@ class Runner:
         allocates outlives it. Monotone until teardown for the same reason -- a
         later CPU task does not free what an earlier GPU task allocated.
         """
-        self._active_executor_used_gpu |= task_uses_gpu(spec)
+        self._active_executor_used_gpu |= spec.uses_gpu()
 
     def _cancel_active_executor(self) -> None:
         with self._active_executor_lock:

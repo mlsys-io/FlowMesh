@@ -51,14 +51,9 @@ def gpu_device_matches(
     )
 
 
-def unoccupied_devices(devices: list[GpuInfo]) -> list[GpuInfo]:
-    """Devices not known to be held by a process outside FlowMesh.
-
-    ``gpu_unavailable is None`` means the worker reported nothing about the device
-    -- an older worker, a device the probe skipped, or a reading it could not trust
-    -- and counts as free, so an unreported device schedules exactly as before.
-    """
-    return [device for device in devices if not device.gpu_unavailable]
+def available_devices(devices: list[GpuInfo]) -> list[GpuInfo]:
+    """Devices not known to be held by a process outside FlowMesh."""
+    return [device for device in devices if device.is_available]
 
 
 def unified_gpu_memory_satisfies(

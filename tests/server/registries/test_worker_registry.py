@@ -324,8 +324,8 @@ class TestParseStatus:
         assert NodeWorkerStatus("RUNNING") is NodeWorkerStatus.UNKNOWN
 
 
-class TestParseGpuOccupancy:
-    def _raw(self, occupancy: dict | None = None) -> dict:
+class TestParseGpuAvailability:
+    def _raw(self, availability: dict | None = None) -> dict:
         hardware = WorkerHardware(
             cpu=CPUInfo(logical_cores=16, model="AMD EPYC 7543"),
             memory=MemoryInfo(total_bytes=64 * 1024**3),
@@ -350,50 +350,50 @@ class TestParseGpuOccupancy:
             network=NetworkInfo(ip=None, bandwidth_bytes_per_sec=None),
         )
         raw = {"status": "IDLE", "hardware_json": hardware.model_dump_json()}
-        if occupancy is not None:
-            raw["gpu_occupancy_json"] = json.dumps(occupancy)
+        if availability is not None:
+            raw["gpu_availability_json"] = json.dumps(availability)
         return raw
 
-    def test_occupancy_joins_onto_devices_by_uuid(self) -> None:
+    def test_availability_joins_onto_devices_by_uuid(self) -> None:
         raw = self._raw(
             {
-                "GPU-held": {"unavailable": True, "free_bytes": 19 * 1024**2},
-                "GPU-free": {"unavailable": False, "free_bytes": 47 * 1024**3},
+                "GPU-held": {"available": False, "free_bytes": 19 * 1024**2},
+                "GPU-free": {"available": True, "free_bytes": 47 * 1024**3},
             }
         )
         w = _parse_worker_from_redis("w-1", raw)
         assert w is not None and w.hardware is not None
         held, free = w.hardware.gpu.devices
-        assert held.gpu_unavailable is True
+        assert held.gpu_available is False
         assert held.memory_free_bytes == 19 * 1024**2
-        assert free.gpu_unavailable is False
+        assert free.gpu_available is True
 
     def test_a_device_the_worker_did_not_mention_stays_unknown(self) -> None:
         w = _parse_worker_from_redis(
-            "w-1", self._raw({"GPU-held": {"unavailable": True}})
+            "w-1", self._raw({"GPU-held": {"available": False}})
         )
         assert w is not None and w.hardware is not None
         held, free = w.hardware.gpu.devices
-        assert held.gpu_unavailable is True
-        assert free.gpu_unavailable is None, "unreported means unknown, not free"
+        assert held.gpu_available is False
+        assert free.gpu_available is None, "unreported means unknown, not free"
 
-    def test_no_occupancy_field_leaves_every_device_unknown(self) -> None:
+    def test_no_availability_field_leaves_every_device_unknown(self) -> None:
         # An older worker, or one that has never taken a usable reading.
         w = _parse_worker_from_redis("w-1", self._raw())
         assert w is not None and w.hardware is not None
-        assert all(d.gpu_unavailable is None for d in w.hardware.gpu.devices)
+        assert all(d.gpu_available is None for d in w.hardware.gpu.devices)
 
-    def test_malformed_occupancy_is_ignored(self) -> None:
+    def test_malformed_availability_is_ignored(self) -> None:
         w = _parse_worker_from_redis("w-1", self._raw({"GPU-held": "nonsense"}))
         assert w is not None and w.hardware is not None
-        assert w.hardware.gpu.devices[0].gpu_unavailable is None
+        assert w.hardware.gpu.devices[0].gpu_available is None
 
 
 def _held(worker: Worker, *indices: int) -> Worker:
     """Mark the given device indices as held by another tenant."""
     assert worker.hardware is not None
     for index in indices:
-        worker.hardware.gpu.devices[index].gpu_unavailable = True
+        worker.hardware.gpu.devices[index].gpu_available = False
     return worker
 
 
@@ -439,7 +439,7 @@ class TestGpuAvailableFor:
         worker = _held(_worker(gpu_count=1, gpu_mem=48 * 1024**3), 0)
         assert gpu_available_for(worker, _task(cpu=2)) is True
 
-    def test_hw_satisfies_is_not_changed_by_occupancy(self) -> None:
+    def test_hw_satisfies_is_not_changed_by_availability(self) -> None:
         # satisfying_workers must keep the worker, or the task fails as
         # unschedulable instead of waiting for the card to free up.
         worker = _held(_worker(gpu_count=1, gpu_mem=48 * 1024**3), 0)
@@ -452,10 +452,10 @@ class TestGpuAvailableForOnlySubtracts:
         # hw_satisfies on a worker it knows nothing about.
         assert gpu_available_for(_worker(gpu_count=0), _inference_task()) is True
 
-    def test_worker_reporting_no_occupancy_is_untouched(self) -> None:
+    def test_worker_reporting_no_availability_is_untouched(self) -> None:
         worker = _worker(gpu_count=1, gpu_mem=48 * 1024**3)
         assert worker.hardware is not None
-        assert all(d.gpu_unavailable is None for d in worker.hardware.gpu.devices)
+        assert all(d.gpu_available is None for d in worker.hardware.gpu.devices)
         assert gpu_available_for(worker, _inference_task()) is True
 
     def test_unified_memory_worker_is_untouched(self) -> None:
@@ -481,14 +481,14 @@ class TestGpuAvailableForOnlySubtracts:
         assert gpu_available_for(worker, _task(gpu_memory="40Gi")) is True
 
 
-class TestClearedOccupancy:
+class TestClearedAvailability:
     def test_an_empty_map_reads_as_nothing_known(self) -> None:
         # What a worker whose probe has failed writes. It must land the devices
         # back on "unknown", not leave the previous reading in place.
-        raw = TestParseGpuOccupancy()._raw({})
+        raw = TestParseGpuAvailability()._raw({})
         w = _parse_worker_from_redis("w-1", raw)
         assert w is not None and w.hardware is not None
-        assert all(d.gpu_unavailable is None for d in w.hardware.gpu.devices)
+        assert all(d.gpu_available is None for d in w.hardware.gpu.devices)
 
     def test_a_cleared_worker_is_offered_again(self) -> None:
         worker = _worker(gpu_count=1, gpu_mem=48 * 1024**3)

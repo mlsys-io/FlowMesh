@@ -150,6 +150,12 @@ class EmbeddingSpecStrict(ModelSpecStrict):
             self.data
         )
 
+    def uses_gpu(self) -> bool:
+        model = self.model
+        if model is not None and model.vllm is not None:
+            return True
+        return self.model_uses_gpu()
+
 
 class EmbeddingSpecTemplate(ModelSpecTemplate):
     taskType: Literal[TaskType.EMBEDDING]
@@ -165,3 +171,9 @@ class EmbeddingSpecTemplate(ModelSpecTemplate):
         return super().has_redacted_credentials() or has_redacted_credential_fields(
             self.data
         )
+
+    def uses_gpu(self) -> bool:
+        model = self.model
+        if model is not None and model.vllm is not None:
+            return True
+        return self.model_uses_gpu()

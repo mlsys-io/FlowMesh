@@ -11,7 +11,7 @@ from .config import WorkerConfig
 from .executors import EXECUTOR_REGISTRY, IMPORT_ERRORS, get_executor_class_name
 from .executors.base_executor import Executor
 from .executors.mp_executor import MPExecutor
-from .gpu_occupancy import GpuOccupancyMonitor, NvmlDeviceProbe
+from .gpu_availability import GpuAvailabilityMonitor, NvmlDeviceProbe
 from .hw import collect_hw, device_uses_unified_memory
 from .lifecycle import Lifecycle
 from .power import PowerMonitor
@@ -215,7 +215,7 @@ def main() -> None:
     hardware = collect_hw(bandwidth_bytes_per_sec=cfg.network_bandwidth_bytes_per_sec)
     logger.info("Collected hardware info: %s", hardware)
     gpu_monitor = (
-        GpuOccupancyMonitor(
+        GpuAvailabilityMonitor(
             cfg.foreign_gpu_gate,
             NvmlDeviceProbe(device_uses_unified_memory),
         )

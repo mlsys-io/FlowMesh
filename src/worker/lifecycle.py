@@ -17,7 +17,7 @@ from shared.schemas.worker import SSHLimits, WorkerCapabilities
 from shared.tasks.worker_message import WorkerHardware, WorkerStatus
 from shared.utils.time import now_iso
 
-from .gpu_occupancy import DeviceOccupancy, GpuOccupancyMonitor
+from .gpu_availability import DeviceAvailability, GpuAvailabilityMonitor
 from .power import PowerMonitor
 from .relay import EndpointRegistry, RelayClient
 from .supervisor_client import SupervisorClient
@@ -36,7 +36,7 @@ class Lifecycle:
         power_monitor: PowerMonitor | None = None,
         endpoints: EndpointRegistry | None = None,
         relay_client: RelayClient | None = None,
-        gpu_monitor: GpuOccupancyMonitor | None = None,
+        gpu_monitor: GpuAvailabilityMonitor | None = None,
     ):
         self.client = client
         self.endpoints = endpoints or EndpointRegistry()
@@ -75,8 +75,8 @@ class Lifecycle:
         """
         self._gpu_executor_probe = probe
 
-    def live_gpu_occupancy(self) -> dict[str, DeviceOccupancy]:
-        """Per-device occupancy, but only from a reading just taken.
+    def live_gpu_availability(self) -> dict[str, DeviceAvailability]:
+        """Per-device availability, but only from a reading just taken.
 
         Empty when the last observation was suppressed or the probe failed, so a
         caller that refuses work on this never refuses on a stale latch.
@@ -119,9 +119,9 @@ class Lifecycle:
             # Always sent, empty included: an empty map is how the worker says its
             # devices are no longer known to be held. Omitting it would leave the
             # server's last reading latched with nothing able to clear it.
-            metrics["gpu_occupancy"] = {
+            metrics["gpu_availability"] = {
                 uuid: {
-                    "unavailable": device.unavailable,
+                    "available": device.available,
                     "free_bytes": device.free_bytes,
                 }
                 for uuid, device in monitor.snapshot().items()
@@ -169,7 +169,7 @@ class Lifecycle:
             try:
                 self._observe_gpu()
             except Exception:
-                logger.debug("GPU occupancy observation failed", exc_info=True)
+                logger.debug("GPU availability observation failed", exc_info=True)
             try:
                 self.client.heartbeat(ttl_sec=self.hb_ttl_sec, metrics=self._metrics())
             except Exception:
@@ -178,7 +178,7 @@ class Lifecycle:
             self._stop_event.wait(self.hb_sec)
 
     def _observe_gpu(self) -> None:
-        """Feed the occupancy monitor one observation per heartbeat.
+        """Feed the availability monitor one observation per heartbeat.
 
         A reading is only trustworthy when nothing of ours could be in it: no task
         running, no GPU-using executor still warm, and past the grace window in

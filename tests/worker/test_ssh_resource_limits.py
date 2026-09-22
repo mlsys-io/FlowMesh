@@ -18,7 +18,8 @@ from shared.tasks.worker_message import (
 from tests.worker.factories import make_worker_config, make_worker_hardware
 from worker.config import WorkerConfig
 from worker.executors.base_executor import ExecutionError
-from worker.executors.ssh_executor import SSHConfig
+from worker.executors.ssh_executor import SSHConfig, _available_uuids
+from worker.gpu_availability import DeviceAvailability
 
 
 def _spec(resources: dict[str, object] | None = None) -> SSHSpecStrict:
@@ -420,7 +421,7 @@ class TestSSHConfigSkipsHeldDevices:
             _spec({"hardware": {"gpu": {"count": 1}}}),
             _worker_config_gpu_limit(),
             self._hardware(),
-            frozenset({"a100-0"}),
+            frozenset({"a100-1", "a100-2", "a100-3"}),
         )
         assert cfg.gpu_device_ids == ["1"]
 
@@ -432,7 +433,7 @@ class TestSSHConfigSkipsHeldDevices:
             _spec({"hardware": {"gpu": {"count": 2}}}),
             _worker_config_gpu_limit(),
             self._hardware(),
-            frozenset({"a100-0", "a100-2"}),
+            frozenset({"a100-1", "a100-3"}),
         )
         assert cfg.gpu_device_ids == ["5", "7"]
 
@@ -440,15 +441,15 @@ class TestSSHConfigSkipsHeldDevices:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv("WORKER_HOST_GPU_ID", "0,1,2,3")
-        with pytest.raises(ExecutionError, match="held by a process outside"):
+        with pytest.raises(ExecutionError, match="only 2 of this worker's"):
             SSHConfig.from_spec(
                 _spec({"hardware": {"gpu": {"count": 3}}}),
                 _worker_config_gpu_limit(),
                 self._hardware(),
-                frozenset({"a100-0", "a100-1"}),
+                frozenset({"a100-2", "a100-3"}),
             )
 
-    def test_no_occupancy_reported_behaves_as_before(
+    def test_no_availability_reported_behaves_as_before(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv("WORKER_HOST_GPU_ID", "0,1,2,3")
@@ -458,3 +459,47 @@ class TestSSHConfigSkipsHeldDevices:
             self._hardware(),
         )
         assert cfg.gpu_device_ids == ["0"]
+
+
+class TestAvailableUuids:
+    """The one place a tri-state availability report becomes a positive set."""
+
+    def _devices(self, n: int = 4) -> list[GpuInfo]:
+        return [
+            GpuInfo(
+                index=i,
+                name="A100",
+                uuid=f"a100-{i}",
+                memory_total_bytes=80 * 1024**3,
+            )
+            for i in range(n)
+        ]
+
+    def test_no_reading_at_all_means_no_opinion(self) -> None:
+        # None, not an empty set: an empty set would withhold every device.
+        assert _available_uuids({}, self._devices()) is None
+
+    def test_a_held_device_is_withheld(self) -> None:
+        reported = {
+            "a100-0": DeviceAvailability(available=False, free_bytes=0),
+            "a100-1": DeviceAvailability(available=True, free_bytes=1),
+        }
+        assert _available_uuids(reported, self._devices(2)) == frozenset({"a100-1"})
+
+    def test_a_device_the_reading_did_not_cover_is_still_offered(self) -> None:
+        # A partial probe must not quietly shrink the session's device set.
+        reported = {"a100-0": DeviceAvailability(available=False, free_bytes=0)}
+        assert _available_uuids(reported, self._devices(4)) == frozenset(
+            {"a100-1", "a100-2", "a100-3"}
+        )
+
+    def test_every_device_held_yields_an_empty_set_not_none(self) -> None:
+        reported = {
+            f"a100-{i}": DeviceAvailability(available=False, free_bytes=0)
+            for i in range(2)
+        }
+        assert _available_uuids(reported, self._devices(2)) == frozenset()
+
+    def test_a_reading_for_a_device_the_worker_does_not_have_is_ignored(self) -> None:
+        reported = {"a100-9": DeviceAvailability(available=True, free_bytes=1)}
+        assert _available_uuids(reported, self._devices(1)) == frozenset({"a100-0"})

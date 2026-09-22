@@ -32,6 +32,12 @@ class InferenceSpecStrict(ModelInferSpecStrict):
     def validate_dispatchable(self) -> None:
         _validate_inference_dispatchable(self)
 
+    def uses_gpu(self) -> bool:
+        if self.backend() is InferenceBackend.TRANSFORMERS:
+            return self.model_uses_gpu(enforce_cpu=self.enforce_cpu is True)
+        # VLLM always, and AUTO because the runner prefers vLLM for it.
+        return True
+
 
 class InferenceSpecTemplate(ModelInferSpecTemplate):
     taskType: Literal[TaskType.INFERENCE]
@@ -45,6 +51,14 @@ class InferenceSpecTemplate(ModelInferSpecTemplate):
 
     def validate_dispatchable(self) -> None:
         _validate_inference_dispatchable(self)
+
+    def uses_gpu(self) -> bool:
+        if self.backend() is InferenceBackend.TRANSFORMERS:
+            # Identity, not truthiness: on a template this field may hold an
+            # unresolved placeholder string, which must not read as "pinned to CPU".
+            return self.model_uses_gpu(enforce_cpu=self.enforce_cpu is True)
+        # VLLM always, and AUTO because the runner prefers vLLM for it.
+        return True
 
 
 def _inference_backend(

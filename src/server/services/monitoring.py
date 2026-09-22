@@ -723,17 +723,17 @@ class EventMonitor:
                 if success:
                     # Scheduling advice, written after the liveness update and
                     # never allowed to cost the worker its heartbeat.
-                    occupancy = (event.metrics or {}).get("gpu_occupancy")
+                    availability = (event.metrics or {}).get("gpu_availability")
                     # An empty map is meaningful -- it clears a stale reading -- so
                     # only an absent key means "this worker said nothing".
-                    if isinstance(occupancy, dict):
+                    if isinstance(availability, dict):
                         try:
-                            self._worker_registry.record_gpu_occupancy(
-                                worker_id, occupancy
+                            self._worker_registry.record_gpu_availability(
+                                worker_id, availability
                             )
                         except Exception:
                             self._logger.debug(
-                                "Could not record GPU occupancy for %s",
+                                "Could not record GPU availability for %s",
                                 worker_id,
                                 exc_info=True,
                             )

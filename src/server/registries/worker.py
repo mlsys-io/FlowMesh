@@ -12,7 +12,6 @@ from shared.schemas.command import (
 from shared.schemas.worker import SSHLimits, WorkerCapabilities
 from shared.tasks import TaskEnvelope
 from shared.tasks.components.resources import GPURequirements
-from shared.tasks.gpu_usage import task_uses_gpu
 from shared.tasks.specs import SSHSpecStrict, SSHSpecTemplate
 from shared.tasks.worker_message import (
     WorkerHardware,
@@ -21,11 +20,11 @@ from shared.tasks.worker_message import (
 )
 from shared.utils import new_worker_id, now_iso, parse_mem_to_bytes
 from shared.utils.hardware import (
+    available_devices,
     normalize_gpu_type,
     parse_gpu_memory_bytes,
     select_matching_gpu_indices,
     unified_gpu_memory_satisfies,
-    unoccupied_devices,
 )
 
 from ..clients.redis import (
@@ -60,10 +59,10 @@ return 1
 """
 
 
-def _merge_gpu_occupancy(
-    hardware: "WorkerHardware | None", occupancy: dict[str, Any]
+def _merge_gpu_availability(
+    hardware: WorkerHardware | None, availability: dict[str, Any]
 ) -> None:
-    """Apply a worker's reported per-device occupancy onto its device list.
+    """Apply a worker's reported per-device availability onto its device list.
 
     Kept out of ``hardware_json`` deliberately. That blob is the worker's
     registration-time description of itself and is never rewritten; this is a
@@ -71,15 +70,15 @@ def _merge_gpu_occupancy(
     read time. A device the worker said nothing about keeps ``None`` and schedules
     exactly as it did before.
     """
-    if hardware is None or not occupancy:
+    if hardware is None or not availability:
         return
     for device in hardware.gpu.devices:
-        reported = occupancy.get(device.uuid)
+        reported = availability.get(device.uuid)
         if not isinstance(reported, dict):
             continue
-        unavailable = reported.get("unavailable")
-        if isinstance(unavailable, bool):
-            device.gpu_unavailable = unavailable
+        available = reported.get("available")
+        if isinstance(available, bool):
+            device.gpu_available = available
         free_bytes = reported.get("free_bytes")
         if isinstance(free_bytes, int):
             device.memory_free_bytes = free_bytes
@@ -541,8 +540,10 @@ class WorkerRegistry:
         seq = await self._rds.asyncio.incr(WORKER_ID_SEQ_KEY)
         return new_worker_id(seq)
 
-    def record_gpu_occupancy(self, worker_id: str, occupancy: dict[str, Any]) -> bool:
-        """Store the per-device occupancy a heartbeat reported.
+    def record_gpu_availability(
+        self, worker_id: str, availability: dict[str, Any]
+    ) -> bool:
+        """Store the per-device availability a heartbeat reported.
 
         Latched rather than expiring: a worker that stops reporting is already
         filtered on staleness, while a worker that is alive but currently unable to
@@ -555,7 +556,7 @@ class WorkerRegistry:
         """
         return self._set_worker_fields(
             worker_id,
-            {"gpu_occupancy_json": json.dumps(occupancy, ensure_ascii=False)},
+            {"gpu_availability_json": json.dumps(availability, ensure_ascii=False)},
         )
 
     def _set_worker_fields(self, worker_id: str, mapping: dict[str, str]) -> bool:
@@ -676,23 +677,23 @@ def gpu_available_for(worker: Worker, task: TaskEnvelope) -> bool:
     -- the set that answers "could anything ever run this?" -- or the task fails as
     unschedulable instead of waiting.
 
-    Only ever subtracts. A worker that reports no devices, or no occupied device,
+    Only ever subtracts. A worker that reports no devices, or no held device,
     or that is being asked for CPU-only work, is returned untouched.
     """
     hw = worker.hardware
     if hw is None or not hw.gpu.devices:
         return True
-    if not any(device.gpu_unavailable for device in hw.gpu.devices):
+    if all(device.is_available for device in hw.gpu.devices):
         return True
-    # A task that asks for a GPU should get an unoccupied one whatever its type,
+    # A task that asks for a GPU should get an available one whatever its type,
     # and a task that uses one without asking still needs a free device. An
     # explicit count of zero asks for none, but cannot exempt a task whose type
     # allocates VRAM regardless.
     declared = _declared_gpu_req(task)
     asks_for_gpus = declared is not None and declared.count != 0
-    if not asks_for_gpus and not task_uses_gpu(task.spec):
+    if not asks_for_gpus and not task.spec.uses_gpu():
         return True
-    free = unoccupied_devices(hw.gpu.devices)
+    free = available_devices(hw.gpu.devices)
     if not free:
         return False
     free_hw = hw.model_copy(update={"gpu": hw.gpu.model_copy(update={"devices": free})})
@@ -808,7 +809,7 @@ def _parse_worker_from_redis(
         if hardware_json is None
         else WorkerHardware.model_validate_json(hardware_json)
     )
-    _merge_gpu_occupancy(hardware, _loads(value.get("gpu_occupancy_json"), {}))
+    _merge_gpu_availability(hardware, _loads(value.get("gpu_availability_json"), {}))
     capabilities_json = value.get("capabilities_json")
     capabilities = (
         WorkerCapabilities()

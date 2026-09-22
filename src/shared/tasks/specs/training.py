@@ -28,6 +28,9 @@ class TrainingSpecStrict(ModelSpecStrict):
             {"data": self.data, "training": self.training}
         )
 
+    def uses_gpu(self) -> bool:
+        return True
+
 
 class TrainingSpecTemplate(ModelSpecTemplate):
     data: dict[str, Any] | None = None
@@ -47,6 +50,9 @@ class TrainingSpecTemplate(ModelSpecTemplate):
         return super().has_redacted_credentials() or has_redacted_credential_fields(
             {"data": self.data, "training": self.training}
         )
+
+    def uses_gpu(self) -> bool:
+        return True
 
 
 class SFTSpecStrict(TrainingSpecStrict):
