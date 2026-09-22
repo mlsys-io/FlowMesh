@@ -720,20 +720,41 @@ class EventMonitor:
                 success = self._worker_registry.update_worker_hb(
                     worker_id, event.ts, event.payload.get("ttl_sec", 120)
                 )
-                if not success:
+                if success:
+                    # Scheduling advice, written after the liveness update and
+                    # never allowed to cost the worker its heartbeat.
+                    availability = (event.metrics or {}).get("gpu_availability")
+                    # An empty map is meaningful -- it clears a stale reading -- so
+                    # only an absent key means "this worker said nothing".
+                    if isinstance(availability, dict):
+                        try:
+                            self._worker_registry.record_gpu_availability(
+                                worker_id, availability
+                            )
+                        except Exception:
+                            self._logger.debug(
+                                "Could not record GPU availability for %s",
+                                worker_id,
+                                exc_info=True,
+                            )
+                else:
                     self._logger.warning(
                         "Heartbeat from unknown worker %s; ignoring", worker_id
                     )
             case "STATUS":
-                worker_id = (event.worker_id or "").strip()
-                status = event.status or WorkerStatus.UNKNOWN
-                success = self._worker_registry.set_worker_status(
-                    worker_id, status, event.ts, event.payload
-                )
-                if not success:
-                    self._logger.warning(
-                        "Status update from unknown worker %s; ignoring", worker_id
+                # A server-origin event announces a write the registry already
+                # applied inline; replaying it here lands that value again at an
+                # arbitrary later time, on top of whatever has since replaced it.
+                if event.origin == "worker":
+                    worker_id = (event.worker_id or "").strip()
+                    status = event.status or WorkerStatus.UNKNOWN
+                    success = self._worker_registry.set_worker_status(
+                        worker_id, status, event.ts, event.payload
                     )
+                    if not success:
+                        self._logger.warning(
+                            "Status update from unknown worker %s; ignoring", worker_id
+                        )
             case "UNREGISTER":
                 worker_id = (event.worker_id or "").strip()
                 self._worker_registry.unregister_workers(worker_id)

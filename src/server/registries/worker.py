@@ -20,6 +20,7 @@ from shared.tasks.worker_message import (
 )
 from shared.utils import new_worker_id, now_iso, parse_mem_to_bytes
 from shared.utils.hardware import (
+    available_devices,
     normalize_gpu_type,
     parse_gpu_memory_bytes,
     select_matching_gpu_indices,
@@ -56,6 +57,31 @@ end
 redis.call('HSET', KEYS[2], unpack(ARGV, 2))
 return 1
 """
+
+
+def _merge_gpu_availability(
+    hardware: WorkerHardware | None, availability: dict[str, Any]
+) -> None:
+    """Apply a worker's reported per-device availability onto its device list.
+
+    Kept out of ``hardware_json`` deliberately. That blob is the worker's
+    registration-time description of itself and is never rewritten; this is a
+    fast-moving observation, so it lives in its own field and is joined by UUID at
+    read time. A device the worker said nothing about keeps ``None`` and schedules
+    exactly as it did before.
+    """
+    if hardware is None or not availability:
+        return
+    for device in hardware.gpu.devices:
+        reported = availability.get(device.uuid)
+        if not isinstance(reported, dict):
+            continue
+        available = reported.get("available")
+        if isinstance(available, bool):
+            device.gpu_available = available
+        free_bytes = reported.get("free_bytes")
+        if isinstance(free_bytes, int):
+            device.memory_free_bytes = free_bytes
 
 
 def _flatten_fields(mapping: dict[str, str]) -> list[str]:
@@ -288,6 +314,7 @@ class WorkerRegistry:
             "worker_id": worker_id,
             "status": status.value,
             "ts": ts,
+            "origin": "server",
         }
         self._rds.sync.publish_telemetry(
             WORKER_EVENT_CHANNEL, json.dumps(payload, ensure_ascii=False)
@@ -307,6 +334,7 @@ class WorkerRegistry:
             "worker_id": worker_id,
             "status": status.value,
             "ts": ts,
+            "origin": "server",
         }
         await self._rds.asyncio.publish_telemetry(
             WORKER_EVENT_CHANNEL, json.dumps(payload, ensure_ascii=False)
@@ -420,7 +448,11 @@ class WorkerRegistry:
                 continue
             if self.is_worker_stale(worker.id):
                 continue
-            if hw_satisfies(worker, task) and capability_satisfies(worker, task):
+            if (
+                hw_satisfies(worker, task)
+                and capability_satisfies(worker, task)
+                and gpu_available_for(worker, task)
+            ):
                 available.append(worker)
         return self.sort_workers(available)
 
@@ -507,6 +539,25 @@ class WorkerRegistry:
     async def _allocate_worker_id_async(self) -> str:
         seq = await self._rds.asyncio.incr(WORKER_ID_SEQ_KEY)
         return new_worker_id(seq)
+
+    def record_gpu_availability(
+        self, worker_id: str, availability: dict[str, Any]
+    ) -> bool:
+        """Store the per-device availability a heartbeat reported.
+
+        Latched rather than expiring: a worker that stops reporting is already
+        filtered on staleness, while a worker that is alive but currently unable to
+        take a reading -- busy, or holding a warm GPU executor -- should keep the
+        last thing it knew rather than silently reading as free.
+
+        An empty map is written, not skipped. It is how a worker whose probe has
+        failed says its devices are no longer known to be held, and without it a
+        stale reading would have nothing able to clear it.
+        """
+        return self._set_worker_fields(
+            worker_id,
+            {"gpu_availability_json": json.dumps(availability, ensure_ascii=False)},
+        )
 
     def _set_worker_fields(self, worker_id: str, mapping: dict[str, str]) -> bool:
         wrote = self._rds.sync.eval(
@@ -617,6 +668,46 @@ def hw_satisfies(worker: Worker, task: TaskEnvelope) -> bool:
     return True
 
 
+def gpu_available_for(worker: Worker, task: TaskEnvelope) -> bool:
+    """Whether this worker has GPUs for this task that nothing else is holding.
+
+    Applied when choosing among idle workers, never in ``hw_satisfies``. Foreign
+    occupancy is transient: a worker whose card a sandbox pod currently holds can
+    still run the task in ten minutes, so it must stay in ``satisfying_workers``
+    -- the set that answers "could anything ever run this?" -- or the task fails as
+    unschedulable instead of waiting.
+
+    Only ever subtracts. A worker that reports no devices, or no held device,
+    or that is being asked for CPU-only work, is returned untouched.
+    """
+    hw = worker.hardware
+    if hw is None or not hw.gpu.devices:
+        return True
+    if all(device.is_available for device in hw.gpu.devices):
+        return True
+    # A task that asks for a GPU should get an available one whatever its type,
+    # and a task that uses one without asking still needs a free device. An
+    # explicit count of zero asks for none, but cannot exempt a task whose type
+    # allocates VRAM regardless.
+    declared = _declared_gpu_req(task)
+    asks_for_gpus = declared is not None and declared.count != 0
+    if not asks_for_gpus and not task.spec.uses_gpu():
+        return True
+    free = available_devices(hw.gpu.devices)
+    if not free:
+        return False
+    free_hw = hw.model_copy(update={"gpu": hw.gpu.model_copy(update={"devices": free})})
+    return _gpu_meets_requirements(
+        free_hw, declared if declared is not None else GPURequirements(count=1)
+    )
+
+
+def _declared_gpu_req(task: TaskEnvelope) -> GPURequirements | None:
+    resources = task.spec.resources
+    hardware = resources.hardware if resources is not None else None
+    return hardware.gpu if hardware is not None else None
+
+
 def capability_satisfies(worker: Worker, task: TaskEnvelope) -> bool:
     return task.spec.taskType in worker.capabilities.supported_task_types
 
@@ -718,6 +809,7 @@ def _parse_worker_from_redis(
         if hardware_json is None
         else WorkerHardware.model_validate_json(hardware_json)
     )
+    _merge_gpu_availability(hardware, _loads(value.get("gpu_availability_json"), {}))
     capabilities_json = value.get("capabilities_json")
     capabilities = (
         WorkerCapabilities()

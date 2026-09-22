@@ -79,6 +79,28 @@ class GpuInfo(BaseModel):
     name: str = Field(description="GPU name.")
     uuid: str = Field(description="GPU UUID.")
     memory_total_bytes: int | None = Field(description="Total GPU memory in bytes.")
+    # Informational only, never a placement input: a reading taken while the
+    # worker's own executor is warm cannot tell our memory from another tenant's.
+    memory_free_bytes: int | None = Field(
+        default=None, description="Free GPU memory in bytes at the last reading."
+    )
+    # The only field that gates placement. None means the worker reported no
+    # observation -- an older worker, a device the probe skipped, or a reading it
+    # could not trust -- and schedules exactly as it did before.
+    gpu_available: bool | None = Field(
+        default=None,
+        description="Whether no process outside FlowMesh holds this device.",
+    )
+
+    @property
+    def is_available(self) -> bool:
+        """Whether this device may be scheduled on.
+
+        Reading ``gpu_available`` for truth would exclude every device no worker has
+        reported on, which is all of them on a cluster that has never taken a reading.
+        Only an explicit ``False`` withholds a device.
+        """
+        return self.gpu_available is not False
 
 
 class GpuPlatformInfo(BaseModel):

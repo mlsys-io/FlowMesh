@@ -148,6 +148,18 @@ class SSHSpecStrict(TaskSpecStrictBase):
         _validate_inputs(self)
         return self
 
+    def uses_gpu(self) -> bool:
+        """An SSH session is GPU-using exactly when it asks for devices.
+
+        A bare ``type`` or ``memory`` without ``count`` still resolves to one device
+        in the session config, so any ``gpu`` block counts -- except an explicit
+        ``count: 0``, which asks for none.
+        """
+        resources = self.resources
+        hardware = resources.hardware if resources is not None else None
+        gpu = hardware.gpu if hardware is not None else None
+        return gpu is not None and gpu.count != 0
+
 
 class SSHSpecTemplate(TaskSpecTemplateBase):
     taskType: Literal[TaskType.SSH]
@@ -187,3 +199,15 @@ class SSHSpecTemplate(TaskSpecTemplateBase):
         _resolve_interactive(self)
         _validate_inputs(self)
         return self
+
+    def uses_gpu(self) -> bool:
+        """An SSH session is GPU-using exactly when it asks for devices.
+
+        A bare ``type`` or ``memory`` without ``count`` still resolves to one device
+        in the session config, so any ``gpu`` block counts -- except an explicit
+        ``count: 0``, which asks for none.
+        """
+        resources = self.resources
+        hardware = resources.hardware if resources is not None else None
+        gpu = hardware.gpu if hardware is not None else None
+        return gpu is not None and gpu.count != 0

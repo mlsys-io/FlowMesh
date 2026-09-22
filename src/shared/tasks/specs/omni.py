@@ -25,6 +25,9 @@ class OmniSpecStrict(ModelInferSpecStrict):
             {"omni": self.omni, "storyboard": self.storyboard}
         )
 
+    def uses_gpu(self) -> bool:
+        return True
+
 
 class OmniSpecTemplate(ModelInferSpecTemplate):
     omni: dict[str, Any] | None = None
@@ -44,6 +47,9 @@ class OmniSpecTemplate(ModelInferSpecTemplate):
         return super().has_redacted_credentials() or has_redacted_credential_fields(
             {"omni": self.omni, "storyboard": self.storyboard}
         )
+
+    def uses_gpu(self) -> bool:
+        return True
 
 
 # ── Text-to-Image ────────────────────────────────────────────────────────────

@@ -11,7 +11,7 @@ from .config import WorkerConfig
 from .executors import EXECUTOR_REGISTRY, IMPORT_ERRORS, get_executor_class_name
 from .executors.base_executor import Executor
 from .executors.mp_executor import MPExecutor
-from .gpu_occupancy import GpuGate, NvmlUsageProbe
+from .gpu_availability import GpuAvailabilityMonitor, NvmlDeviceProbe
 from .hw import collect_hw, device_uses_unified_memory
 from .lifecycle import Lifecycle
 from .power import PowerMonitor
@@ -214,12 +214,12 @@ def main() -> None:
 
     hardware = collect_hw(bandwidth_bytes_per_sec=cfg.network_bandwidth_bytes_per_sec)
     logger.info("Collected hardware info: %s", hardware)
-    gpu_gate = (
-        GpuGate(
+    gpu_monitor = (
+        GpuAvailabilityMonitor(
             cfg.foreign_gpu_gate,
-            NvmlUsageProbe(device_uses_unified_memory),
+            NvmlDeviceProbe(device_uses_unified_memory),
         )
-        if hardware.gpu.devices
+        if hardware.gpu.devices and cfg.foreign_gpu_gate.enabled
         else None
     )
     lifecycle = Lifecycle(
@@ -231,7 +231,7 @@ def main() -> None:
         power_monitor=PowerMonitor(),
         endpoints=endpoints,
         relay_client=relay_client,
-        gpu_gate=gpu_gate,
+        gpu_monitor=gpu_monitor,
     )
 
     executors, default_executor = initialize_executors(
@@ -272,7 +272,7 @@ def main() -> None:
         network_bandwidth_bytes_per_sec=cfg.network_bandwidth_bytes_per_sec,
         executor_idle_cleanup_sec=cfg.executor_idle_cleanup_sec,
     )
-    lifecycle.set_active_executor_probe(runner.has_active_executor)
+    lifecycle.set_gpu_executor_probe(runner.has_active_gpu_executor)
 
     # Install signal handlers to allow graceful shutdown
     def handle_exit_signal(signum: int, _) -> None:

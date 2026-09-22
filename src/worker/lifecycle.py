@@ -17,7 +17,7 @@ from shared.schemas.worker import SSHLimits, WorkerCapabilities
 from shared.tasks.worker_message import WorkerHardware, WorkerStatus
 from shared.utils.time import now_iso
 
-from .gpu_occupancy import GpuGate, GpuGateCancelled
+from .gpu_availability import DeviceAvailability, GpuAvailabilityMonitor
 from .power import PowerMonitor
 from .relay import EndpointRegistry, RelayClient
 from .supervisor_client import SupervisorClient
@@ -36,7 +36,7 @@ class Lifecycle:
         power_monitor: PowerMonitor | None = None,
         endpoints: EndpointRegistry | None = None,
         relay_client: RelayClient | None = None,
-        gpu_gate: GpuGate | None = None,
+        gpu_monitor: GpuAvailabilityMonitor | None = None,
     ):
         self.client = client
         self.endpoints = endpoints or EndpointRegistry()
@@ -48,33 +48,41 @@ class Lifecycle:
         self.power_monitor = power_monitor or PowerMonitor()
         self._stop_event = threading.Event()
         self._started_ts: float | None = None
-        # Foreign-GPU gate. _status_lock serialises status sends between the heartbeat
-        # thread and the task runner, so a gate flip can never overwrite a BUSY that
-        # raced it.
+        # _status_lock serialises status sends between the heartbeat thread and the
+        # task runner, so neither can overwrite the other's report.
         self._status_lock = threading.Lock()
         self._active_task: str | None = None
         self._reported: WorkerStatus = WorkerStatus.STARTING
         self._last_task_end: float = 0.0
-        self._gpu_gate = gpu_gate
-        self._active_executor_probe: Callable[[], bool] | None = None
-        if gpu_gate is not None:
-            gate_cfg = gpu_gate.config
+        self._gpu_monitor = gpu_monitor
+        self._gpu_executor_probe: Callable[[], bool] | None = None
+        if gpu_monitor is not None:
+            cfg = gpu_monitor.config
             logger.info(
-                "foreign-GPU gate on: UNAVAILABLE when >%d MiB is used with no task "
-                "(%d consecutive checks, %.0fs grace after a task)",
-                gate_cfg.threshold_mib,
-                gate_cfg.consecutive,
-                gate_cfg.grace_sec,
+                "foreign-GPU detection on: a device is reported unavailable above "
+                "%d MiB used with nothing of ours loaded (%d consecutive checks, "
+                "%.0fs grace after a task)",
+                cfg.threshold_mib,
+                cfg.consecutive,
+                cfg.grace_sec,
             )
 
-    def set_active_executor_probe(self, probe: Callable[[], bool]) -> None:
-        """Register a probe reporting whether an executor is loaded, so the
-        foreign-GPU gate skips a reading its own executor may be part of."""
-        self._active_executor_probe = probe
+    def set_gpu_executor_probe(self, probe: Callable[[], bool]) -> None:
+        """Register a probe reporting whether a GPU-using executor is loaded.
 
-    def _executor_active(self) -> bool:
-        probe = self._active_executor_probe
-        return probe is not None and probe()
+        A reading taken while one is warm would include our own model, so the
+        monitor must not treat it as another tenant's.
+        """
+        self._gpu_executor_probe = probe
+
+    def live_gpu_availability(self) -> dict[str, DeviceAvailability]:
+        """Per-device availability, but only from a reading just taken.
+
+        Empty when the last observation was suppressed or the probe failed, so a
+        caller that refuses work on this never refuses on a stale latch.
+        """
+        monitor = self._gpu_monitor
+        return {} if monitor is None else monitor.live_snapshot()
 
     @property
     def worker_id(self) -> str:
@@ -107,6 +115,17 @@ class Lifecycle:
             energy_total = power_summary.get("estimated_energy_kwh")
             if isinstance(energy_total, (int, float)):
                 metrics["estimated_energy_kwh"] = energy_total
+        if (monitor := self._gpu_monitor) is not None:
+            # Always sent, empty included: an empty map is how the worker says its
+            # devices are no longer known to be held. Omitting it would leave the
+            # server's last reading latched with nothing able to clear it.
+            metrics["gpu_availability"] = {
+                uuid: {
+                    "available": device.available,
+                    "free_bytes": device.free_bytes,
+                }
+                for uuid, device in monitor.snapshot().items()
+            }
         return metrics
 
     def start(
@@ -145,57 +164,40 @@ class Lifecycle:
 
     def _hb_loop(self):
         while not self._stop_event.is_set():
+            # Observe before reporting so the heartbeat carries this beat's
+            # reading rather than the previous one's.
+            try:
+                self._observe_gpu()
+            except Exception:
+                logger.debug("GPU availability observation failed", exc_info=True)
             try:
                 self.client.heartbeat(ttl_sec=self.hb_ttl_sec, metrics=self._metrics())
             except Exception:
                 pass
             self._touch_hb_file()
-            try:
-                self._evaluate_gpu_gate()
-            except Exception:
-                logger.debug("foreign-GPU gate evaluation failed", exc_info=True)
             self._stop_event.wait(self.hb_sec)
 
-    def _evaluate_gpu_gate(self) -> None:
-        gpu_gate = self._gpu_gate
-        if gpu_gate is None:
+    def _observe_gpu(self) -> None:
+        """Feed the availability monitor one observation per heartbeat.
+
+        A reading is only trustworthy when nothing of ours could be in it: no task
+        running, no GPU-using executor still warm, and past the grace window in
+        which a finished task's subprocess may still be releasing memory. Before
+        the runner registers its probe we cannot know, so we do not measure.
+
+        Measurability is sampled before the read and not re-confirmed after it, so a
+        task starting mid-probe could in principle contribute to the reading. The
+        window is a single NVML call, and ``consecutive`` readings must agree before
+        a device flips, so one such reading cannot move the state on its own.
+        """
+        monitor = self._gpu_monitor
+        if monitor is None:
             return
-        cfg = gpu_gate.config
+        probe = self._gpu_executor_probe
         with self._status_lock:
-            if (
-                self._active_task is not None
-                or self._reported not in (WorkerStatus.IDLE, WorkerStatus.UNAVAILABLE)
-                or self._executor_active()
-            ):
-                return
-            if time.time() - self._last_task_end < cfg.grace_sec:
-                return
-        with gpu_gate.step() as next_state, self._status_lock:
-            if (
-                self._active_task is not None
-                or self._reported not in (WorkerStatus.IDLE, WorkerStatus.UNAVAILABLE)
-                or self._executor_active()
-            ):
-                raise GpuGateCancelled("worker took on work while reading")
-            if next_state is None:
-                return
-            used_mib = round(next_state.used_mib or 0.0)
-            if next_state.unavailable:
-                logger.warning(
-                    "foreign GPU occupancy detected: %d MiB used with no active "
-                    "task -> UNAVAILABLE",
-                    used_mib,
-                )
-                status = WorkerStatus.UNAVAILABLE
-                payload = {"reason": "foreign_gpu_occupancy", "gpu_used_mib": used_mib}
-            else:
-                logger.info(
-                    "foreign GPU occupancy cleared (%d MiB used) -> IDLE", used_mib
-                )
-                status = WorkerStatus.IDLE
-                payload = {"reason": "foreign_gpu_released", "gpu_used_mib": used_mib}
-            self.client.set_status(status, payload)
-            self._reported = status
+            idle = self._active_task is None
+            past_grace = time.time() - self._last_task_end >= monitor.config.grace_sec
+        monitor.observe(idle and past_grace and probe is not None and not probe())
 
     def set_busy(self, task_id: str):
         with self._status_lock:
@@ -210,9 +212,6 @@ class Lifecycle:
         with self._status_lock:
             self._active_task = None
             self._last_task_end = time.time()
-            # Back to IDLE; the gate re-checks after its grace period.
-            if self._gpu_gate is not None:
-                self._gpu_gate.clear()
             try:
                 self.client.set_status(WorkerStatus.IDLE, {"last_task": task_id})
                 self._reported = WorkerStatus.IDLE

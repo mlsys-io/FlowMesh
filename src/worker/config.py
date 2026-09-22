@@ -19,7 +19,7 @@ from shared.utils.parsing import (
     parse_mem_to_bytes,
 )
 
-from .gpu_occupancy import GpuGateConfig
+from .gpu_availability import GpuGateConfig
 from .utils.health import get_hb_config
 
 

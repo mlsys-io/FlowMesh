@@ -51,6 +51,11 @@ def gpu_device_matches(
     )
 
 
+def available_devices(devices: list[GpuInfo]) -> list[GpuInfo]:
+    """Devices not known to be held by a process outside FlowMesh."""
+    return [device for device in devices if device.is_available]
+
+
 def unified_gpu_memory_satisfies(
     hw: WorkerHardware, required_memory_bytes: int, required_count: int
 ) -> bool:

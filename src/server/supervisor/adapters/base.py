@@ -76,8 +76,8 @@ class WorkerConfig(BaseModel):
     executor_idle_cleanup_sec: float = env.WORKER_EXECUTOR_IDLE_CLEANUP_SEC
     """Seconds an executor may sit idle before the worker unloads it"""
     foreign_gpu_gate: bool = env.WORKER_FOREIGN_GPU_GATE
-    """Whether an idle GPU worker reports UNAVAILABLE when its GPU is held
-    by a process outside FlowMesh"""
+    """Whether a worker reports a GPU as unavailable while a process outside
+    FlowMesh holds it"""
     foreign_gpu_mem_mib: int = env.WORKER_FOREIGN_GPU_MEM_MIB
     """Foreign GPU-memory threshold in MiB above which the gate trips"""
     foreign_gpu_consecutive: int = env.WORKER_FOREIGN_GPU_CONSECUTIVE
