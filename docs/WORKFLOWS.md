@@ -77,6 +77,8 @@ contract.
 
 Credential handling: a caller-supplied `Authorization` header is always used as-is and never overwritten. With no header, `NEBULA_API_TOKEN` is injected only when the call is on the Nebula url (no custom `spec.api.url`) — the Nebula token is never sent to a custom endpoint. A Nebula-path call with no token available fails closed.
 
+`spec.api.retries` (default `0`) sets how many times a transient failure is retried before the task fails. A transient failure is a connection error or an HTTP status of 5xx, 408, or 429; other 4xx statuses are never retried. Each retry waits a fixed 1s backoff. A cancelled task stops retrying immediately.
+
 ```yaml
 spec:
   taskType: api
@@ -89,6 +91,7 @@ spec:
       messages:
         - role: user
           content: Hello
+    retries: 3
     response:
       parse_json: true
 ```

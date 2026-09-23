@@ -1,6 +1,7 @@
 import logging
 import os
 import threading
+import time
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -11,12 +12,20 @@ from shared.tasks.specs import ApiSpecStrict
 from shared.tasks.task_type import TaskType
 from shared.utils.redact import is_credential_key
 
-from .base_executor import ExecutionError, Executor, ExecutorTask
+from .base_executor import ExecutionError, Executor, ExecutorTask, TaskCancelledError
 
 logger = logging.getLogger(__name__)
 
 # Cache key: (base_url, timeout_seconds, verify_tls, follow_redirects)
 _ClientKey = tuple[str, float, bool, bool]
+
+# Fixed delay between retry attempts.
+_RETRY_BACKOFF_SEC = 1.0
+
+
+def _is_retryable_status(status_code: int) -> bool:
+    """Whether an HTTP status is transient and worth retrying."""
+    return status_code >= 500 or status_code in (408, 429)
 
 
 class APIExecutor(Executor):
@@ -35,6 +44,14 @@ class APIExecutor(Executor):
     # ---- Class-level connection pool (shared across all instances) ----
     _clients: ClassVar[dict[_ClientKey, httpx.Client]] = {}
     _clients_lock: ClassVar[threading.Lock] = threading.Lock()
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._cancel_event = threading.Event()
+
+    def cancel(self, task_id: str) -> None:
+        """Signal the executor to abort the current request and any retries."""
+        self._cancel_event.set()
 
     @classmethod
     def _base_url(cls, url: str) -> str:
@@ -77,6 +94,47 @@ class APIExecutor(Executor):
                 timeout_sec,
             )
             return client
+
+    def _request_with_retries(
+        self,
+        client: httpx.Client,
+        method: str,
+        url: str,
+        headers: dict[str, Any],
+        params: dict[str, Any] | None,
+        request_kwargs: dict[str, Any],
+        retries: int,
+    ) -> httpx.Response:
+        """Issue the request, retrying transient failures up to ``retries`` times.
+
+        A retryable failure is a connection error or a transient HTTP status
+        (5xx, 408, 429). Non-retryable failures and a cancelled task stop the
+        loop immediately. The final attempt's failure propagates to the caller.
+        """
+        attempt = 0
+        while True:
+            if self._cancel_event.is_set():
+                raise TaskCancelledError("API request cancelled")
+            try:
+                resp = client.request(
+                    method,
+                    url,
+                    headers=headers,
+                    params=params,
+                    **request_kwargs,
+                )
+            except httpx.RequestError:
+                if attempt < retries:
+                    attempt += 1
+                    time.sleep(_RETRY_BACKOFF_SEC)
+                    continue
+                raise
+            if resp.is_error and _is_retryable_status(resp.status_code):
+                if attempt < retries:
+                    attempt += 1
+                    time.sleep(_RETRY_BACKOFF_SEC)
+                    continue
+            return resp
 
     @classmethod
     def close_all_clients(cls) -> None:
@@ -164,15 +222,21 @@ class APIExecutor(Executor):
         raise_for_status = bool(response_cfg.get("raise_for_status", True))
         max_body_bytes = int(response_cfg.get("max_body_bytes", 200000))
 
+        retries = api_cfg.get("retries", 0)
+        if not isinstance(retries, int) or isinstance(retries, bool) or retries < 0:
+            raise ExecutionError("spec.api.retries must be a non-negative integer")
+
         try:
             base = self._base_url(str(url))
             client = self._get_client(base, timeout, verify_tls, follow_redirects)
-            resp = client.request(
+            resp = self._request_with_retries(
+                client,
                 method,
                 str(url),
-                headers=headers,
-                params=params,
-                **request_kwargs,
+                headers,
+                params,
+                request_kwargs,
+                retries,
             )
         except httpx.RequestError as exc:
             raise ExecutionError(f"API request failed: {exc}", retryable=True) from exc
@@ -225,7 +289,7 @@ class APIExecutor(Executor):
             message = f"API request returned status {resp.status_code}"
             if body_text:
                 message = f"{message}: {body_text[:200]}"
-            retryable = resp.status_code >= 500 or resp.status_code in (408, 429)
+            retryable = _is_retryable_status(resp.status_code)
             raise ExecutionError(message, retryable=retryable)
 
         return result
