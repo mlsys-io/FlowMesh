@@ -1,5 +1,6 @@
 """Tests for the API executor url override and Nebula credential handling."""
 
+import threading
 from pathlib import Path
 from unittest.mock import patch
 
@@ -8,7 +9,7 @@ import pytest
 
 from shared.tasks.worker_message import WorkerTaskMessage
 from worker.executors.api_executor import APIExecutor
-from worker.executors.base_executor import ExecutionError
+from worker.executors.base_executor import ExecutionError, TaskCancelledError
 
 
 def _task_message(**spec_updates: object) -> WorkerTaskMessage:
@@ -54,8 +55,9 @@ class _RecordingTransport(httpx.MockTransport):
 
 
 def _run(
-    executor: APIExecutor, task: WorkerTaskMessage, transport: _RecordingTransport
+    executor: APIExecutor, task: WorkerTaskMessage, transport: httpx.MockTransport
 ) -> None:
+    executor._cancel_event = threading.Event()
     with patch.object(
         APIExecutor, "_get_client", return_value=httpx.Client(transport=transport)
     ):
@@ -162,3 +164,95 @@ class TestCustomUrl:
         assert transport.request is not None
         assert transport.request.headers["Content-Type"] == "application/json"
         assert "Authorization" not in transport.request.headers
+
+
+class _SequenceTransport(httpx.MockTransport):
+    """MockTransport that serves a fixed sequence of responses."""
+
+    def __init__(self, responses: list[httpx.Response]) -> None:
+        self.responses = list(responses)
+        self.calls = 0
+        super().__init__(self._handler)
+
+    def _handler(self, request: httpx.Request) -> httpx.Response:
+        self.calls += 1
+        return self.responses.pop(0)
+
+
+def _ok_response() -> httpx.Response:
+    return httpx.Response(
+        200,
+        json={
+            "choices": [{"message": {"content": "hello"}}],
+            "usage": {"total_tokens": 3},
+        },
+    )
+
+
+def _error_response(status_code: int) -> httpx.Response:
+    return httpx.Response(status_code, json={"error": "boom"})
+
+
+class TestRetries:
+    def _task(self, **spec_updates: object) -> WorkerTaskMessage:
+        return _task_message(
+            url="https://custom.example.com/v1/chat/completions",
+            response={"parse_json": False},
+            **spec_updates,
+        )
+
+    def test_retry_succeeds_after_transient_failures(self) -> None:
+        """A 504 followed by a 200 succeeds when retries are configured."""
+        task = self._task(retries=2)
+        transport = _SequenceTransport(
+            [_error_response(504), _error_response(504), _ok_response()]
+        )
+        _run(APIExecutor.__new__(APIExecutor), task, transport)
+        assert transport.calls == 3
+
+    def test_retries_exhausted_still_fails(self) -> None:
+        """Persistent 5xx failures exhaust retries and raise loudly."""
+        task = self._task(retries=2)
+        transport = _SequenceTransport(
+            [_error_response(504), _error_response(504), _error_response(504)]
+        )
+        with pytest.raises(ExecutionError, match="status 504"):
+            _run(APIExecutor.__new__(APIExecutor), task, transport)
+        assert transport.calls == 3
+
+    def test_no_retry_by_default(self) -> None:
+        """Without a retries field, a transient failure fails immediately."""
+        task = self._task()
+        transport = _SequenceTransport([_error_response(504)])
+        with pytest.raises(ExecutionError, match="status 504"):
+            _run(APIExecutor.__new__(APIExecutor), task, transport)
+        assert transport.calls == 1
+
+    def test_non_retryable_status_not_retried(self) -> None:
+        """A 4xx (other than 408/429) is never retried."""
+        task = self._task(retries=3)
+        transport = _SequenceTransport([_error_response(400)])
+        with pytest.raises(ExecutionError, match="status 400"):
+            _run(APIExecutor.__new__(APIExecutor), task, transport)
+        assert transport.calls == 1
+
+    def test_cancelled_task_stops_retrying(self) -> None:
+        """A cancelled task does not keep retrying."""
+        executor = APIExecutor.__new__(APIExecutor)
+        executor._cancel_event = threading.Event()
+        executor._cancel_event.set()
+        task = self._task(retries=3)
+        transport = _SequenceTransport([_error_response(504)])
+        with patch.object(
+            APIExecutor, "_get_client", return_value=httpx.Client(transport=transport)
+        ):
+            with pytest.raises(TaskCancelledError):
+                executor.run(task, Path("/tmp/out"))
+        assert transport.calls == 0
+
+    def test_invalid_retries_rejected(self) -> None:
+        """A negative or non-integer retries value is rejected."""
+        for bad in (-1, "2", 1.5, True):
+            task = self._task(retries=bad)
+            with pytest.raises(ExecutionError, match="spec.api.retries"):
+                _run(APIExecutor.__new__(APIExecutor), task, _RecordingTransport())
