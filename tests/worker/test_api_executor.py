@@ -108,10 +108,6 @@ def _run(
     transport: httpx.MockTransport,
     out_dir: Path = Path("/tmp/out"),
 ):
-    executor._cancel_event = threading.Event()
-    executor._cancel_lock = threading.Lock()
-    executor._active_task_id = None
-    executor._pending_cancelled_ids = set()
     with patch.object(
         APIExecutor, "_get_client", return_value=httpx.Client(transport=transport)
     ):
@@ -122,7 +118,8 @@ def _executor() -> APIExecutor:
     """Build an APIExecutor with cancellation state, without a WorkerConfig."""
     executor = APIExecutor.__new__(APIExecutor)
     executor._cancel_event = threading.Event()
-    executor._cancel_task_id = None
+    executor._active_task_id = None
+    executor._pending_cancelled_ids = set()
     executor._cancel_lock = threading.Lock()
     return executor
 
@@ -299,7 +296,7 @@ class TestRetries:
         transport = _SequenceTransport(
             [_error_response(504), _error_response(504), _ok_response()]
         )
-        _run(APIExecutor.__new__(APIExecutor), task, transport)
+        _run(_executor(), task, transport)
         assert transport.calls == 3
 
     def test_retries_exhausted_still_fails(self) -> None:
@@ -309,7 +306,7 @@ class TestRetries:
             [_error_response(504), _error_response(504), _error_response(504)]
         )
         with pytest.raises(ExecutionError, match="status 504"):
-            _run(APIExecutor.__new__(APIExecutor), task, transport)
+            _run(_executor(), task, transport)
         assert transport.calls == 3
 
     def test_no_retry_by_default(self) -> None:
@@ -317,7 +314,7 @@ class TestRetries:
         task = self._task()
         transport = _SequenceTransport([_error_response(504)])
         with pytest.raises(ExecutionError, match="status 504"):
-            _run(APIExecutor.__new__(APIExecutor), task, transport)
+            _run(_executor(), task, transport)
         assert transport.calls == 1
 
     def test_non_retryable_status_not_retried(self) -> None:
@@ -325,16 +322,12 @@ class TestRetries:
         task = self._task(retries=3)
         transport = _SequenceTransport([_error_response(400)])
         with pytest.raises(ExecutionError, match="status 400"):
-            _run(APIExecutor.__new__(APIExecutor), task, transport)
+            _run(_executor(), task, transport)
         assert transport.calls == 1
 
     def test_cancelled_task_stops_retrying(self) -> None:
         """A cancelled task does not keep retrying."""
-        executor = APIExecutor.__new__(APIExecutor)
-        executor._cancel_event = threading.Event()
-        executor._cancel_lock = threading.Lock()
-        executor._active_task_id = None
-        executor._pending_cancelled_ids = set()
+        executor = _executor()
         task = self._task(retries=3)
         executor.cancel(task.task_id)
         transport = _SequenceTransport([_error_response(504)])
@@ -350,7 +343,7 @@ class TestRetries:
         for bad in (-1, "2", 1.5, True):
             task = self._task(retries=bad)
             with pytest.raises(ExecutionError, match="spec.api.retries"):
-                _run(APIExecutor.__new__(APIExecutor), task, _RecordingTransport())
+                _run(_executor(), task, _RecordingTransport())
 
     def test_cancel_previous_task_does_not_cancel_next(self) -> None:
         """A cancellation left over from a prior task does not cancel the next."""
@@ -498,6 +491,7 @@ class TestRetries:
         canceller.join()
         assert elapsed < 0.5
         assert transport.calls == 1
+
 
 class TestBatch:
     @pytest.fixture(autouse=True)
