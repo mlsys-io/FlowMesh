@@ -17,6 +17,7 @@ Typical usage:
     result = safe_execute_function(fn_obj, ("hello",))  # Returns "HELLO"
 """
 
+import ast
 import inspect
 import json
 import math
@@ -137,6 +138,35 @@ def safe_materialize_function(
 
     # Case 2: Function definition (use exec - def is a statement)
     else:
+        try:
+            tree = ast.parse(fn_code_stripped)
+        except SyntaxError as e:
+            raise RuntimeError(
+                f"Function definition failed: {e}\nCode: {fn_code}"
+            ) from e
+
+        if len(tree.body) != 1:
+            kinds = [type(n).__name__ for n in tree.body]
+            raise RuntimeError(
+                "Function source must be a single function definition, "
+                f"found top-level statements: {kinds}"
+            )
+        stmt = tree.body[0]
+        if isinstance(stmt, ast.FunctionDef):
+            fn_name = stmt.name
+        elif (
+            isinstance(stmt, ast.Assign)
+            and len(stmt.targets) == 1
+            and isinstance(stmt.targets[0], ast.Name)
+            and isinstance(stmt.value, ast.Lambda)
+        ):
+            fn_name = stmt.targets[0].id
+        else:
+            raise RuntimeError(
+                "Function source must be a single function definition or "
+                f"an assignment of a lambda, found: {type(stmt).__name__}"
+            )
+
         safe_locals: dict[str, Any] = {}
 
         # Execute the function definition (creates function object in locals)
@@ -147,12 +177,6 @@ def safe_materialize_function(
                 f"Function definition failed: {e}\nCode: {fn_code}"
             ) from e
 
-        # Find the function object
-        if not safe_locals:
-            raise RuntimeError("Function definition did not create any objects")
-
-        # Get the function (usually the first/only item in locals)
-        fn_name = list(safe_locals.keys())[0]
         fn_obj = safe_locals[fn_name]
 
         if not callable(fn_obj):

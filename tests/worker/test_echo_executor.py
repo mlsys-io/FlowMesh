@@ -118,6 +118,26 @@ class TestFunctionPath:
         )
         assert [i.output for i in result.items] == [["a", "b"]]
 
+    def test_mixed_argument_raises(self) -> None:
+        with pytest.raises(ExecutionError, match="exactly one"):
+            _run(
+                {
+                    "type": "function",
+                    "function": "lambda args: [args[0]]",
+                    "arguments": [{"items": [1], "expr": "absent.items"}],
+                }
+            )
+
+    def test_unknown_key_argument_raises(self) -> None:
+        with pytest.raises(ExecutionError, match="exactly one"):
+            _run(
+                {
+                    "type": "function",
+                    "function": "lambda args: [args[0]]",
+                    "arguments": [{"bogus": 1}],
+                }
+            )
+
     def test_non_list_return_raises(self) -> None:
         with pytest.raises(ExecutionError, match="must return a list"):
             _run(
