@@ -368,7 +368,7 @@ class APIExecutor(DataMixin, Executor):
 
         entry = self._collect_prompts_for_spec(spec, task_id=task.task_id)
         prompts = entry.prompts
-        if not prompts:
+        if not prompts and not entry.tables:
             raise ExecutionError("spec.data produced no rows")
 
         request_kwargs = self._build_request_kwargs(api_cfg, None)
@@ -452,7 +452,7 @@ class APIExecutor(DataMixin, Executor):
         if result_items:
             first = result_items[0]
             if isinstance(first, APIGroupItem):
-                status_code = first.rows[0].status_code
+                status_code = first.rows[0].status_code if first.rows else 0
                 truncated = any(
                     r.truncated
                     for g in result_items

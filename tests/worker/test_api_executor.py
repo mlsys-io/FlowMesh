@@ -1080,6 +1080,185 @@ class TestDataframeRows:
             [{"role": "user", "content": "row c1"}],
         ]
 
+    def test_all_empty_columns_issue_no_request_and_one_empty_group(
+        self, tmp_path: Path
+    ) -> None:
+        """A dataframe whose columns all resolve to zero rows runs zero rows:
+        no HTTP request, and one empty group item so downstream paths resolve."""
+        upstream = APIResult(
+            ok=True,
+            executor="api",
+            method="POST",
+            url="https://up.example.com",
+            status_code=200,
+            items=[],
+        )
+        payload = {
+            "task_id": "task-api-df-empty",
+            "workflow_id": "wf-1",
+            "owner_id": "owner",
+            "assigned_worker": "worker-1",
+            "dispatched_at": "2026-03-22T00:00:00Z",
+            "task": {
+                "apiVersion": "flowmesh/v1",
+                "kind": "Task",
+                "metadata": {"name": "wf:api"},
+                "spec": {
+                    "taskType": "api",
+                    "_upstreamResults": {"Up": upstream},
+                    "api": {
+                        "method": "POST",
+                        "url": "https://custom.example.com/v1/chat/completions",
+                        "json": {"messages": "{{prompt}}"},
+                    },
+                    "data": {
+                        "type": "dataframe",
+                        "columns": [
+                            {
+                                "label": "L",
+                                "node": "Up",
+                                "path": "items.json.choices[0].message.content",
+                            }
+                        ],
+                        "messages": [
+                            {"role": "user", "content": "row {L}"},
+                        ],
+                    },
+                },
+            },
+        }
+        task = WorkerTaskMessage.model_validate(payload)
+        transport = _EchoTransport()
+        result = _run(_executor(), task, transport, tmp_path)
+        assert transport.requests == []
+        assert len(result.items) == 1
+        assert isinstance(result.items[0], APIGroupItem)
+        assert result.items[0].index == 0
+        assert result.items[0].rows == []
+        assert result.status_code == 0
+
+    def test_zero_vs_three_rows_still_raises(self, tmp_path: Path) -> None:
+        """A real mismatch (one column empty, another with rows) still raises."""
+        empty = APIResult(
+            ok=True,
+            executor="api",
+            method="POST",
+            url="https://up.example.com",
+            status_code=200,
+            items=[],
+        )
+        full = APIResult(
+            ok=True,
+            executor="api",
+            method="POST",
+            url="https://up.example.com",
+            status_code=200,
+            items=[_api_item("c0"), _api_item("c1"), _api_item("c2")],
+        )
+        payload = {
+            "task_id": "task-api-df-mismatch",
+            "workflow_id": "wf-1",
+            "owner_id": "owner",
+            "assigned_worker": "worker-1",
+            "dispatched_at": "2026-03-22T00:00:00Z",
+            "task": {
+                "apiVersion": "flowmesh/v1",
+                "kind": "Task",
+                "metadata": {"name": "wf:api"},
+                "spec": {
+                    "taskType": "api",
+                    "_upstreamResults": {"Empty": empty, "Full": full},
+                    "api": {
+                        "method": "POST",
+                        "url": "https://custom.example.com/v1/chat/completions",
+                        "json": {"messages": "{{prompt}}"},
+                    },
+                    "data": {
+                        "type": "dataframe",
+                        "columns": [
+                            {
+                                "label": "Empty",
+                                "node": "Empty",
+                                "path": "items.json.choices[0].message.content",
+                            },
+                            {
+                                "label": "Full",
+                                "node": "Full",
+                                "path": "items.json.choices[0].message.content",
+                            },
+                        ],
+                        "messages": [
+                            {"role": "user", "content": "row {Empty} {Full}"},
+                        ],
+                    },
+                },
+            },
+        }
+        task = WorkerTaskMessage.model_validate(payload)
+        with pytest.raises(ExecutionError, match="same number of rows"):
+            _run(_executor(), task, _EchoTransport(), tmp_path)
+
+    def test_two_vs_three_rows_still_raises(self, tmp_path: Path) -> None:
+        """A ragged mismatch (2 vs 3 rows) still raises."""
+        two = APIResult(
+            ok=True,
+            executor="api",
+            method="POST",
+            url="https://up.example.com",
+            status_code=200,
+            items=[_api_item("c0"), _api_item("c1")],
+        )
+        three = APIResult(
+            ok=True,
+            executor="api",
+            method="POST",
+            url="https://up.example.com",
+            status_code=200,
+            items=[_api_item("c0"), _api_item("c1"), _api_item("c2")],
+        )
+        payload = {
+            "task_id": "task-api-df-ragged",
+            "workflow_id": "wf-1",
+            "owner_id": "owner",
+            "assigned_worker": "worker-1",
+            "dispatched_at": "2026-03-22T00:00:00Z",
+            "task": {
+                "apiVersion": "flowmesh/v1",
+                "kind": "Task",
+                "metadata": {"name": "wf:api"},
+                "spec": {
+                    "taskType": "api",
+                    "_upstreamResults": {"Two": two, "Three": three},
+                    "api": {
+                        "method": "POST",
+                        "url": "https://custom.example.com/v1/chat/completions",
+                        "json": {"messages": "{{prompt}}"},
+                    },
+                    "data": {
+                        "type": "dataframe",
+                        "columns": [
+                            {
+                                "label": "A",
+                                "node": "Two",
+                                "path": "items.json.choices[0].message.content",
+                            },
+                            {
+                                "label": "B",
+                                "node": "Three",
+                                "path": "items.json.choices[0].message.content",
+                            },
+                        ],
+                        "messages": [
+                            {"role": "user", "content": "row {A} {B}"},
+                        ],
+                    },
+                },
+            },
+        }
+        task = WorkerTaskMessage.model_validate(payload)
+        with pytest.raises(ExecutionError, match="same number of rows"):
+            _run(_executor(), task, _EchoTransport(), tmp_path)
+
 
 class TestGraphTemplateAggregate:
     def test_graph_template_aggregates_all_rows_into_one_prompt(
