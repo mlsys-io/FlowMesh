@@ -100,3 +100,17 @@ class TestMaterializeShape:
     def test_syntax_error_raises_runtime_error(self) -> None:
         with pytest.raises(RuntimeError, match="Function definition failed"):
             _run("def f(args):\n    return )", (1,))
+
+
+class TestValueErrorPropagation:
+    def test_value_error_message_survives_sandbox(self) -> None:
+        """A function raising ValueError fails closed with its message intact."""
+        with pytest.raises(
+            RuntimeError,
+            match="kept ids not in the candidate table: \\['f6'\\]",
+        ):
+            _run(
+                "def f(args):\n"
+                "    raise ValueError(\"kept ids not in the candidate table: ['f6']\")",
+                (),
+            )

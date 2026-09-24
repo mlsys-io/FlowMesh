@@ -56,6 +56,7 @@ SAFE_BUILTINS = {
     "all": all,
     "range": range,
     "isinstance": isinstance,
+    "ValueError": ValueError,
 }
 
 # Whitelist of safe modules available during function execution.
