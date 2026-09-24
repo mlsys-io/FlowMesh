@@ -12,6 +12,7 @@ from .base_executor import ExecutionError, Executor, ExecutorTask
 from .mixins.data import DataMixin
 from .utils.checkpoints import maybe_upload_traces
 from .utils.graph_templates import _evaluate_expr
+from .utils.safe_eval import safe_execute_function, safe_materialize_function
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +52,25 @@ class EchoExecutor(DataMixin, Executor):
             )
         return resolved
 
+    @staticmethod
+    def _resolve_function_arg(
+        arg: dict[str, Any], context: dict[str, BaseExecutorResult]
+    ) -> Any:
+        keys = frozenset(arg)
+        if keys == {"items"}:
+            items = arg["items"]
+            if not isinstance(items, list):
+                raise ExecutionError(
+                    "echo executor function argument 'items' must be a list"
+                )
+            return items
+        if keys in ({"expr"}, {"node", "path"}):
+            return EchoExecutor._resolve_expr_item(arg, context)
+        raise ExecutionError(
+            "echo executor function argument must have exactly one of "
+            f"'items', 'expr', or 'node'+'path'; got keys {sorted(keys)}"
+        )
+
     def _resolve_item(
         self, item: EchoItem, context: dict[str, BaseExecutorResult]
     ) -> Any:
@@ -64,6 +84,48 @@ class EchoExecutor(DataMixin, Executor):
                 "a string literal or a mapping"
             )
 
+    def _run_list(
+        self, data_cfg: dict[str, Any], context: dict[str, BaseExecutorResult]
+    ) -> list[EchoResultItem]:
+        items_cfg = data_cfg.get("items")
+        if not isinstance(items_cfg, list):
+            raise ExecutionError("echo executor requires spec.data.items to be a list")
+        merged_items: list[EchoResultItem] = []
+        for item in items_cfg:
+            resolved = self._resolve_item(item, context)
+            self._append_outputs(merged_items, resolved)
+        return merged_items
+
+    def _run_function(
+        self,
+        data_cfg: dict[str, Any],
+        context: dict[str, BaseExecutorResult],
+        task_id: str,
+    ) -> list[EchoResultItem]:
+        fn_code = data_cfg.get("function")
+        if not isinstance(fn_code, str) or not fn_code.strip():
+            raise ExecutionError(
+                f"echo executor task {task_id} requires spec.data.function "
+                "to be a non-empty string"
+            )
+        args_cfg = data_cfg.get("arguments")
+        if not isinstance(args_cfg, list):
+            raise ExecutionError(
+                f"echo executor task {task_id} requires spec.data.arguments "
+                "to be a list"
+            )
+        resolved_args = [self._resolve_function_arg(arg, context) for arg in args_cfg]
+        try:
+            fn_obj = safe_materialize_function(fn_code)
+            output = safe_execute_function(
+                fn_obj, tuple(resolved_args), expect_list=True
+            )
+        except Exception as e:
+            raise ExecutionError(
+                f"echo executor task {task_id} function failed: {e}"
+            ) from e
+        return [EchoResultItem(output=element) for element in output]
+
     def run(self, task: ExecutorTask, out_dir: Path) -> EchoResult:
         spec = self.require_spec(task, EchoSpecStrict)
         task_id = task.task_id.strip()
@@ -75,20 +137,16 @@ class EchoExecutor(DataMixin, Executor):
 
             if not isinstance(data_cfg, dict):
                 raise ExecutionError("echo executor requires spec.data to be a mapping")
-            items_cfg = data_cfg.get("items")
-            if not isinstance(items_cfg, list):
-                raise ExecutionError(
-                    "echo executor requires spec.data.items to be a list"
-                )
             if not isinstance(context, dict):
                 raise ExecutionError(
                     "echo executor requires spec._upstreamResults to be a mapping"
                 )
 
-            merged_items: list[EchoResultItem] = []
-            for item in items_cfg:
-                resolved = self._resolve_item(item, context)
-                self._append_outputs(merged_items, resolved)
+            data_type = data_cfg.get("type")
+            if data_type == "function":
+                merged_items = self._run_function(data_cfg, context, task_id)
+            else:
+                merged_items = self._run_list(data_cfg, context)
 
             result = EchoResult(
                 items=merged_items,

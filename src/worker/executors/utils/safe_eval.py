@@ -9,7 +9,7 @@ Security model:
 - Two-phase execution: materialize (compile) then execute (run)
 - Restricted builtins: only safe operations (no open, eval, exec, import, etc.)
 - Limited module access: json, re, math, numpy, pandas, pyarrow
-- Type validation: enforces Callable[[tuple[str, ...]], str] signature
+- Type validation: enforces Callable[[tuple[str, ...]], Any] signature
 - Isolated execution: exec() with explicit safe_globals/safe_locals
 
 Typical usage:
@@ -17,6 +17,7 @@ Typical usage:
     result = safe_execute_function(fn_obj, ("hello",))  # Returns "HELLO"
 """
 
+import ast
 import inspect
 import json
 import math
@@ -69,9 +70,24 @@ SAFE_MODULES = {
 }
 
 
+def _is_json_value(value: Any) -> bool:
+    """Whether ``value`` is a JSON value (recursively, string keys, finite numbers)."""
+    if value is None or isinstance(value, (str, bool)):
+        return True
+    if isinstance(value, int):
+        return True
+    if isinstance(value, float):
+        return value == value and value not in (float("inf"), float("-inf"))
+    if isinstance(value, list):
+        return all(_is_json_value(item) for item in value)
+    if isinstance(value, dict):
+        return all(isinstance(k, str) and _is_json_value(v) for k, v in value.items())
+    return False
+
+
 def safe_materialize_function(
     fn_code: str,
-) -> Callable[[tuple[str | list[dict[str, str]], ...]], str]:
+) -> Callable[[tuple[str | list[dict[str, str]], ...]], Any]:
     """
     Compile function source code into a callable object with restricted builtins.
 
@@ -86,8 +102,8 @@ def safe_materialize_function(
 
     Type signature enforcement:
     - Must accept exactly 1 parameter (tuple of strings or list of messages)
-    - Should return a string (validated at execution time)
-    - Signature: Callable[[tuple[str, ...]], str]
+    - Returns a string or a list of JSON values (validated at execution time)
+    - Signature: Callable[[tuple[str, ...]], Any]
 
     Args:
         fn_code: Python source code defining a function or lambda expression
@@ -122,6 +138,35 @@ def safe_materialize_function(
 
     # Case 2: Function definition (use exec - def is a statement)
     else:
+        try:
+            tree = ast.parse(fn_code_stripped)
+        except SyntaxError as e:
+            raise RuntimeError(
+                f"Function definition failed: {e}\nCode: {fn_code}"
+            ) from e
+
+        if len(tree.body) != 1:
+            kinds = [type(n).__name__ for n in tree.body]
+            raise RuntimeError(
+                "Function source must be a single function definition, "
+                f"found top-level statements: {kinds}"
+            )
+        stmt = tree.body[0]
+        if isinstance(stmt, ast.FunctionDef):
+            fn_name = stmt.name
+        elif (
+            isinstance(stmt, ast.Assign)
+            and len(stmt.targets) == 1
+            and isinstance(stmt.targets[0], ast.Name)
+            and isinstance(stmt.value, ast.Lambda)
+        ):
+            fn_name = stmt.targets[0].id
+        else:
+            raise RuntimeError(
+                "Function source must be a single function definition or "
+                f"an assignment of a lambda, found: {type(stmt).__name__}"
+            )
+
         safe_locals: dict[str, Any] = {}
 
         # Execute the function definition (creates function object in locals)
@@ -132,12 +177,6 @@ def safe_materialize_function(
                 f"Function definition failed: {e}\nCode: {fn_code}"
             ) from e
 
-        # Find the function object
-        if not safe_locals:
-            raise RuntimeError("Function definition did not create any objects")
-
-        # Get the function (usually the first/only item in locals)
-        fn_name = list(safe_locals.keys())[0]
         fn_obj = safe_locals[fn_name]
 
         if not callable(fn_obj):
@@ -167,10 +206,11 @@ def safe_materialize_function(
 
 
 def safe_execute_function(
-    fn_obj: Callable[[tuple[str | list[dict[str, str]], ...]], str],
+    fn_obj: Callable[[tuple[str | list[dict[str, str]], ...]], Any],
     args: tuple[str | Sequence[dict[str, str]], ...],
     allowed_modules: dict[str, Any] | None = None,
-) -> str:
+    expect_list: bool = False,
+) -> Any:
     """
     Execute a function in an isolated environment with no access to external state.
 
@@ -185,7 +225,8 @@ def safe_execute_function(
     1. Validate input types (args must be tuple of strings or lists)
     2. Create isolated globals with SAFE_BUILTINS and SAFE_MODULES
     3. Execute function call via exec() in restricted environment
-    4. Extract result and validate output type (must be string)
+    4. Extract result and validate output type (string, or list of JSON when
+       ``expect_list`` is set)
 
     Args:
         fn_obj: Compiled function from safe_materialize_function()
@@ -193,13 +234,14 @@ def safe_execute_function(
         allowed_modules: Optional dict of additional modules to allow during execution.
                          If None, uses SAFE_MODULES
                          (json, re, math, numpy, pandas, pyarrow).
+        expect_list: When True, require the result to be a list of JSON values.
 
     Returns:
-        String result from function execution
+        Result from function execution
 
     Raises:
         RuntimeError: If function execution fails for any reason
-        TypeError: If args is not tuple[str, ...] or result is not str
+        TypeError: If args is not tuple[str, ...] or result is not the expected type
 
     Examples:
         >>> fn = safe_materialize_function("lambda args: args[0].upper()")
@@ -213,7 +255,11 @@ def safe_execute_function(
     if not isinstance(args, tuple):
         raise TypeError(f"Args must be a tuple, got {type(args).__name__}")
 
-    if not all(isinstance(arg, (str, list)) for arg in args):
+    if expect_list:
+        if not all(_is_json_value(arg) for arg in args):
+            arg_types = [type(arg).__name__ for arg in args]
+            raise TypeError(f"All args must be JSON values, got types: {arg_types}")
+    elif not all(isinstance(arg, (str, list)) for arg in args):
         arg_types = [type(arg).__name__ for arg in args]
         raise TypeError(f"All args must be strings or lists, got types: {arg_types}")
 
@@ -239,8 +285,20 @@ def safe_execute_function(
         # Extract the result from safe_locals
         result = safe_locals["__result__"]
 
-        # Validate output type: must be a string
-        if not isinstance(result, str):
+        # Validate output type
+        if expect_list:
+            if not isinstance(result, list):
+                raise TypeError(
+                    "Function must return a list, but returned "
+                    f"{type(result).__name__}: {result}"
+                )
+            for element in result:
+                if not _is_json_value(element):
+                    raise TypeError(
+                        "Function must return a list of JSON values, but an element "
+                        f"is {type(element).__name__}: {element}"
+                    )
+        elif not isinstance(result, str):
             raise TypeError(
                 "Function must return a string, but returned "
                 f"{type(result).__name__}: {result}"
