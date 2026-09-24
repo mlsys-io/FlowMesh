@@ -89,7 +89,6 @@ def _run(
     transport: httpx.MockTransport,
     out_dir: Path = Path("/tmp/out"),
 ):
-    executor._cancel_event = threading.Event()
     with patch.object(
         APIExecutor, "_get_client", return_value=httpx.Client(transport=transport)
     ):
@@ -277,7 +276,7 @@ class TestRetries:
         transport = _SequenceTransport(
             [_error_response(504), _error_response(504), _ok_response()]
         )
-        _run(APIExecutor.__new__(APIExecutor), task, transport)
+        _run(_executor(), task, transport)
         assert transport.calls == 3
 
     def test_retries_exhausted_still_fails(self) -> None:
@@ -287,7 +286,7 @@ class TestRetries:
             [_error_response(504), _error_response(504), _error_response(504)]
         )
         with pytest.raises(ExecutionError, match="status 504"):
-            _run(APIExecutor.__new__(APIExecutor), task, transport)
+            _run(_executor(), task, transport)
         assert transport.calls == 3
 
     def test_no_retry_by_default(self) -> None:
@@ -295,7 +294,7 @@ class TestRetries:
         task = self._task()
         transport = _SequenceTransport([_error_response(504)])
         with pytest.raises(ExecutionError, match="status 504"):
-            _run(APIExecutor.__new__(APIExecutor), task, transport)
+            _run(_executor(), task, transport)
         assert transport.calls == 1
 
     def test_non_retryable_status_not_retried(self) -> None:
@@ -303,15 +302,14 @@ class TestRetries:
         task = self._task(retries=3)
         transport = _SequenceTransport([_error_response(400)])
         with pytest.raises(ExecutionError, match="status 400"):
-            _run(APIExecutor.__new__(APIExecutor), task, transport)
+            _run(_executor(), task, transport)
         assert transport.calls == 1
 
     def test_cancelled_task_stops_retrying(self) -> None:
         """A cancelled task does not keep retrying."""
-        executor = APIExecutor.__new__(APIExecutor)
-        executor._cancel_event = threading.Event()
-        executor._cancel_event.set()
+        executor = _executor()
         task = self._task(retries=3)
+        executor.cancel(task.task_id)
         transport = _SequenceTransport([_error_response(504)])
         with patch.object(
             APIExecutor, "_get_client", return_value=httpx.Client(transport=transport)
@@ -325,7 +323,8 @@ class TestRetries:
         for bad in (-1, "2", 1.5, True):
             task = self._task(retries=bad)
             with pytest.raises(ExecutionError, match="spec.api.retries"):
-                _run(APIExecutor.__new__(APIExecutor), task, _RecordingTransport())
+                _run(_executor(), task, _RecordingTransport())
+
 
 class TestBatch:
     @pytest.fixture(autouse=True)
