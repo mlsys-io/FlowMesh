@@ -56,14 +56,20 @@ class EchoExecutor(DataMixin, Executor):
     def _resolve_function_arg(
         arg: dict[str, Any], context: dict[str, BaseExecutorResult]
     ) -> Any:
-        if "items" in arg:
+        keys = frozenset(arg)
+        if keys == {"items"}:
             items = arg["items"]
             if not isinstance(items, list):
                 raise ExecutionError(
                     "echo executor function argument 'items' must be a list"
                 )
             return items
-        return EchoExecutor._resolve_expr_item(arg, context)
+        if keys in ({"expr"}, {"node", "path"}):
+            return EchoExecutor._resolve_expr_item(arg, context)
+        raise ExecutionError(
+            "echo executor function argument must have exactly one of "
+            f"'items', 'expr', or 'node'+'path'; got keys {sorted(keys)}"
+        )
 
     def _resolve_item(
         self, item: EchoItem, context: dict[str, BaseExecutorResult]
