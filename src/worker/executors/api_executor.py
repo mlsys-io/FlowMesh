@@ -8,7 +8,7 @@ from typing import Any, ClassVar
 
 import httpx
 
-from shared.schemas.result import APIItem, APIResult
+from shared.schemas.result import APIGroupItem, APIItem, APIResult
 from shared.tasks.specs import ApiSpecStrict
 from shared.tasks.task_type import TaskType
 from shared.utils.redact import is_credential_key
@@ -229,7 +229,7 @@ class APIExecutor(DataMixin, Executor):
         return value
 
     def _build_request_kwargs(
-        self, api_cfg: dict[str, Any], prompt: str | None
+        self, api_cfg: dict[str, Any], prompt: Any | None
     ) -> dict[str, Any]:
         """Build httpx request kwargs from ``spec.api``, substituting the row
         prompt when batching."""
@@ -454,12 +454,52 @@ class APIExecutor(DataMixin, Executor):
 
         items = [results[idx] for idx in range(len(prompts))]
 
+        result_items: list[APIItem | APIGroupItem] = []
+        if entry.tables:
+            # Grouped data: one result item per table, holding that group's
+            # row responses in order (same slicing as DataMixin._populate_table).
+            grouped: list[APIGroupItem] = []
+            cur = 0
+            for group_index, df in enumerate(entry.tables):
+                size = len(df)
+                grouped.append(
+                    APIGroupItem(index=group_index, rows=items[cur : cur + size])
+                )
+                cur += size
+            if cur != len(items):
+                raise ExecutionError(
+                    f"Output length {len(items)} does not match "
+                    f"the total number of rows {cur} in table stores."
+                )
+            result_items.extend(grouped)
+        else:
+            result_items.extend(items)
+
+        if result_items:
+            first = result_items[0]
+            if isinstance(first, APIGroupItem):
+                status_code = first.rows[0].status_code
+                truncated = any(
+                    r.truncated
+                    for g in result_items
+                    if isinstance(g, APIGroupItem)
+                    for r in g.rows
+                )
+            else:
+                status_code = first.status_code
+                truncated = any(
+                    item.truncated for item in result_items if isinstance(item, APIItem)
+                )
+        else:
+            status_code = 0
+            truncated = False
+
         return APIResult(
             ok=True,
             executor=self.name,
             method=method,
             url=str(url),
-            status_code=items[0].status_code,
-            truncated=any(item.truncated for item in items),
-            items=items,
+            status_code=status_code,
+            truncated=truncated,
+            items=result_items,
         )

@@ -602,55 +602,71 @@ def _evaluate_expr(expr: str, context: dict[str, BaseExecutorResult]) -> Any:
             continue
         attr, indexes = _split_indexes(token)
         if attr:
-            if isinstance(value, dict) and attr in value:
-                value = value[attr]
-            elif isinstance(value, list) and all(
-                isinstance(v, dict) and attr in v for v in value
-            ):
-                value = [v[attr] for v in value]
-            elif isinstance(value, list) and all(
-                isinstance(v, pd.DataFrame) for v in value
-            ):
-                if any(attr not in v.columns for v in value):
-                    raise ExecutionError(
-                        f"{attr} not a valid column in one of the "
-                        f"DataFrames for {token}."
-                    )
-                value = [v[attr].tolist() for v in value]
-            elif isinstance(value, pd.DataFrame):
-                if attr not in value.columns:
-                    raise ExecutionError(
-                        f"{attr} not a valid column in DataFrame for {token}."
-                    )
-                value = value[attr].tolist()
-            elif isinstance(value, BaseModel):
-                resolved = getattr(value, attr, _SENTINEL)
-                if resolved is _SENTINEL:
-                    raise ExecutionError(
-                        f"{attr} not a valid attribute of {type(value).__name__} "
-                        f"for {token}."
-                    )
-                value = resolved
-            else:
-                raise ExecutionError(
-                    f"{attr} in {parts} is not a valid key - "
-                    f"{type(value).__name__}, {value}"
-                )
+            value = _apply_attr(value, attr, token, parts)
         for idx in indexes:
-            if isinstance(value, list) and -len(value) <= idx < len(value):
-                value = value[idx]
-            elif isinstance(value, list) and all(isinstance(v, list) for v in value):
-                value = [v[idx] for v in value]
-            else:
-                raise ExecutionError(
-                    f"{idx} not a valid index in {token} - {len(value)}"
-                )
+            value = _apply_index(value, idx, token)
         # Attempt to deserialize DataFrame if applicable
         if isinstance(value, dict):
             value = try_deserialize_dataframe(value)
         elif isinstance(value, list) and all(isinstance(v, dict) for v in value):
             value = [try_deserialize_dataframe(v) for v in value]
     return value
+
+
+def _apply_attr(value: Any, attr: str, token: str, parts: list[str]) -> Any:
+    """Resolve an attribute access, mapping over lists of dicts, DataFrames,
+    or pydantic models (including nested lists)."""
+    if isinstance(value, dict) and attr in value:
+        return value[attr]
+    if isinstance(value, list):
+        if all(isinstance(v, dict) and attr in v for v in value):
+            return [v[attr] for v in value]
+        if all(isinstance(v, pd.DataFrame) for v in value):
+            if any(attr not in v.columns for v in value):
+                raise ExecutionError(
+                    f"{attr} not a valid column in one of the "
+                    f"DataFrames for {token}."
+                )
+            return [v[attr].tolist() for v in value]
+        if all(isinstance(v, BaseModel) for v in value):
+            return [_model_attr(v, attr, token) for v in value]
+        if all(isinstance(v, list) for v in value):
+            return [_apply_attr(v, attr, token, parts) for v in value]
+    if isinstance(value, pd.DataFrame):
+        if attr not in value.columns:
+            raise ExecutionError(f"{attr} not a valid column in DataFrame for {token}.")
+        return value[attr].tolist()
+    if isinstance(value, BaseModel):
+        return _model_attr(value, attr, token)
+    raise ExecutionError(
+        f"{attr} in {parts} is not a valid key - " f"{type(value).__name__}, {value}"
+    )
+
+
+def _model_attr(value: BaseModel, attr: str, token: str) -> Any:
+    """Resolve a declared pydantic field by name or alias, never a method."""
+    fields = type(value).model_fields
+    field = fields.get(attr)
+    if field is not None:
+        return getattr(value, attr)
+    for name, f in fields.items():
+        if f.alias == attr:
+            return getattr(value, name)
+    extras = getattr(value, "__pydantic_extra__", None)
+    if extras and attr in extras:
+        return extras[attr]
+    raise ExecutionError(
+        f"{attr} not a valid attribute of {type(value).__name__} for {token}."
+    )
+
+
+def _apply_index(value: Any, idx: int, token: str) -> Any:
+    """Index into a list, mapping over a list of lists (one per group)."""
+    if isinstance(value, list) and all(isinstance(v, list) for v in value):
+        return [_apply_index(v, idx, token) for v in value]
+    if isinstance(value, list) and -len(value) <= idx < len(value):
+        return value[idx]
+    raise ExecutionError(f"{idx} not a valid index in {token} - {len(value)}")
 
 
 def _split_indexes(token: str) -> tuple[str, list[int]]:
