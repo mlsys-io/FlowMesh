@@ -228,3 +228,15 @@ class APIItem(StrictModel):
     usage: dict[str, Any] | None = None
     text: str | None = None
     prompt: str | None = None
+
+
+class APIGroupItem(StrictModel):
+    """One group's row responses in a batched API task over grouped data.
+
+    ``rows`` holds the group's row responses in order. A group is one
+    dataframe table (one claim), so a downstream column reads ``rows`` as a
+    per-group list.
+    """
+
+    index: int
+    rows: list[APIItem]

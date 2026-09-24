@@ -9,7 +9,7 @@ from typing import Any, ClassVar
 
 import httpx
 
-from shared.schemas.result import APIItem, APIResult
+from shared.schemas.result import APIGroupItem, APIItem, APIResult
 from shared.tasks.specs import ApiSpecStrict
 from shared.tasks.task_type import TaskType
 from shared.utils.redact import is_credential_key
@@ -193,20 +193,18 @@ class APIExecutor(DataMixin, Executor):
         """Close the connection pool when the runner deactivates this executor."""
         self.close_all_clients()
 
-    @staticmethod
-    def _prompt_to_str(prompt: Any) -> str:
-        """Render a row's prompt as a string for body substitution."""
-        if isinstance(prompt, str):
-            return prompt
-        return json.dumps(prompt)
-
     @classmethod
-    def _substitute_prompt(cls, value: Any, prompt: str) -> Any:
-        """Replace ``{{prompt}}`` in the request body with a row's prompt."""
+    def _substitute_prompt(cls, value: Any, prompt: Any) -> Any:
+        """Replace ``{{prompt}}`` in the request body with a row's prompt.
+
+        A body value that is exactly ``{{prompt}}`` is replaced by the prompt
+        object as-is (a message list stays a list of ``{"role", "content"}``
+        dicts); an embedded placeholder inside a longer string keeps string
+        substitution."""
         if isinstance(value, str):
             if value == _PROMPT_PLACEHOLDER:
                 return prompt
-            return value.replace(_PROMPT_PLACEHOLDER, prompt)
+            return value.replace(_PROMPT_PLACEHOLDER, str(prompt))
         if isinstance(value, dict):
             return {k: cls._substitute_prompt(v, prompt) for k, v in value.items()}
         if isinstance(value, list):
@@ -214,7 +212,7 @@ class APIExecutor(DataMixin, Executor):
         return value
 
     def _build_request_kwargs(
-        self, api_cfg: dict[str, Any], prompt: str | None
+        self, api_cfg: dict[str, Any], prompt: Any | None
     ) -> dict[str, Any]:
         """Build httpx request kwargs from ``spec.api``, substituting the row
         prompt when batching."""
@@ -378,8 +376,7 @@ class APIExecutor(DataMixin, Executor):
         def _issue(idx: int, prompt: Any) -> APIItem:
             if self._cancel_event.is_set():
                 raise TaskCancelledError("API task cancelled")
-            prompt_str = self._prompt_to_str(prompt)
-            kwargs = self._substitute_prompt(request_kwargs, prompt_str)
+            kwargs = self._substitute_prompt(request_kwargs, prompt)
             try:
                 resp = self._request_with_retries(
                     client,
@@ -409,7 +406,7 @@ class APIExecutor(DataMixin, Executor):
                 max_body_bytes=max_body_bytes,
             )
             item.index = idx
-            item.prompt = prompt_str
+            item.prompt = json.dumps(prompt) if not isinstance(prompt, str) else prompt
 
             if self._cancel_event.is_set():
                 raise TaskCancelledError("API task cancelled")
@@ -431,12 +428,52 @@ class APIExecutor(DataMixin, Executor):
 
         items = [results[idx] for idx in range(len(prompts))]
 
+        result_items: list[APIItem | APIGroupItem] = []
+        if entry.tables:
+            # Grouped data: one result item per table, holding that group's
+            # row responses in order (same slicing as DataMixin._populate_table).
+            grouped: list[APIGroupItem] = []
+            cur = 0
+            for group_index, df in enumerate(entry.tables):
+                size = len(df)
+                grouped.append(
+                    APIGroupItem(index=group_index, rows=items[cur : cur + size])
+                )
+                cur += size
+            if cur != len(items):
+                raise ExecutionError(
+                    f"Output length {len(items)} does not match "
+                    f"the total number of rows {cur} in table stores."
+                )
+            result_items.extend(grouped)
+        else:
+            result_items.extend(items)
+
+        if result_items:
+            first = result_items[0]
+            if isinstance(first, APIGroupItem):
+                status_code = first.rows[0].status_code
+                truncated = any(
+                    r.truncated
+                    for g in result_items
+                    if isinstance(g, APIGroupItem)
+                    for r in g.rows
+                )
+            else:
+                status_code = first.status_code
+                truncated = any(
+                    item.truncated for item in result_items if isinstance(item, APIItem)
+                )
+        else:
+            status_code = 0
+            truncated = False
+
         return APIResult(
             ok=True,
             executor=self.name,
             method=method,
             url=str(url),
-            status_code=items[0].status_code,
-            truncated=any(item.truncated for item in items),
-            items=items,
+            status_code=status_code,
+            truncated=truncated,
+            items=result_items,
         )

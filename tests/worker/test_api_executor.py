@@ -12,6 +12,7 @@ from unittest.mock import patch
 import httpx
 import pytest
 
+from shared.schemas.result import APIGroupItem, APIItem, APIResult
 from shared.tasks.worker_message import WorkerTaskMessage
 from worker.executors import api_executor as api_executor_module
 from worker.executors.api_executor import APIExecutor
@@ -101,6 +102,8 @@ def _executor() -> APIExecutor:
     executor._cancel_event = threading.Event()
     executor._cancel_task_id = None
     executor._cancel_lock = threading.Lock()
+    executor._task_id = None
+    executor._current_batch_id = None
     return executor
 
 
@@ -131,6 +134,13 @@ def _batch_task(items: list[Any], **api_updates: Any) -> WorkerTaskMessage:
         },
     }
     return WorkerTaskMessage.model_validate(payload)
+
+
+def _api_item(content: str) -> APIItem:
+    """An upstream APIItem whose response carries the given content."""
+    item = APIItem(index=0, url="u", status_code=200)
+    item.response_json = {"choices": [{"message": {"content": content}}]}
+    return item
 
 
 class TestNebulaPath:
@@ -935,3 +945,281 @@ class TestBatch:
 
         assert len(errors) == 1
         assert isinstance(errors[0], TaskCancelledError)
+
+
+class TestPromptSubstitution:
+    def test_exact_placeholder_substitutes_raw_object(self) -> None:
+        """A body value that is exactly {{prompt}} is replaced by the prompt
+        object as-is, so a message list stays a list of dicts."""
+        messages = [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "hi"},
+        ]
+        payload = {
+            "task_id": "task-api-sub",
+            "workflow_id": "wf-1",
+            "owner_id": "owner",
+            "assigned_worker": "worker-1",
+            "dispatched_at": "2026-03-22T00:00:00Z",
+            "task": {
+                "apiVersion": "flowmesh/v1",
+                "kind": "Task",
+                "metadata": {"name": "wf:api"},
+                "spec": {
+                    "taskType": "api",
+                    "api": {
+                        "method": "POST",
+                        "url": "https://custom.example.com/v1/chat/completions",
+                        "json": {"messages": "{{prompt}}"},
+                    },
+                    "data": {"type": "list", "items": [messages]},
+                },
+            },
+        }
+        task = WorkerTaskMessage.model_validate(payload)
+        transport = _EchoTransport()
+        _run(_executor(), task, transport)
+        assert len(transport.requests) == 1
+        body = json.loads(transport.requests[0].read())
+        assert body["messages"] == messages
+
+    def test_embedded_placeholder_substitutes_string(self) -> None:
+        """An embedded {{prompt}} inside a longer string keeps string
+        substitution."""
+        payload = {
+            "task_id": "task-api-sub",
+            "workflow_id": "wf-1",
+            "owner_id": "owner",
+            "assigned_worker": "worker-1",
+            "dispatched_at": "2026-03-22T00:00:00Z",
+            "task": {
+                "apiVersion": "flowmesh/v1",
+                "kind": "Task",
+                "metadata": {"name": "wf:api"},
+                "spec": {
+                    "taskType": "api",
+                    "api": {
+                        "method": "POST",
+                        "url": "https://custom.example.com/v1/chat/completions",
+                        "json": {
+                            "messages": [{"role": "user", "content": "Q: {{prompt}}"}]
+                        },
+                    },
+                    "data": {"type": "list", "items": ["hello"]},
+                },
+            },
+        }
+        task = WorkerTaskMessage.model_validate(payload)
+        transport = _EchoTransport()
+        _run(_executor(), task, transport)
+        body = json.loads(transport.requests[0].read())
+        assert body["messages"][0]["content"] == "Q: hello"
+
+
+class TestDataframeRows:
+    def test_dataframe_column_issues_one_request_per_row(self, tmp_path: Path) -> None:
+        """A dataframe-spec API task whose column reads an upstream APIResult's
+        items issues one request per upstream row, each body carrying that
+        row's messages as a list."""
+        upstream = APIResult(
+            ok=True,
+            executor="api",
+            method="POST",
+            url="https://up.example.com",
+            status_code=200,
+            items=[_api_item("c0"), _api_item("c1")],
+        )
+        payload = {
+            "task_id": "task-api-df",
+            "workflow_id": "wf-1",
+            "owner_id": "owner",
+            "assigned_worker": "worker-1",
+            "dispatched_at": "2026-03-22T00:00:00Z",
+            "task": {
+                "apiVersion": "flowmesh/v1",
+                "kind": "Task",
+                "metadata": {"name": "wf:api"},
+                "spec": {
+                    "taskType": "api",
+                    "_upstreamResults": {"Up": upstream},
+                    "api": {
+                        "method": "POST",
+                        "url": "https://custom.example.com/v1/chat/completions",
+                        "json": {"messages": "{{prompt}}"},
+                    },
+                    "data": {
+                        "type": "dataframe",
+                        "columns": [
+                            {
+                                "label": "L",
+                                "node": "Up",
+                                "path": "items.json.choices[0].message.content",
+                            }
+                        ],
+                        "messages": [
+                            {"role": "user", "content": "row {L}"},
+                        ],
+                    },
+                },
+            },
+        }
+        task = WorkerTaskMessage.model_validate(payload)
+        transport = _EchoTransport()
+        result = _run(_executor(), task, transport, tmp_path)
+        assert len(transport.requests) == 2
+        issued = {
+            json.loads(req.read())["messages"][0]["content"]
+            for req in transport.requests
+        }
+        assert issued == {"row c0", "row c1"}
+        # A single-column dataframe is one table, so one group item holds both rows.
+        assert len(result.items) == 1
+        prompts = [json.loads(r.prompt) for r in result.items[0].rows]
+        assert prompts == [
+            [{"role": "user", "content": "row c0"}],
+            [{"role": "user", "content": "row c1"}],
+        ]
+
+
+class TestGraphTemplateAggregate:
+    def test_graph_template_aggregates_all_rows_into_one_prompt(
+        self, tmp_path: Path
+    ) -> None:
+        """A graph_template aggregate API task over all rows of an upstream
+        APIResult issues one request whose prompt contains every row."""
+        upstream = APIResult(
+            ok=True,
+            executor="api",
+            method="POST",
+            url="https://up.example.com",
+            status_code=200,
+            items=[_api_item("c0"), _api_item("c1")],
+        )
+        payload = {
+            "task_id": "task-api-gt",
+            "workflow_id": "wf-1",
+            "owner_id": "owner",
+            "assigned_worker": "worker-1",
+            "dispatched_at": "2026-03-22T00:00:00Z",
+            "task": {
+                "apiVersion": "flowmesh/v1",
+                "kind": "Task",
+                "metadata": {"name": "wf:api"},
+                "spec": {
+                    "taskType": "api",
+                    "_upstreamResults": {"Up": upstream},
+                    "api": {
+                        "method": "POST",
+                        "url": "https://custom.example.com/v1/chat/completions",
+                        "json": {"messages": "{{prompt}}"},
+                    },
+                    "data": {
+                        "type": "graph_template",
+                        "template": {
+                            "name": "format",
+                            "columns": [
+                                {
+                                    "label": "df",
+                                    "data": {
+                                        "type": "dataframe",
+                                        "columns": [
+                                            {
+                                                "label": "L",
+                                                "node": "Up",
+                                                "path": (
+                                                    "items.json.choices[0].message.content"
+                                                ),
+                                            }
+                                        ],
+                                    },
+                                }
+                            ],
+                            "options": {
+                                "format": {
+                                    "steps": [],
+                                    "messages": [
+                                        {"role": "user", "content": "all: {df}"}
+                                    ],
+                                }
+                            },
+                        },
+                    },
+                },
+            },
+        }
+        task = WorkerTaskMessage.model_validate(payload)
+        transport = _EchoTransport()
+        result = _run(_executor(), task, transport, tmp_path)
+        assert len(transport.requests) == 1
+        body = json.loads(transport.requests[0].read())
+        content = body["messages"][0]["content"]
+        assert "c0" in content and "c1" in content
+        assert len(result.items) == 1
+        # Aggregate result is a plain item (read at items.json...), not a group
+        # item (read at items.rows.json...).
+        item = result.items[0]
+        assert not hasattr(item, "rows")
+        assert item.response_json["choices"][0]["message"]["content"].startswith(
+            "echo:all:"
+        )
+
+
+class TestGroupedResult:
+    def test_ragged_groups_return_one_item_per_group(self, tmp_path: Path) -> None:
+        """A ragged grouped dataframe API task (groups of different sizes)
+        returns one item per group with the right rows in each."""
+        upstream = APIResult(
+            ok=True,
+            executor="api",
+            method="POST",
+            url="https://up.example.com",
+            status_code=200,
+            items=[
+                APIGroupItem(index=0, rows=[_api_item("c0"), _api_item("c1")]),
+                APIGroupItem(index=1, rows=[_api_item("c2")]),
+            ],
+        )
+        payload = {
+            "task_id": "task-api-grp",
+            "workflow_id": "wf-1",
+            "owner_id": "owner",
+            "assigned_worker": "worker-1",
+            "dispatched_at": "2026-03-22T00:00:00Z",
+            "task": {
+                "apiVersion": "flowmesh/v1",
+                "kind": "Task",
+                "metadata": {"name": "wf:api"},
+                "spec": {
+                    "taskType": "api",
+                    "_upstreamResults": {"Up": upstream},
+                    "api": {
+                        "method": "POST",
+                        "url": "https://custom.example.com/v1/chat/completions",
+                        "json": {"messages": "{{prompt}}"},
+                    },
+                    "data": {
+                        "type": "dataframe",
+                        "columns": [
+                            {
+                                "label": "L",
+                                "node": "Up",
+                                "path": "items.rows.json.choices[0].message.content",
+                            }
+                        ],
+                        "messages": [
+                            {"role": "user", "content": "row {L}"},
+                        ],
+                    },
+                },
+            },
+        }
+        task = WorkerTaskMessage.model_validate(payload)
+        transport = _EchoTransport()
+        result = _run(_executor(), task, transport, tmp_path)
+        assert len(transport.requests) == 3
+        assert len(result.items) == 2
+        assert [len(item.rows) for item in result.items] == [2, 1]
+        # Group 0 holds rows c0, c1; group 1 holds c2.
+        group0 = {json.loads(r.prompt)[0]["content"] for r in result.items[0].rows}
+        assert group0 == {"row c0", "row c1"}
+        assert json.loads(result.items[1].rows[0].prompt)[0]["content"] == "row c2"
