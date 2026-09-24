@@ -39,6 +39,7 @@ from .payloads import (
     AgentItem,
     AgentMetadata,
     AgentUsage,
+    APIGroupItem,
     APIItem,
     CostEstimates,
     DataRetrievalItem,
@@ -89,6 +90,7 @@ for _model in _RESULT_MODELS:
     _model.model_rebuild()
 
 __all__ = [
+    "APIGroupItem",
     "APIItem",
     "APIResult",
     "AgentBatchSummary",
