@@ -5,7 +5,9 @@ from datetime import UTC, datetime
 import pytest
 from flowmesh.models import (
     ActiveWaitBreakdown,
+    APIGroupItem,
     APIItem,
+    APIResult,
     AssetSummary,
     CriticalPathSummary,
     E2EBreakdown,
@@ -515,3 +517,41 @@ class TestAPIItem:
             {"index": 1, "url": "u", "status_code": 200, "json": {"a": 1}}
         )
         assert by_alias.response_json == {"a": 1}
+
+
+class TestAPIGroupResult:
+    def test_grouped_api_result_round_trip(self) -> None:
+        """A grouped API result (items carrying ``rows``) validates in the SDK
+        and round-trips through ``model_dump(by_alias=True)`` then
+        ``model_validate``."""
+        payload = {
+            "task_type": "api",
+            "executor": "api",
+            "method": "POST",
+            "url": "http://example.com/v1/chat/completions",
+            "status_code": 200,
+            "items": [
+                {
+                    "index": 0,
+                    "rows": [
+                        {
+                            "index": 0,
+                            "url": "http://example.com/v1/chat/completions",
+                            "status_code": 200,
+                            "json": {"choices": [{"message": {"content": "hi"}}]},
+                            "text": "hi",
+                        }
+                    ],
+                }
+            ],
+        }
+        result = APIResult.model_validate(payload)
+        assert isinstance(result.items[0], APIGroupItem)
+        assert (
+            result.items[0].rows[0].response_json["choices"][0]["message"]["content"]
+            == "hi"
+        )
+        wire = result.model_dump(by_alias=True)
+        reloaded = APIResult.model_validate(wire)
+        assert isinstance(reloaded.items[0], APIGroupItem)
+        assert reloaded.items[0].rows[0].text == "hi"
