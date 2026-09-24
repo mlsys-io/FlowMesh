@@ -452,7 +452,15 @@ class APIExecutor(DataMixin, Executor):
         if result_items:
             first = result_items[0]
             if isinstance(first, APIGroupItem):
-                status_code = first.rows[0].status_code if first.rows else 0
+                status_code = next(
+                    (
+                        r.status_code
+                        for g in result_items
+                        if isinstance(g, APIGroupItem)
+                        for r in g.rows
+                    ),
+                    0,
+                )
                 truncated = any(
                     r.truncated
                     for g in result_items

@@ -1402,3 +1402,62 @@ class TestGroupedResult:
         group0 = {json.loads(r.prompt)[0]["content"] for r in result.items[0].rows}
         assert group0 == {"row c0", "row c1"}
         assert json.loads(result.items[1].rows[0].prompt)[0]["content"] == "row c2"
+
+    def test_status_code_taken_from_first_row_across_groups(
+        self, tmp_path: Path
+    ) -> None:
+        """A leading empty group must not zero the result status; the first
+        row across all groups supplies it."""
+        upstream = APIResult(
+            ok=True,
+            executor="api",
+            method="POST",
+            url="https://up.example.com",
+            status_code=200,
+            items=[
+                APIGroupItem(index=0, rows=[]),
+                APIGroupItem(index=1, rows=[_api_item("c0")]),
+            ],
+        )
+        payload = {
+            "task_id": "task-api-grp-leading-empty",
+            "workflow_id": "wf-1",
+            "owner_id": "owner",
+            "assigned_worker": "worker-1",
+            "dispatched_at": "2026-03-22T00:00:00Z",
+            "task": {
+                "apiVersion": "flowmesh/v1",
+                "kind": "Task",
+                "metadata": {"name": "wf:api"},
+                "spec": {
+                    "taskType": "api",
+                    "_upstreamResults": {"Up": upstream},
+                    "api": {
+                        "method": "POST",
+                        "url": "https://custom.example.com/v1/chat/completions",
+                        "json": {"messages": "{{prompt}}"},
+                    },
+                    "data": {
+                        "type": "dataframe",
+                        "columns": [
+                            {
+                                "label": "L",
+                                "node": "Up",
+                                "path": "items.rows.json.choices[0].message.content",
+                            }
+                        ],
+                        "messages": [
+                            {"role": "user", "content": "row {L}"},
+                        ],
+                    },
+                },
+            },
+        }
+        task = WorkerTaskMessage.model_validate(payload)
+        transport = _EchoTransport()
+        result = _run(_executor(), task, transport, tmp_path)
+        assert len(transport.requests) == 1
+        assert len(result.items) == 2
+        assert result.items[0].rows == []
+        assert len(result.items[1].rows) == 1
+        assert result.status_code == 200
