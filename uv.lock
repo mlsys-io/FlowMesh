@@ -1960,6 +1960,7 @@ ci = [
     { name = "ruff" },
     { name = "sqlalchemy" },
     { name = "sqlmodel" },
+    { name = "tabulate" },
     { name = "tiktoken" },
     { name = "toml" },
     { name = "torch" },
@@ -2042,6 +2043,7 @@ runtime-analytics = [
     { name = "pandas" },
     { name = "psycopg", extra = ["binary"] },
     { name = "sqlalchemy" },
+    { name = "tabulate" },
 ]
 runtime-inference = [
     { name = "accelerate" },
@@ -2162,6 +2164,7 @@ runtime-worker-cpu = [
     { name = "rich" },
     { name = "sqlalchemy" },
     { name = "sqlmodel" },
+    { name = "tabulate" },
     { name = "tiktoken" },
     { name = "toml" },
     { name = "torch" },
@@ -2269,6 +2272,7 @@ ci = [
     { name = "ruff", specifier = ">=0.14.10" },
     { name = "sqlalchemy", specifier = ">=2.0.44" },
     { name = "sqlmodel", specifier = ">=0.0.27" },
+    { name = "tabulate", specifier = ">=0.9.0" },
     { name = "tiktoken", specifier = ">=0.12.0" },
     { name = "toml", specifier = ">=0.10.2" },
     { name = "torch", specifier = ">=2.11.0" },
@@ -2350,6 +2354,7 @@ runtime-analytics = [
     { name = "pandas", specifier = ">=2.3.3" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2.12" },
     { name = "sqlalchemy", specifier = ">=2.0.44" },
+    { name = "tabulate", specifier = ">=0.9.0" },
 ]
 runtime-inference = [
     { name = "accelerate", specifier = ">=1.12.0" },
@@ -2468,6 +2473,7 @@ runtime-worker-cpu = [
     { name = "rich", specifier = ">=14.2.0" },
     { name = "sqlalchemy", specifier = ">=2.0.44" },
     { name = "sqlmodel", specifier = ">=0.0.27" },
+    { name = "tabulate", specifier = ">=0.9.0" },
     { name = "tiktoken", specifier = ">=0.12.0" },
     { name = "toml", specifier = ">=0.10.2" },
     { name = "torch", specifier = ">=2.11.0" },
