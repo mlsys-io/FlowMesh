@@ -215,7 +215,7 @@ def _build_grouped_dataframes(columns: list[dict[str, Any]]) -> list[pd.DataFram
 
     dataframes: list[pd.DataFrame] = []
     for group_idx in range(group_count):
-        max_len = 1
+        max_len = 0
         raw_values: dict[str, list[Any]] = {}
         for label, groups in grouped_columns.items():
             values = groups[group_idx]

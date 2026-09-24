@@ -612,7 +612,7 @@ class DataMixin(GovernanceMixin):
 
             table_stores_list = []
             for group_idx in range(group_count):
-                max_len = 1
+                max_len = 0
                 raw_group_values: dict[str, list[Any]] = {}
                 for label, groups in grouped_columns.items():
                     values = groups[group_idx]
