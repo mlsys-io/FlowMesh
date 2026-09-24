@@ -1,8 +1,13 @@
 """Tests for _evaluate_expr attribute/index resolution over pydantic models,
 aliases, and nested lists."""
 
+import pandas as pd
+
 from shared.schemas.result import APIGroupItem, APIItem, APIResult
-from worker.executors.utils.graph_templates import _evaluate_expr
+from worker.executors.utils.graph_templates import (
+    _build_grouped_dataframes,
+    _evaluate_expr,
+)
 
 
 def _item(content: str) -> APIItem:
@@ -44,3 +49,16 @@ def test_expr_over_nested_lists_of_models() -> None:
         "Up.items.rows.json.choices[0].message.content", {"Up": upstream}
     )
     assert value == [["c0", "c1"], ["c2"]]
+
+
+def test_build_grouped_dataframes_all_empty_columns_yield_zero_rows() -> None:
+    """All-empty grouped columns yield a zero-row DataFrame, not a mismatch."""
+    columns = [
+        {"label": "text", "value": []},
+        {"label": "statement", "value": []},
+    ]
+    dataframes = _build_grouped_dataframes(columns)
+    assert len(dataframes) == 1
+    assert dataframes[0].empty
+    assert list(dataframes[0].columns) == ["text", "statement"]
+    assert isinstance(dataframes[0], pd.DataFrame)
