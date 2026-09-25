@@ -165,16 +165,42 @@ def test_heartbeat_retakes_lapsed_lease(
     assert rds.hget(LEASE, "node_id") == node_id
 
 
-@pytest.mark.asyncio
-async def test_heartbeat_reports_lease_taken_over(
+def test_takeover_removes_stale_holder_record(
     registry: NodeRegistry, rds: fakeredis.FakeRedis
 ) -> None:
     old_id = registry.register_node(_info())
-    _age_lease(rds, TTL_SEC)
+    _age_lease(rds, TTL_SEC / 2 + 1)
+
     new_id = registry.register_node(_info())
 
-    assert await registry.update_node_hb_async(old_id, "ts", TTL_SEC)
-    assert rds.hget(LEASE, "node_id") == new_id
+    assert rds.smembers(NODES_SET_KEY) == {new_id}
+    assert not rds.exists(node_key(old_id))
+
+
+@pytest.mark.asyncio
+async def test_register_removes_record_left_by_expired_lease(
+    registry: NodeRegistry, rds: fakeredis.FakeRedis
+) -> None:
+    other_id = await registry.register_node_async(_info("gpu-b"))
+    old_id = await registry.register_node_async(_info())
+    rds.delete(LEASE)
+
+    new_id = await registry.register_node_async(_info())
+
+    assert rds.smembers(NODES_SET_KEY) == {other_id, new_id}
+    assert not rds.exists(node_key(old_id))
+
+
+def test_heartbeat_reports_alias_held_by_another_node(
+    registry: NodeRegistry, rds: fakeredis.FakeRedis
+) -> None:
+    holder = registry.register_node(_info())
+    # A record written without the lease, as by a root that predates it.
+    rds.sadd(NODES_SET_KEY, "nde-legacy")
+    rds.hset(node_key("nde-legacy"), mapping={"id": "nde-legacy", "alias": "gpu-a"})
+
+    assert registry.update_node_hb("nde-legacy", "ts", TTL_SEC)
+    assert rds.hget(LEASE, "node_id") == holder
 
 
 def test_heartbeat_of_unregistered_node_writes_nothing(

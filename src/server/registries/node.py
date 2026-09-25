@@ -25,6 +25,7 @@ from shared.utils import new_node_id
 from ..clients.redis import (
     NODE_ALIAS_LEASE_PREFIX,
     NODE_ID_SEQ_KEY,
+    NODE_KEY_PREFIX,
     NODE_RESPONSE_CHANNEL,
     NODES_SET_KEY,
     REDIS_CONN_ERRORS,
@@ -43,9 +44,11 @@ _RECONNECT_BACKOFF_SEC = 1.0
 # from PTTL, so no clocks are compared.
 
 # KEYS: [lease, nodes set, node hash]
-# ARGV: [node_id, lease ttl_ms, node hash field, value, field, value, ...]
+# ARGV: [node_id, alias, lease ttl_ms, node key prefix, node hash field, value,
+#        field, value, ...]
 # Returns 1 once the lease is taken and the node written, else 0 with nothing
-# written.
+# written. Taking the lease removes any other record with the alias, left by a
+# node that crashed or was taken over.
 _REGISTER_LUA = """
 local holder = redis.call('HGET', KEYS[1], 'node_id')
 if holder and holder ~= ARGV[1] then
@@ -56,10 +59,16 @@ if holder and holder ~= ARGV[1] then
   end
 end
 redis.call('DEL', KEYS[1])
-redis.call('HSET', KEYS[1], 'node_id', ARGV[1], 'ttl_ms', ARGV[2])
-redis.call('PEXPIRE', KEYS[1], ARGV[2])
+redis.call('HSET', KEYS[1], 'node_id', ARGV[1], 'ttl_ms', ARGV[3])
+redis.call('PEXPIRE', KEYS[1], ARGV[3])
+for _, other in ipairs(redis.call('SMEMBERS', KEYS[2])) do
+  if redis.call('HGET', ARGV[4] .. other, 'alias') == ARGV[2] then
+    redis.call('SREM', KEYS[2], other)
+    redis.call('DEL', ARGV[4] .. other)
+  end
+end
 redis.call('SADD', KEYS[2], ARGV[1])
-redis.call('HSET', KEYS[3], unpack(ARGV, 3))
+redis.call('HSET', KEYS[3], unpack(ARGV, 5))
 return 1
 """
 
@@ -484,7 +493,7 @@ def _register_script_args(
         for item in (key, value)
     ]
     keys = [node_alias_lease_key(node_info.alias), NODES_SET_KEY, node_key(node_id)]
-    return keys, [node_id, str(lease_ttl_ms), *fields]
+    return keys, [node_id, node_info.alias, str(lease_ttl_ms), NODE_KEY_PREFIX, *fields]
 
 
 def _heartbeat_script_args(

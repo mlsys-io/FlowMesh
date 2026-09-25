@@ -186,7 +186,9 @@ scripts/dev/            compile_protos, sync_requirements, check_env_examples
   (`nodes:alias:{alias}`), refreshes it with its heartbeat, and releases it on
   unregister; while another live node holds the alias, registration fails with
   `409`. A lease its holder has not refreshed for half its TTL can be taken
-  over, so a crash-restarted node reclaims its alias. `(node_alias, alias)` is
+  over, so a crash-restarted node reclaims its alias. Taking the lease removes
+  any other node record with the alias, so a node that crashed or was taken
+  over does not linger beside its replacement. `(node_alias, alias)` is
   therefore a worker's durable, unique address.
 - **Cursor pagination.** List endpoints accept `limit` and `before` /
   `after` cursors. The cursor is an opaque base64 of `(timestamp, id)`;
