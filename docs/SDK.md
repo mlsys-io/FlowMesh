@@ -57,8 +57,8 @@ async with AsyncFlowMesh(base_url="...", api_key="...") as client:
   summary.
 - **Cancel** — `client.workflows.cancel(wf_id)`.
 - **Cordon a worker** — `client.workers.cordon(worker_id)` /
-  `uncordon(worker_id)`; `list_cordons()` and
-  `remove_cordon(node_alias, alias)` manage cordons by key.
+  `uncordon(worker_id)`, or by key with `cordon_alias(node_alias, alias)` /
+  `uncordon_alias(node_alias, alias)`; `list_cordons()` lists them.
 
 ## Cursor pagination
 
