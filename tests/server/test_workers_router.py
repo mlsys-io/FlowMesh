@@ -117,6 +117,8 @@ async def test_uncordon_by_alias_needs_no_registered_worker() -> None:
         {"alias": "alpha"},
         {"worker_id": "wkr-1", "node_alias": "node", "alias": "alpha"},
         {"worker_id": "wkr-1", "alias": "alpha"},
+        {"node_alias": "node", "alias": ""},
+        {"node_alias": "", "alias": "alpha"},
     ],
 )
 async def test_cordon_requires_exactly_one_selector(body: dict[str, Any]) -> None:

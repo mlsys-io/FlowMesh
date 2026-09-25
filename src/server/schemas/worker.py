@@ -15,6 +15,11 @@ class WorkerCordonById(BaseModel):
 class WorkerCordonByAlias(WorkerCordon):
     model_config = ConfigDict(extra="forbid")
 
+    node_alias: str = Field(
+        min_length=1, description="Alias of the node the worker runs on."
+    )
+    alias: str = Field(min_length=1, description="Worker alias.")
+
 
 WorkerCordonRequest = WorkerCordonById | WorkerCordonByAlias
 
