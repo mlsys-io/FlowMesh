@@ -22,19 +22,92 @@ from shared.schemas.command import (
 from shared.schemas.node import NodeInfo
 from shared.utils import new_node_id
 
+from .. import env
 from ..clients.redis import (
+    NODE_ALIAS_LEASE_PREFIX,
     NODE_ID_SEQ_KEY,
     NODE_RESPONSE_CHANNEL,
     NODES_SET_KEY,
     REDIS_CONN_ERRORS,
     RedisClient,
     iter_pubsub_messages,
+    node_alias_lease_key,
     node_cmd_channel,
     node_hb_key,
     node_key,
 )
 
 _RECONNECT_BACKOFF_SEC = 1.0
+
+# A node alias lease is a hash {node_id, ttl_ms} expiring after ttl_ms. It is
+# stale once its holder has not refreshed it for half its TTL; the age is read
+# from PTTL, so no clocks are compared.
+_REGISTER_LUA = """
+local holder = redis.call('HGET', KEYS[1], 'node_id')
+if holder and holder ~= ARGV[1] and holder ~= ARGV[3] then
+  local held_ttl = tonumber(redis.call('HGET', KEYS[1], 'ttl_ms')) or 0
+  local remaining = redis.call('PTTL', KEYS[1])
+  if remaining >= 0 and remaining * 2 >= held_ttl then
+    return holder
+  end
+end
+redis.call('DEL', KEYS[1])
+redis.call('HSET', KEYS[1], 'node_id', ARGV[1], 'ttl_ms', ARGV[2])
+redis.call('PEXPIRE', KEYS[1], ARGV[2])
+redis.call('SADD', KEYS[2], ARGV[1])
+redis.call('HSET', KEYS[3], unpack(ARGV, 4))
+return ''
+"""
+
+_HEARTBEAT_LUA = """
+if redis.call('SISMEMBER', KEYS[1], ARGV[1]) == 0 then
+  return ''
+end
+redis.call('SET', KEYS[3], ARGV[2], 'EX', ARGV[3])
+if ARGV[5] ~= '' then
+  redis.call('HSET', KEYS[2], 'last_seen', ARGV[2], 'current_gpu_count', ARGV[5])
+else
+  redis.call('HSET', KEYS[2], 'last_seen', ARGV[2])
+end
+local alias = redis.call('HGET', KEYS[2], 'alias')
+if not alias then
+  return ''
+end
+local lease = ARGV[4] .. alias
+local holder = redis.call('HGET', lease, 'node_id')
+if holder and holder ~= ARGV[1] then
+  return holder
+end
+local ttl_ms = tonumber(ARGV[3]) * 1000
+redis.call('HSET', lease, 'node_id', ARGV[1], 'ttl_ms', ttl_ms)
+redis.call('PEXPIRE', lease, ttl_ms)
+return ''
+"""
+
+_UNREGISTER_LUA = """
+local alias = redis.call('HGET', KEYS[2], 'alias')
+if alias then
+  local lease = ARGV[2] .. alias
+  if redis.call('HGET', lease, 'node_id') == ARGV[1] then
+    redis.call('DEL', lease)
+  end
+end
+redis.call('SREM', KEYS[1], ARGV[1])
+redis.call('DEL', KEYS[2], KEYS[3])
+return ''
+"""
+
+
+class NodeAliasInUseError(Exception):
+    """A live node other than the registrant holds the requested node alias."""
+
+    def __init__(self, alias: str, holder: str) -> None:
+        super().__init__(
+            f"node alias '{alias}' is held by live node {holder}; "
+            "set a distinct NODE_ALIAS"
+        )
+        self.alias = alias
+        self.holder = holder
 
 
 class Node(BaseModel):
@@ -176,31 +249,30 @@ class NodeRegistry:
     # Node lifecycle helpers
     # ------------------------------------------------------------------ #
 
-    def register_node(self, node_info: NodeInfo) -> str:
+    def register_node(
+        self, node_info: NodeInfo, previous_node_id: str | None = None
+    ) -> str:
+        """Register a node under a fresh id, taking its alias lease.
+
+        A lease held by `previous_node_id` is reclaimed. Raises
+        `NodeAliasInUseError` when another live node holds the alias.
+        """
         node_id = self._allocate_node_id()
-        self.upsert_node(node_id, node_info)
+        keys, args = self._register_script_args(node_id, node_info, previous_node_id)
+        holder = self._rds.sync.eval(_REGISTER_LUA, len(keys), *keys, *args)
+        if holder:
+            raise NodeAliasInUseError(node_info.alias, holder)
         return node_id
 
-    async def register_node_async(self, node_info: NodeInfo) -> str:
+    async def register_node_async(
+        self, node_info: NodeInfo, previous_node_id: str | None = None
+    ) -> str:
         node_id = await self._allocate_node_id_async()
-        await self.upsert_node_async(node_id, node_info)
+        keys, args = self._register_script_args(node_id, node_info, previous_node_id)
+        holder = await self._rds.asyncio.eval(_REGISTER_LUA, len(keys), *keys, *args)
+        if holder:
+            raise NodeAliasInUseError(node_info.alias, holder)
         return node_id
-
-    def upsert_node(self, node_id: str, node_info: NodeInfo) -> None:
-        node = self._node_from_info(node_id, node_info)
-        mapping = {k: v for k, v in node.model_dump().items() if v is not None}
-        with self._rds.sync.control_pipeline() as pipe:
-            pipe.sadd(NODES_SET_KEY, node_id)
-            pipe.hset(node_key(node_id), mapping=mapping)
-            pipe.execute()
-
-    async def upsert_node_async(self, node_id: str, node_info: NodeInfo) -> None:
-        node = self._node_from_info(node_id, node_info)
-        mapping = {k: v for k, v in node.model_dump().items() if v is not None}
-        async with self._rds.asyncio.control_pipeline() as pipe:
-            pipe.sadd(NODES_SET_KEY, node_id)
-            pipe.hset(node_key(node_id), mapping=mapping)
-            await pipe.execute()
 
     def update_node_hb(
         self,
@@ -208,16 +280,13 @@ class NodeRegistry:
         ts: str,
         ttl_sec: int,
         current_gpu_count: int | None = None,
-    ) -> None:
-        if not self._rds.sync.sismember(NODES_SET_KEY, node_id):
-            return
-        mapping: dict[str, Any] = {"last_seen": ts}
-        if current_gpu_count is not None:
-            mapping["current_gpu_count"] = current_gpu_count
-        with self._rds.sync.control_pipeline() as pipe:
-            pipe.setex(node_hb_key(node_id), ttl_sec, ts)
-            pipe.hset(node_key(node_id), mapping=mapping)
-            pipe.execute()
+    ) -> str | None:
+        """Refresh a registered node's heartbeat and alias lease.
+
+        Returns the id of another node holding this node's alias, if any.
+        """
+        keys, args = _heartbeat_script_args(node_id, ts, ttl_sec, current_gpu_count)
+        return self._rds.sync.eval(_HEARTBEAT_LUA, len(keys), *keys, *args) or None
 
     async def update_node_hb_async(
         self,
@@ -225,30 +294,18 @@ class NodeRegistry:
         ts: str,
         ttl_sec: int,
         current_gpu_count: int | None = None,
-    ) -> None:
-        if not await self._rds.asyncio.sismember(NODES_SET_KEY, node_id):
-            return
-        mapping: dict[str, Any] = {"last_seen": ts}
-        if current_gpu_count is not None:
-            mapping["current_gpu_count"] = current_gpu_count
-        async with self._rds.asyncio.control_pipeline() as pipe:
-            pipe.setex(node_hb_key(node_id), ttl_sec, ts)
-            pipe.hset(node_key(node_id), mapping=mapping)
-            await pipe.execute()
+    ) -> str | None:
+        keys, args = _heartbeat_script_args(node_id, ts, ttl_sec, current_gpu_count)
+        holder = await self._rds.asyncio.eval(_HEARTBEAT_LUA, len(keys), *keys, *args)
+        return holder or None
 
     def unregister_node(self, node_id: str) -> None:
-        with self._rds.sync.control_pipeline() as pipe:
-            pipe.srem(NODES_SET_KEY, node_id)
-            pipe.delete(node_key(node_id))
-            pipe.delete(node_hb_key(node_id))
-            pipe.execute()
+        keys, args = _unregister_script_args(node_id)
+        self._rds.sync.eval(_UNREGISTER_LUA, len(keys), *keys, *args)
 
     async def unregister_node_async(self, node_id: str) -> None:
-        async with self._rds.asyncio.control_pipeline() as pipe:
-            pipe.srem(NODES_SET_KEY, node_id)
-            pipe.delete(node_key(node_id))
-            pipe.delete(node_hb_key(node_id))
-            await pipe.execute()
+        keys, args = _unregister_script_args(node_id)
+        await self._rds.asyncio.eval(_UNREGISTER_LUA, len(keys), *keys, *args)
 
     # ------------------------------------------------------------------ #
     # Node query helpers
@@ -405,6 +462,20 @@ class NodeRegistry:
     # Internal helpers
     # ------------------------------------------------------------------ #
 
+    def _register_script_args(
+        self, node_id: str, node_info: NodeInfo, previous_node_id: str | None
+    ) -> tuple[list[str], list[str]]:
+        node = self._node_from_info(node_id, node_info)
+        fields = [
+            str(item)
+            for key, value in node.model_dump().items()
+            if value is not None
+            for item in (key, value)
+        ]
+        keys = [node_alias_lease_key(node_info.alias), NODES_SET_KEY, node_key(node_id)]
+        lease_ttl_ms = str(env.SERVER_HEARTBEAT_TTL * 1000)
+        return keys, [node_id, lease_ttl_ms, previous_node_id or "", *fields]
+
     def _allocate_node_id(self) -> str:
         seq = self._rds.sync.incr(NODE_ID_SEQ_KEY)
         return new_node_id(seq)
@@ -412,3 +483,16 @@ class NodeRegistry:
     async def _allocate_node_id_async(self) -> str:
         seq = await self._rds.asyncio.incr(NODE_ID_SEQ_KEY)
         return new_node_id(seq)
+
+
+def _heartbeat_script_args(
+    node_id: str, ts: str, ttl_sec: int, current_gpu_count: int | None
+) -> tuple[list[str], list[str]]:
+    keys = [NODES_SET_KEY, node_key(node_id), node_hb_key(node_id)]
+    gpu_count = "" if current_gpu_count is None else str(current_gpu_count)
+    return keys, [node_id, ts, str(ttl_sec), NODE_ALIAS_LEASE_PREFIX, gpu_count]
+
+
+def _unregister_script_args(node_id: str) -> tuple[list[str], list[str]]:
+    keys = [NODES_SET_KEY, node_key(node_id), node_hb_key(node_id)]
+    return keys, [node_id, NODE_ALIAS_LEASE_PREFIX]

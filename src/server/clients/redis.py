@@ -58,6 +58,7 @@ WORKER_EVENT_CHANNEL = "workers:events"
 
 NODES_SET_KEY = "nodes:ids"
 NODE_ID_SEQ_KEY = "nodes:id_seq"
+NODE_ALIAS_LEASE_PREFIX = "nodes:alias:"
 NODE_EVENT_CHANNEL = "nodes:events"
 NODE_RESPONSE_CHANNEL = "nodes:responses"
 
@@ -104,6 +105,10 @@ def node_key(node_id: str) -> str:
 
 def node_hb_key(node_id: str) -> str:
     return f"node:{node_id}:hb"
+
+
+def node_alias_lease_key(alias: str) -> str:
+    return f"{NODE_ALIAS_LEASE_PREFIX}{alias}"
 
 
 def node_dispatch_channel(node_id: str) -> str:

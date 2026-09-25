@@ -4,6 +4,7 @@ import asyncio
 import logging
 import os
 import signal
+import time
 from collections.abc import Callable
 from multiprocessing.process import BaseProcess
 from multiprocessing.queues import Queue as MPQueue
@@ -30,8 +31,13 @@ from ..utils.concurrent import (
 
 _CMD_TIMEOUT = 120.0
 _NODE_ID_HANDSHAKE_TIMEOUT = 30.0
+_NODE_ID_HANDSHAKE_MARGIN_SEC = 30.0
 _NODE_ID_WATCH_POLL_SEC = 0.5
 _REBIND_APPLY_TIMEOUT_SEC = 2.0
+
+
+def node_hb_ttl_sec(heartbeat_interval: int) -> int:
+    return max(heartbeat_interval * 4, 120)
 
 
 class WorkerSupervisor:
@@ -102,21 +108,31 @@ class WorkerSupervisor:
             self._identity.alias,
         )
 
-        try:
-            node_id = await asyncio.to_thread(
-                self._node_id_queue.get, True, _NODE_ID_HANDSHAKE_TIMEOUT
-            )
-        except QueueEmpty as exc:
+        # Registration waits out an alias lease left by this node's previous
+        # run, which frees within one heartbeat TTL.
+        handshake_timeout = max(
+            _NODE_ID_HANDSHAKE_TIMEOUT,
+            node_hb_ttl_sec(self._worker_management.heartbeat_interval)
+            + _NODE_ID_HANDSHAKE_MARGIN_SEC,
+        )
+        node_id = await asyncio.to_thread(self._await_node_id, handshake_timeout)
+        if node_id is None:
             alive = self._process.is_alive()
             if alive:
                 self._process.terminate()
                 self._process.join(timeout=3.0)
             self._process = None
+            hint = (
+                f"; check that NODE_ALIAS {self._identity.alias!r} is not held by "
+                "another live node"
+                if alive
+                else ""
+            )
             raise RuntimeError(
                 f"Supervisor child did not register a node within "
-                f"{_NODE_ID_HANDSHAKE_TIMEOUT:.0f}s "
-                f"(child {'still alive' if alive else 'exited'})"
-            ) from exc
+                f"{handshake_timeout:.0f}s "
+                f"(child {'still alive' if alive else 'exited'}){hint}"
+            )
         self._node_id = node_id
         self._logger.info("Supervisor handshake complete: node_id=%s", node_id)
 
@@ -175,6 +191,19 @@ class WorkerSupervisor:
         if sender is None:
             raise RuntimeError("Supervisor command channel not initialized")
         return await sender.send(cmd.command_id, cmd, timeout=timeout)
+
+    def _await_node_id(self, timeout: float) -> str | None:
+        """Wait for the child's first node id; give up early if the child dies."""
+        deadline = time.monotonic() + timeout
+        while (remaining := deadline - time.monotonic()) > 0:
+            try:
+                return self._node_id_queue.get(
+                    timeout=min(remaining, _NODE_ID_WATCH_POLL_SEC)
+                )
+            except QueueEmpty:
+                if self._process is None or not self._process.is_alive():
+                    return None
+        return None
 
     # ------------------------------------------------------------------ #
     # Node ID watching
@@ -306,7 +335,7 @@ def _run_supervisor(
     node_registry = NodeRegistry(redis_client, logger)
 
     # --- Lifecycle: register node and get auto-assigned node_id ---
-    hb_ttl_sec = max(wm_cfg.heartbeat_interval * 4, 120)
+    hb_ttl_sec = node_hb_ttl_sec(wm_cfg.heartbeat_interval)
 
     lifecycle = Lifecycle(
         redis=redis_client.sync,

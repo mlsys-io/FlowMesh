@@ -1,6 +1,7 @@
 import json
 import logging
 import threading
+import time
 from collections.abc import Callable
 
 import httpx
@@ -13,11 +14,19 @@ from shared.utils.time import now_iso
 
 from ...clients.redis import NODE_EVENT_CHANNEL, SyncRedisClient
 from ...config import NodeRole
-from ...registries.node import NodeRegistry
+from ...registries.node import NodeAliasInUseError, NodeRegistry
+
+_REGISTER_RETRY_INITIAL_SEC = 2.0
+
+
+class AliasHeldError(RuntimeError):
+    """Registration was refused because a live node holds this node's alias."""
 
 
 class Lifecycle:
     """Manages node registration, heartbeats, and unregistration."""
+
+    _shutting_down: bool = False
 
     def __init__(
         self,
@@ -46,6 +55,7 @@ class Lifecycle:
         self._on_reregister = on_reregister
 
         self._node_id: str | None = None
+        self._previous_node_id: str | None = None
         self._stop_event = threading.Event()
         self._stop_event.set()  # Initially stopped
         self._hb_thread: threading.Thread | None = None
@@ -68,14 +78,34 @@ class Lifecycle:
     # ------------------------------------------------------------------ #
 
     def _register(self) -> str:
-        """Register with the root and return the assigned node_id."""
+        """Register with the root and return the assigned node_id.
+
+        Raises `AliasHeldError` when a live node holds this node's alias.
+        """
         if self._role is NodeRole.ROOT:
             return self._register_direct()
         return self._register_http()
 
+    def _register_until_alias_free(self) -> str:
+        """Retry registration until this node's alias lease is free, e.g. while
+        a lease left by this node's crashed previous run goes stale."""
+        delay = _REGISTER_RETRY_INITIAL_SEC
+        while True:
+            try:
+                return self._register()
+            except AliasHeldError as exc:
+                self.logger.warning("%s; retrying in %.0fs", exc, delay)
+            time.sleep(delay)
+            delay = min(delay * 2, max(self.hb_sec, _REGISTER_RETRY_INITIAL_SEC))
+
     def _register_direct(self) -> str:
         """Root node: register directly via NodeRegistry (Redis)."""
-        node_id = self._node_registry.register_node(self._node_info)
+        try:
+            node_id = self._node_registry.register_node(
+                self._node_info, previous_node_id=self._previous_node_id
+            )
+        except NodeAliasInUseError as exc:
+            raise AliasHeldError(str(exc)) from exc
         self.logger.info("Node registered (direct): %s", node_id)
         return node_id
 
@@ -87,6 +117,8 @@ class Lifecycle:
         )
         payload = self._node_info.model_dump()
         resp = httpx.post(url, json=payload, headers=auth_headers(), timeout=10.0)
+        if resp.status_code == httpx.codes.CONFLICT:
+            raise AliasHeldError(resp.json().get("detail", resp.text))
         resp.raise_for_status()
         data = resp.json()
         node_id = data.get("node_id")
@@ -128,12 +160,19 @@ class Lifecycle:
     def heartbeat_now(self) -> None:
         with self._hb_lock:
             ts = now_iso()
-            self._node_registry.update_node_hb(
+            alias_holder = self._node_registry.update_node_hb(
                 self.node_id,
                 ts,
                 self.hb_ttl_sec,
                 current_gpu_count=self._current_gpu_count(),
             )
+            if alias_holder is not None:
+                self.logger.error(
+                    "Node alias %r was taken over by node %s; set a distinct "
+                    "NODE_ALIAS on one of them",
+                    self._node_info.alias,
+                    alias_holder,
+                )
             gpu_count = self._current_gpu_count()
             hb_payload: dict[str, object] = {"ttl_sec": self.hb_ttl_sec}
             if gpu_count is not None:
@@ -145,7 +184,7 @@ class Lifecycle:
             self.logger.warning("Node lifecycle already started")
             return self.node_id
 
-        self._node_id = self._register()
+        self._node_id = self._register_until_alias_free()
         self._unregister_published = False
         self._publish_event("SV_REGISTER")
         self.heartbeat_now()
@@ -166,12 +205,20 @@ class Lifecycle:
         present in the root registry (e.g., when the control-plane Redis is cleared on
         root redeploy), the node must re-register to obtain a new node_id.
         """
-        if self._node_registry.node_exists(self.node_id):
+        # Once SV_UNREGISTER is out, the root removes this node's record; that is
+        # not a loss to recover from, and a re-register would leave a lease
+        # nothing releases.
+        if self._shutting_down or self._node_registry.node_exists(self.node_id):
             return
         self.logger.warning(
             "Node %s missing from root registry; re-registering", self._node_id
         )
-        self._node_id = self._register()
+        self._previous_node_id = self._node_id
+        try:
+            self._node_id = self._register()
+        except AliasHeldError as exc:
+            self.logger.warning("%s; retrying on the next heartbeat", exc)
+            return
         self._unregister_published = False
         self._publish_event("SV_REGISTER")
         self.logger.info("Node re-registered as %s", self._node_id)
@@ -195,6 +242,7 @@ class Lifecycle:
             self._stop_event.wait(self.hb_sec)
 
     def publish_unregister(self) -> None:
+        self._shutting_down = True
         if self._unregister_published:
             return
         self._publish_event("SV_UNREGISTER")

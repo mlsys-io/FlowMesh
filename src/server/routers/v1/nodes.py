@@ -19,7 +19,7 @@ from ...auth.security import (
     resolve_accessible_ids,
 )
 from ...hooks import ResourceAction, ResourceKind
-from ...registries import Node, NodeRegistry, WorkerRegistry
+from ...registries import Node, NodeAliasInUseError, NodeRegistry, WorkerRegistry
 from ...schemas.node import (
     NodeInfo,
     NodeRegisterResponse,
@@ -105,9 +105,14 @@ async def list_all_workers(
 @router.post(
     "/register",
     summary="Register a node",
-    description="Register a new node.",
+    description=(
+        "Register a new node. The node alias must be unique among live nodes."
+    ),
     response_description="Node ID",
     status_code=status.HTTP_201_CREATED,
+    responses={
+        status.HTTP_409_CONFLICT: {"description": "Node alias held by a live node"}
+    },
 )
 async def register_node(
     node_info: NodeInfo,
@@ -118,7 +123,10 @@ async def register_node(
     await require_permission(
         principal, ResourceKind.NODE, None, ResourceAction.WRITE, logger
     )
-    node_id = await node_registry.register_node_async(node_info)
+    try:
+        node_id = await node_registry.register_node_async(node_info)
+    except NodeAliasInUseError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
     return NodeRegisterResponse(node_id=node_id)
 
 
