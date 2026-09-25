@@ -44,13 +44,17 @@ _SSH_NETWORK_NAME = f"flowmesh_ssh_{_ssh_network_suffix or 'default'}"
 logger = logging.getLogger("supervisor")
 
 
-def _is_removal_in_progress(exc: APIError) -> bool:
+def _is_removal_in_progress(exc: Exception) -> bool:
     """Whether Docker refused a remove because one is already under way.
 
     Matched on ``explanation`` as well as status: 409 also reports conflicts
     that do not resolve on their own, such as a name already in use.
     """
-    return exc.status_code == 409 and "already in progress" in (exc.explanation or "")
+    return (
+        isinstance(exc, APIError)
+        and exc.status_code == 409
+        and "already in progress" in (exc.explanation or "")
+    )
 
 
 class _VolumeInitializer:
@@ -229,32 +233,60 @@ class DockerWorkerAdapter(WorkerAdapter):
             self.config.docker_registry, self.config.version, self.gpu_arch
         )
 
-    def _wait_container_gone(
-        self,
-        timeout: float = _REMOVAL_IN_PROGRESS_TIMEOUT,
-        poll: float = _REMOVAL_IN_PROGRESS_POLL,
-    ) -> bool:
-        """Block until this adapter's container no longer exists.
+    def _remove_stale_container(self, container: Container) -> bool:
+        try:
+            container.remove(force=True)
+        except NotFound:
+            return True
+        except Exception as exc:
+            if _is_removal_in_progress(exc):
+                logger.info(
+                    "Container %s is already being removed; waiting for it to go",
+                    self.container_name,
+                )
+                return self._wait_container_gone()
+            logger.error(
+                "Failed to remove stale container %s: %s", self.container_name, exc
+            )
+            return False
+        logger.debug("Removed stale container %s", self.container_name)
+        return True
 
-        Returns False on timeout, so a caller never goes on to create a
-        container whose name is still taken. An inspect failure other than
-        ``NotFound`` cannot confirm removal, so only the deadline ends the wait.
+    def _wait_container_gone(self) -> bool:
+        """Block until this adapter's container no longer exists, or time out.
+
+        Only ``NotFound`` confirms removal. An inspect that fails any other way
+        leaves the outcome unknown, so the wait runs on to the deadline.
         """
-        deadline = time.monotonic() + timeout
+        deadline = time.monotonic() + _REMOVAL_IN_PROGRESS_TIMEOUT
+        inspect_error: Exception | None = None
         while True:
             try:
                 self._docker.containers.get(self.container_name)
+                inspect_error = None
             except NotFound:
                 return True
-            except Exception as exc:  # cannot confirm; keep waiting out the clock
-                logger.debug(
-                    "Inspect of %s while awaiting removal failed: %s",
-                    self.container_name,
-                    repr(exc),
-                )
+            except Exception as exc:
+                inspect_error = exc
             if time.monotonic() >= deadline:
-                return False
-            time.sleep(poll)
+                break
+            time.sleep(_REMOVAL_IN_PROGRESS_POLL)
+
+        if inspect_error is None:
+            logger.error(
+                "Stale container %s is still present %ss after its removal "
+                "was reported in progress",
+                self.container_name,
+                _REMOVAL_IN_PROGRESS_TIMEOUT,
+            )
+        else:
+            logger.error(
+                "Could not confirm removal of stale container %s within %ss: %s",
+                self.container_name,
+                _REMOVAL_IN_PROGRESS_TIMEOUT,
+                inspect_error,
+            )
+        return False
 
     def _start(self) -> bool:
         existing: Container | None = None
@@ -271,54 +303,11 @@ class DockerWorkerAdapter(WorkerAdapter):
             return False
 
         if existing is not None:
-            try:
-                existing.reload()
-            except Exception as exc:
-                logger.warning(
-                    "Failed to reload Docker container %s: %s",
-                    self.container_name,
-                    repr(exc),
-                )
-                return False
-
             if existing.status == "running":
                 self._is_started = True
                 logger.warning("Container %s is already running.", self.container_name)
                 return True
-
-            try:
-                existing.remove(force=True)
-                logger.debug("Removed stale container %s", self.container_name)
-            except APIError as exc:
-                # A removal already under way completes on its own, so the
-                # container does go away; Docker answers instead of blocking.
-                if not _is_removal_in_progress(exc):
-                    # APIError.__repr__ omits .explanation, the only field
-                    # distinguishing one 409 from another.
-                    logger.error(
-                        "Failed to remove stale container %s: %s",
-                        self.container_name,
-                        exc.explanation or repr(exc),
-                    )
-                    return False
-                logger.info(
-                    "Container %s is already being removed; waiting for it to go",
-                    self.container_name,
-                )
-                if not self._wait_container_gone():
-                    logger.error(
-                        "Stale container %s still present %ss after Docker reported "
-                        "its removal was already in progress",
-                        self.container_name,
-                        _REMOVAL_IN_PROGRESS_TIMEOUT,
-                    )
-                    return False
-            except Exception as exc:
-                logger.error(
-                    "Failed to remove stale container %s: %s",
-                    self.container_name,
-                    repr(exc),
-                )
+            if not self._remove_stale_container(existing):
                 return False
 
         environment: dict[str, str] = self._base_environment()
