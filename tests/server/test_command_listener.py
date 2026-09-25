@@ -351,6 +351,26 @@ class TestLegacyRootPayloads:
         assert _run(self.cl._handle_destroy_workers_cmd(cmd)).success
         self.cl._wm.destroy_workers.assert_called_once_with({"w-1", "w-2"})
 
+    def test_destroy_worker_accepts_worker_name(self) -> None:
+        self.cl._wm.destroy_worker = AsyncMock(return_value=True)  # type: ignore[method-assign]
+
+        cmd = _cmd(CommandType.DESTROY_WORKER, {"worker_name": "w-1"})
+
+        assert _run(self.cl._handle_destroy_worker_cmd(cmd)).success
+        self.cl._wm.destroy_worker.assert_called_once_with("w-1")
+
+    def test_get_single_worker_accepts_worker_name(self) -> None:
+        info = MagicMock()
+        info.alias = "w-1"
+        info.model_dump = MagicMock(return_value={"alias": "w-1"})
+        self.cl._wm.get_worker_info = MagicMock(return_value=info)  # type: ignore[method-assign]
+
+        cmd = _cmd(CommandType.GET_WORKERS, {"worker_name": "w-1"})
+        resp = self.cl._handle_get_workers_cmd(cmd)
+
+        assert resp.data == {"workers": [{"alias": "w-1", "name": "w-1"}]}
+        self.cl._wm.get_worker_info.assert_called_once_with("w-1")
+
     def test_get_workers_reports_alias_as_name(self) -> None:
         info = MagicMock()
         info.alias = "w-1"
