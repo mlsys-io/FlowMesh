@@ -138,6 +138,13 @@ class TestStartWithStaleContainer:
         client.containers.get.side_effect = [stale, *after_remove]
         return client
 
+    def test_removes_a_stale_container_then_starts(self) -> None:
+        stale = _stale_container(None)
+        client = self._client(stale)
+        assert _adapter(client)._start() is True
+        stale.remove.assert_called_once_with(force=True)
+        client.containers.run.assert_called_once()
+
     def test_waits_out_a_concurrent_removal_then_starts(self) -> None:
         stale = _stale_container(_api_error(409, _IN_PROGRESS))
         client = self._client(stale, SimpleNamespace(), NotFound("gone"))

@@ -298,7 +298,7 @@ class DockerWorkerAdapter(WorkerAdapter):
             logger.warning(
                 "Failed to inspect Docker container %s: %s",
                 self.container_name,
-                repr(exc),
+                exc,
             )
             return False
 
@@ -341,7 +341,7 @@ class DockerWorkerAdapter(WorkerAdapter):
             logger.error(
                 "Failed to start Docker container %s: %s",
                 self.container_name,
-                repr(exc),
+                exc,
             )
             return False
 
