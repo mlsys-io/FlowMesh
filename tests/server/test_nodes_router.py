@@ -26,12 +26,12 @@ NODE_INFO = {
 
 
 class _Registry:
-    def __init__(self, holder: str | None) -> None:
-        self.holder = holder
+    def __init__(self, alias_held: bool) -> None:
+        self.alias_held = alias_held
 
     async def register_node_async(self, node_info: Any) -> str:
-        if self.holder is not None:
-            raise NodeAliasInUseError(node_info.alias, self.holder)
+        if self.alias_held:
+            raise NodeAliasInUseError(node_info.alias)
         return "nde-1"
 
 
@@ -50,19 +50,20 @@ def _make_app(registry: _Registry) -> FastAPI:
 
 @pytest.mark.anyio
 @pytest.mark.parametrize(
-    ("holder", "status_code"), [(None, 201), ("nde-7", 409)], ids=["free", "held"]
+    ("alias_held", "status_code"), [(False, 201), (True, 409)], ids=["free", "held"]
 )
 async def test_register_node(
-    monkeypatch: pytest.MonkeyPatch, holder: str | None, status_code: int
+    monkeypatch: pytest.MonkeyPatch, alias_held: bool, status_code: int
 ) -> None:
     monkeypatch.setattr(nodes_router, "require_permission", _allow)
     async with AsyncClient(
-        transport=ASGITransport(app=_make_app(_Registry(holder))), base_url="http://t"
+        transport=ASGITransport(app=_make_app(_Registry(alias_held))),
+        base_url="http://t",
     ) as ac:
         resp = await ac.post(f"{PREFIX}/nodes/register", json=NODE_INFO)
 
     assert resp.status_code == status_code
-    if holder is not None:
+    if alias_held:
         assert resp.json()["detail"] == (
-            "node alias 'gpu-a' is held by live node nde-7; set a distinct NODE_ALIAS"
+            "node alias 'gpu-a' is held by another live node; set a distinct NODE_ALIAS"
         )

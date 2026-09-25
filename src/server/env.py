@@ -80,13 +80,7 @@ REDIS_TELEMETRY_URL: str = os.getenv("REDIS_TELEMETRY_URL", REDIS_URL)
 REDIS_TLS_CA_FILE: str = os.getenv("REDIS_TLS_CA_FILE", "").strip()
 
 SERVER_HEARTBEAT_INTERVAL: int = int(os.getenv("SERVER_HEARTBEAT_INTERVAL") or "30")
-
-
-def heartbeat_ttl_sec(heartbeat_interval: int) -> int:
-    return max(heartbeat_interval * 4, 120)
-
-
-SERVER_HEARTBEAT_TTL: int = heartbeat_ttl_sec(SERVER_HEARTBEAT_INTERVAL)
+SERVER_HEARTBEAT_TTL: int = max(SERVER_HEARTBEAT_INTERVAL * 4, 120)
 ENABLE_SSH_BY_DEFAULT: bool = parse_bool_env("ENABLE_SSH_BY_DEFAULT", False)
 SSH_DEFAULT_IMAGE: str | None = os.getenv("SSH_DEFAULT_IMAGE", "").strip() or None
 SSH_DEFAULT_USER: str | None = os.getenv("SSH_DEFAULT_USER", "").strip() or None

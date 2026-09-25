@@ -126,7 +126,7 @@ def test_register_http_raises_alias_held_on_conflict(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     detail = (
-        "node alias 'worker-1' is held by live node nde-7; set a distinct NODE_ALIAS"
+        "node alias 'worker-1' is held by another live node; set a distinct NODE_ALIAS"
     )
 
     def fake_post(url: str, **kwargs: Any) -> _StubResponse:
@@ -134,7 +134,7 @@ def test_register_http_raises_alias_held_on_conflict(
 
     monkeypatch.setattr(lifecycle_module.httpx, "post", fake_post)
 
-    with pytest.raises(AliasHeldError, match="nde-7"):
+    with pytest.raises(AliasHeldError, match="another live node"):
         _build_lifecycle()._register_http()
 
 
@@ -148,7 +148,7 @@ class _AliasHeldThenFree(StubLifecycle):
     def _register(self) -> str:
         self.attempts += 1
         if self.attempts <= self.refusals:
-            raise AliasHeldError("node alias 'a' is held by live node nde-0")
+            raise AliasHeldError("node alias 'a' is held by another live node")
         return "nde-2"
 
 

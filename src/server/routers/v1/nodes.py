@@ -105,9 +105,7 @@ async def list_all_workers(
 @router.post(
     "/register",
     summary="Register a node",
-    description=(
-        "Register a new node. The node alias must be unique among live nodes."
-    ),
+    description="Register a new node.",
     response_description="Node ID",
     status_code=status.HTTP_201_CREATED,
     responses={

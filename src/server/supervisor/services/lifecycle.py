@@ -26,8 +26,6 @@ class AliasHeldError(RuntimeError):
 class Lifecycle:
     """Manages node registration, heartbeats, and unregistration."""
 
-    _shutting_down: bool = False
-
     def __init__(
         self,
         redis: SyncRedisClient,
@@ -60,6 +58,7 @@ class Lifecycle:
         self._hb_thread: threading.Thread | None = None
         self._hb_lock = threading.Lock()
         self._unregister_published: bool = False
+        self._shutting_down: bool = False
 
     @property
     def node_id(self) -> str:
@@ -157,18 +156,17 @@ class Lifecycle:
     def heartbeat_now(self) -> None:
         with self._hb_lock:
             ts = now_iso()
-            alias_holder = self._node_registry.update_node_hb(
+            alias_held = self._node_registry.update_node_hb(
                 self.node_id,
                 ts,
                 self.hb_ttl_sec,
                 current_gpu_count=self._current_gpu_count(),
             )
-            if alias_holder is not None:
+            if alias_held:
                 self.logger.error(
-                    "Node alias %r was taken over by node %s; set a distinct "
-                    "NODE_ALIAS on one of them",
+                    "Node alias %r was taken over by another live node; set a "
+                    "distinct NODE_ALIAS for this node",
                     self._node_info.alias,
-                    alias_holder,
                 )
             gpu_count = self._current_gpu_count()
             hb_payload: dict[str, object] = {"ttl_sec": self.hb_ttl_sec}

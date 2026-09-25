@@ -249,6 +249,10 @@ class WorkerManagementConfig:
     config_path: str = "configs/worker_config.yaml"
     heartbeat_interval: int = 30
 
+    @property
+    def heartbeat_ttl_sec(self) -> int:
+        return max(self.heartbeat_interval * 4, 120)
+
     @classmethod
     def from_env(cls) -> "WorkerManagementConfig":
         return cls(

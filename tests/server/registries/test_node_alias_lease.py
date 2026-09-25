@@ -46,10 +46,7 @@ def rds(server: fakeredis.FakeServer) -> fakeredis.FakeRedis:
 
 
 @pytest.fixture
-def registry(
-    server: fakeredis.FakeServer, monkeypatch: pytest.MonkeyPatch
-) -> NodeRegistry:
-    monkeypatch.setattr("server.env.SERVER_HEARTBEAT_TTL", TTL_SEC)
+def registry(server: fakeredis.FakeServer) -> NodeRegistry:
     sync = SyncRedisClient.__new__(SyncRedisClient)
     sync._control = fakeredis.FakeRedis(server=server, decode_responses=True)
     async_client = AsyncRedisClient.__new__(AsyncRedisClient)
@@ -59,7 +56,7 @@ def registry(
     client = RedisClient.__new__(RedisClient)
     client.sync = sync
     client.asyncio = async_client
-    return NodeRegistry(client, logging.getLogger("test.node_alias_lease"))
+    return NodeRegistry(client, logging.getLogger("test.node_alias_lease"), TTL_SEC)
 
 
 def _pttl(rds: fakeredis.FakeRedis) -> int:
@@ -90,8 +87,8 @@ def test_duplicate_alias_is_refused_without_writing(
     with pytest.raises(NodeAliasInUseError) as exc:
         registry.register_node(_info())
 
-    assert exc.value.holder == holder
     assert "NODE_ALIAS" in str(exc.value)
+    assert holder not in str(exc.value)
     assert rds.smembers(NODES_SET_KEY) == {holder}
 
 
@@ -150,9 +147,8 @@ def test_heartbeat_refreshes_own_lease_with_node_ttl(
     node_id = registry.register_node(_info())
     _age_lease(rds, 50)
 
-    holder = registry.update_node_hb(node_id, "ts", 300, current_gpu_count=2)
+    assert not registry.update_node_hb(node_id, "ts", 300, current_gpu_count=2)
 
-    assert holder is None
     assert rds.hget(LEASE, "ttl_ms") == "300000"
     assert _pttl(rds) > 290_000
     assert rds.get(node_hb_key(node_id)) == "ts"
@@ -165,7 +161,7 @@ def test_heartbeat_retakes_lapsed_lease(
     node_id = registry.register_node(_info())
     rds.delete(LEASE)
 
-    assert registry.update_node_hb(node_id, "ts", TTL_SEC) is None
+    assert not registry.update_node_hb(node_id, "ts", TTL_SEC)
     assert rds.hget(LEASE, "node_id") == node_id
 
 
@@ -177,7 +173,7 @@ async def test_heartbeat_reports_lease_taken_over(
     _age_lease(rds, TTL_SEC)
     new_id = registry.register_node(_info())
 
-    assert await registry.update_node_hb_async(old_id, "ts", TTL_SEC) == new_id
+    assert await registry.update_node_hb_async(old_id, "ts", TTL_SEC)
     assert rds.hget(LEASE, "node_id") == new_id
 
 
@@ -187,7 +183,7 @@ def test_heartbeat_of_unregistered_node_writes_nothing(
     node_id = registry.register_node(_info())
     registry.unregister_node(node_id)
 
-    assert registry.update_node_hb(node_id, "ts", TTL_SEC) is None
+    assert not registry.update_node_hb(node_id, "ts", TTL_SEC)
     assert not rds.exists(node_key(node_id))
     assert not rds.exists(node_hb_key(node_id))
     assert not rds.exists(LEASE)
