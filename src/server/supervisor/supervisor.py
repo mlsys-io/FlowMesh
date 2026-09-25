@@ -14,6 +14,7 @@ from threading import Thread
 
 from shared.schemas.command import CommandMessage, CommandResponse
 
+from .. import env
 from ..config import (
     GrpcConfig,
     IdentityConfig,
@@ -34,10 +35,6 @@ _NODE_ID_HANDSHAKE_TIMEOUT = 30.0
 _NODE_ID_HANDSHAKE_MARGIN_SEC = 30.0
 _NODE_ID_WATCH_POLL_SEC = 0.5
 _REBIND_APPLY_TIMEOUT_SEC = 2.0
-
-
-def node_hb_ttl_sec(heartbeat_interval: int) -> int:
-    return max(heartbeat_interval * 4, 120)
 
 
 class WorkerSupervisor:
@@ -112,7 +109,7 @@ class WorkerSupervisor:
         # run, which frees within one heartbeat TTL.
         handshake_timeout = max(
             _NODE_ID_HANDSHAKE_TIMEOUT,
-            node_hb_ttl_sec(self._worker_management.heartbeat_interval)
+            env.heartbeat_ttl_sec(self._worker_management.heartbeat_interval)
             + _NODE_ID_HANDSHAKE_MARGIN_SEC,
         )
         node_id = await asyncio.to_thread(self._await_node_id, handshake_timeout)
@@ -335,7 +332,7 @@ def _run_supervisor(
     node_registry = NodeRegistry(redis_client, logger)
 
     # --- Lifecycle: register node and get auto-assigned node_id ---
-    hb_ttl_sec = node_hb_ttl_sec(wm_cfg.heartbeat_interval)
+    hb_ttl_sec = env.heartbeat_ttl_sec(wm_cfg.heartbeat_interval)
 
     lifecycle = Lifecycle(
         redis=redis_client.sync,
