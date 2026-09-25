@@ -16,7 +16,6 @@ session runs in, selected by ``SSH_SESSION_BACKEND``.
 import logging
 import threading
 import time
-import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -83,7 +82,7 @@ class SSHExecutor(Executor):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         config = self._config
-        self._worker_name = config.container_name or config.alias or None
+        self._owner = config.container_name or config.alias
         self._cancel_event = threading.Event()
         self._finish_event = threading.Event()
         self._current_session: SSHSession | None = None
@@ -92,18 +91,6 @@ class SSHExecutor(Executor):
     @classmethod
     def is_available(cls, config: WorkerConfig) -> bool:
         return select_backend_cls(config) is not None
-
-    @property
-    def worker_name(self) -> str:
-        if name := self._worker_name:
-            return name
-        name = (
-            lifecycle.worker_id
-            if (lifecycle := self._lifecycle)
-            else uuid.uuid4().hex[:8]
-        )
-        self._worker_name = name
-        return name
 
     @property
     def backend(self) -> SSHSessionBackend:
@@ -128,7 +115,7 @@ class SSHExecutor(Executor):
 
     def teardown(self) -> None:
         """Stop all sessions owned by this worker."""
-        self._backend.teardown(self.worker_name)
+        self._backend.teardown(self._owner)
 
     # ------------------------------------------------------------------ #
     # Main execution
@@ -161,7 +148,7 @@ class SSHExecutor(Executor):
         request = SessionRequest(
             task_id=task.task_id,
             session_id=session_id,
-            worker_name=self.worker_name,
+            owner=self._owner,
             cfg=cfg,
             out_dir=out_dir,
             resolved_inputs=resolved_inputs,

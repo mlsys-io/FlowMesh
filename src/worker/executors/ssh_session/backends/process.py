@@ -161,7 +161,7 @@ class ProcessSessionBackend(SSHSessionBackend):
             self._active = session
         return session
 
-    def teardown(self, worker_name: str) -> None:
+    def teardown(self, owner: str) -> None:
         with self._lock:
             session = self._active
         if session is None:

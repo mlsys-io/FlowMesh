@@ -126,12 +126,12 @@ class DockerSessionBackend(SSHSessionBackend):
         """Docker publishes the container's port on the host either way."""
         return ANY_BIND_HOST
 
-    def teardown(self, worker_name: str) -> None:
+    def teardown(self, owner: str) -> None:
         stop_timeout_sec = parse_float_env("SSH_STOP_TIMEOUT_SEC", STOP_TIMEOUT_SEC)
         client = self._get_docker_client()
         try:
             containers = client.containers.list(
-                filters={"label": f"{LABEL_WORKER}={worker_name}"}
+                filters={"label": f"{LABEL_WORKER}={owner}"}
             )
         except Exception as exc:
             logger.warning(
@@ -159,8 +159,7 @@ class DockerSessionBackend(SSHSessionBackend):
             container_cmd = self._resolve_noninteractive_command(client, cfg)
 
         container_name = (
-            f"{request.worker_name}_ssh-"
-            f"{request.task_id[:8]}-{request.session_id[:8]}"
+            f"{request.owner}_ssh-" f"{request.task_id[:8]}-{request.session_id[:8]}"
         )
         mount_plan = self._build_mount_plan(
             client,
@@ -168,10 +167,10 @@ class DockerSessionBackend(SSHSessionBackend):
             request.resolved_inputs,
             cfg,
             request.session_id,
-            request.worker_name,
+            request.owner,
         )
         labels = {
-            LABEL_WORKER: request.worker_name,
+            LABEL_WORKER: request.owner,
             LABEL_TASK: request.task_id,
             LABEL_SESSION: request.session_id,
             LABEL_MANAGED: "true",
@@ -431,7 +430,7 @@ class DockerSessionBackend(SSHSessionBackend):
         resolved_inputs: list[ResolvedSSHInput],
         cfg: SSHConfig,
         session_id: str,
-        worker_name: str,
+        owner: str,
     ) -> SSHMountPlan:
         volumes: list[str] = []
         staged_input_specs: list[tuple[str, str]] = []
@@ -443,7 +442,7 @@ class DockerSessionBackend(SSHSessionBackend):
 
         if results_source and resolved_inputs:
             staged_inputs_volume = self._stage_inputs_in_volume(
-                client, resolved_inputs, results_source, session_id, worker_name
+                client, resolved_inputs, results_source, session_id, owner
             )
             volumes.append(
                 f"{staged_inputs_volume}:{_CONTAINER_RESULTS_SOURCE_ROOT}:ro"
@@ -496,13 +495,13 @@ class DockerSessionBackend(SSHSessionBackend):
         resolved_inputs: list[ResolvedSSHInput],
         results_source: str,
         session_id: str,
-        worker_name: str,
+        owner: str,
     ) -> str:
         volume_name = f"flowmesh_ssh_inputs_{session_id}"
         volume = client.volumes.create(
             name=volume_name,
             labels={
-                LABEL_WORKER: worker_name,
+                LABEL_WORKER: owner,
                 LABEL_SESSION: session_id,
                 LABEL_MANAGED: "true",
             },
