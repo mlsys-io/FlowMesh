@@ -51,10 +51,7 @@ async def list_workers(
 @router.get(
     "/cordons",
     summary="List cordons",
-    description=(
-        "List the (node alias, worker alias) pairs excluded from dispatch, "
-        "including cordons with no worker currently registered under them."
-    ),
+    description="List the (node alias, worker alias) pairs excluded from dispatch.",
     response_description="Active cordons",
 )
 async def list_cordons(
@@ -62,10 +59,15 @@ async def list_cordons(
     registry: WorkerRegistry = Depends(get_worker_registry),
     logger: logging.Logger = Depends(get_logger),
 ) -> list[WorkerCordon]:
-    await require_permission(
-        principal, ResourceKind.WORKER, None, ResourceAction.READ, logger
+    cordons = await registry.list_cordons_async()
+    allowed = await resolve_accessible_ids(
+        principal, ResourceKind.WORKER, ResourceAction.READ, logger
     )
-    return await registry.list_cordons_async()
+    if allowed is None:
+        return cordons
+    workers = await registry.get_workers_async(sorted(allowed))
+    keys = {(w.node_alias, w.alias) for w in workers if w is not None}
+    return [c for c in cordons if (c.node_alias, c.alias) in keys]
 
 
 @router.get(
@@ -101,7 +103,7 @@ async def _resolve_cordon(
 ) -> WorkerCordon:
     if isinstance(request, WorkerCordonByAlias):
         await require_permission(
-            principal, ResourceKind.WORKER, None, ResourceAction.WRITE, logger
+            principal, ResourceKind.SYSTEM, None, ResourceAction.ADMIN, logger
         )
         return WorkerCordon(node_alias=request.node_alias, alias=request.alias)
     await require_permission(
