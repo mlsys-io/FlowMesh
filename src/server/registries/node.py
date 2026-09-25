@@ -94,7 +94,7 @@ return 0
 
 # KEYS: [nodes set, node hash, node heartbeat key]
 # ARGV: [node_id, lease key prefix]
-# Returns "". Releases the alias lease only if this node holds it.
+# Returns nothing. Releases the alias lease only if this node holds it.
 _UNREGISTER_LUA = """
 local alias = redis.call('HGET', KEYS[2], 'alias')
 if alias then
@@ -105,7 +105,6 @@ if alias then
 end
 redis.call('SREM', KEYS[1], ARGV[1])
 redis.call('DEL', KEYS[2], KEYS[3])
-return ''
 """
 
 
