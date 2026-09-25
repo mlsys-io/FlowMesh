@@ -10,6 +10,8 @@ individual machine, cannot be revoked per worker, and admits nobody unless set.
 import hmac
 from hashlib import sha256
 
+from shared.utils.worker_token import EXTERNAL_TOKEN_SEP, split_external_token
+
 from ... import env
 from ...hooks import PrincipalContext
 from ..schemas import WorkerInfo, WorkerStatus
@@ -23,9 +25,6 @@ from .base import (
 
 _PROVIDER_NAME = "external"
 
-# A name may itself contain dots, so the split is always on the last one.
-_SEP = "."
-
 
 def mint_external_token(secret: str, name: str) -> WorkerTokenType:
     """Build the token an external worker named `name` must present.
@@ -34,7 +33,7 @@ def mint_external_token(secret: str, name: str) -> WorkerTokenType:
     or supervisor restart re-derives the identity instead of losing it.
     """
     digest = hmac.new(secret.encode(), name.encode(), sha256).hexdigest()
-    return WorkerTokenType(f"{name}{_SEP}{digest}")
+    return WorkerTokenType(f"{name}{EXTERNAL_TOKEN_SEP}{digest}")
 
 
 def verify_external_token(token: str, secret: str | None = None) -> str | None:
@@ -47,9 +46,10 @@ def verify_external_token(token: str, secret: str | None = None) -> str | None:
     configured = env.EXTERNAL_WORKER_TOKEN if secret is None else secret
     if not configured:
         return None
-    name, sep, digest = token.rpartition(_SEP)
-    if not sep or not name or not digest:
+    parts = split_external_token(token)
+    if parts is None:
         return None
+    name, digest = parts
     expected = hmac.new(configured.encode(), name.encode(), sha256).hexdigest()
     # Constant-time compare so a forged digest can't be recovered by timing.
     if hmac.compare_digest(expected, digest):
