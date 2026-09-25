@@ -325,6 +325,7 @@ class TestHandleDestroyWorkerCmd:
         self.cl._wm.destroy_worker.assert_called_once_with("worker-abc123")
 
 
+# TODO(deprecate): remove with the legacy-payload shims in command_listener.py.
 class TestLegacyRootPayloads:
     """A root one release behind sends `worker_name(s)` and reads `name`."""
 
