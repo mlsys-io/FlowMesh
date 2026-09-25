@@ -44,14 +44,16 @@ _DESTROY_WORKERS_TIMEOUT = 120.0
 # release behind; remove them in the next minor release.
 def _payload_alias(payload: dict[str, Any] | None) -> str | None:
     payload = payload or {}
-    alias = payload.get("worker_alias", payload.get("worker_name"))
+    if (alias := payload.get("worker_alias")) is None:
+        alias = payload.get("worker_name")
     return None if alias is None else str(alias)
 
 
-def _payload_aliases(payload: dict[str, Any] | None) -> list[str] | None:
+def _payload_aliases(payload: dict[str, Any] | None) -> set[str] | None:
     payload = payload or {}
-    aliases = payload.get("worker_aliases", payload.get("worker_names"))
-    return None if aliases is None else [str(alias) for alias in aliases]
+    if (aliases := payload.get("worker_aliases")) is None:
+        aliases = payload.get("worker_names")
+    return None if aliases is None else {str(alias) for alias in aliases}
 
 
 def _cmd_receiver_loop(
@@ -361,7 +363,7 @@ class CommandListener:
                 return [] if alias is None else [alias]
             case CommandType.DESTROY_WORKERS:
                 aliases = _payload_aliases(payload)
-                return [] if aliases is None else sorted(set(aliases))
+                return [] if aliases is None else sorted(aliases)
             case _:
                 return []
 
@@ -634,8 +636,7 @@ class CommandListener:
             )
 
     async def _handle_destroy_workers_cmd(self, cmd: CommandMessage) -> CommandResponse:
-        raw_aliases = _payload_aliases(cmd.payload)
-        aliases = set(raw_aliases) if raw_aliases is not None else None
+        aliases = _payload_aliases(cmd.payload)
         try:
             await asyncio.wait_for(
                 self._wm.destroy_workers(aliases), timeout=_DESTROY_WORKERS_TIMEOUT
