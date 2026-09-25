@@ -17,6 +17,7 @@ from server.clients.redis import (
     SyncRedisClient,
     worker_key,
 )
+from server.hooks import PrincipalContext
 from server.supervisor.adapters.external import (
     ExternalWorkerAdapter,
     ExternalWorkerConfig,
@@ -284,10 +285,13 @@ def _build_servicer(
     return servicer, redis
 
 
-async def _register(servicer: SupervisorServicer, token: str) -> str:
-    resp = await servicer.RegisterWorker(
-        supervisor_pb2.RegisterRequest(), cast(Any, _FakeContext(token))
-    )
+async def _register(
+    servicer: SupervisorServicer, token: str, alias: str | None = None
+) -> str:
+    request = supervisor_pb2.RegisterRequest()
+    if alias is not None:
+        request.meta.update({"alias": alias})
+    resp = await servicer.RegisterWorker(request, cast(Any, _FakeContext(token)))
     return resp.worker_id
 
 
@@ -432,3 +436,67 @@ class TestRegisterWorkerExternalEnrollment:
         worker_id = await _register(servicer, cast(str, token))
 
         assert worker_id in redis.worker_ids
+
+
+class TestRegisterWorkerRecordsVerifiedAlias:
+    """The recorded alias is the name the supervisor can verify, never the
+    self-reported one."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("reported", [None, "fm-worker-0"])
+    async def test_external_alias_is_token_name(
+        self, monkeypatch: pytest.MonkeyPatch, reported: str | None
+    ) -> None:
+        monkeypatch.setattr("server.env.EXTERNAL_WORKER_TOKEN", SECRET)
+        servicer, redis = _build_servicer()
+        token = mint_external_token(SECRET, "fm-worker-0")
+
+        worker_id = await _register(servicer, token, alias=reported)
+
+        assert redis.hashes[worker_key(worker_id)]["alias"] == "fm-worker-0"
+
+    @pytest.mark.asyncio
+    async def test_mismatched_alias_is_overridden_and_logged(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        monkeypatch.setattr("server.env.EXTERNAL_WORKER_TOKEN", SECRET)
+        servicer, redis = _build_servicer()
+        token = mint_external_token(SECRET, "fm-worker-0")
+
+        with caplog.at_level(logging.WARNING):
+            worker_id = await _register(servicer, token, alias="someone-else")
+
+        assert redis.hashes[worker_key(worker_id)]["alias"] == "fm-worker-0"
+        assert "'someone-else'" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_managed_alias_is_supervisor_name(self) -> None:
+        servicer, redis = _build_servicer()
+        token = servicer._registry.new_token()
+        worker = ExternalWorkerFactory(system_principal=None).create_worker(  # type: ignore[arg-type]
+            token, ExternalWorkerConfig(), name="flowmesh_server_worker_cpu_0"
+        )
+        servicer._registry.add(worker)
+
+        worker_id = await _register(servicer, token, alias="3f9a1c0e7b2d4a55")
+
+        assert (
+            redis.hashes[worker_key(worker_id)]["alias"]
+            == "flowmesh_server_worker_cpu_0"
+        )
+
+
+def test_worker_environment_carries_name_as_alias() -> None:
+    principal = PrincipalContext(
+        principal_id="system",
+        org_id="org",
+        external_id="system",
+        principal_type="user",
+        scopes=[],
+    )
+    worker = ExternalWorkerFactory(system_principal=principal).create_worker(
+        WorkerRegistry().new_token(),
+        ExternalWorkerConfig(worker_alias="requested"),
+        name="resolved-name",
+    )
+    assert worker._base_environment()["WORKER_ALIAS"] == "resolved-name"

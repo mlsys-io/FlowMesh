@@ -21,7 +21,7 @@ class WorkerConfig(BaseModel):
     hb_interval: int = env.SERVER_HEARTBEAT_INTERVAL
     """Interval between heartbeats in seconds"""
     worker_alias: str | None = None
-    """Optional worker alias"""
+    """Requested worker name; the worker's alias is its name"""
     tags: str = env.WORKER_TAGS
     """Comma-separated tags used by the scheduler"""
     hb_file: str | None = None
@@ -157,7 +157,7 @@ class WorkerAdapter(ABC):
             "WORKER_HB_FILE": hb_file,
             "WORKER_NAMESPACE": env.NODE_NAMESPACE,
             "WORKER_CLUSTER": env.NODE_CLUSTER,
-            "WORKER_ALIAS": config.worker_alias or "",
+            "WORKER_ALIAS": self.name,
             "WORKER_TAGS": config.tags,
             "LOG_LEVEL": config.log_level,
             "WORKER_COST_PER_HOUR": to_env_str(config.worker_cost_per_hour),
