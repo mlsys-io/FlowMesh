@@ -73,7 +73,7 @@ class Workers(SyncResource):
         return WorkerCordonResult.model_validate(data)
 
     def list_cordons(self) -> builtins.list[WorkerCordon]:
-        """List cordons, including those with no worker registered."""
+        """List the cordons visible to the caller."""
         data = self._client._request("GET", "/workers/cordons")
         return [WorkerCordon.model_validate(c) for c in data]
 
@@ -144,6 +144,6 @@ class AsyncWorkers(AsyncResource):
         return WorkerCordonResult.model_validate(data)
 
     async def list_cordons(self) -> builtins.list[WorkerCordon]:
-        """List cordons, including those with no worker registered."""
+        """List the cordons visible to the caller."""
         data = await self._client._request("GET", "/workers/cordons")
         return [WorkerCordon.model_validate(c) for c in data]

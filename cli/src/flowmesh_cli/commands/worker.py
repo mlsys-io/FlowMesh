@@ -132,7 +132,7 @@ def uncordon(
 
 @app.command("cordons")
 def list_cordons() -> None:
-    """List cordons, including those with no worker registered."""
+    """List the cordons visible to the caller."""
     client = FlowMesh()
     try:
         cordons = client.workers.list_cordons()
