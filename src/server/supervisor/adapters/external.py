@@ -10,7 +10,7 @@ individual machine, cannot be revoked per worker, and admits nobody unless set.
 import hmac
 from hashlib import sha256
 
-from shared.utils.worker_token import EXTERNAL_TOKEN_SEP, split_external_token
+from shared.utils.worker_token import EXTERNAL_NAME_SEP, split_external_token
 
 from ... import env
 from ...hooks import PrincipalContext
@@ -33,7 +33,7 @@ def mint_external_token(secret: str, name: str) -> WorkerTokenType:
     or supervisor restart re-derives the identity instead of losing it.
     """
     digest = hmac.new(secret.encode(), name.encode(), sha256).hexdigest()
-    return WorkerTokenType(f"{name}{EXTERNAL_TOKEN_SEP}{digest}")
+    return WorkerTokenType(f"{name}{EXTERNAL_NAME_SEP}{digest}")
 
 
 def verify_external_token(token: str, secret: str | None = None) -> str | None:

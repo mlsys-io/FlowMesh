@@ -6,7 +6,7 @@ reads its own name from one.
 
 import string
 
-EXTERNAL_TOKEN_SEP = "."
+EXTERNAL_NAME_SEP = "."
 _DIGEST_LEN = 64
 _HEX_DIGITS = frozenset(string.hexdigits.lower())
 
@@ -16,7 +16,7 @@ def split_external_token(token: str) -> tuple[str, str] | None:
 
     A name may itself contain dots, so the split is on the last one.
     """
-    name, sep, digest = token.rpartition(EXTERNAL_TOKEN_SEP)
+    name, sep, digest = token.rpartition(EXTERNAL_NAME_SEP)
     if not sep or not name or len(digest) != _DIGEST_LEN:
         return None
     if not _HEX_DIGITS.issuperset(digest):
@@ -30,4 +30,4 @@ def external_token_name(token: str) -> str | None:
     return parts[0] if parts is not None else None
 
 
-__all__ = ["EXTERNAL_TOKEN_SEP", "external_token_name", "split_external_token"]
+__all__ = ["EXTERNAL_NAME_SEP", "external_token_name", "split_external_token"]
