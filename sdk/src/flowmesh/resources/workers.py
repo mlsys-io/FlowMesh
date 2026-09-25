@@ -1,10 +1,15 @@
 """Worker resource operations."""
 
 import builtins
+from urllib.parse import quote
 
-from ..models.workers import WorkerInfo
+from ..models.workers import WorkerCordon, WorkerCordonResult, WorkerInfo
 from ..params import append_param, extend_params
 from ._base import AsyncResource, SyncResource
+
+
+def _cordon_path(node_alias: str, alias: str) -> str:
+    return f"/workers/cordoned/{quote(node_alias, safe='')}/{quote(alias, safe='')}"
 
 
 class Workers(SyncResource):
@@ -40,6 +45,26 @@ class Workers(SyncResource):
         data = self._client._request("GET", "/workers", params=params or None)
         return [WorkerInfo.model_validate(w) for w in data]
 
+    def cordon(self, worker_id: str) -> WorkerCordonResult:
+        """Stop offering new tasks to a worker without stopping it."""
+        data = self._client._request("POST", f"/workers/{worker_id}/cordon")
+        return WorkerCordonResult.model_validate(data)
+
+    def uncordon(self, worker_id: str) -> WorkerCordonResult:
+        """Allow a cordoned worker to receive tasks again."""
+        data = self._client._request("POST", f"/workers/{worker_id}/uncordon")
+        return WorkerCordonResult.model_validate(data)
+
+    def list_cordons(self) -> builtins.list[WorkerCordon]:
+        """List active cordons."""
+        data = self._client._request("GET", "/workers/cordoned")
+        return [WorkerCordon.model_validate(c) for c in data]
+
+    def remove_cordon(self, node_alias: str, alias: str) -> WorkerCordonResult:
+        """Remove a cordon by node alias and worker alias."""
+        data = self._client._request("DELETE", _cordon_path(node_alias, alias))
+        return WorkerCordonResult.model_validate(data)
+
 
 class AsyncWorkers(AsyncResource):
     """Asynchronous worker operations."""
@@ -73,3 +98,23 @@ class AsyncWorkers(AsyncResource):
             params.extend(query_params)
         data = await self._client._request("GET", "/workers", params=params or None)
         return [WorkerInfo.model_validate(w) for w in data]
+
+    async def cordon(self, worker_id: str) -> WorkerCordonResult:
+        """Stop offering new tasks to a worker without stopping it."""
+        data = await self._client._request("POST", f"/workers/{worker_id}/cordon")
+        return WorkerCordonResult.model_validate(data)
+
+    async def uncordon(self, worker_id: str) -> WorkerCordonResult:
+        """Allow a cordoned worker to receive tasks again."""
+        data = await self._client._request("POST", f"/workers/{worker_id}/uncordon")
+        return WorkerCordonResult.model_validate(data)
+
+    async def list_cordons(self) -> builtins.list[WorkerCordon]:
+        """List active cordons."""
+        data = await self._client._request("GET", "/workers/cordoned")
+        return [WorkerCordon.model_validate(c) for c in data]
+
+    async def remove_cordon(self, node_alias: str, alias: str) -> WorkerCordonResult:
+        """Remove a cordon by node alias and worker alias."""
+        data = await self._client._request("DELETE", _cordon_path(node_alias, alias))
+        return WorkerCordonResult.model_validate(data)
