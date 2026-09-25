@@ -142,3 +142,78 @@ def test_genuinely_grouped_upstream_still_groups() -> None:
     assert [len(df) for df in entry.tables] == [2, 1]
     assert entry.tables[0]["claim"].tolist() == ["c0", "c1"]
     assert entry.tables[1]["claim"].tolist() == ["c2"]
+
+
+def _list_mode_lambda_upstream(
+    groups: list[list[dict[str, Any]]],
+) -> BaseExecutorResult:
+    """A list-mode lambda upstream: one item per group, each item's ``output``
+    is itself a list of records (the live PairSources shape)."""
+    return BaseExecutorResult.model_validate(
+        {
+            "items": [{"output": group} for group in groups],
+            "count": len(groups),
+        }
+    )
+
+
+def test_list_mode_lambda_output_groups_by_item() -> None:
+    """A list-mode lambda upstream whose items' output is a list of records,
+    read as ``items.output.<field>`` columns, gives one group per item with the
+    right row counts (uneven group sizes included)."""
+    upstream = _list_mode_lambda_upstream(
+        [
+            [{"claim": "c0", "src_text": "s0"}, {"claim": "c0", "src_text": "s1"}],
+            [{"claim": "c1", "src_text": "s2"}],
+            [
+                {"claim": "c2", "src_text": "s3"},
+                {"claim": "c2", "src_text": "s4"},
+                {"claim": "c2", "src_text": "s5"},
+            ],
+        ]
+    )
+    columns = [
+        {"label": "claim", "node": "Up", "path": "items.output.claim"},
+        {"label": "src_text", "node": "Up", "path": "items.output.src_text"},
+    ]
+
+    entry = _collect(columns, upstream, content="row {claim} {src_text}")
+
+    assert len(entry.tables) == 3
+    assert [len(df) for df in entry.tables] == [2, 1, 3]
+    assert entry.tables[0]["claim"].tolist() == ["c0", "c0"]
+    assert entry.tables[0]["src_text"].tolist() == ["s0", "s1"]
+    assert entry.tables[1]["claim"].tolist() == ["c1"]
+    assert entry.tables[2]["claim"].tolist() == ["c2", "c2", "c2"]
+
+
+def test_index_mapping_over_nested_list_stays_one_group() -> None:
+    """``items.json.choices[0].message.content`` over a non-grouped api result
+    stays one group: the index mapping over a per-item list is not grouping."""
+    items: list[APIItem | APIGroupItem] = []
+    for i in range(3):
+        item = APIItem(index=i, url="u", status_code=200)
+        item.response_json = {"choices": [{"message": {"content": f"c{i}"}}]}
+        items.append(item)
+    upstream = APIResult(
+        ok=True,
+        executor="api",
+        method="POST",
+        url="https://up.example.com",
+        status_code=200,
+        items=items,
+    )
+    columns = [
+        {
+            "label": "content",
+            "node": "Up",
+            "path": "items.json.choices[0].message.content",
+        },
+    ]
+
+    entry = _collect(columns, upstream, content="row {content}")
+
+    assert len(entry.tables) == 1
+    df = entry.tables[0]
+    assert len(df) == 3
+    assert df["content"].tolist() == ["c0", "c1", "c2"]
