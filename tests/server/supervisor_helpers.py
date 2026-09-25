@@ -1,8 +1,12 @@
-"""Shared stubs for the supervisor lifecycle / re-register tests."""
+"""Shared stubs for the supervisor tests."""
 
 import logging
+import os
+from unittest.mock import MagicMock
 
 from server.registries.node import NodeRegistry
+from server.supervisor.manager import WorkerManager
+from server.supervisor.registry import WorkerRegistry
 from server.supervisor.services.lifecycle import Lifecycle
 
 _LOGGER = logging.getLogger("test.supervisor")
@@ -39,3 +43,16 @@ class StubLifecycle(Lifecycle):
 
     def _publish_event(self, event_type: str, **extra: object) -> None:
         self.published_events.append(event_type)
+
+
+class StubWorkerManager(WorkerManager):
+    """WorkerManager in the started state, with no config file, providers, or
+    Docker. The registry defaults to a ``MagicMock``."""
+
+    def __init__(self, registry: WorkerRegistry | None = None) -> None:
+        self.config_path = os.devnull
+        self.logger = _LOGGER
+        self._registry = registry if registry is not None else MagicMock()
+        self._is_started = True
+        self._default_worker_config = {}
+        self._capacity_change_callback = None

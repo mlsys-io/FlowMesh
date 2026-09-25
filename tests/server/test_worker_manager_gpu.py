@@ -1,7 +1,6 @@
 """Tests for server GPU resource management and worker capacity reporting."""
 
 import asyncio
-import logging
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -13,8 +12,9 @@ from server.supervisor.adapters.docker import (
     DockerWorkerConfig,
     WorkerType,
 )
-from server.supervisor.manager import WorkerInitConfig, WorkerManager
+from server.supervisor.manager import WorkerInitConfig
 from server.supervisor.resource_manager import GpuArch, MachineEnv, ResourceManager
+from tests.server.supervisor_helpers import StubWorkerManager
 
 # ------------------------------------------------------------------ #
 # Helpers
@@ -30,18 +30,6 @@ def _resource_manager(available: set[int]) -> ResourceManager:
         available_gpus=set(available),
     )
     return rm
-
-
-def _worker_manager() -> WorkerManager:
-    """Construct a WorkerManager in started state without filesystem or Docker."""
-    wm = object.__new__(WorkerManager)
-    wm.config_path = "/dev/null"
-    wm.logger = logging.getLogger("test-wm")
-    wm._registry = MagicMock()
-    wm._is_started = True
-    wm._default_worker_config = {}
-    wm._capacity_change_callback = None
-    return wm
 
 
 # ------------------------------------------------------------------ #
@@ -292,7 +280,7 @@ class TestCapacityChangeReporting:
         return asyncio.run(coro)  # type: ignore[arg-type]
 
     def test_create_worker_reports_capacity_change(self) -> None:
-        wm = _worker_manager()
+        wm = StubWorkerManager()
         callback = MagicMock()
         wm._capacity_change_callback = callback
 
@@ -315,7 +303,7 @@ class TestCapacityChangeReporting:
         callback.assert_called_once_with()
 
     def test_destroy_worker_reports_capacity_change(self) -> None:
-        wm = _worker_manager()
+        wm = StubWorkerManager()
         callback = MagicMock()
         wm._capacity_change_callback = callback
 

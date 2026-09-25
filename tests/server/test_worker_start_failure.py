@@ -7,19 +7,13 @@ import pytest
 
 from server.supervisor.manager import WorkerManager
 from server.supervisor.schemas import WorkerStatus
+from tests.server.supervisor_helpers import StubWorkerManager
 
 
 def _worker_manager() -> tuple[WorkerManager, MagicMock]:
     """A started manager plus the registry mock it was given."""
     registry = MagicMock()
-    wm = object.__new__(WorkerManager)
-    wm.config_path = "/dev/null"
-    wm.logger = logging.getLogger("test-wm")
-    wm._registry = registry
-    wm._is_started = True
-    wm._default_worker_config = {}
-    wm._capacity_change_callback = None
-    return wm, registry
+    return StubWorkerManager(registry), registry
 
 
 def _worker(name: str = "gpu_0", *, started: bool) -> MagicMock:
@@ -40,7 +34,7 @@ class TestStartWorkerFailure:
         wm._stop_and_destroy_worker = AsyncMock(return_value=True)  # type: ignore[method-assign]
         worker = _worker(started=False)
 
-        with caplog.at_level(logging.ERROR, logger="test-wm"):
+        with caplog.at_level(logging.ERROR, logger="test.supervisor"):
             result = await wm._start_worker(worker)
 
         assert result is False
@@ -66,7 +60,7 @@ class TestStartWorkerFailure:
         wm._stop_and_destroy_worker = AsyncMock(return_value=True)  # type: ignore[method-assign]
         worker = _worker(started=True)
 
-        with caplog.at_level(logging.ERROR, logger="test-wm"):
+        with caplog.at_level(logging.ERROR, logger="test.supervisor"):
             result = await wm._start_worker(worker)
 
         assert result is True
