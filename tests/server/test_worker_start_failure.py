@@ -5,21 +5,15 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from server.supervisor.manager import WorkerManager
+from server.supervisor.adapters.base import WorkerAdapter
 from server.supervisor.schemas import WorkerStatus
 from tests.server.supervisor_helpers import StubWorkerManager
 
 
-def _worker_manager() -> tuple[WorkerManager, MagicMock]:
-    """A started manager plus the registry mock it was given."""
-    registry = MagicMock()
-    return StubWorkerManager(registry), registry
-
-
-def _worker(name: str = "gpu_0", *, started: bool) -> MagicMock:
-    worker = MagicMock()
-    worker.alias = name
-    worker.token = f"{name}.token"
+def _worker(*, started: bool) -> MagicMock:
+    worker = MagicMock(spec=WorkerAdapter)
+    worker.alias = "gpu_0"
+    worker.token = "gpu_0.token"
     worker.status = WorkerStatus.STOPPED
     worker.start = AsyncMock(return_value=started)
     return worker
@@ -30,7 +24,7 @@ class TestStartWorkerFailure:
     async def test_failed_start_is_logged_as_an_error(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
-        wm, registry = _worker_manager()
+        wm = StubWorkerManager()
         wm._stop_and_destroy_worker = AsyncMock(return_value=True)  # type: ignore[method-assign]
         worker = _worker(started=False)
 
@@ -38,13 +32,13 @@ class TestStartWorkerFailure:
             result = await wm._start_worker(worker)
 
         assert result is False
-        errors = [r for r in caplog.records if r.levelno >= logging.ERROR]
-        assert len(errors) == 1
-        assert "gpu_0" in errors[0].getMessage()
+        errors = [r.getMessage() for r in caplog.records if r.levelno >= logging.ERROR]
+        assert errors == ["Worker gpu_0 failed to start; discarding it"]
 
     @pytest.mark.asyncio
     async def test_failed_start_still_discards_the_worker(self) -> None:
-        wm, registry = _worker_manager()
+        registry = MagicMock()
+        wm = StubWorkerManager(registry)
         wm._stop_and_destroy_worker = AsyncMock(return_value=True)  # type: ignore[method-assign]
         worker = _worker(started=False)
 
@@ -53,10 +47,11 @@ class TestStartWorkerFailure:
         registry.try_pop.assert_called_once_with(worker.token)
 
     @pytest.mark.asyncio
-    async def test_successful_start_logs_nothing_and_keeps_the_worker(
+    async def test_successful_start_logs_no_error_and_keeps_the_worker(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
-        wm, registry = _worker_manager()
+        registry = MagicMock()
+        wm = StubWorkerManager(registry)
         wm._stop_and_destroy_worker = AsyncMock(return_value=True)  # type: ignore[method-assign]
         worker = _worker(started=True)
 
