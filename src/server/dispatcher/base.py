@@ -905,6 +905,8 @@ class Dispatcher:
         try:
             if self._worker_registry.is_worker_stale(worker_id):
                 return False
+            if self._worker_registry.is_cordoned(worker):
+                return False
         except Exception:
             return False
         if worker.status is WorkerStatus.IDLE:
