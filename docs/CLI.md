@@ -13,7 +13,7 @@ FlowMesh server.
 flowmesh info | health | init | deinit | config
 flowmesh workflow {submit, validate, list, info, watch, cancel, logs}
 flowmesh task     {list, info, watch, stop, logs}
-flowmesh worker   {list, info}
+flowmesh worker   {list, info, cordon, uncordon, cordons, remove-cordon}
 flowmesh node     {list, info, worker {list, start, stop}}
 flowmesh ssh      {connect, run, proxy, connections}
 flowmesh result   {fetch, download}

@@ -56,6 +56,9 @@ async with AsyncFlowMesh(base_url="...", api_key="...") as client:
   yields JSONL rows; `client.traces.analyze(wf_id)` returns a profile
   summary.
 - **Cancel** — `client.workflows.cancel(wf_id)`.
+- **Cordon a worker** — `client.workers.cordon(worker_id)` /
+  `uncordon(worker_id)`; `list_cordons()` and
+  `remove_cordon(node_alias, alias)` manage cordons by key.
 
 ## Cursor pagination
 
