@@ -71,14 +71,6 @@ self-authenticate the same way, sending `FLOWMESH_API_KEY` as the bearer.
 | POST | `/api/v1/nodes/{id}/workers/register` | Register worker under node. |
 | POST | `/api/v1/nodes/{id}/workers/{alias}/{start,stop}` | Start/stop a worker. |
 
-A worker's alias is assigned by its supervisor, and registration records the
-alias the supervisor verified from the worker's token. Aliases are unique per
-node and node aliases are unique among live nodes, so `(node alias, worker
-alias)` identifies a worker across restarts and re-registrations.
-`POST /api/v1/nodes/{id}/workers/register`
-records the worker metadata it is given as is, alias included; it is an
-operator route for workers no supervisor launched or admitted.
-
 `/api/v1/stack/workers/...` wraps node-registered workers with local-only
 container lifecycle and is what `flowmesh stack worker {up,down,...}`
 calls.
