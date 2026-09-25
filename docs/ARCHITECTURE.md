@@ -181,7 +181,7 @@ scripts/dev/            compile_protos, sync_requirements, check_env_examples
 - **Worker and node identity.** A worker's alias is its supervisor-side name:
   the supervisor passes it as `WORKER_ALIAS` to the workers it launches, an
   external worker reads it from its token, and registration records the name
-  the supervisor verified, whatever the worker reports. Names are unique per
+  the supervisor verified from the worker's token. Names are unique per
   node. A node takes a Redis lease on its `NODE_ALIAS` at registration
   (`nodes:alias:{alias}`), refreshes it with its heartbeat, and releases it on
   unregister; while another live node holds the alias, registration fails with

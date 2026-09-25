@@ -71,9 +71,9 @@ self-authenticate the same way, sending `FLOWMESH_API_KEY` as the bearer.
 | POST | `/api/v1/nodes/{id}/workers/register` | Register worker under node. |
 | POST | `/api/v1/nodes/{id}/workers/{name}/{start,stop}` | Start/stop a worker by alias. |
 
-A worker's alias is its name: the supervisor assigns it, and the server records
-the name it verified rather than the one the worker reports. Aliases are unique
-per node and node aliases are unique among live nodes, so `(node alias, worker
+A worker's alias is its name: the supervisor assigns it, and registration
+records the name the supervisor verified from the worker's token. Aliases are
+unique per node and node aliases are unique among live nodes, so `(node alias, worker
 alias)` identifies a worker across restarts and re-registrations. Worker `{name}`
 path parameters take the worker alias.
 
