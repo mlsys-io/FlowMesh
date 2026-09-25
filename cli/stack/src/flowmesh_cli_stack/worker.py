@@ -127,7 +127,7 @@ def worker_up(
 
 @app.command("start")
 def worker_start(
-    names: list[str] = typer.Argument(..., help="Worker name(s) or 'all'"),
+    names: list[str] = typer.Argument(..., help="Worker alias(es) or 'all'"),
     env_file: Path = typer.Option(
         DEFAULT_ENV_FILE, "--env-file", help="Env file to load defaults"
     ),
@@ -152,7 +152,7 @@ def worker_start(
 
 @app.command("stop")
 def worker_stop(
-    names: list[str] = typer.Argument(..., help="Worker name(s) or 'all'"),
+    names: list[str] = typer.Argument(..., help="Worker alias(es) or 'all'"),
     env_file: Path = typer.Option(
         DEFAULT_ENV_FILE, "--env-file", help="Env file to load defaults"
     ),
@@ -177,7 +177,7 @@ def worker_stop(
 
 @app.command("down")
 def worker_down(
-    names: list[str] = typer.Argument(..., help="Worker name(s) or 'all'"),
+    names: list[str] = typer.Argument(..., help="Worker alias(es) or 'all'"),
     env_file: Path = typer.Option(
         DEFAULT_ENV_FILE, "--env-file", help="Env file to load defaults"
     ),

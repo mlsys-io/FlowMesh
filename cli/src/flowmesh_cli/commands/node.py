@@ -67,7 +67,7 @@ app.add_typer(worker_app, name="worker")
 def list_workers(
     node_id: str | None = typer.Argument(None, help="Node identifier"),
     worker_id: str | None = typer.Option(None, "--id", help="Filter by worker id"),
-    name: str | None = typer.Option(None, "--name", help="Filter by worker name"),
+    name: str | None = typer.Option(None, "--name", help="Filter by worker alias"),
     namespace: str | None = typer.Option(
         None, "--namespace", help="Filter by worker namespace"
     ),
@@ -115,7 +115,7 @@ def list_workers(
 @worker_app.command("start")
 def start_worker(
     node_id: str = typer.Argument(..., help="Node identifier"),
-    worker_name: str = typer.Argument(..., help="Worker name"),
+    worker_name: str = typer.Argument(..., help="Worker alias"),
 ) -> None:
     """Start a worker on a specific node."""
     client = FlowMesh()
@@ -130,7 +130,7 @@ def start_worker(
 @worker_app.command("stop")
 def stop_worker(
     node_id: str = typer.Argument(..., help="Node identifier"),
-    worker_name: str = typer.Argument(..., help="Worker name"),
+    worker_name: str = typer.Argument(..., help="Worker alias"),
 ) -> None:
     """Stop a worker on a specific node."""
     client = FlowMesh()

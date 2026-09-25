@@ -42,6 +42,13 @@ and requeues them onto other eligible nodes. A recreated node's supervisor
 re-creates its configured workers, which re-register themselves on startup. No
 cordon step is required.
 
+**Node alias.** A node holds a lease on its `NODE_ALIAS` while it is live and
+releases it when it shuts down cleanly, so a restarted node re-registers under
+the same alias at once. A node that exits without unregistering (a crash or a
+kill) leaves its lease behind; the replacement takes it over once the lease has
+gone unrefreshed for half the node heartbeat TTL (60s by default), and startup
+waits until then.
+
 **Root node.** The root holds the dispatcher's scheduling state in memory, so a
 naive restart would lose every in-flight workflow. Three mechanisms make a root
 restart safe:

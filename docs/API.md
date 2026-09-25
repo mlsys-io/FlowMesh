@@ -66,10 +66,16 @@ self-authenticate the same way, sending `FLOWMESH_API_KEY` as the bearer.
 | GET | `/api/v1/workers` | List workers. Filters: `alias`, `namespace`, `cluster`, `status`, `tags`. |
 | GET | `/api/v1/workers/{id}` | Worker details + hardware. |
 | GET | `/api/v1/nodes` | List nodes (supervisors). |
-| POST | `/api/v1/nodes/register` | Register a node. |
+| POST | `/api/v1/nodes/register` | Register a node; `409 Conflict` while another live node holds the same alias. |
 | GET | `/api/v1/nodes/{id}/workers` | List workers under a node. |
 | POST | `/api/v1/nodes/{id}/workers/register` | Register worker under node. |
-| POST | `/api/v1/nodes/{id}/workers/{name}/{start,stop}` | Start/stop a worker. |
+| POST | `/api/v1/nodes/{id}/workers/{name}/{start,stop}` | Start/stop a worker by alias. |
+
+A worker's alias is its name: the supervisor assigns it, and the server records
+the name it verified rather than the one the worker reports. Aliases are unique
+per node and node aliases are unique among live nodes, so `(node alias, worker
+alias)` identifies a worker across restarts and re-registrations. Worker `{name}`
+path parameters take the worker alias.
 
 `/api/v1/stack/workers/...` wraps node-registered workers with local-only
 container lifecycle and is what `flowmesh stack worker {up,down,...}`

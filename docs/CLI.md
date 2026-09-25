@@ -95,6 +95,10 @@ flowmesh stack worker up cpu 2 --name-template '{slug}-run-{idx}'  # {slug}-run-
 The template must keep names unique within one `up` invocation — include
 `{idx}` or `{gpu}` when creating more than one worker.
 
+A worker's name is also its alias: `flowmesh worker list` shows it, and
+`flowmesh stack worker {start,stop,down}` and `flowmesh node worker {list,start,stop}`
+take it.
+
 `flowmesh stack up` reads `NODE_ROLE` from the env file (default `root`). On a
 root node, both local Redis services are deployed alongside the server. On a
 worker node (`NODE_ROLE=worker`), Redis services are skipped — the worker
