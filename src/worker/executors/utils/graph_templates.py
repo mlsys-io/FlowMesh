@@ -651,11 +651,15 @@ def _apply_attr(
                 grouped or is_grouped,
             )
         if all(isinstance(v, list) for v in value):
+            # Each inner list of records is one group; a per-row list cell is not.
+            is_grouped = bool(value) and all(
+                all(isinstance(r, (dict, BaseModel)) for r in v) for v in value
+            )
             mapped: list[Any] = []
             for v in value:
                 inner, _ = _apply_attr(v, attr, token, parts, grouped)
                 mapped.append(inner)
-            return mapped, grouped
+            return mapped, grouped or is_grouped
     if isinstance(value, pd.DataFrame):
         if attr not in value.columns:
             raise ExecutionError(f"{attr} not a valid column in DataFrame for {token}.")
