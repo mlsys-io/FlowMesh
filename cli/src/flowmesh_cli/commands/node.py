@@ -67,7 +67,7 @@ app.add_typer(worker_app, name="worker")
 def list_workers(
     node_id: str | None = typer.Argument(None, help="Node identifier"),
     worker_id: str | None = typer.Option(None, "--id", help="Filter by worker id"),
-    name: str | None = typer.Option(None, "--name", help="Filter by worker alias"),
+    alias: str | None = typer.Option(None, "--alias", help="Filter by worker alias"),
     namespace: str | None = typer.Option(
         None, "--namespace", help="Filter by worker namespace"
     ),
@@ -94,7 +94,7 @@ def list_workers(
     client = FlowMesh()
     query_params = parse_query_filters(query)
     append_param(query_params, "id", worker_id)
-    append_param(query_params, "name", name)
+    append_param(query_params, "alias", alias)
     append_param(query_params, "namespace", namespace)
     append_param(query_params, "cluster", cluster)
     append_param(query_params, "provider", provider)
@@ -115,28 +115,28 @@ def list_workers(
 @worker_app.command("start")
 def start_worker(
     node_id: str = typer.Argument(..., help="Node identifier"),
-    worker_name: str = typer.Argument(..., help="Worker alias"),
+    alias: str = typer.Argument(..., help="Worker alias"),
 ) -> None:
     """Start a worker on a specific node."""
     client = FlowMesh()
     try:
-        client.nodes.start_worker(node_id, worker_name)
+        client.nodes.start_worker(node_id, alias)
     except FlowMeshError as exc:
         logging.error(str(exc))
         raise typer.Exit(code=1)
-    logging.success(f"Worker '{worker_name}' started on node '{node_id}'")
+    logging.success(f"Worker '{alias}' started on node '{node_id}'")
 
 
 @worker_app.command("stop")
 def stop_worker(
     node_id: str = typer.Argument(..., help="Node identifier"),
-    worker_name: str = typer.Argument(..., help="Worker alias"),
+    alias: str = typer.Argument(..., help="Worker alias"),
 ) -> None:
     """Stop a worker on a specific node."""
     client = FlowMesh()
     try:
-        client.nodes.stop_worker(node_id, worker_name)
+        client.nodes.stop_worker(node_id, alias)
     except FlowMeshError as exc:
         logging.error(str(exc))
         raise typer.Exit(code=1)
-    logging.success(f"Worker '{worker_name}' stopped on node '{node_id}'")
+    logging.success(f"Worker '{alias}' stopped on node '{node_id}'")

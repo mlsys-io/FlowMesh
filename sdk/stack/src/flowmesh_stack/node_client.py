@@ -83,17 +83,17 @@ class NodeClient:
             timeout=_WORKER_CREATE_TIMEOUT,
         )
 
-    def start_worker(self, name: str) -> None:
+    def start_worker(self, alias: str) -> None:
         """Start a stopped worker."""
-        self._request("POST", f"/api/v1/stack/workers/{name}/start")
+        self._request("POST", f"/api/v1/stack/workers/{alias}/start")
 
-    def stop_worker(self, name: str) -> None:
+    def stop_worker(self, alias: str) -> None:
         """Stop a running worker."""
-        self._request("POST", f"/api/v1/stack/workers/{name}/stop")
+        self._request("POST", f"/api/v1/stack/workers/{alias}/stop")
 
-    def destroy_worker(self, name: str) -> None:
+    def destroy_worker(self, alias: str) -> None:
         """Destroy a single worker, removing its container."""
-        self._request("DELETE", f"/api/v1/stack/workers/{name}")
+        self._request("DELETE", f"/api/v1/stack/workers/{alias}")
 
     def destroy_all_workers(self, *, ignore_unreachable: bool = False) -> bool:
         """Destroy all workers managed by this node.
@@ -113,18 +113,18 @@ class NodeClient:
             return False
         return True
 
-    def worker_names(self) -> list[str]:
-        """Return a list of all worker names."""
+    def worker_aliases(self) -> list[str]:
+        """Return a list of all worker aliases."""
         data = self.list_workers()
-        names: list[str] = []
+        aliases: list[str] = []
         for item in data:
             if isinstance(item, str):
-                names.append(item)
+                aliases.append(item)
             elif isinstance(item, dict):
-                name = item.get("name")
-                if isinstance(name, str) and name:
-                    names.append(name)
-        return names
+                alias = item.get("alias")
+                if isinstance(alias, str) and alias:
+                    aliases.append(alias)
+        return aliases
 
     # -- Transport ------------------------------------------------------- #
 
