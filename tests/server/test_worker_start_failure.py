@@ -78,13 +78,25 @@ class TestCreateWorkerFailure:
         worker = _worker(started=False)
         wm._create_worker = MagicMock(return_value=worker)  # type: ignore[method-assign]
         wm._stop_and_destroy_worker = AsyncMock(return_value=True)  # type: ignore[method-assign]
-        wm._report_capacity_change = MagicMock()  # type: ignore[method-assign]
 
-        with pytest.raises(RuntimeError, match="gpu_0"):
+        with pytest.raises(RuntimeError, match="Failed to start worker 'gpu_0'"):
             await wm.create_worker(WorkerInitConfig(init_on_start=True))
 
-        # A worker this call created must not outlive its own failure holding the
-        # name; an already-registered one started later is a different case.
+        wm._stop_and_destroy_worker.assert_awaited_once_with(worker)
+        registry.try_pop.assert_called_once_with(worker.token)
+
+    @pytest.mark.asyncio
+    async def test_create_whose_start_raises_unwinds_the_worker_it_made(self) -> None:
+        registry = MagicMock()
+        wm = StubWorkerManager(registry)
+        worker = _worker(started=False)
+        worker.start = AsyncMock(side_effect=OSError("docker unavailable"))
+        wm._create_worker = MagicMock(return_value=worker)  # type: ignore[method-assign]
+        wm._stop_and_destroy_worker = AsyncMock(return_value=True)  # type: ignore[method-assign]
+
+        with pytest.raises(OSError, match="docker unavailable"):
+            await wm.create_worker(WorkerInitConfig(init_on_start=True))
+
         wm._stop_and_destroy_worker.assert_awaited_once_with(worker)
         registry.try_pop.assert_called_once_with(worker.token)
 

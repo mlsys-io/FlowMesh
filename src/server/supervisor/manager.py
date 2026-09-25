@@ -207,13 +207,14 @@ class WorkerManager:
 
         worker = self._create_worker(init_config)
         if init_config.init_on_start:
-            started = await self._start_worker(worker)
-            if not started:
-                # This call created the worker, so unwind it rather than leaving a
-                # STOPPED one holding the name against a retry.
+            # A worker created here must not hold its alias or GPUs against a retry.
+            try:
+                if not await self._start_worker(worker):
+                    raise RuntimeError(f"Failed to start worker '{worker.alias}'")
+            except Exception:
                 await self._stop_and_destroy_worker(worker)
                 self._registry.try_pop(worker.token)
-                raise RuntimeError(f"Failed to start worker '{worker.alias}'")
+                raise
         self._report_capacity_change()
         return worker.get_info()
 
