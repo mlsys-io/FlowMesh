@@ -3,6 +3,7 @@ batch mode (one task, N row-aligned requests)."""
 
 import concurrent.futures
 import json
+import logging
 import threading
 import time
 from pathlib import Path
@@ -1461,3 +1462,108 @@ class TestGroupedResult:
         assert result.items[0].rows == []
         assert len(result.items[1].rows) == 1
         assert result.status_code == 200
+
+
+class TestCallLogging:
+    @pytest.fixture(autouse=True)
+    def _nebula_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("NEBULA_API_BASE_URL", "https://nebula.example.com")
+        monkeypatch.setenv("NEBULA_API_TOKEN", "nebula-token")
+
+    @staticmethod
+    def _records(caplog: pytest.LogCaptureFixture, prefix: str) -> list[str]:
+        return [
+            r.getMessage() for r in caplog.records if r.getMessage().startswith(prefix)
+        ]
+
+    def test_chat_completion_call_line_has_tokens_and_backend(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A chat-completion response yields a per-call line with the token and
+        backend fields."""
+        task = _batch_task(["hi"])
+        transport = _SequenceTransport(
+            [
+                httpx.Response(
+                    200,
+                    json={
+                        "choices": [
+                            {
+                                "message": {"content": "hello"},
+                                "finish_reason": "stop",
+                            }
+                        ],
+                        "usage": {
+                            "prompt_tokens": 10,
+                            "completion_tokens": 5,
+                            "completion_tokens_details": {"reasoning_tokens": 2},
+                        },
+                        "provider": "nebula",
+                    },
+                )
+            ]
+        )
+        with caplog.at_level(logging.INFO, logger="worker.executors.api_executor"):
+            _run(_executor(), task, transport, tmp_path)
+        call_lines = self._records(caplog, "api call")
+        assert len(call_lines) == 1
+        msg = call_lines[0]
+        assert "row=0" in msg
+        assert "attempts=1" in msg
+        assert "status=200" in msg
+        assert "prompt_tokens=10" in msg
+        assert "completion_tokens=5" in msg
+        assert "reasoning_tokens=2" in msg
+        assert "finish_reason=stop" in msg
+        assert "backend=nebula" in msg
+
+    def test_retried_503_then_200_shows_attempts_two(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A retried 503 then 200 logs attempts=2."""
+        task = _batch_task(["hi"], retries=2)
+        transport = _SequenceTransport([_error_response(503), _ok_response()])
+        with caplog.at_level(logging.INFO, logger="worker.executors.api_executor"):
+            _run(_executor(), task, transport, tmp_path)
+        call_lines = self._records(caplog, "api call")
+        assert len(call_lines) == 1
+        assert "attempts=2" in call_lines[0]
+
+    def test_non_json_body_logs_dash_without_raising(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A non-JSON body logs '-' fields without raising."""
+        task = _batch_task(["hi"], response={"parse_json": False})
+        transport = _SequenceTransport(
+            [
+                httpx.Response(
+                    200,
+                    text="not json",
+                    headers={"Content-Type": "text/plain"},
+                )
+            ]
+        )
+        with caplog.at_level(logging.INFO, logger="worker.executors.api_executor"):
+            result = _run(_executor(), task, transport, tmp_path)
+        assert result.items[0].text == "not json"
+        call_lines = self._records(caplog, "api call")
+        assert len(call_lines) == 1
+        msg = call_lines[0]
+        assert "prompt_tokens=-" in msg
+        assert "backend=-" in msg
+
+    def test_summary_reports_per_backend_counts(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The summary line reports per-backend counts."""
+        task = _batch_task(["a", "b"])
+        transport = _EchoTransport()
+        with caplog.at_level(logging.INFO, logger="worker.executors.api_executor"):
+            _run(_executor(), task, transport, tmp_path)
+        summary = self._records(caplog, "api summary")
+        assert len(summary) == 1
+        msg = summary[0]
+        assert "calls=2" in msg
+        assert "failures=0" in msg
+        assert "retries=0" in msg
+        assert "backends=-" in msg
