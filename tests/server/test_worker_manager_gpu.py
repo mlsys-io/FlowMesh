@@ -221,6 +221,7 @@ class TestDockerWorkerRuntimeSelection:
             principal_type="user",
             scopes=[],
         )
+        worker.name = "worker-gpu-3"
         worker.container_name = "worker-gpu-3"
         worker.cuda_devices = [3]
         worker.gpu_arch = GpuArch.BLACKWELL
