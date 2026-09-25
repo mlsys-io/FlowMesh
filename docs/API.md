@@ -69,13 +69,13 @@ self-authenticate the same way, sending `FLOWMESH_API_KEY` as the bearer.
 | POST | `/api/v1/nodes/register` | Register a node; `409 Conflict` while another live node holds the same alias. |
 | GET | `/api/v1/nodes/{id}/workers` | List workers under a node. |
 | POST | `/api/v1/nodes/{id}/workers/register` | Register worker under node. |
-| POST | `/api/v1/nodes/{id}/workers/{name}/{start,stop}` | Start/stop a worker by alias. |
+| POST | `/api/v1/nodes/{id}/workers/{alias}/{start,stop}` | Start/stop a worker. |
 
-A worker's alias is its name: the supervisor assigns it, and registration
-records the name the supervisor verified from the worker's token. Aliases are
-unique per node and node aliases are unique among live nodes, so `(node alias, worker
-alias)` identifies a worker across restarts and re-registrations. Worker `{name}`
-path parameters take the worker alias. `POST /api/v1/nodes/{id}/workers/register`
+A worker's alias is assigned by its supervisor, and registration records the
+alias the supervisor verified from the worker's token. Aliases are unique per
+node and node aliases are unique among live nodes, so `(node alias, worker
+alias)` identifies a worker across restarts and re-registrations.
+`POST /api/v1/nodes/{id}/workers/register`
 records the worker metadata it is given as is, alias included; it is an
 operator route for workers no supervisor launched or admitted.
 
