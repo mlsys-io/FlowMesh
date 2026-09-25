@@ -175,7 +175,6 @@ def test_reregister_if_lost_retries_next_tick_when_alias_held() -> None:
     instance._reregister_if_lost()
 
     assert instance._node_id == "nde-2"
-    assert instance._previous_node_id == "nde-1"
     assert instance.published_events == ["SV_REGISTER"]
 
 

@@ -55,7 +55,6 @@ class Lifecycle:
         self._on_reregister = on_reregister
 
         self._node_id: str | None = None
-        self._previous_node_id: str | None = None
         self._stop_event = threading.Event()
         self._stop_event.set()  # Initially stopped
         self._hb_thread: threading.Thread | None = None
@@ -101,9 +100,7 @@ class Lifecycle:
     def _register_direct(self) -> str:
         """Root node: register directly via NodeRegistry (Redis)."""
         try:
-            node_id = self._node_registry.register_node(
-                self._node_info, previous_node_id=self._previous_node_id
-            )
+            node_id = self._node_registry.register_node(self._node_info)
         except NodeAliasInUseError as exc:
             raise AliasHeldError(str(exc)) from exc
         self.logger.info("Node registered (direct): %s", node_id)
@@ -213,7 +210,6 @@ class Lifecycle:
         self.logger.warning(
             "Node %s missing from root registry; re-registering", self._node_id
         )
-        self._previous_node_id = self._node_id
         try:
             self._node_id = self._register()
         except AliasHeldError as exc:

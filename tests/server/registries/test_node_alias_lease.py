@@ -102,9 +102,14 @@ async def test_async_register_refuses_duplicate(registry: NodeRegistry) -> None:
         await registry.register_node_async(_info())
 
 
-def test_distinct_aliases_coexist(registry: NodeRegistry) -> None:
-    registry.register_node(_info("gpu-a"))
-    registry.register_node(_info("gpu-b"))
+def test_distinct_aliases_coexist(
+    registry: NodeRegistry, rds: fakeredis.FakeRedis
+) -> None:
+    id_a = registry.register_node(_info("gpu-a"))
+    id_b = registry.register_node(_info("gpu-b"))
+
+    assert rds.hget(node_alias_lease_key("gpu-a"), "node_id") == id_a
+    assert rds.hget(node_alias_lease_key("gpu-b"), "node_id") == id_b
 
 
 def test_stale_holder_is_taken_over(
@@ -137,16 +142,6 @@ def test_expired_lease_is_free(
     node_id = registry.register_node(_info())
 
     assert rds.hget(LEASE, "node_id") == node_id
-
-
-def test_previous_id_reclaims_its_own_lease(
-    registry: NodeRegistry, rds: fakeredis.FakeRedis
-) -> None:
-    old_id = registry.register_node(_info())
-
-    new_id = registry.register_node(_info(), previous_node_id=old_id)
-
-    assert rds.hget(LEASE, "node_id") == new_id
 
 
 def test_heartbeat_refreshes_own_lease_with_node_ttl(

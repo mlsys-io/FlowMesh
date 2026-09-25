@@ -44,7 +44,7 @@ _RECONNECT_BACKOFF_SEC = 1.0
 # from PTTL, so no clocks are compared.
 _REGISTER_LUA = """
 local holder = redis.call('HGET', KEYS[1], 'node_id')
-if holder and holder ~= ARGV[1] and holder ~= ARGV[3] then
+if holder and holder ~= ARGV[1] then
   local held_ttl = tonumber(redis.call('HGET', KEYS[1], 'ttl_ms')) or 0
   local remaining = redis.call('PTTL', KEYS[1])
   if remaining >= 0 and remaining * 2 >= held_ttl then
@@ -55,7 +55,7 @@ redis.call('DEL', KEYS[1])
 redis.call('HSET', KEYS[1], 'node_id', ARGV[1], 'ttl_ms', ARGV[2])
 redis.call('PEXPIRE', KEYS[1], ARGV[2])
 redis.call('SADD', KEYS[2], ARGV[1])
-redis.call('HSET', KEYS[3], unpack(ARGV, 4))
+redis.call('HSET', KEYS[3], unpack(ARGV, 3))
 return ''
 """
 
@@ -249,26 +249,21 @@ class NodeRegistry:
     # Node lifecycle helpers
     # ------------------------------------------------------------------ #
 
-    def register_node(
-        self, node_info: NodeInfo, previous_node_id: str | None = None
-    ) -> str:
+    def register_node(self, node_info: NodeInfo) -> str:
         """Register a node under a fresh id, taking its alias lease.
 
-        A lease held by `previous_node_id` is reclaimed. Raises
-        `NodeAliasInUseError` when another live node holds the alias.
+        Raises `NodeAliasInUseError` when another live node holds the alias.
         """
         node_id = self._allocate_node_id()
-        keys, args = self._register_script_args(node_id, node_info, previous_node_id)
+        keys, args = self._register_script_args(node_id, node_info)
         holder = self._rds.sync.eval(_REGISTER_LUA, len(keys), *keys, *args)
         if holder:
             raise NodeAliasInUseError(node_info.alias, holder)
         return node_id
 
-    async def register_node_async(
-        self, node_info: NodeInfo, previous_node_id: str | None = None
-    ) -> str:
+    async def register_node_async(self, node_info: NodeInfo) -> str:
         node_id = await self._allocate_node_id_async()
-        keys, args = self._register_script_args(node_id, node_info, previous_node_id)
+        keys, args = self._register_script_args(node_id, node_info)
         holder = await self._rds.asyncio.eval(_REGISTER_LUA, len(keys), *keys, *args)
         if holder:
             raise NodeAliasInUseError(node_info.alias, holder)
@@ -463,7 +458,7 @@ class NodeRegistry:
     # ------------------------------------------------------------------ #
 
     def _register_script_args(
-        self, node_id: str, node_info: NodeInfo, previous_node_id: str | None
+        self, node_id: str, node_info: NodeInfo
     ) -> tuple[list[str], list[str]]:
         node = self._node_from_info(node_id, node_info)
         fields = [
@@ -474,7 +469,7 @@ class NodeRegistry:
         ]
         keys = [node_alias_lease_key(node_info.alias), NODES_SET_KEY, node_key(node_id)]
         lease_ttl_ms = str(env.SERVER_HEARTBEAT_TTL * 1000)
-        return keys, [node_id, lease_ttl_ms, previous_node_id or "", *fields]
+        return keys, [node_id, lease_ttl_ms, *fields]
 
     def _allocate_node_id(self) -> str:
         seq = self._rds.sync.incr(NODE_ID_SEQ_KEY)
