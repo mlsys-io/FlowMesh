@@ -45,7 +45,7 @@ class EchoExecutor(DataMixin, Executor):
                 "echo executor mapping item must contain either 'expr' or "
                 "both 'node' and 'path'"
             )
-        resolved = _evaluate_expr(expr.strip(), context)
+        resolved, _ = _evaluate_expr(expr.strip(), context)
         if resolved is None:
             raise ExecutionError(
                 f"echo executor expression resolved to null: '{expr.strip()}'"
