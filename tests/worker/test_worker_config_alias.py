@@ -33,5 +33,5 @@ def test_external_token_supplies_alias(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_managed_token_without_alias_exits(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("WORKER_TOKEN", uuid.uuid4().hex)
-    with pytest.raises(SystemExit, match="WORKER_ALIAS"):
+    with pytest.raises(SystemExit, match="WORKER_ALIAS is required"):
         WorkerConfig.from_env()

@@ -97,7 +97,8 @@ class WorkerConfig:
         )
         if not alias:
             raise SystemExit(
-                "WORKER_ALIAS is required for a supervisor-launched worker"
+                "WORKER_ALIAS is required unless WORKER_TOKEN is an external "
+                "worker token of the form <name>.<hex digest>"
             )
         tags = [t.strip() for t in os.getenv("WORKER_TAGS", "").split(",") if t.strip()]
 
