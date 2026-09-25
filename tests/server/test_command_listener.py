@@ -60,8 +60,8 @@ class TestHandleCreateWorkerCmd:
 
     def test_valid_init_config(self) -> None:
         info = MagicMock()
-        info.name = "w-test"
-        info.model_dump = MagicMock(return_value={"name": "w-test"})
+        info.alias = "w-test"
+        info.model_dump = MagicMock(return_value={"alias": "w-test"})
         self.cl._wm.create_worker = AsyncMock(return_value=info)  # type: ignore[method-assign]
 
         resp = self._handle(
@@ -74,7 +74,7 @@ class TestHandleCreateWorkerCmd:
 
         assert resp.success
         assert resp.data is not None
-        assert resp.data["name"] == "w-test"
+        assert resp.data["alias"] == "w-test"
         init_config = self.cl._wm.create_worker.call_args[0][0]
         assert init_config.provider == "docker"
         assert init_config.worker_config["worker_alias"] == "my-worker"
@@ -174,7 +174,7 @@ class TestHandleCreateWorkerOnNodeCmd:
 
     def test_zero_gpu_count_creates_cpu_worker(self) -> None:
         info = MagicMock()
-        info.name = "w-cpu"
+        info.alias = "w-cpu"
         self.cl._wm.create_worker = AsyncMock(return_value=info)  # type: ignore[method-assign]
 
         resp = self._handle({"gpu_count": "0"})
@@ -187,7 +187,7 @@ class TestHandleCreateWorkerOnNodeCmd:
 
     def test_two_gpu_worker_sets_type_and_gpu_count(self) -> None:
         info = MagicMock()
-        info.name = "w-gpu"
+        info.alias = "w-gpu"
         self.cl._wm.create_worker = AsyncMock(return_value=info)  # type: ignore[method-assign]
 
         resp = self._handle({"gpu_count": "2", "worker_alias": "my-worker"})
@@ -200,7 +200,7 @@ class TestHandleCreateWorkerOnNodeCmd:
 
     def test_four_gpu_worker(self) -> None:
         info = MagicMock()
-        info.name = "w-gpu"
+        info.alias = "w-gpu"
         self.cl._wm.create_worker = AsyncMock(return_value=info)  # type: ignore[method-assign]
 
         resp = self._handle({"gpu_count": "4"})
@@ -241,7 +241,7 @@ class TestHandleCreateWorkerOnNodeCmd:
 
     def test_explicit_cuda_devices_passed_through(self) -> None:
         info = MagicMock()
-        info.name = "w-gpu"
+        info.alias = "w-gpu"
         self.cl._wm.create_worker = AsyncMock(return_value=info)  # type: ignore[method-assign]
 
         resp = self._handle({"gpu_count": "2", "cuda_devices": [2, 3]})
@@ -255,7 +255,7 @@ class TestHandleCreateWorkerOnNodeCmd:
 
     def test_alias_auto_generated_with_worker_prefix(self) -> None:
         info = MagicMock()
-        info.name = "w-test"
+        info.alias = "w-test"
         self.cl._wm.create_worker = AsyncMock(return_value=info)  # type: ignore[method-assign]
 
         resp = self._handle({"gpu_count": "0"})
@@ -267,7 +267,7 @@ class TestHandleCreateWorkerOnNodeCmd:
 
     def test_explicit_alias_preserved(self) -> None:
         info = MagicMock()
-        info.name = "w-test"
+        info.alias = "w-test"
         self.cl._wm.create_worker = AsyncMock(return_value=info)  # type: ignore[method-assign]
 
         resp = self._handle({"gpu_count": "0", "worker_alias": "my-alias"})
@@ -278,7 +278,7 @@ class TestHandleCreateWorkerOnNodeCmd:
 
     def test_alias_unique_across_calls(self) -> None:
         info = MagicMock()
-        info.name = "w-test"
+        info.alias = "w-test"
         self.cl._wm.create_worker = AsyncMock(return_value=info)  # type: ignore[method-assign]
 
         self._handle({"gpu_count": "0"})
@@ -306,23 +306,60 @@ class TestHandleDestroyWorkerCmd:
     def test_none_payload_returns_error(self) -> None:
         resp = self._handle(None)
         assert not resp.success
-        assert "worker_name" in (resp.message or "").lower()
+        assert "worker_alias" in (resp.message or "").lower()
 
-    def test_missing_worker_name_returns_error(self) -> None:
+    def test_missing_worker_alias_returns_error(self) -> None:
         resp = self._handle({})
         assert not resp.success
 
-    def test_empty_worker_name_returns_error(self) -> None:
-        resp = self._handle({"worker_name": ""})
+    def test_empty_worker_alias_returns_error(self) -> None:
+        resp = self._handle({"worker_alias": ""})
         assert not resp.success
 
-    def test_valid_worker_name_calls_destroy(self) -> None:
+    def test_valid_worker_alias_calls_destroy(self) -> None:
         self.cl._wm.destroy_worker = AsyncMock(return_value=True)  # type: ignore[method-assign]
 
-        resp = self._handle({"worker_name": "worker-abc123"})
+        resp = self._handle({"worker_alias": "worker-abc123"})
 
         assert resp.success
         self.cl._wm.destroy_worker.assert_called_once_with("worker-abc123")
+
+
+class TestLegacyRootPayloads:
+    """A root one release behind sends `worker_name(s)` and reads `name`."""
+
+    def setup_method(self) -> None:
+        self.cl = _listener()
+
+    def test_start_and_stop_accept_worker_name(self) -> None:
+        self.cl._wm.start_worker = AsyncMock(return_value=True)  # type: ignore[method-assign]
+        self.cl._wm.stop_worker = AsyncMock(return_value=True)  # type: ignore[method-assign]
+
+        start = _cmd(CommandType.START_WORKER, {"worker_name": "w-1"})
+        stop = _cmd(CommandType.STOP_WORKER, {"worker_name": "w-1"})
+
+        assert _run(self.cl._handle_start_worker_cmd(start)).success
+        assert _run(self.cl._handle_stop_worker_cmd(stop)).success
+        self.cl._wm.start_worker.assert_called_once_with("w-1")
+        self.cl._wm.stop_worker.assert_called_once_with("w-1")
+
+    def test_destroy_workers_accepts_worker_names(self) -> None:
+        self.cl._wm.destroy_workers = AsyncMock()  # type: ignore[method-assign]
+
+        cmd = _cmd(CommandType.DESTROY_WORKERS, {"worker_names": ["w-1", "w-2"]})
+
+        assert _run(self.cl._handle_destroy_workers_cmd(cmd)).success
+        self.cl._wm.destroy_workers.assert_called_once_with({"w-1", "w-2"})
+
+    def test_get_workers_reports_alias_as_name(self) -> None:
+        info = MagicMock()
+        info.alias = "w-1"
+        info.model_dump = MagicMock(return_value={"alias": "w-1"})
+        self.cl._wm.list_workers = MagicMock(return_value=[info])  # type: ignore[method-assign]
+
+        resp = self.cl._handle_get_workers_cmd(_cmd(CommandType.GET_WORKERS))
+
+        assert resp.data == {"workers": [{"alias": "w-1", "name": "w-1"}]}
 
 
 # ------------------------------------------------------------------ #
@@ -348,7 +385,7 @@ class TestParallelDispatch:
 
         async def go() -> tuple[float, list[CommandResponse]]:
             cmds = [
-                _cmd(CommandType.START_WORKER, {"worker_name": f"w-{i}"})
+                _cmd(CommandType.START_WORKER, {"worker_alias": f"w-{i}"})
                 for i in range(4)
             ]
             t0 = asyncio.get_event_loop().time()
@@ -382,11 +419,11 @@ class TestParallelDispatch:
 
         async def go() -> tuple[CommandResponse, CommandResponse]:
             stop_task = asyncio.create_task(
-                cl._dispatch(_cmd(CommandType.STOP_WORKER, {"worker_name": "w-1"}))
+                cl._dispatch(_cmd(CommandType.STOP_WORKER, {"worker_alias": "w-1"}))
             )
             await asyncio.sleep(0.05)
             destroy_task = asyncio.create_task(
-                cl._dispatch(_cmd(CommandType.DESTROY_WORKER, {"worker_name": "w-1"}))
+                cl._dispatch(_cmd(CommandType.DESTROY_WORKER, {"worker_alias": "w-1"}))
             )
             # Destroy must NOT have started while stop is blocked.
             await asyncio.sleep(0.05)
@@ -409,7 +446,7 @@ class TestParallelDispatch:
 
         async def go() -> None:
             await cl._dispatch(
-                _cmd(CommandType.DESTROY_WORKER, {"worker_name": "w-gone"})
+                _cmd(CommandType.DESTROY_WORKER, {"worker_alias": "w-gone"})
             )
 
         asyncio.run(go())
@@ -439,7 +476,7 @@ class TestParallelDispatch:
         async def go() -> bool:
             loop = asyncio.get_running_loop()
             cl._loop = loop
-            cmd_obj = _cmd(CommandType.START_WORKER, {"worker_name": "w-1"})
+            cmd_obj = _cmd(CommandType.START_WORKER, {"worker_alias": "w-1"})
             submitted = threading.Event()
             captured: list = []
 
@@ -469,7 +506,7 @@ class TestParallelDispatch:
                 cl._dispatch(
                     _cmd(
                         CommandType.DESTROY_WORKERS,
-                        {"worker_names": ["w-1", "w-1", "w-2", "w-2"]},
+                        {"worker_aliases": ["w-1", "w-1", "w-2", "w-2"]},
                     )
                 ),
                 timeout=2.0,
@@ -484,35 +521,37 @@ class TestParallelDispatch:
 # ------------------------------------------------------------------ #
 
 
-class TestTargetWorkerNames:
+class TestTargetWorkerAliases:
     def test_single_worker_commands(self) -> None:
         for cmd_type in (
             CommandType.START_WORKER,
             CommandType.STOP_WORKER,
             CommandType.DESTROY_WORKER,
         ):
-            assert CommandListener._target_worker_names(
-                _cmd(cmd_type, {"worker_name": "w-1"})
+            assert CommandListener._target_worker_aliases(
+                _cmd(cmd_type, {"worker_alias": "w-1"})
             ) == ["w-1"]
 
-    def test_destroy_workers_sorts_names(self) -> None:
-        names = CommandListener._target_worker_names(
-            _cmd(CommandType.DESTROY_WORKERS, {"worker_names": ["w-3", "w-1", "w-2"]})
+    def test_destroy_workers_sorts_aliases(self) -> None:
+        aliases = CommandListener._target_worker_aliases(
+            _cmd(CommandType.DESTROY_WORKERS, {"worker_aliases": ["w-3", "w-1", "w-2"]})
         )
-        assert names == ["w-1", "w-2", "w-3"]
+        assert aliases == ["w-1", "w-2", "w-3"]
 
-    def test_destroy_workers_dedupes_names(self) -> None:
-        names = CommandListener._target_worker_names(
+    def test_destroy_workers_dedupes_aliases(self) -> None:
+        aliases = CommandListener._target_worker_aliases(
             _cmd(
                 CommandType.DESTROY_WORKERS,
-                {"worker_names": ["w-2", "w-1", "w-2", "w-1", "w-3"]},
+                {"worker_aliases": ["w-2", "w-1", "w-2", "w-1", "w-3"]},
             )
         )
-        assert names == ["w-1", "w-2", "w-3"]
+        assert aliases == ["w-1", "w-2", "w-3"]
 
-    def test_destroy_workers_no_names(self) -> None:
+    def test_destroy_workers_no_aliases(self) -> None:
         assert (
-            CommandListener._target_worker_names(_cmd(CommandType.DESTROY_WORKERS, {}))
+            CommandListener._target_worker_aliases(
+                _cmd(CommandType.DESTROY_WORKERS, {})
+            )
             == []
         )
 
@@ -523,5 +562,13 @@ class TestTargetWorkerNames:
             CommandType.GET_WORKERS,
             CommandType.START_RELAY,
         ):
-            payload = {"worker_name": "w-1"}
-            assert CommandListener._target_worker_names(_cmd(cmd_type, payload)) == []
+            payload = {"worker_alias": "w-1"}
+            assert CommandListener._target_worker_aliases(_cmd(cmd_type, payload)) == []
+
+    def test_legacy_payload_keys(self) -> None:
+        assert CommandListener._target_worker_aliases(
+            _cmd(CommandType.STOP_WORKER, {"worker_name": "w-1"})
+        ) == ["w-1"]
+        assert CommandListener._target_worker_aliases(
+            _cmd(CommandType.DESTROY_WORKERS, {"worker_names": ["w-2", "w-1"]})
+        ) == ["w-1", "w-2"]

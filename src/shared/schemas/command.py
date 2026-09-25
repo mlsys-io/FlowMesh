@@ -15,8 +15,8 @@ class CommandType(StrEnum):
     GET_WORKERS = "GET_WORKERS"
     GET_PROVIDERS = "GET_PROVIDERS"
     STOP_WORKER = "STOP_WORKER"
-    DESTROY_WORKER = "DESTROY_WORKER"  # payload: {worker_name: str}
-    DESTROY_WORKERS = "DESTROY_WORKERS"  # payload: {worker_names: [str]} or null
+    DESTROY_WORKER = "DESTROY_WORKER"  # payload: {worker_alias: str}
+    DESTROY_WORKERS = "DESTROY_WORKERS"  # payload: {worker_aliases: [str]} or null
     START_RELAY = "START_RELAY"
 
 

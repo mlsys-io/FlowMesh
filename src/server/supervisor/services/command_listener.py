@@ -40,6 +40,20 @@ _DESTROY_WORKER_TIMEOUT = 60.0
 _DESTROY_WORKERS_TIMEOUT = 120.0
 
 
+# The `worker_name(s)` fallbacks accept payloads from a root one release behind;
+# remove them in the next minor release.
+def _payload_alias(payload: dict[str, Any] | None) -> str | None:
+    payload = payload or {}
+    alias = payload.get("worker_alias", payload.get("worker_name"))
+    return None if alias is None else str(alias)
+
+
+def _payload_aliases(payload: dict[str, Any] | None) -> list[str] | None:
+    payload = payload or {}
+    aliases = payload.get("worker_aliases", payload.get("worker_names"))
+    return None if aliases is None else [str(alias) for alias in aliases]
+
+
 def _cmd_receiver_loop(
     receiver: TaskReceiver[CommandMessage, CommandResponse],
     q: queue.Queue[tuple[CommandMessage, ResponseHandler]],
@@ -311,16 +325,16 @@ class CommandListener:
             )
         try:
             async with sem:
-                names = self._target_worker_names(cmd)
-                if not names:
+                aliases = self._target_worker_aliases(cmd)
+                if not aliases:
                     return await self._invoke(cmd)
                 async with contextlib.AsyncExitStack() as stack:
-                    for name in names:
-                        if name in self._worker_locks:
-                            lock = self._worker_locks[name]
+                    for alias in aliases:
+                        if alias in self._worker_locks:
+                            lock = self._worker_locks[alias]
                         else:
                             lock = asyncio.Lock()
-                            self._worker_locks[name] = lock
+                            self._worker_locks[alias] = lock
                         await stack.enter_async_context(lock)
                     return await self._invoke(cmd)
         except Exception as exc:
@@ -330,10 +344,10 @@ class CommandListener:
             )
 
     @staticmethod
-    def _target_worker_names(cmd: CommandMessage) -> list[str]:
-        """Names whose per-worker lock the dispatch must hold for FIFO
+    def _target_worker_aliases(cmd: CommandMessage) -> list[str]:
+        """Aliases whose per-worker lock the dispatch must hold for FIFO
         ordering against concurrent ops on the same worker. CREATE
-        commands generate names internally, so locking them is not
+        commands generate aliases internally, so locking them is not
         meaningful (the registry already rejects collisions atomically).
         """
         payload = cmd.payload or {}
@@ -343,11 +357,11 @@ class CommandListener:
                 | CommandType.STOP_WORKER
                 | CommandType.DESTROY_WORKER
             ):
-                name = payload.get("worker_name")
-                return [] if name is None else [str(name)]
+                alias = _payload_alias(payload)
+                return [] if alias is None else [alias]
             case CommandType.DESTROY_WORKERS:
-                raw = payload.get("worker_names")
-                return [] if raw is None else sorted(set(str(n) for n in raw))
+                aliases = _payload_aliases(payload)
+                return [] if aliases is None else sorted(set(aliases))
             case _:
                 return []
 
@@ -390,17 +404,17 @@ class CommandListener:
                 CommandErrorCode.INTERNAL,
             )
 
-        worker_name = cmd.payload.get("worker_name")
-        if worker_name is None:
+        worker_alias = _payload_alias(cmd.payload)
+        if worker_alias is None:
             return CommandResponse.error(
                 cmd,
-                "Missing worker_name in payload for START_WORKER command",
+                "Missing worker_alias in payload for START_WORKER command",
                 CommandErrorCode.INTERNAL,
             )
 
         try:
             result = await asyncio.wait_for(
-                self._wm.start_worker(worker_name), timeout=_START_WORKER_TIMEOUT
+                self._wm.start_worker(worker_alias), timeout=_START_WORKER_TIMEOUT
             )
             return CommandResponse.ok(cmd, data={"success": result})
         except ManagerNotStartedError as exc:
@@ -418,17 +432,17 @@ class CommandListener:
                 CommandErrorCode.INTERNAL,
             )
 
-        worker_name = cmd.payload.get("worker_name")
-        if worker_name is None:
+        worker_alias = _payload_alias(cmd.payload)
+        if worker_alias is None:
             return CommandResponse.error(
                 cmd,
-                "Missing worker_name in payload for STOP_WORKER command",
+                "Missing worker_alias in payload for STOP_WORKER command",
                 CommandErrorCode.INTERNAL,
             )
 
         try:
             result = await asyncio.wait_for(
-                self._wm.stop_worker(worker_name), timeout=_STOP_WORKER_TIMEOUT
+                self._wm.stop_worker(worker_alias), timeout=_STOP_WORKER_TIMEOUT
             )
             return CommandResponse.ok(cmd, data={"success": result})
         except ManagerNotStartedError as exc:
@@ -441,21 +455,29 @@ class CommandListener:
     def _handle_get_workers_cmd(self, cmd: CommandMessage) -> CommandResponse:
         try:
             if payload := cmd.payload:
-                if (worker_name := payload.get("worker_name")) is None:
+                if (worker_alias := _payload_alias(payload)) is None:
                     return CommandResponse.error(
                         cmd,
-                        "Missing worker_name in payload for GET_WORKERS command",
+                        "Missing worker_alias in payload for GET_WORKERS command",
                         CommandErrorCode.INTERNAL,
                     )
                 workers = (
                     [worker]
-                    if (worker := self._wm.get_worker_info(worker_name))
+                    if (worker := self._wm.get_worker_info(worker_alias))
                     else []
                 )
             else:
                 workers = self._wm.list_workers()
+            # `name` is for roots one release behind, whose NodeWorkerInfo still
+            # requires it; remove in the next minor release.
             return CommandResponse.ok(
-                cmd, data={"workers": [worker.model_dump() for worker in workers]}
+                cmd,
+                data={
+                    "workers": [
+                        worker.model_dump() | {"name": worker.alias}
+                        for worker in workers
+                    ]
+                },
             )
         except Exception as exc:
             return CommandResponse.error(
@@ -578,7 +600,7 @@ class CommandListener:
             info = await asyncio.wait_for(
                 self._wm.create_worker(init_config), timeout=_CREATE_WORKER_TIMEOUT
             )
-            return CommandResponse.ok(cmd, data={"worker_name": info.name})
+            return CommandResponse.ok(cmd, data={"worker_alias": info.alias})
         except ProviderUnavailableError as exc:
             return CommandResponse.error(
                 cmd,
@@ -593,16 +615,16 @@ class CommandListener:
             )
 
     async def _handle_destroy_worker_cmd(self, cmd: CommandMessage) -> CommandResponse:
-        worker_name = (cmd.payload or {}).get("worker_name")
-        if not worker_name:
+        worker_alias = _payload_alias(cmd.payload)
+        if not worker_alias:
             return CommandResponse.error(
-                cmd, "Missing worker_name", CommandErrorCode.INTERNAL
+                cmd, "Missing worker_alias", CommandErrorCode.INTERNAL
             )
         try:
             success = await asyncio.wait_for(
-                self._wm.destroy_worker(worker_name), timeout=_DESTROY_WORKER_TIMEOUT
+                self._wm.destroy_worker(worker_alias), timeout=_DESTROY_WORKER_TIMEOUT
             )
-            self._worker_locks.pop(worker_name, None)
+            self._worker_locks.pop(worker_alias, None)
             return CommandResponse.ok(cmd, data={"success": success})
         except ManagerNotStartedError as exc:
             return CommandResponse.error(cmd, str(exc), CommandErrorCode.NOT_READY)
@@ -612,15 +634,15 @@ class CommandListener:
             )
 
     async def _handle_destroy_workers_cmd(self, cmd: CommandMessage) -> CommandResponse:
-        raw_names = (cmd.payload or {}).get("worker_names")
-        names: set[str] | None = set(raw_names) if raw_names is not None else None
+        raw_aliases = _payload_aliases(cmd.payload)
+        aliases = set(raw_aliases) if raw_aliases is not None else None
         try:
             await asyncio.wait_for(
-                self._wm.destroy_workers(names), timeout=_DESTROY_WORKERS_TIMEOUT
+                self._wm.destroy_workers(aliases), timeout=_DESTROY_WORKERS_TIMEOUT
             )
-            if names is not None:
-                for name in names:
-                    self._worker_locks.pop(name, None)
+            if aliases is not None:
+                for alias in aliases:
+                    self._worker_locks.pop(alias, None)
             else:
                 self._worker_locks.clear()
             return CommandResponse.ok(cmd)

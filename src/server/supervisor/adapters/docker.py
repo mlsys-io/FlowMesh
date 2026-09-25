@@ -139,7 +139,7 @@ class DockerWorkerAdapter(WorkerAdapter):
     def __init__(
         self,
         token: WorkerTokenType,
-        name: str,
+        alias: str,
         container_name: str,
         cuda_devices: list[int] | None,
         gpu_arch: GpuArch | None,
@@ -152,7 +152,7 @@ class DockerWorkerAdapter(WorkerAdapter):
         ):
             raise ValueError("Expected at least one CUDA device for GPU worker.")
 
-        super().__init__(token, name, config, owner)
+        super().__init__(token, alias, config, owner)
 
         self.config: DockerWorkerConfig
         self.container_name = container_name
@@ -177,7 +177,7 @@ class DockerWorkerAdapter(WorkerAdapter):
             self._hardware = hardware
         return DockerWorkerInfo(
             id=self.worker_id,
-            name=self.name,
+            alias=self.alias,
             provider=_PROVIDER_NAME,
             status=self.status,
             hardware=hardware,
@@ -657,15 +657,15 @@ class DockerWorkerFactory(WorkerFactory):
                     n=config.gpu_count if config.cuda_devices is None else None,
                 )
 
-        name = self._resolve_worker_name(config)
+        alias = self._resolve_worker_alias(config)
         container_name = (
             config.container_name
             if config.container_name
-            else self._sanitize_container_name(name, config)
+            else self._sanitize_container_name(alias, config)
         )
         worker = DockerWorkerAdapter(
             token=token,
-            name=name,
+            alias=alias,
             container_name=container_name,
             cuda_devices=cuda_devices,
             gpu_arch=gpu_arch,
@@ -723,19 +723,19 @@ class DockerWorkerFactory(WorkerFactory):
         self._worker_id_registry[prefix] = container_id + 1
         return container_id
 
-    def _resolve_worker_name(self, config: DockerWorkerConfig) -> str:
-        return config.worker_alias or self._get_next_worker_name(config.worker_type)
+    def _resolve_worker_alias(self, config: DockerWorkerConfig) -> str:
+        return config.worker_alias or self._get_next_worker_alias(config.worker_type)
 
     def _sanitize_container_name(self, value: str, config: DockerWorkerConfig) -> str:
         raw = str(value or "").strip()
         if not raw:
-            return self._get_next_worker_name(config.worker_type)
+            return self._get_next_worker_alias(config.worker_type)
         sanitized = sanitize_container_name(raw, self._CONTAINER_NAME_MAX_LEN)
         if not sanitized or not self._CONTAINER_NAME_ALLOWED_RE.match(sanitized):
-            return self._get_next_worker_name(config.worker_type)
+            return self._get_next_worker_alias(config.worker_type)
         return sanitized
 
-    def _get_next_worker_name(self, worker_type: WorkerType) -> str:
+    def _get_next_worker_alias(self, worker_type: WorkerType) -> str:
         match worker_type:
             case WorkerType.CPU:
                 prefix = "flowmesh_server_worker_cpu_"

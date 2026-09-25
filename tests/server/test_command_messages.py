@@ -27,9 +27,9 @@ class TestCommandMessage:
     def test_with_payload(self) -> None:
         msg = CommandMessage(
             command=CommandType.STOP_WORKER,
-            payload={"worker_name": "w-1"},
+            payload={"worker_alias": "w-1"},
         )
-        assert msg.payload == {"worker_name": "w-1"}
+        assert msg.payload == {"worker_alias": "w-1"}
 
     def test_command_id_is_unique(self) -> None:
         m1 = CommandMessage(command=CommandType.GET_WORKERS)

@@ -42,8 +42,8 @@ def _mock_supervisor(response: CommandResponse | None = None) -> MagicMock:
 
 
 _WORKERS = [
-    {"id": "wkr-1", "name": "w1", "provider": "docker", "status": "RUNNING"},
-    {"id": "wkr-2", "name": "w2", "provider": "vastai", "status": "STOPPED"},
+    {"id": "wkr-1", "alias": "w1", "provider": "docker", "status": "RUNNING"},
+    {"id": "wkr-2", "alias": "w2", "provider": "vastai", "status": "STOPPED"},
 ]
 
 
@@ -82,7 +82,7 @@ async def test_get_worker_found() -> None:
     ) as ac:
         resp = await ac.get(f"{PREFIX}/stack/workers/w1")
     assert resp.status_code == 200
-    assert resp.json()["name"] == "w1"
+    assert resp.json()["alias"] == "w1"
 
 
 @pytest.mark.anyio
@@ -106,7 +106,7 @@ async def test_create_worker() -> None:
         _ok(
             data={
                 "id": "wkr-3",
-                "name": "new",
+                "alias": "new",
                 "provider": "docker",
                 "status": "RUNNING",
             }
@@ -117,7 +117,7 @@ async def test_create_worker() -> None:
     ) as ac:
         resp = await ac.post(f"{PREFIX}/stack/workers", json={"provider": "docker"})
     assert resp.status_code == 200
-    assert resp.json()["name"] == "new"
+    assert resp.json()["alias"] == "new"
 
 
 @pytest.mark.anyio
@@ -279,7 +279,7 @@ async def test_destroy_workers_with_names() -> None:
         )
     assert resp.status_code == 200
     cmd = sv.exec_cmd.call_args[0][0]
-    assert cmd.payload == {"worker_names": ["w1", "w2"]}
+    assert cmd.payload == {"worker_aliases": ["w1", "w2"]}
 
 
 @pytest.mark.anyio

@@ -123,13 +123,13 @@ class VastAIWorkerAdapter(WorkerAdapter):
     def __init__(
         self,
         token: WorkerTokenType,
-        name: str,
+        alias: str,
         config: VastAIWorkerConfig,
         vastai_client: VastAI,
         instance_pool: ResourcePool[int],
         owner: PrincipalContext,
     ) -> None:
-        super().__init__(token, name, config, owner)
+        super().__init__(token, alias, config, owner)
         self.config: VastAIWorkerConfig
         self._client = vastai_client
         self._instance_pool = instance_pool
@@ -160,7 +160,7 @@ class VastAIWorkerAdapter(WorkerAdapter):
             self._hardware = hardware
         return VastAIWorkerInfo(
             id=self.worker_id,
-            name=self.name,
+            alias=self.alias,
             provider=_PROVIDER_NAME,
             status=self.status,
             hardware=hardware,
@@ -221,20 +221,20 @@ class VastAIWorkerAdapter(WorkerAdapter):
                 logger.error(
                     "Unable to find VastAI instance with ID %s for worker %s.",
                     instance_id,
-                    self.name,
+                    self.alias,
                 )
                 return False
             logger.debug(
                 "Starting existing VastAI instance %s for worker %s.",
                 instance_id,
-                self.name,
+                self.alias,
             )
             err = self._client.start_instance(id=instance_id)
             if err is not None:
                 logger.error(
                     "Failed to start VastAI instance %s for worker %s: %s",
                     instance_id,
-                    self.name,
+                    self.alias,
                     err,
                 )
                 return False
@@ -275,7 +275,7 @@ class VastAIWorkerAdapter(WorkerAdapter):
             if not instance_pool.reserve(instance_id):
                 continue
             logger.debug(
-                "Launching VastAI instance %s for worker %s.", instance_id, self.name
+                "Launching VastAI instance %s for worker %s.", instance_id, self.alias
             )
             gpu_arch = offer_gpu_arch(instance_info.get("gpu_name"))
             env = self._build_env_str()
@@ -286,7 +286,7 @@ class VastAIWorkerAdapter(WorkerAdapter):
                     image=get_worker_image_name(
                         config.docker_registry, config.version, gpu_arch
                     ),
-                    label=config.label or self.name,
+                    label=config.label or self.alias,
                     env=env,
                     cancel_unavail=True,
                     # NOTE(kaiitunnz): The following come from worker's Dockerfile
@@ -300,7 +300,7 @@ class VastAIWorkerAdapter(WorkerAdapter):
                 logger.debug(
                     "Failed to create VastAI instance %s for worker %s: %s",
                     instance_id,
-                    self.name,
+                    self.alias,
                     resp,
                 )
                 instance_pool.release(instance_id)
@@ -309,7 +309,7 @@ class VastAIWorkerAdapter(WorkerAdapter):
                 logger.debug(
                     "Failed to create VastAI instance %s for worker %s: %s",
                     instance_id,
-                    self.name,
+                    self.alias,
                     resp,
                 )
                 instance_pool.release(instance_id)
@@ -331,7 +331,7 @@ class VastAIWorkerAdapter(WorkerAdapter):
             logger.debug(
                 "Successfully created VastAI instance %s for worker %s.",
                 new_instance_id,
-                self.name,
+                self.alias,
             )
             return True
         raise RuntimeError("Failed to launch any VastAI instance.")
@@ -345,21 +345,21 @@ class VastAIWorkerAdapter(WorkerAdapter):
             logger.debug(
                 "Destroying VastAI instance %s created for worker %s.",
                 instance_id,
-                self.name,
+                self.alias,
             )
             err = self._client.destroy_instance(id=instance_id)
         else:
             logger.debug(
                 "Stopping VastAI instance %s for worker %s.",
                 instance_id,
-                self.name,
+                self.alias,
             )
             err = self._client.stop_instance(id=instance_id)
         if err is not None:
             logger.error(
                 "Failed to stop VastAI instance %s for worker %s: %s",
                 instance_id,
-                self.name,
+                self.alias,
                 err,
             )
             self._release_reserved_offer()
@@ -419,7 +419,7 @@ class VastAIWorkerFactory(WorkerFactory):
             self._client_cache[api_key] = client
         return VastAIWorkerAdapter(
             token=token,
-            name=self._resolve_worker_name(config),
+            alias=self._resolve_worker_alias(config),
             config=config,
             vastai_client=client,
             instance_pool=self._instance_pool,
@@ -432,14 +432,14 @@ class VastAIWorkerFactory(WorkerFactory):
         # VastAI instances are torn down during stopping; nothing to release here.
         return
 
-    def _resolve_worker_name(self, config: VastAIWorkerConfig) -> str:
+    def _resolve_worker_alias(self, config: VastAIWorkerConfig) -> str:
         if config.label is not None:
             return config.label
         if config.worker_alias is not None:
             return config.worker_alias
-        return self._get_next_worker_name()
+        return self._get_next_worker_alias()
 
-    def _get_next_worker_name(self) -> str:
+    def _get_next_worker_alias(self) -> str:
         prefix = "flowmesh_vastai_worker_"
         next_id = self._worker_id_registry[prefix]
         self._worker_id_registry[prefix] += 1

@@ -10,7 +10,7 @@ individual machine, cannot be revoked per worker, and admits nobody unless set.
 import hmac
 from hashlib import sha256
 
-from shared.utils.worker_token import EXTERNAL_NAME_SEP, split_external_token
+from shared.utils.worker_token import EXTERNAL_ALIAS_SEP, split_external_token
 
 from ... import env
 from ...hooks import PrincipalContext
@@ -26,18 +26,18 @@ from .base import (
 _PROVIDER_NAME = "external"
 
 
-def mint_external_token(secret: str, name: str) -> WorkerTokenType:
-    """Build the token an external worker named `name` must present.
+def mint_external_token(secret: str, alias: str) -> WorkerTokenType:
+    """Build the token an external worker with alias `alias` must present.
 
-    Deterministic: the same (secret, name) yields the same token, so a worker
+    Deterministic: the same (secret, alias) yields the same token, so a worker
     or supervisor restart re-derives the identity instead of losing it.
     """
-    digest = hmac.new(secret.encode(), name.encode(), sha256).hexdigest()
-    return WorkerTokenType(f"{name}{EXTERNAL_NAME_SEP}{digest}")
+    digest = hmac.new(secret.encode(), alias.encode(), sha256).hexdigest()
+    return WorkerTokenType(f"{alias}{EXTERNAL_ALIAS_SEP}{digest}")
 
 
 def verify_external_token(token: str, secret: str | None = None) -> str | None:
-    """Return the worker name a token proves, or None if it proves nothing.
+    """Return the worker alias a token proves, or None if it proves nothing.
 
     Never raises: every rejection path returns None so a caller can treat "not
     an external token" and "a forged one" identically and fall through to the
@@ -49,11 +49,11 @@ def verify_external_token(token: str, secret: str | None = None) -> str | None:
     parts = split_external_token(token)
     if parts is None:
         return None
-    name, digest = parts
-    expected = hmac.new(configured.encode(), name.encode(), sha256).hexdigest()
+    alias, digest = parts
+    expected = hmac.new(configured.encode(), alias.encode(), sha256).hexdigest()
     # Constant-time compare so a forged digest can't be recovered by timing.
     if hmac.compare_digest(expected, digest):
-        return name
+        return alias
     return None
 
 
@@ -70,11 +70,11 @@ class ExternalWorkerAdapter(WorkerAdapter):
     def __init__(
         self,
         token: WorkerTokenType,
-        name: str,
+        alias: str,
         config: ExternalWorkerConfig,
         owner: PrincipalContext,
     ) -> None:
-        super().__init__(token, name, config, owner)
+        super().__init__(token, alias, config, owner)
         # An external worker is already running when it presents its token.
         self._status: WorkerStatus = WorkerStatus.RUNNING
 
@@ -88,7 +88,7 @@ class ExternalWorkerAdapter(WorkerAdapter):
     def get_info(self) -> WorkerInfo:
         return WorkerInfo(
             id=self.worker_id,
-            name=self.name,
+            alias=self.alias,
             provider=_PROVIDER_NAME,
             status=self._status,
             # Externally managed workers' hardware is not known to the supervisor.
@@ -115,12 +115,12 @@ class ExternalWorkerAdapter(WorkerAdapter):
 
 class ExternalWorkerFactory(WorkerFactory):
     def create_worker(
-        self, token: WorkerTokenType, config: ExternalWorkerConfig, name: str = ""
+        self, token: WorkerTokenType, config: ExternalWorkerConfig, alias: str = ""
     ) -> ExternalWorkerAdapter:
-        resolved = name or (verify_external_token(token) or "")
+        resolved = alias or (verify_external_token(token) or "")
         if not resolved:
             raise ValueError(
-                "external worker token does not carry a verifiable name; "
+                "external worker token does not carry a verifiable alias; "
                 "it must be minted with mint_external_token()"
             )
         return ExternalWorkerAdapter(token, resolved, config, self.system_principal)

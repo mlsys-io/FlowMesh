@@ -432,13 +432,13 @@ class NodeRegistry:
     async def destroy_worker_on_node(
         self,
         node_id: str,
-        worker_name: str,
+        alias: str,
         timeout: float = 60.0,
     ) -> CommandResponse:
         """Send DESTROY_WORKER command to a node and wait for its response."""
         cmd = CommandMessage(
             command=CommandType.DESTROY_WORKER,
-            payload={"worker_name": worker_name},
+            payload={"worker_alias": alias},
         )
         return await self.exec_node_cmd(node_id, cmd, timeout=timeout)
 

@@ -196,14 +196,14 @@ async def register_worker(
 
 
 @router.post(
-    "/{node_id}/workers/{worker_name}/start",
+    "/{node_id}/workers/{alias}/start",
     summary="Start a worker",
     description="Start a worker managed by a node.",
     status_code=status.HTTP_204_NO_CONTENT,
 )
 async def start_node_worker(
     node_id: str,
-    worker_name: str,
+    alias: str,
     principal: PrincipalContext = Depends(authenticate_connection),
     node_registry: NodeRegistry = Depends(get_node_registry),
     logger: logging.Logger = Depends(get_logger),
@@ -212,7 +212,7 @@ async def start_node_worker(
         principal, ResourceKind.NODE, node_id, ResourceAction.WRITE, logger
     )
     cmd = CommandMessage(
-        command=CommandType.START_WORKER, payload={"worker_name": worker_name}
+        command=CommandType.START_WORKER, payload={"worker_alias": alias}
     )
     try:
         resp = await node_registry.exec_node_cmd(node_id, cmd)
@@ -233,14 +233,14 @@ async def start_node_worker(
 
 
 @router.post(
-    "/{node_id}/workers/{worker_name}/stop",
+    "/{node_id}/workers/{alias}/stop",
     summary="Stop a worker",
     description="Stop a worker managed by a node.",
     status_code=status.HTTP_204_NO_CONTENT,
 )
 async def stop_node_worker(
     node_id: str,
-    worker_name: str,
+    alias: str,
     principal: PrincipalContext = Depends(authenticate_connection),
     node_registry: NodeRegistry = Depends(get_node_registry),
     logger: logging.Logger = Depends(get_logger),
@@ -249,7 +249,7 @@ async def stop_node_worker(
         principal, ResourceKind.NODE, node_id, ResourceAction.WRITE, logger
     )
     cmd = CommandMessage(
-        command=CommandType.STOP_WORKER, payload={"worker_name": worker_name}
+        command=CommandType.STOP_WORKER, payload={"worker_alias": alias}
     )
     try:
         resp = await node_registry.exec_node_cmd(node_id, cmd)

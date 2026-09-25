@@ -100,7 +100,7 @@ class TestExternalAdapter:
     def _adapter(self, name: str = "fm-worker-0") -> ExternalWorkerAdapter:
         factory = ExternalWorkerFactory(system_principal=None)  # type: ignore[arg-type]
         return factory.create_worker(
-            mint_external_token(SECRET, name), ExternalWorkerConfig(), name=name
+            mint_external_token(SECRET, name), ExternalWorkerConfig(), alias=name
         )
 
     def test_starts_in_running_because_it_is_already_running(self) -> None:
@@ -119,14 +119,14 @@ class TestExternalAdapter:
     ) -> None:
         info = self._adapter().get_info()
         assert info.provider == "external"
-        assert info.name == "fm-worker-0"
+        assert info.alias == "fm-worker-0"
         #: The supervisor cannot introspect a machine it does not own; a made-up
         #: profile would be fed straight to the scheduler.
         assert info.hardware is None
 
     def test_create_worker_refuses_a_token_with_no_verifiable_name(self) -> None:
         factory = ExternalWorkerFactory(system_principal=None)  # type: ignore[arg-type]
-        with pytest.raises(ValueError, match="verifiable name"):
+        with pytest.raises(ValueError, match="verifiable alias"):
             factory.create_worker("garbage", ExternalWorkerConfig())  # type: ignore[arg-type]
 
     def test_destroy_does_not_pretend_to_stop_the_process(self) -> None:
@@ -207,7 +207,7 @@ class TestDockerlessHost:
                 provider="external", worker_token=token, init_on_start=False
             )
         )
-        assert worker.name == "fm-worker-0"
+        assert worker.alias == "fm-worker-0"
 
 
 class _Aborted(Exception):
@@ -328,7 +328,7 @@ class TestRegisterWorkerExternalEnrollment:
         info = await servicer._worker_manager.admit_worker(cast(Any, token))
 
         assert info is not None
-        assert info.name == "fm-worker-0"
+        assert info.alias == "fm-worker-0"
         assert info.provider == "external"
         assert info.status is WorkerStatus.RUNNING
 
@@ -353,7 +353,7 @@ class TestRegisterWorkerExternalEnrollment:
         squatter = ExternalWorkerFactory(system_principal=None).create_worker(  # type: ignore[arg-type]
             mint_external_token("other-secret", "fm-worker-0"),
             ExternalWorkerConfig(),
-            name="fm-worker-0",
+            alias="fm-worker-0",
         )
         servicer._registry.add(squatter)
 
@@ -429,7 +429,7 @@ class TestRegisterWorkerExternalEnrollment:
         token = servicer._registry.new_token()
         # Simulate WorkerManager having created + registered the adapter already.
         adapter = ExternalWorkerFactory(system_principal=None).create_worker(  # type: ignore[arg-type]
-            token, ExternalWorkerConfig(), name="docker-worker-0"
+            token, ExternalWorkerConfig(), alias="docker-worker-0"
         )
         servicer._registry.add(adapter)
 
@@ -474,7 +474,7 @@ class TestRegisterWorkerRecordsVerifiedAlias:
         servicer, redis = _build_servicer()
         token = servicer._registry.new_token()
         worker = ExternalWorkerFactory(system_principal=None).create_worker(  # type: ignore[arg-type]
-            token, ExternalWorkerConfig(), name="flowmesh_server_worker_cpu_0"
+            token, ExternalWorkerConfig(), alias="flowmesh_server_worker_cpu_0"
         )
         servicer._registry.add(worker)
 
@@ -497,6 +497,6 @@ def test_worker_environment_carries_name_as_alias() -> None:
     worker = ExternalWorkerFactory(system_principal=principal).create_worker(
         WorkerRegistry().new_token(),
         ExternalWorkerConfig(worker_alias="requested"),
-        name="resolved-name",
+        alias="resolved-name",
     )
     assert worker._base_environment()["WORKER_ALIAS"] == "resolved-name"

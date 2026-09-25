@@ -221,7 +221,7 @@ class TestDockerWorkerRuntimeSelection:
             principal_type="user",
             scopes=[],
         )
-        worker.name = "worker-gpu-3"
+        worker.alias = "worker-gpu-3"
         worker.container_name = "worker-gpu-3"
         worker.cuda_devices = [3]
         worker.gpu_arch = GpuArch.BLACKWELL
@@ -298,7 +298,7 @@ class TestCapacityChangeReporting:
 
         worker = MagicMock()
         info = MagicMock()
-        worker.name = "w-1"
+        worker.alias = "w-1"
         worker.get_info.return_value = info
         wm._create_worker = MagicMock(return_value=worker)  # type: ignore[method-assign]
         wm._start_worker = AsyncMock(return_value=True)  # type: ignore[method-assign]
@@ -320,9 +320,9 @@ class TestCapacityChangeReporting:
         wm._capacity_change_callback = callback
 
         worker = MagicMock()
-        worker.name = "w-1"
-        wm._registry.try_get_by_name.return_value = worker  # type: ignore[attr-defined]
-        wm._registry.try_pop_by_name = MagicMock()  # type: ignore[attr-defined, method-assign]
+        worker.alias = "w-1"
+        wm._registry.try_get_by_alias.return_value = worker  # type: ignore[attr-defined]
+        wm._registry.try_pop_by_alias = MagicMock()  # type: ignore[attr-defined, method-assign]
         wm._stop_and_destroy_worker = AsyncMock(return_value=True)  # type: ignore[method-assign]
 
         result = self._run(wm.destroy_worker("w-1"))
