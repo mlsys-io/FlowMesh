@@ -8,7 +8,7 @@ from httpx import ASGITransport, AsyncClient
 
 from server.app_state import get_worker_registry
 from server.auth.security import PrincipalContext, authenticate_connection
-from server.registries.worker import Worker, cordon_member
+from server.registries.worker import Worker
 from server.routers.v1 import workers as workers_router
 from server.schemas.worker import WorkerCordon
 from shared.schemas.worker import WorkerStatus
@@ -33,11 +33,9 @@ def _registry(workers: list[Worker]) -> MagicMock:
     registry = MagicMock()
     registry.get_worker_async = AsyncMock(side_effect=by_id.get)
     registry.is_worker_stale_async = AsyncMock(return_value=False)
-    registry.cordoned_members_async = AsyncMock(
-        return_value={cordon_member("node", "alpha")}
-    )
+    registry.is_cordoned_async = AsyncMock(return_value=True)
     registry.set_cordon_async = AsyncMock(return_value=True)
-    registry.live_worker_ids_async = AsyncMock(
+    registry.live_worker_ids_for_cordon_async = AsyncMock(
         side_effect=lambda cordon: [
             w.id
             for w in workers

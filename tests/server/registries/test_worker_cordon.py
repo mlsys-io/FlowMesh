@@ -5,13 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from server.clients.redis import WORKERS_CORDONED_SET_KEY, WORKERS_SET_KEY
-from server.registries.worker import (
-    Worker,
-    WorkerRegistry,
-    cordon_member,
-    is_cordoned,
-    parse_cordon_member,
-)
+from server.registries.worker import Worker, WorkerRegistry
 from server.schemas.worker import WorkerCordon
 from shared.schemas.worker import WorkerCapabilities, WorkerStatus
 from shared.tasks import TaskEnvelopeStrict
@@ -43,22 +37,30 @@ def _worker(worker_id: str, alias: str | None, node_alias: str = "node-a") -> Wo
     )
 
 
+def _cordon(alias: str, node_alias: str = "node-a") -> WorkerCordon:
+    return WorkerCordon(node_alias=node_alias, alias=alias)
+
+
 class _Registry(WorkerRegistry):
     def __init__(
         self,
         workers: list[Worker],
-        cordoned: set[str],
+        cordons: Sequence[WorkerCordon] = (),
         stale: frozenset[str] = frozenset(),
     ) -> None:
         self._workers = {w.id: w for w in workers}
         self._stale = stale
-        self.cordoned = cordoned
+        self.cordoned: set[str] = set()
         rds: Any = MagicMock()
         rds.sync.set_members.side_effect = self._set_members
         rds.asyncio.set_members = AsyncMock(side_effect=self._set_members)
+        rds.sync.sadd.side_effect = self._sadd
+        rds.sync.srem.side_effect = self._srem
         rds.asyncio.sadd = AsyncMock(side_effect=self._sadd)
         rds.asyncio.srem = AsyncMock(side_effect=self._srem)
         super().__init__(cast(Any, rds))
+        for cordon in cordons:
+            self.set_cordon(cordon, cordoned=True)
 
     def _set_members(self, key: str) -> set[str]:
         if key == WORKERS_CORDONED_SET_KEY:
@@ -83,8 +85,14 @@ class _Registry(WorkerRegistry):
     async def get_worker_async(self, worker_id: str) -> Worker | None:
         return self._workers.get(worker_id)
 
+    def get_worker_ids(self) -> set[str]:
+        return set(self._workers)
+
     async def get_worker_ids_async(self) -> set[str]:
         return set(self._workers)
+
+    def get_workers(self, worker_ids: Sequence[str]) -> list[Worker | None]:
+        return [self._workers.get(worker_id) for worker_id in worker_ids]
 
     async def get_workers_async(self, worker_ids: Sequence[str]) -> list[Worker | None]:
         return [self._workers.get(worker_id) for worker_id in worker_ids]
@@ -102,44 +110,36 @@ class _Registry(WorkerRegistry):
 def test_cordoned_worker_is_not_offered_new_work() -> None:
     registry = _Registry(
         [_worker("wkr-1", "alpha"), _worker("wkr-2", "beta")],
-        cordoned={cordon_member("node-a", "alpha")},
+        cordons=[_cordon("alpha")],
     )
     assert [w.id for w in registry.idle_satisfying_pool(_task())] == ["wkr-2"]
 
 
 def test_cordoned_worker_is_excluded_from_the_eligibility_set() -> None:
-    registry = _Registry(
-        [_worker("wkr-1", "alpha")], cordoned={cordon_member("node-a", "alpha")}
-    )
+    registry = _Registry([_worker("wkr-1", "alpha")], cordons=[_cordon("alpha")])
     assert registry.satisfying_workers(_task()) == []
 
 
 def test_same_alias_on_another_node_is_not_cordoned() -> None:
     registry = _Registry(
         [_worker("wkr-1", "alpha", "node-a"), _worker("wkr-2", "alpha", "node-b")],
-        cordoned={cordon_member("node-a", "alpha")},
+        cordons=[_cordon("alpha")],
     )
     assert [w.id for w in registry.idle_satisfying_pool(_task())] == ["wkr-2"]
 
 
 def test_cordon_matches_a_worker_reregistered_under_a_new_id() -> None:
-    registry = _Registry(
-        [_worker("wkr-9", "alpha")], cordoned={cordon_member("node-a", "alpha")}
-    )
+    registry = _Registry([_worker("wkr-9", "alpha")], cordons=[_cordon("alpha")])
     assert registry.idle_satisfying_pool(_task()) == []
 
 
 def test_a_worker_with_no_alias_is_not_excluded() -> None:
-    registry = _Registry(
-        [_worker("wkr-1", None)], cordoned={cordon_member("node-a", "alpha")}
-    )
+    registry = _Registry([_worker("wkr-1", None)], cordons=[_cordon("alpha")])
     assert [w.id for w in registry.idle_satisfying_pool(_task())] == ["wkr-1"]
 
 
 def test_the_cordon_set_is_read_once_per_dispatch() -> None:
-    registry = _Registry(
-        [_worker(f"wkr-{i}", f"alias-{i}") for i in range(10)], cordoned=set()
-    )
+    registry = _Registry([_worker(f"wkr-{i}", f"alias-{i}") for i in range(10)])
     registry.idle_satisfying_pool(_task())
     rds = cast(Any, registry._rds)
     cordon_reads = [
@@ -153,7 +153,7 @@ def test_the_cordon_set_is_read_once_per_dispatch() -> None:
 def test_list_workers_reports_cordon_state() -> None:
     registry = _Registry(
         [_worker("wkr-1", "alpha"), _worker("wkr-2", "beta")],
-        cordoned={cordon_member("node-a", "alpha")},
+        cordons=[_cordon("alpha")],
     )
     by_id = {w.id: w.cordoned for w in registry.list_workers()}
     assert by_id == {"wkr-1": True, "wkr-2": False}
@@ -161,8 +161,8 @@ def test_list_workers_reports_cordon_state() -> None:
 
 @pytest.mark.asyncio
 async def test_set_cordon_reports_whether_it_changed_anything() -> None:
-    registry = _Registry([], cordoned=set())
-    cordon = WorkerCordon(node_alias="node-a", alias="alpha")
+    registry = _Registry([])
+    cordon = _cordon("alpha")
     assert await registry.set_cordon_async(cordon, cordoned=True) is True
     assert await registry.set_cordon_async(cordon, cordoned=True) is False
     assert await registry.list_cordons_async() == [cordon]
@@ -170,22 +170,23 @@ async def test_set_cordon_reports_whether_it_changed_anything() -> None:
     assert await registry.set_cordon_async(cordon, cordoned=False) is False
 
 
-def test_cordon_member_round_trips_separator_characters() -> None:
-    member = cordon_member("node/a", 'we"ird,alias')
-    assert parse_cordon_member(member) == WorkerCordon(
-        node_alias="node/a", alias='we"ird,alias'
-    )
-    assert parse_cordon_member("not-json") is None
-
-
-def test_is_cordoned_keys_on_node_alias_and_worker_alias() -> None:
-    members = {cordon_member("node-a", "alpha")}
-    assert is_cordoned(_worker("wkr-1", "alpha", "node-a"), members)
-    assert not is_cordoned(_worker("wkr-1", "alpha", "node-b"), members)
+def test_list_cordons_round_trips_separator_characters() -> None:
+    cordon = _cordon('we"ird,alias', "node/a")
+    registry = _Registry([], cordons=[cordon, _cordon("alpha")])
+    registry.cordoned.add("not-json")
+    assert registry.list_cordons() == [_cordon("alpha"), cordon]
 
 
 @pytest.mark.asyncio
-async def test_live_worker_ids_match_the_key_and_skip_stale_records() -> None:
+async def test_is_cordoned_keys_on_node_alias_and_worker_alias() -> None:
+    registry = _Registry([], cordons=[_cordon("alpha")])
+    assert await registry.is_cordoned_async(_worker("wkr-1", "alpha", "node-a"))
+    assert not await registry.is_cordoned_async(_worker("wkr-1", "alpha", "node-b"))
+    assert not registry.is_cordoned(_worker("wkr-1", None, "node-a"))
+
+
+@pytest.mark.asyncio
+async def test_live_worker_ids_for_cordon_match_the_key_and_skip_stale() -> None:
     registry = _Registry(
         [
             _worker("wkr-1", "alpha", "node-a"),
@@ -193,8 +194,8 @@ async def test_live_worker_ids_match_the_key_and_skip_stale_records() -> None:
             _worker("wkr-3", "alpha", "node-b"),
             _worker("wkr-4", "beta", "node-a"),
         ],
-        cordoned=set(),
         stale=frozenset({"wkr-1"}),
     )
-    cordon = WorkerCordon(node_alias="node-a", alias="alpha")
-    assert await registry.live_worker_ids_async(cordon) == ["wkr-2"]
+    cordon = _cordon("alpha")
+    assert await registry.live_worker_ids_for_cordon_async(cordon) == ["wkr-2"]
+    assert registry.live_worker_ids_for_cordon(cordon) == ["wkr-2"]

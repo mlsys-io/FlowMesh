@@ -13,7 +13,7 @@ from ...auth.security import (
     resolve_accessible_ids,
 )
 from ...hooks import ResourceAction, ResourceKind
-from ...registries.worker import WorkerInfo, WorkerRegistry, is_cordoned
+from ...registries.worker import WorkerInfo, WorkerRegistry
 from ...schemas.worker import (
     WorkerCordon,
     WorkerCordonByAlias,
@@ -89,7 +89,7 @@ async def get_worker(
             status_code=status.HTTP_404_NOT_FOUND, detail="worker not found"
         )
     stale = await registry.is_worker_stale_async(worker.id)
-    cordoned = is_cordoned(worker, await registry.cordoned_members_async())
+    cordoned = await registry.is_cordoned_async(worker)
     return WorkerInfo(**worker.model_dump(), stale=stale, cordoned=cordoned)
 
 
@@ -129,7 +129,7 @@ async def _set_cordon(
 ) -> WorkerCordonResult:
     cordon = await _resolve_cordon(request, registry, principal, logger)
     changed = await registry.set_cordon_async(cordon, cordoned=cordoned)
-    worker_ids = await registry.live_worker_ids_async(cordon)
+    worker_ids = await registry.live_worker_ids_for_cordon_async(cordon)
     logger.info(
         "%s %s/%s (workers: %s)",
         "Cordoned" if cordoned else "Uncordoned",
