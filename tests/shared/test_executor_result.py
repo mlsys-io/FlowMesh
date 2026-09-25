@@ -8,6 +8,7 @@ from pydantic import Field, ValidationError
 
 from shared.schemas.artifact import ArtifactContext, ArtifactRef
 from shared.schemas.result import (
+    APIGroupItem,
     APIItem,
     APIResult,
     BaseExecutorResult,
@@ -214,3 +215,56 @@ def test_api_item_round_trip_construct_serialize_validate() -> None:
         {"index": 1, "url": "u", "status_code": 200, "json": {"a": 1}}
     )
     assert by_alias.response_json == {"a": 1}
+
+
+def test_api_result_payload_uses_wire_alias_json() -> None:
+    """A plain model_dump emits ``json`` (the wire alias), never ``response_json``."""
+    result = APIResult.model_validate(
+        {
+            "executor": "api",
+            "method": "POST",
+            "url": "http://example.com/v1/chat/completions",
+            "status_code": 200,
+            "items": [
+                {
+                    "index": 0,
+                    "url": "http://example.com/v1/chat/completions",
+                    "status_code": 200,
+                    "json": {"choices": [{"message": {"content": "hello"}}]},
+                    "text": "hello",
+                },
+                {
+                    "index": 1,
+                    "rows": [
+                        {
+                            "index": 0,
+                            "url": "http://example.com/v1/chat/completions",
+                            "status_code": 200,
+                            "json": {"choices": [{"message": {"content": "grouped"}}]},
+                        }
+                    ],
+                },
+            ],
+        }
+    )
+
+    payload = result.model_dump()
+
+    assert "response_json" not in payload
+    assert payload["items"][0]["json"] == {
+        "choices": [{"message": {"content": "hello"}}]
+    }
+    assert payload["items"][1]["rows"][0]["json"] == {
+        "choices": [{"message": {"content": "grouped"}}]
+    }
+
+    # The server-side result model validates the aliased payload back.
+    reloaded = APIResult.model_validate(payload)
+    first = reloaded.items[0]
+    assert isinstance(first, APIItem)
+    assert first.response_json["choices"][0]["message"]["content"] == "hello"
+    grouped = reloaded.items[1]
+    assert isinstance(grouped, APIGroupItem)
+    assert grouped.rows[0].response_json["choices"][0]["message"]["content"] == (
+        "grouped"
+    )

@@ -217,7 +217,9 @@ class APIItem(StrictModel):
     wire key stays ``json``.
     """
 
-    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+    model_config = ConfigDict(
+        extra="forbid", populate_by_name=True, serialize_by_alias=True
+    )
 
     index: int
     url: str
