@@ -1,4 +1,5 @@
-"""Tests for how the worker manager reports a worker that fails to start."""
+"""Tests for how the worker manager reports a worker that fails to start or is
+torn down."""
 
 import logging
 from unittest.mock import AsyncMock, MagicMock
@@ -17,6 +18,10 @@ def _worker(*, started: bool) -> MagicMock:
     worker.status = WorkerStatus.STOPPED
     worker.start = AsyncMock(return_value=started)
     return worker
+
+
+def _info_messages(caplog: pytest.LogCaptureFixture) -> list[str]:
+    return [r.getMessage() for r in caplog.records if r.levelno == logging.INFO]
 
 
 class TestStartWorkerFailure:
@@ -62,3 +67,40 @@ class TestStartWorkerFailure:
         assert [r for r in caplog.records if r.levelno >= logging.ERROR] == []
         wm._stop_and_destroy_worker.assert_not_awaited()
         registry.try_pop.assert_not_called()
+
+
+class TestStopAndDestroyWorkerLog:
+    @pytest.mark.asyncio
+    async def test_a_worker_that_failed_to_start_is_logged_as_destroyed(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        wm = StubWorkerManager()
+        wm._destroy_worker = MagicMock()  # type: ignore[method-assign]
+        worker = _worker(started=False)
+
+        with caplog.at_level(logging.INFO, logger="test.supervisor"):
+            assert await wm._start_worker(worker) is False
+
+        assert _info_messages(caplog) == [
+            "Destroying worker gpu_0 that is not running.",
+            "Worker gpu_0 destroyed.",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_a_running_worker_is_logged_as_stopped(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        wm = StubWorkerManager()
+        wm._destroy_worker = MagicMock()  # type: ignore[method-assign]
+        worker = _worker(started=True)
+        worker.status = WorkerStatus.RUNNING
+        worker.stop = AsyncMock(return_value=True)
+
+        with caplog.at_level(logging.INFO, logger="test.supervisor"):
+            assert await wm._stop_and_destroy_worker(worker) is True
+
+        worker.stop.assert_awaited_once_with()
+        assert _info_messages(caplog) == [
+            "Stopping worker gpu_0...",
+            "Worker gpu_0 stopped.",
+        ]

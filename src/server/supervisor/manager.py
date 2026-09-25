@@ -371,8 +371,9 @@ class WorkerManager:
     async def _stop_and_destroy_worker(self, worker: WorkerAdapter) -> bool:
         worker_alias = worker.alias
         success = True
+        was_running = worker.status in (WorkerStatus.STARTING, WorkerStatus.RUNNING)
 
-        if worker.status in (WorkerStatus.STARTING, WorkerStatus.RUNNING):
+        if was_running:
             self.logger.info("Stopping worker %s...", worker_alias)
             try:
                 success = await worker.stop()
@@ -392,8 +393,10 @@ class WorkerManager:
             )
             success = False
 
-        if success:
+        if success and was_running:
             self.logger.info("Worker %s stopped.", worker_alias)
+        elif success:
+            self.logger.info("Worker %s destroyed.", worker_alias)
 
         return success
 
