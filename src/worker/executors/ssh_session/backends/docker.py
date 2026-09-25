@@ -159,7 +159,7 @@ class DockerSessionBackend(SSHSessionBackend):
             container_cmd = self._resolve_noninteractive_command(client, cfg)
 
         container_name = (
-            f"{request.owner}_ssh-" f"{request.task_id[:8]}-{request.session_id[:8]}"
+            f"{request.owner}_ssh-{request.task_id[:8]}-{request.session_id[:8]}"
         )
         mount_plan = self._build_mount_plan(
             client,
