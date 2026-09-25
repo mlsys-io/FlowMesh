@@ -149,12 +149,8 @@ async def _set_cordon(
     summary="Cordon a worker",
     description=(
         "Stop offering new tasks to a worker, selected by `worker_id` or by "
-        "`node_alias` and `alias`. The worker keeps running and work already "
-        "dispatched to it runs to completion. The cordon is keyed on the node "
-        "alias and the worker alias and persists until uncordoned: it applies "
-        "when the worker reconnects under a new id, and to a worker that "
-        "registers under that key later. `worker_ids` lists the live workers "
-        "the cordon currently matches."
+        "`node_alias` and `alias`. Work already dispatched runs to completion, "
+        "and the cordon persists until uncordoned."
     ),
     response_description="Cordon result",
 )

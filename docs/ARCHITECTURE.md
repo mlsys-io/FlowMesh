@@ -194,11 +194,8 @@ scripts/dev/            compile_protos, sync_requirements, check_env_examples
   already dispatched, but is left out of both the idle pool and the eligibility
   set, so tasks neither go to it nor wait for it. The cordon is keyed on
   `(node_alias, alias)` and lasts until it is uncordoned, independent of any
-  worker's lifecycle: it holds when the worker reconnects under a new id or its
-  node re-registers under a new node id, and a worker that registers under a
-  cordoned key later starts cordoned. Cordon and uncordon take a worker id or
-  the key itself, so a key with no registered worker can be cordoned or
-  released.
+  worker's lifecycle, so it also applies to a worker that registers under the
+  key later.
 - **Cursor pagination.** List endpoints accept `limit` and `before` /
   `after` cursors. The cursor is an opaque base64 of `(timestamp, id)`;
   do not parse client-side.

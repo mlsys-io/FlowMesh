@@ -65,8 +65,8 @@ self-authenticate the same way, sending `FLOWMESH_API_KEY` as the bearer.
 |--------|------|-------------|
 | GET | `/api/v1/workers` | List workers. Filters: `alias`, `namespace`, `cluster`, `status`, `tags`. |
 | GET | `/api/v1/workers/{id}` | Worker details + hardware. |
-| POST | `/api/v1/workers/{cordon,uncordon}` | Stop / resume offering new tasks to a worker. Body: `{"worker_id": …}` or `{"node_alias": …, "alias": …}`; a cordon by alias needs no registered worker. The response lists the live `worker_ids` the key matches. |
-| GET | `/api/v1/workers/cordons` | List cordons as `{node_alias, alias}` pairs, including those with no registered worker. |
+| POST | `/api/v1/workers/{cordon,uncordon}` | Stop / resume offering new tasks to a worker. |
+| GET | `/api/v1/workers/cordons` | List cordoned workers. |
 | GET | `/api/v1/nodes` | List nodes (supervisors). |
 | POST | `/api/v1/nodes/register` | Register a node; `409 Conflict` while another live node holds the same alias. |
 | GET | `/api/v1/nodes/{id}/workers` | List workers under a node. |
