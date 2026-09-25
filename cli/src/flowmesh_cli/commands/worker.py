@@ -75,33 +75,64 @@ def list_workers(
     logging.log(json.dumps([w.model_dump(mode="json") for w in workers], indent=2))
 
 
+def _set_cordon(
+    cordoned: bool,
+    worker_id: str | None,
+    node_alias: str | None,
+    alias: str | None,
+) -> None:
+    client = FlowMesh()
+    try:
+        if worker_id is not None and node_alias is None and alias is None:
+            set_by_id = client.workers.cordon if cordoned else client.workers.uncordon
+            result = set_by_id(worker_id)
+        elif worker_id is None and node_alias and alias:
+            set_by_alias = (
+                client.workers.cordon_alias
+                if cordoned
+                else client.workers.uncordon_alias
+            )
+            result = set_by_alias(node_alias, alias)
+        else:
+            logging.error("Pass a WORKER_ID, or both --node-alias and --alias.")
+            raise typer.Exit(code=2)
+    except FlowMeshError as exc:
+        logging.error(str(exc))
+        raise typer.Exit(code=1)
+    logging.log(result.model_dump_json(indent=2))
+
+
 @app.command()
-def cordon(worker_id: str = typer.Argument(..., help="Worker identifier")) -> None:
+def cordon(
+    worker_id: str | None = typer.Argument(None, help="Worker identifier"),
+    node_alias: str | None = typer.Option(
+        None, "--node-alias", help="Node alias, with --alias instead of WORKER_ID"
+    ),
+    alias: str | None = typer.Option(
+        None, "--alias", help="Worker alias, with --node-alias instead of WORKER_ID"
+    ),
+) -> None:
     """Stop offering new tasks to a worker without stopping it."""
-    client = FlowMesh()
-    try:
-        result = client.workers.cordon(worker_id)
-    except FlowMeshError as exc:
-        logging.error(str(exc))
-        raise typer.Exit(code=1)
-    logging.log(result.model_dump_json(indent=2))
+    _set_cordon(True, worker_id, node_alias, alias)
 
 
 @app.command()
-def uncordon(worker_id: str = typer.Argument(..., help="Worker identifier")) -> None:
+def uncordon(
+    worker_id: str | None = typer.Argument(None, help="Worker identifier"),
+    node_alias: str | None = typer.Option(
+        None, "--node-alias", help="Node alias, with --alias instead of WORKER_ID"
+    ),
+    alias: str | None = typer.Option(
+        None, "--alias", help="Worker alias, with --node-alias instead of WORKER_ID"
+    ),
+) -> None:
     """Allow a cordoned worker to receive tasks again."""
-    client = FlowMesh()
-    try:
-        result = client.workers.uncordon(worker_id)
-    except FlowMeshError as exc:
-        logging.error(str(exc))
-        raise typer.Exit(code=1)
-    logging.log(result.model_dump_json(indent=2))
+    _set_cordon(False, worker_id, node_alias, alias)
 
 
 @app.command("cordons")
 def list_cordons() -> None:
-    """List active cordons."""
+    """List cordons, including those with no worker registered."""
     client = FlowMesh()
     try:
         cordons = client.workers.list_cordons()
@@ -109,18 +140,3 @@ def list_cordons() -> None:
         logging.error(str(exc))
         raise typer.Exit(code=1)
     logging.log(json.dumps([c.model_dump(mode="json") for c in cordons], indent=2))
-
-
-@app.command("remove-cordon")
-def remove_cordon(
-    node_alias: str = typer.Argument(..., help="Alias of the worker's node"),
-    alias: str = typer.Argument(..., help="Worker alias"),
-) -> None:
-    """Remove a cordon by node alias and worker alias, e.g. for an offline worker."""
-    client = FlowMesh()
-    try:
-        result = client.workers.remove_cordon(node_alias, alias)
-    except FlowMeshError as exc:
-        logging.error(str(exc))
-        raise typer.Exit(code=1)
-    logging.log(result.model_dump_json(indent=2))

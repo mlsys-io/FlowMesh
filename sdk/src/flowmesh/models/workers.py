@@ -132,3 +132,4 @@ class WorkerCordon(BaseModel):
 class WorkerCordonResult(WorkerCordon):
     cordoned: bool
     changed: bool
+    worker_ids: list[str] = Field(default_factory=list)

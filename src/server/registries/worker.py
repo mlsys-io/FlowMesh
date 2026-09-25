@@ -489,6 +489,20 @@ class WorkerRegistry:
         ]
         return sorted(cordons, key=lambda c: (c.node_alias, c.alias))
 
+    async def live_worker_ids_async(self, cordon: WorkerCordon) -> list[str]:
+        """Ids of non-stale workers registered under the cordon's key."""
+        worker_ids: list[str] = []
+        for worker_id in await self.get_worker_ids_async():
+            worker = await self.get_worker_async(worker_id)
+            if (
+                worker is not None
+                and worker.node_alias == cordon.node_alias
+                and worker.alias == cordon.alias
+                and not await self.is_worker_stale_async(worker_id)
+            ):
+                worker_ids.append(worker_id)
+        return sorted(worker_ids)
+
     async def set_cordon_async(self, cordon: WorkerCordon, cordoned: bool) -> bool:
         """Add or remove a cordon. Returns whether the cordon set changed."""
         member = cordon_member(cordon.node_alias, cordon.alias)

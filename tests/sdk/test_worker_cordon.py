@@ -1,4 +1,5 @@
 import json
+from typing import Any
 
 import pytest
 import respx
@@ -12,12 +13,19 @@ from server.routers.v1.workers import router as workers_router
 
 from .router_app import TEST_BASE_URL, route_url
 
-_RESULT = {
+_RESULT: dict[str, Any] = {
     "node_alias": "node-a",
     "alias": "fm-worker-0",
     "cordoned": True,
     "changed": True,
+    "worker_ids": ["wkr-1"],
 }
+_BY_ID = {"worker_id": "wkr-1"}
+_BY_ALIAS = {"node_alias": "node-a", "alias": "fm-worker-0"}
+
+
+def _sent(route: respx.Route) -> Any:
+    return json.loads(route.calls[0].request.content)
 
 
 @pytest.fixture
@@ -33,21 +41,34 @@ def cli_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 class TestSyncCordon:
     @respx.mock
-    def test_cordon(self, mock_client: FlowMesh) -> None:
-        route = respx.post(route_url("cordon_worker", worker_id="wkr-1")).respond(
-            json=_RESULT
-        )
-        assert mock_client.workers.cordon("wkr-1") == WorkerCordonResult.model_validate(
-            _RESULT
-        )
-        assert route.calls[0].request.content == b""
+    def test_cordon_by_id(self, mock_client: FlowMesh) -> None:
+        route = respx.post(route_url("cordon_worker")).respond(json=_RESULT)
+        result = mock_client.workers.cordon("wkr-1")
+        assert result == WorkerCordonResult.model_validate(_RESULT)
+        assert _sent(route) == _BY_ID
 
     @respx.mock
-    def test_uncordon(self, mock_client: FlowMesh) -> None:
-        respx.post(route_url("uncordon_worker", worker_id="wkr-1")).respond(
+    def test_cordon_by_alias(self, mock_client: FlowMesh) -> None:
+        route = respx.post(route_url("cordon_worker")).respond(json=_RESULT)
+        mock_client.workers.cordon_alias("node-a", "fm-worker-0")
+        assert _sent(route) == _BY_ALIAS
+
+    @respx.mock
+    def test_uncordon_by_id(self, mock_client: FlowMesh) -> None:
+        route = respx.post(route_url("uncordon_worker")).respond(
             json={**_RESULT, "cordoned": False}
         )
         assert mock_client.workers.uncordon("wkr-1").cordoned is False
+        assert _sent(route) == _BY_ID
+
+    @respx.mock
+    def test_uncordon_by_alias(self, mock_client: FlowMesh) -> None:
+        route = respx.post(route_url("uncordon_worker")).respond(
+            json={**_RESULT, "cordoned": False, "worker_ids": []}
+        )
+        result = mock_client.workers.uncordon_alias("node-a", "fm-worker-0")
+        assert result.worker_ids == []
+        assert _sent(route) == _BY_ALIAS
 
     @respx.mock
     def test_list_cordons(self, mock_client: FlowMesh) -> None:
@@ -58,18 +79,8 @@ class TestSyncCordon:
             WorkerCordon(node_alias="node-a", alias="alpha")
         ]
 
-    @respx.mock
-    def test_remove_cordon(self, mock_client: FlowMesh) -> None:
-        route = respx.delete(
-            route_url("remove_cordon", node_alias="node-a", alias="alpha")
-        ).respond(json={**_RESULT, "alias": "alpha", "cordoned": False})
-        assert mock_client.workers.remove_cordon("node-a", "alpha").cordoned is False
-        assert route.called
-
-    def test_cordoned_route_precedes_the_worker_id_route(self) -> None:
-        assert route_url("get_worker", worker_id="cordoned") == route_url(
-            "list_cordons"
-        )
+    def test_cordons_route_precedes_the_worker_id_route(self) -> None:
+        assert route_url("get_worker", worker_id="cordons") == route_url("list_cordons")
         names = [r.name for r in workers_router.routes if isinstance(r, APIRoute)]
         assert names.index("list_cordons") < names.index("get_worker")
 
@@ -77,15 +88,17 @@ class TestSyncCordon:
 class TestAsyncCordon:
     @pytest.mark.asyncio
     @respx.mock
-    async def test_async_cordon_and_remove(self) -> None:
+    async def test_async_cordon_by_id_and_uncordon_by_alias(self) -> None:
         client = AsyncFlowMesh(base_url=TEST_BASE_URL, api_key="flm-test-key")
-        respx.post(route_url("cordon_worker", worker_id="wkr-1")).respond(json=_RESULT)
-        respx.delete(
-            route_url("remove_cordon", node_alias="node-a", alias="fm-worker-0")
-        ).respond(json={**_RESULT, "cordoned": False})
+        cordon = respx.post(route_url("cordon_worker")).respond(json=_RESULT)
+        uncordon = respx.post(route_url("uncordon_worker")).respond(
+            json={**_RESULT, "cordoned": False}
+        )
         assert (await client.workers.cordon("wkr-1")).cordoned is True
-        result = await client.workers.remove_cordon("node-a", "fm-worker-0")
+        result = await client.workers.uncordon_alias("node-a", "fm-worker-0")
         assert result.cordoned is False
+        assert _sent(cordon) == _BY_ID
+        assert _sent(uncordon) == _BY_ALIAS
 
 
 class TestWorkerModel:
@@ -105,16 +118,44 @@ class TestWorkerModel:
 
 class TestCLI:
     @respx.mock
-    def test_cordon_prints_the_result(self, cli_env: None) -> None:
-        respx.post(route_url("cordon_worker", worker_id="wkr-1")).respond(json=_RESULT)
+    def test_cordon_by_id(self, cli_env: None) -> None:
+        route = respx.post(route_url("cordon_worker")).respond(json=_RESULT)
         result = CliRunner().invoke(app, ["cordon", "wkr-1"])
         assert result.exit_code == 0, result.output
         assert json.loads(result.output)["alias"] == "fm-worker-0"
+        assert _sent(route) == _BY_ID
 
     @respx.mock
-    def test_cordon_exits_nonzero_on_conflict(self, cli_env: None) -> None:
-        respx.post(route_url("cordon_worker", worker_id="wkr-1")).respond(
-            status_code=409, json={"detail": "ambiguous"}
+    def test_uncordon_by_alias(self, cli_env: None) -> None:
+        route = respx.post(route_url("uncordon_worker")).respond(
+            json={**_RESULT, "cordoned": False}
+        )
+        result = CliRunner().invoke(
+            app, ["uncordon", "--node-alias", "node-a", "--alias", "fm-worker-0"]
+        )
+        assert result.exit_code == 0, result.output
+        assert _sent(route) == _BY_ALIAS
+
+    @pytest.mark.parametrize(
+        "args",
+        [
+            ["cordon"],
+            ["cordon", "--alias", "fm-worker-0"],
+            ["cordon", "wkr-1", "--node-alias", "node-a", "--alias", "fm-worker-0"],
+        ],
+    )
+    @respx.mock
+    def test_cordon_rejects_an_ambiguous_selector(
+        self, cli_env: None, args: list[str]
+    ) -> None:
+        route = respx.post(route_url("cordon_worker")).respond(json=_RESULT)
+        assert CliRunner().invoke(app, args).exit_code == 2
+        assert not route.called
+
+    @respx.mock
+    def test_cordon_exits_nonzero_on_a_server_error(self, cli_env: None) -> None:
+        respx.post(route_url("cordon_worker")).respond(
+            status_code=404, json={"detail": "worker not found"}
         )
         assert CliRunner().invoke(app, ["cordon", "wkr-1"]).exit_code == 1
 
@@ -126,12 +167,3 @@ class TestCLI:
         result = CliRunner().invoke(app, ["cordons"])
         assert result.exit_code == 0, result.output
         assert json.loads(result.output) == [{"node_alias": "node-a", "alias": "alpha"}]
-
-    @respx.mock
-    def test_remove_cordon(self, cli_env: None) -> None:
-        respx.delete(
-            route_url("remove_cordon", node_alias="node-a", alias="alpha")
-        ).respond(json={**_RESULT, "alias": "alpha", "cordoned": False})
-        result = CliRunner().invoke(app, ["remove-cordon", "node-a", "alpha"])
-        assert result.exit_code == 0, result.output
-        assert json.loads(result.output)["cordoned"] is False

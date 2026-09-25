@@ -43,8 +43,14 @@ def _worker(worker_id: str, alias: str | None, node_alias: str = "node-a") -> Wo
 
 
 class _Registry(WorkerRegistry):
-    def __init__(self, workers: list[Worker], cordoned: set[str]) -> None:
+    def __init__(
+        self,
+        workers: list[Worker],
+        cordoned: set[str],
+        stale: frozenset[str] = frozenset(),
+    ) -> None:
         self._workers = {w.id: w for w in workers}
+        self._stale = stale
         self.cordoned = cordoned
         rds: Any = MagicMock()
         rds.sync.set_members.side_effect = self._set_members
@@ -73,8 +79,17 @@ class _Registry(WorkerRegistry):
     def get_worker(self, worker_id: str) -> Worker | None:
         return self._workers.get(worker_id)
 
+    async def get_worker_async(self, worker_id: str) -> Worker | None:
+        return self._workers.get(worker_id)
+
+    async def get_worker_ids_async(self) -> set[str]:
+        return set(self._workers)
+
     def is_worker_stale(self, worker_id: str) -> bool:
-        return False
+        return worker_id in self._stale
+
+    async def is_worker_stale_async(self, worker_id: str) -> bool:
+        return worker_id in self._stale
 
     def get_worker_heartbeat(self, worker_id: str) -> str | None:
         return None
@@ -163,3 +178,19 @@ def test_is_cordoned_keys_on_node_alias_and_worker_alias() -> None:
     members = {cordon_member("node-a", "alpha")}
     assert is_cordoned(_worker("wkr-1", "alpha", "node-a"), members)
     assert not is_cordoned(_worker("wkr-1", "alpha", "node-b"), members)
+
+
+@pytest.mark.asyncio
+async def test_live_worker_ids_match_the_key_and_skip_stale_records() -> None:
+    registry = _Registry(
+        [
+            _worker("wkr-1", "alpha", "node-a"),
+            _worker("wkr-2", "alpha", "node-a"),
+            _worker("wkr-3", "alpha", "node-b"),
+            _worker("wkr-4", "beta", "node-a"),
+        ],
+        cordoned=set(),
+        stale=frozenset({"wkr-1"}),
+    )
+    cordon = WorkerCordon(node_alias="node-a", alias="alpha")
+    assert await registry.live_worker_ids_async(cordon) == ["wkr-2"]
