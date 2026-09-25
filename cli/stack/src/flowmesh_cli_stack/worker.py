@@ -80,11 +80,11 @@ def worker_up(
             "Repeat --config-raw to provide multiple configs."
         ),
     ),
-    name_template: str | None = typer.Option(
+    alias_template: str | None = typer.Option(
         None,
-        "--name-template",
+        "--alias-template",
         help=(
-            "Worker name template for cpu/gpu presets. Placeholders: "
+            "Worker alias template for cpu/gpu presets. Placeholders: "
             "{slug}, {kind}, {idx}, {gpu}. "
             "Default: '{slug}_worker_{kind}_{idx|gpu}'."
         ),
@@ -113,21 +113,21 @@ def worker_up(
             targets=targets,
             config_paths=config,
             config_raw=config_raw,
-            name_template=name_template,
+            alias_template=alias_template,
             slug=slug,
         )
     except FlowMeshError as exc:
         logging.error(str(exc))
         raise typer.Exit(code=1)
     for label, worker_info in created:
-        worker_name = worker_info.get("name", "<unknown>")
-        logging.success(f"Created {label} '{worker_name}':")
+        worker_alias = worker_info.get("alias", "<unknown>")
+        logging.success(f"Created {label} '{worker_alias}':")
         logging.log(json.dumps(worker_info, indent=2))
 
 
 @app.command("start")
 def worker_start(
-    names: list[str] = typer.Argument(..., help="Worker name(s) or 'all'"),
+    aliases: list[str] = typer.Argument(..., help="Worker alias(es) or 'all'"),
     env_file: Path = typer.Option(
         DEFAULT_ENV_FILE, "--env-file", help="Env file to load defaults"
     ),
@@ -139,20 +139,20 @@ def worker_start(
     """Start a stopped worker container."""
     client = stack_node_client(env_file, base_url, token or None)
     try:
-        started = operate_workers(client, names, operation="start")
+        started = operate_workers(client, aliases, operation="start")
     except FlowMeshError as exc:
         logging.error(str(exc))
         raise typer.Exit(code=1)
     if not started:
         logging.warning("No workers found.")
         return
-    for name in started:
-        logging.success(f"Started worker {name}")
+    for alias in started:
+        logging.success(f"Started worker {alias}")
 
 
 @app.command("stop")
 def worker_stop(
-    names: list[str] = typer.Argument(..., help="Worker name(s) or 'all'"),
+    aliases: list[str] = typer.Argument(..., help="Worker alias(es) or 'all'"),
     env_file: Path = typer.Option(
         DEFAULT_ENV_FILE, "--env-file", help="Env file to load defaults"
     ),
@@ -164,20 +164,20 @@ def worker_stop(
     """Stop a running worker container without removing it."""
     client = stack_node_client(env_file, base_url, token or None)
     try:
-        stopped = operate_workers(client, names, operation="stop")
+        stopped = operate_workers(client, aliases, operation="stop")
     except FlowMeshError as exc:
         logging.error(str(exc))
         raise typer.Exit(code=1)
     if not stopped:
         logging.warning("No workers found.")
         return
-    for name in stopped:
-        logging.success(f"Stopped worker {name}")
+    for alias in stopped:
+        logging.success(f"Stopped worker {alias}")
 
 
 @app.command("down")
 def worker_down(
-    names: list[str] = typer.Argument(..., help="Worker name(s) or 'all'"),
+    aliases: list[str] = typer.Argument(..., help="Worker alias(es) or 'all'"),
     env_file: Path = typer.Option(
         DEFAULT_ENV_FILE, "--env-file", help="Env file to load defaults"
     ),
@@ -188,9 +188,9 @@ def worker_down(
 ) -> None:
     """Destroy a worker or all workers, removing containers and associated resources."""
     client = stack_node_client(env_file, base_url, token or None)
-    if "all" in names:
-        if len(names) != 1:
-            logging.error("Use either 'all' or worker names, not both.")
+    if "all" in aliases:
+        if len(aliases) != 1:
+            logging.error("Use either 'all' or worker aliases, not both.")
             raise typer.Exit(code=1)
         try:
             logging.info("Destroying all workers...")
@@ -202,15 +202,15 @@ def worker_down(
         return
 
     try:
-        destroyed = operate_workers(client, names, operation="destroy")
+        destroyed = operate_workers(client, aliases, operation="destroy")
     except FlowMeshError as exc:
         logging.error(str(exc))
         raise typer.Exit(code=1)
     if not destroyed:
         logging.warning("No workers found.")
         return
-    for name in destroyed:
-        logging.success(f"Destroyed worker {name}")
+    for alias in destroyed:
+        logging.success(f"Destroyed worker {alias}")
 
 
 @app.command("pull")

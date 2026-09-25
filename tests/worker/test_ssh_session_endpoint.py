@@ -268,6 +268,7 @@ class TestDirectHostFromEnv:
     @pytest.fixture(autouse=True)
     def _required_env(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         monkeypatch.setenv("WORKER_TOKEN", "tok")
+        monkeypatch.setenv("WORKER_ALIAS", "worker-0")
         monkeypatch.setenv("SUPERVISOR_GRPC_TARGET", "supervisor:50051")
         monkeypatch.setenv("WORKER_HB_FILE", (tmp_path / "worker.hb").as_posix())
         monkeypatch.delenv("SSH_DIRECT_HOST", raising=False)

@@ -65,7 +65,7 @@ def _request(cfg: SSHConfig, tmp_path: Path) -> SessionRequest:
     return SessionRequest(
         task_id="task-ssh",
         session_id="ssn-1234",
-        worker_name="worker-1",
+        owner="worker-1",
         cfg=cfg,
         out_dir=tmp_path / "out",
         resolved_inputs=[],

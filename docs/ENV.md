@@ -88,7 +88,8 @@ Spark), set `DOCKER_GPU_RUNTIME=` in the stack env.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `NODE_NAMESPACE` / `NODE_CLUSTER` / `NODE_ALIAS` | defaults | Identity |
+| `NODE_NAMESPACE` / `NODE_CLUSTER` | defaults | Identity |
+| `NODE_ALIAS` | `node` | Node alias; unique among live nodes |
 | `NODE_TAGS` | `` | Scheduler hints (CSV) |
 | `SUPERVISOR_GRPC_DISABLE_SERVER_TLS` | `false` | Local-only insecure gRPC |
 | `SUPERVISOR_GRPC_KEEPALIVE_PERMIT_WITHOUT_CALLS` | `true` | gRPC keepalive |

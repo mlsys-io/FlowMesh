@@ -172,6 +172,16 @@ class SupervisorServicer(supervisor_pb2_grpc.SupervisorServicer):
         if worker is None:
             await context.abort(grpc.StatusCode.UNAUTHENTICATED, "Invalid worker token")
         worker_meta = _payload_from_struct(request.meta)
+        reported_alias = worker_meta.get("alias")
+        if reported_alias != worker.alias:
+            if reported_alias:
+                self._logger.warning(
+                    "Worker %s reported alias %r; check WORKER_ALIAS against the "
+                    "alias the supervisor assigned or the worker's token",
+                    worker.alias,
+                    reported_alias,
+                )
+            worker_meta["alias"] = worker.alias
         # Stamp node_id, persist the record and set the worker id as one unit so a
         # concurrent rebind_node either sees this worker in its snapshot or stamps
         # it with the new id.

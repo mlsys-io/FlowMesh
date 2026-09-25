@@ -44,7 +44,7 @@ class SessionRequest:
 
     task_id: str
     session_id: str
-    worker_name: str
+    owner: str
     cfg: SSHConfig
     out_dir: Path
     resolved_inputs: list[ResolvedSSHInput]
@@ -134,8 +134,11 @@ class SSHSessionBackend(ABC):
         """Create and start a session."""
 
     @abstractmethod
-    def teardown(self, worker_name: str) -> None:
-        """Reap any sessions ``worker_name`` still owns."""
+    def teardown(self, owner: str) -> None:
+        """Reap any sessions ``owner`` still owns.
+
+        ``owner`` is the worker's container name, else its alias.
+        """
 
     def session_bind_host(self, access_mode: str) -> str:
         """Address the session's sshd listens on.

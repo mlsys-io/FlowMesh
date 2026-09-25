@@ -30,6 +30,7 @@ class StubLifecycle(Lifecycle):
         self._node_id = node_id
         self.logger = _LOGGER
         self._unregister_published = True
+        self._shutting_down = False
         self._on_reregister = None
         self.published_events: list[str] = []
 

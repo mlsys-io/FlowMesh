@@ -45,7 +45,7 @@ class WorkerRegisterResponse(BaseModel):
 
 class NodeWorkerInfo(BaseModel):
     id: str | None = None
-    name: str
+    alias: str
     namespace: str
     cluster: str
     node_id: str

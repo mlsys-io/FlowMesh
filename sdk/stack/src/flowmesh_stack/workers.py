@@ -17,42 +17,42 @@ _MAX_PARALLEL_REQUESTS = 16
 
 def operate_workers(
     client: NodeClient,
-    names: list[str],
+    aliases: list[str],
     operation: str,
 ) -> list[str]:
     """Apply a start/stop/destroy operation to one or more workers."""
-    if not names:
+    if not aliases:
         return []
-    if "all" in names:
-        if len(names) != 1:
-            raise FlowMeshError("Use either 'all' or worker names, not both.")
-        names = client.worker_names()
-        if not names:
+    if "all" in aliases:
+        if len(aliases) != 1:
+            raise FlowMeshError("Use either 'all' or worker aliases, not both.")
+        aliases = client.worker_aliases()
+        if not aliases:
             return []
 
-    def _apply(name: str) -> str:
+    def _apply(alias: str) -> str:
         match operation:
             case "start":
-                client.start_worker(name)
+                client.start_worker(alias)
             case "stop":
-                client.stop_worker(name)
+                client.stop_worker(alias)
             case "destroy":
-                client.destroy_worker(name)
+                client.destroy_worker(alias)
             case _:
                 raise FlowMeshError(f"Unsupported worker operation: {operation}")
-        return name
+        return alias
 
     successes: list[str] = []
     errors: list[str] = []
-    max_workers = min(len(names), _MAX_PARALLEL_REQUESTS)
+    max_workers = min(len(aliases), _MAX_PARALLEL_REQUESTS)
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = {executor.submit(_apply, name): name for name in names}
+        futures = {executor.submit(_apply, alias): alias for alias in aliases}
         for future in as_completed(futures):
-            name = futures[future]
+            alias = futures[future]
             try:
                 successes.append(future.result())
             except Exception as exc:
-                errors.append(f"{name}: {exc}")
+                errors.append(f"{alias}: {exc}")
     if errors:
         raise FlowMeshError("; ".join(errors))
     return successes
@@ -65,7 +65,7 @@ def create_workers(
     targets: str = "all",
     config_paths: list[Path] | None = None,
     config_raw: list[str] | None = None,
-    name_template: str | None = None,
+    alias_template: str | None = None,
     slug: str | None = None,
 ) -> list[tuple[str, dict[str, Any]]]:
     """Create node workers from configs or built-in cpu/gpu presets.
@@ -75,8 +75,8 @@ def create_workers(
     will be created per GPU target, and the number of targets must match ``count``.
 
     For the built-in cpu/gpu presets, ``slug`` prefixes the generated worker
-    aliases so names are scoped to a stack, and ``name_template`` overrides the
-    naming entirely (placeholders ``{slug}``, ``{kind}``, ``{idx}``, ``{gpu}``).
+    aliases so they are scoped to a stack, and ``alias_template`` overrides the
+    aliases entirely (placeholders ``{slug}``, ``{kind}``, ``{idx}``, ``{gpu}``).
     Both are ignored when ``config_paths`` / ``config_raw`` are provided, since
     those payloads carry their own aliases.
     """
@@ -86,7 +86,7 @@ def create_workers(
         targets=targets,
         config_paths=config_paths,
         config_raw=config_raw,
-        name_template=name_template,
+        alias_template=alias_template,
         slug=slug,
     )
     if not payloads:
@@ -200,7 +200,7 @@ def _worker_alias(
         return template.format_map(_StrictFormatDict(fields))
     except (KeyError, IndexError, ValueError) as exc:
         raise FlowMeshError(
-            f"invalid --name-template ({exc}); "
+            f"invalid --alias-template ({exc}); "
             f"available placeholders: {_ALIAS_FIELDS}"
         ) from exc
 
@@ -211,7 +211,7 @@ def _payloads_for_worker_create(
     targets: str,
     config_paths: list[Path] | None,
     config_raw: list[str] | None,
-    name_template: str | None = None,
+    alias_template: str | None = None,
     slug: str | None = None,
 ) -> list[tuple[str, str]]:
     if count < 1:
@@ -232,7 +232,7 @@ def _payloads_for_worker_create(
     if kind == "cpu":
         specs = [
             (
-                (alias := _worker_alias("cpu", idx, slug, name_template)),
+                (alias := _worker_alias("cpu", idx, slug, alias_template)),
                 {"worker_type": "cpu", "worker_alias": alias},
                 "CPU worker",
             )
@@ -258,7 +258,7 @@ def _payloads_for_worker_create(
                 (
                     (
                         alias := _worker_alias(
-                            "gpu", idx, slug, name_template, gpu=str(gpu_id)
+                            "gpu", idx, slug, alias_template, gpu=str(gpu_id)
                         )
                     ),
                     {
@@ -276,7 +276,7 @@ def _payloads_for_worker_create(
                 (
                     (
                         alias := _worker_alias(
-                            "gpu", 0, slug, name_template, gpu=worker_suffix
+                            "gpu", 0, slug, alias_template, gpu=worker_suffix
                         )
                     ),
                     {
@@ -293,7 +293,7 @@ def _payloads_for_worker_create(
     aliases = [alias for alias, _, _ in specs]
     if len(set(aliases)) != len(aliases):
         raise FlowMeshError(
-            "--name-template produced duplicate worker names; "
+            "--alias-template produced duplicate worker aliases; "
             "include {idx} or {gpu} to disambiguate"
         )
 

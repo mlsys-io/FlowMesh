@@ -358,7 +358,7 @@ class TestNodeModels:
     def test_node_worker_info(self) -> None:
         node = SrvNodeWorkerInfo(
             id="w-1",
-            name="worker-a100",
+            alias="worker-a100",
             namespace="default",
             cluster="us-west",
             node_id="g-1",
@@ -367,7 +367,7 @@ class TestNodeModels:
             status=SrvNodeWorkerStatus.IDLE,
         )
         w = NodeWorkerInfo.model_validate(_dump(node))
-        assert w.name == "worker-a100"
+        assert w.alias == "worker-a100"
         assert w.node_id == "g-1"
 
 

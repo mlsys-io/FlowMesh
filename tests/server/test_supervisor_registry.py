@@ -10,13 +10,13 @@ from server.supervisor.registry import WorkerRegistry
 
 
 class _FakeAdapter:
-    def __init__(self, token: str, name: str) -> None:
+    def __init__(self, token: str, alias: str) -> None:
         self.token = cast(WorkerTokenType, token)
-        self.name = name
+        self.alias = alias
 
 
-def _adapter(token: str, name: str) -> WorkerAdapter:
-    return cast(WorkerAdapter, _FakeAdapter(token, name))
+def _adapter(token: str, alias: str) -> WorkerAdapter:
+    return cast(WorkerAdapter, _FakeAdapter(token, alias))
 
 
 def test_add_get_pop_roundtrip() -> None:
@@ -25,7 +25,7 @@ def test_add_get_pop_roundtrip() -> None:
 
     registry.add(worker)
     assert registry.try_get(cast(WorkerTokenType, "tok-1")) is worker
-    assert registry.try_get_by_name("worker-1") is worker
+    assert registry.try_get_by_alias("worker-1") is worker
     assert registry.all_workers() == [worker]
 
     registry.set_worker_id(cast(WorkerTokenType, "tok-1"), "wrk-1")
@@ -44,7 +44,7 @@ def test_add_rejects_duplicate_token_and_name() -> None:
 
     with pytest.raises(ValueError, match="token"):
         registry.add(_adapter("tok-1", "worker-2"))
-    with pytest.raises(ValueError, match="name"):
+    with pytest.raises(ValueError, match="alias"):
         registry.add(_adapter("tok-2", "worker-1"))
 
 
@@ -74,7 +74,7 @@ def test_concurrent_mutation_and_snapshot_do_not_crash() -> None:
         try:
             while not done.is_set():
                 for worker in registry.all_workers():
-                    _ = worker.name
+                    _ = worker.alias
         except BaseException as exc:
             errors.append(exc)
 

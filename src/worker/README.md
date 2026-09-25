@@ -52,7 +52,7 @@ At startup the worker:
 | `WORKER_NAMESPACE` | flowmesh | Optional namespace associated with the worker. |
 | `WORKER_CLUSTER` | cluster | Optional cluster associated with the worker. |
 | `WORKER_CONTAINER_NAME` | – | Docker worker container name, used when available as the worker runtime identity. |
-| `WORKER_ALIAS` | random hex | Override to pin a stable worker alias advertised to the orchestrator. |
+| `WORKER_ALIAS` | token alias | The worker's alias. The supervisor sets it for workers it launches; an external worker defaults to the alias in its token. |
 | `WORKER_TAGS` | empty | Comma-separated tags used by the scheduler. |
 | `LOG_LEVEL` | `INFO` | Worker log level. |
 | `WORKER_COST_PER_HOUR` | `1.0` | Hourly cost in USD; reported with heartbeats. |

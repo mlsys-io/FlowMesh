@@ -18,6 +18,7 @@ from shared.utils.parsing import (
     parse_int_env,
     parse_mem_to_bytes,
 )
+from shared.utils.worker_token import external_token_alias
 
 from .gpu_availability import GpuGateConfig
 from .utils.health import get_hb_config
@@ -91,7 +92,14 @@ class WorkerConfig:
         cluster = os.getenv("WORKER_CLUSTER", "cluster").strip()
         container_name = os.getenv("WORKER_CONTAINER_NAME", "").strip() or None
         ssh_network_name = os.getenv("SSH_NETWORK_NAME", "").strip() or None
-        alias = os.getenv("WORKER_ALIAS", "").strip() or os.urandom(8).hex()
+        alias = os.getenv("WORKER_ALIAS", "").strip() or external_token_alias(
+            worker_token
+        )
+        if not alias:
+            raise SystemExit(
+                "WORKER_ALIAS is required unless WORKER_TOKEN is an external "
+                "worker token of the form <alias>.<hex digest>"
+            )
         tags = [t.strip() for t in os.getenv("WORKER_TAGS", "").split(",") if t.strip()]
 
         log_level = os.getenv("LOG_LEVEL", "INFO").upper()

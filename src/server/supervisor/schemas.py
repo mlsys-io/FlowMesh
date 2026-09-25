@@ -18,7 +18,7 @@ class WorkerStatus(StrEnum):
 
 class WorkerInfo(BaseModel):
     id: Annotated[str | None, Field(description="Worker ID")]
-    name: Annotated[str, Field(description="Worker name")]
+    alias: Annotated[str, Field(description="Worker alias")]
     namespace: str = Field(default=env.NODE_NAMESPACE, description="Worker namespace")
     cluster: str = Field(default=env.NODE_CLUSTER, description="Worker cluster")
     node_alias: str = Field(default=env.NODE_ALIAS, description="Node alias")

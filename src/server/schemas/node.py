@@ -133,7 +133,7 @@ class WorkerHardware(BaseModel):
 
 class NodeWorkerInfo(BaseModel):
     id: str | None = Field(..., description="Worker ID")
-    name: str = Field(..., description="Worker name")
+    alias: str = Field(..., description="Worker alias")
     namespace: str = Field(..., description="Worker namespace")
     cluster: str = Field(..., description="Worker cluster")
     node_id: str = Field(..., description="Associated node ID")

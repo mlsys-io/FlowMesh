@@ -6,11 +6,12 @@ picks it up, updates the cached id, and notifies listeners (which refresh
 """
 
 import logging
+import time
 from multiprocessing import Queue
 from multiprocessing.queues import Queue as MPQueue
 from queue import Queue as ThreadQueue
 from threading import Event, Thread
-from typing import cast
+from typing import Any, cast
 
 from server.supervisor.supervisor import WorkerSupervisor, _enqueue_latest_node_id
 
@@ -101,3 +102,30 @@ def test_enqueue_drops_oldest_when_full() -> None:
     _enqueue_latest_node_id(queue, "nde-2", _LOGGER)
     assert queue.get_nowait() == "nde-2"
     assert queue.empty()
+
+
+class _Process:
+    def __init__(self, alive: bool) -> None:
+        self.alive = alive
+
+    def is_alive(self) -> bool:
+        return self.alive
+
+
+def test_await_node_id_returns_the_first_id() -> None:
+    sup = _build_supervisor()
+    sup._node_id_queue = _bounded(8)
+    sup._process = cast(Any, _Process(alive=True))
+    sup._node_id_queue.put("nde-1")
+
+    assert sup._await_node_id(5.0) == "nde-1"
+
+
+def test_await_node_id_stops_early_when_child_exits() -> None:
+    sup = _build_supervisor()
+    sup._node_id_queue = _bounded(8)
+    sup._process = cast(Any, _Process(alive=False))
+
+    started = time.monotonic()
+    assert sup._await_node_id(60.0) is None
+    assert time.monotonic() - started < 5.0

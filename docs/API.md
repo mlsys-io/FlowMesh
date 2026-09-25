@@ -66,10 +66,10 @@ self-authenticate the same way, sending `FLOWMESH_API_KEY` as the bearer.
 | GET | `/api/v1/workers` | List workers. Filters: `alias`, `namespace`, `cluster`, `status`, `tags`. |
 | GET | `/api/v1/workers/{id}` | Worker details + hardware. |
 | GET | `/api/v1/nodes` | List nodes (supervisors). |
-| POST | `/api/v1/nodes/register` | Register a node. |
+| POST | `/api/v1/nodes/register` | Register a node; `409 Conflict` while another live node holds the same alias. |
 | GET | `/api/v1/nodes/{id}/workers` | List workers under a node. |
 | POST | `/api/v1/nodes/{id}/workers/register` | Register worker under node. |
-| POST | `/api/v1/nodes/{id}/workers/{name}/{start,stop}` | Start/stop a worker. |
+| POST | `/api/v1/nodes/{id}/workers/{alias}/{start,stop}` | Start/stop a worker. |
 
 `/api/v1/stack/workers/...` wraps node-registered workers with local-only
 container lifecycle and is what `flowmesh stack worker {up,down,...}`

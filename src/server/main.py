@@ -79,7 +79,9 @@ REDIS_CLIENT = RedisClient(
     tls_ca_file=config.redis.tls_ca_file,
 )
 
-NODE_REGISTRY = NodeRegistry(REDIS_CLIENT, logger)
+NODE_REGISTRY = NodeRegistry(
+    REDIS_CLIENT, logger, config.worker_management.heartbeat_ttl_sec
+)
 
 METRICS_RECORDER = MetricsRecorder(
     METRICS_DIR,
