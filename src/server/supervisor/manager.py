@@ -337,16 +337,7 @@ class WorkerManager:
 
         started = await worker.start()
         if not started:
-            # start() resets the adapter to STOPPED, so leaving it registered keeps
-            # it listable and startable again. Destroying it here would also free
-            # its GPU reservation, which is taken at create time and not retaken by
-            # start -- a later retry would then run on a device another worker may
-            # already hold.
-            self.logger.error(
-                "Worker %s failed to start; it stays registered as STOPPED and can "
-                "be started again.",
-                worker.alias,
-            )
+            self.logger.error("Worker %s failed to start", worker.alias)
             return False
         return True
 

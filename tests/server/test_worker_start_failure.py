@@ -39,10 +39,7 @@ class TestStartWorkerFailure:
 
         assert result is False
         errors = [r.getMessage() for r in caplog.records if r.levelno >= logging.ERROR]
-        assert errors == [
-            "Worker gpu_0 failed to start; it stays registered as STOPPED and can "
-            "be started again."
-        ]
+        assert errors == ["Worker gpu_0 failed to start"]
 
     @pytest.mark.asyncio
     async def test_failed_start_keeps_the_worker_registered(self) -> None:
@@ -52,8 +49,6 @@ class TestStartWorkerFailure:
         worker = _worker(started=False)
 
         assert await wm._start_worker(worker) is False
-        # Destroying it here would free a GPU reservation that start() does not
-        # retake, so a later retry could land on a device another worker holds.
         wm._stop_and_destroy_worker.assert_not_awaited()
         registry.try_pop.assert_not_called()
 
