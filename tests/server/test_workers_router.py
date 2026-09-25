@@ -187,20 +187,15 @@ async def test_cordon_worker_without_an_alias_is_409() -> None:
 
 @pytest.mark.anyio
 @pytest.mark.parametrize("route", ["cordon", "uncordon"])
+@pytest.mark.parametrize(
+    "body", [{"worker_id": "wkr-1"}, {"node_alias": "node", "alias": "alpha"}]
+)
 @pytest.mark.usefixtures("non_admin")
-async def test_selecting_by_alias_requires_admin(route: str) -> None:
+async def test_cordon_requires_admin(route: str, body: dict[str, Any]) -> None:
     registry = _registry([_worker("wkr-1")])
-    resp = await _post(registry, route, {"node_alias": "node", "alias": "alpha"})
+    resp = await _post(registry, route, body)
     assert resp.status_code == 403
     registry.set_cordon_async.assert_not_called()
-
-
-@pytest.mark.anyio
-@pytest.mark.usefixtures("non_admin")
-async def test_non_admin_cordons_an_accessible_worker_by_id() -> None:
-    registry = _registry([_worker("wkr-1")])
-    resp = await _post(registry, "cordon", {"worker_id": "wkr-1"})
-    assert resp.status_code == 200
 
 
 @pytest.mark.anyio

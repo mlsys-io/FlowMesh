@@ -96,19 +96,10 @@ async def get_worker(
 
 
 async def _resolve_cordon(
-    request: WorkerCordonRequest,
-    registry: WorkerRegistry,
-    principal: PrincipalContext,
-    logger: logging.Logger,
+    request: WorkerCordonRequest, registry: WorkerRegistry
 ) -> WorkerCordon:
     if isinstance(request, WorkerCordonByAlias):
-        await require_permission(
-            principal, ResourceKind.SYSTEM, None, ResourceAction.ADMIN, logger
-        )
         return WorkerCordon(node_alias=request.node_alias, alias=request.alias)
-    await require_permission(
-        principal, ResourceKind.WORKER, request.worker_id, ResourceAction.WRITE, logger
-    )
     worker = await registry.get_worker_async(request.worker_id)
     if not worker:
         raise HTTPException(
@@ -129,7 +120,12 @@ async def _set_cordon(
     principal: PrincipalContext,
     logger: logging.Logger,
 ) -> WorkerCordonResult:
-    cordon = await _resolve_cordon(request, registry, principal, logger)
+    # A cordon outlives its worker and applies to whichever worker registers
+    # under the key next, so no per-worker permission can authorize it.
+    await require_permission(
+        principal, ResourceKind.SYSTEM, None, ResourceAction.ADMIN, logger
+    )
+    cordon = await _resolve_cordon(request, registry)
     changed = await registry.set_cordon_async(cordon, cordoned=cordoned)
     worker_ids = await registry.live_worker_ids_for_cordon_async(cordon)
     logger.info(
