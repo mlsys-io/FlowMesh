@@ -393,10 +393,9 @@ class WorkerManager:
             )
             success = False
 
-        if success and was_running:
-            self.logger.info("Worker %s stopped.", worker_alias)
-        elif success:
-            self.logger.info("Worker %s destroyed.", worker_alias)
+        if success:
+            outcome = "stopped" if was_running else "destroyed"
+            self.logger.info("Worker %s %s.", worker_alias, outcome)
 
         return success
 
