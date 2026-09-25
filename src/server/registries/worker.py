@@ -30,12 +30,14 @@ from shared.utils.hardware import (
 from ..clients.redis import (
     WORKER_EVENT_CHANNEL,
     WORKER_ID_SEQ_KEY,
+    WORKERS_CORDONED_SET_KEY,
     WORKERS_SET_KEY,
     RedisClient,
     node_dispatch_channel,
     worker_hb_key,
     worker_key,
 )
+from ..schemas.worker import WorkerCordon
 
 # A write for a worker that is no longer a set member must not recreate a partial
 # record. A read-then-write cannot promise that, since the watchdog can reap
@@ -137,6 +139,10 @@ class Worker(BaseModel):
 
 class WorkerInfo(Worker):
     stale: bool = Field(description="Whether the worker heartbeat is stale.")
+    cordoned: bool = Field(
+        default=False,
+        description="Whether the worker is excluded from new dispatches.",
+    )
 
 
 class WorkerRegistry:
@@ -343,6 +349,7 @@ class WorkerRegistry:
 
     def list_workers(self) -> list[WorkerInfo]:
         results: list[WorkerInfo] = []
+        cordoned = self._cordoned_members()
         for worker_id in self.get_worker_ids():
             worker = self.get_worker(worker_id)
             if not worker:
@@ -356,12 +363,14 @@ class WorkerRegistry:
                 WorkerInfo(
                     **worker.model_dump(),
                     stale=stale,
+                    cordoned=_is_cordoned(worker, cordoned),
                 )
             )
         return results
 
     async def list_workers_async(self) -> list[WorkerInfo]:
         results: list[WorkerInfo] = []
+        cordoned = await self._cordoned_members_async()
         for worker_id in await self.get_worker_ids_async():
             worker = await self.get_worker_async(worker_id)
             if not worker:
@@ -375,6 +384,7 @@ class WorkerRegistry:
                 WorkerInfo(
                     **worker.model_dump(),
                     stale=stale,
+                    cordoned=_is_cordoned(worker, cordoned),
                 )
             )
         return results
@@ -440,13 +450,76 @@ class WorkerRegistry:
         except Exception:
             return
 
+    # ------------------------------------------------------------------ #
+    # Cordon
+    # ------------------------------------------------------------------ #
+
+    def _cordoned_members(self) -> set[str]:
+        return self._rds.sync.set_members(WORKERS_CORDONED_SET_KEY)
+
+    async def _cordoned_members_async(self) -> set[str]:
+        return await self._rds.asyncio.set_members(WORKERS_CORDONED_SET_KEY)
+
+    def is_cordoned(self, worker: Worker) -> bool:
+        return _is_cordoned(worker, self._cordoned_members())
+
+    async def is_cordoned_async(self, worker: Worker) -> bool:
+        return _is_cordoned(worker, await self._cordoned_members_async())
+
+    def list_cordons(self) -> list[WorkerCordon]:
+        return _parse_cordon_members(self._cordoned_members())
+
+    async def list_cordons_async(self) -> list[WorkerCordon]:
+        return _parse_cordon_members(await self._cordoned_members_async())
+
+    def live_worker_ids_for_cordon(self, cordon: WorkerCordon) -> list[str]:
+        """Ids of non-stale workers registered under the cordon's key."""
+        workers = self.get_workers(sorted(self.get_worker_ids()))
+        return [
+            worker.id
+            for worker in workers
+            if worker is not None
+            and _matches_cordon(worker, cordon)
+            and not self.is_worker_stale(worker.id)
+        ]
+
+    async def live_worker_ids_for_cordon_async(self, cordon: WorkerCordon) -> list[str]:
+        """Ids of non-stale workers registered under the cordon's key."""
+        workers = await self.get_workers_async(
+            sorted(await self.get_worker_ids_async())
+        )
+        return [
+            worker.id
+            for worker in workers
+            if worker is not None
+            and _matches_cordon(worker, cordon)
+            and not await self.is_worker_stale_async(worker.id)
+        ]
+
+    def set_cordon(self, cordon: WorkerCordon, cordoned: bool) -> bool:
+        """Add or remove a cordon. Returns whether the cordon set changed."""
+        member = _cordon_member(cordon.node_alias, cordon.alias)
+        if cordoned:
+            return self._rds.sync.sadd(WORKERS_CORDONED_SET_KEY, member) > 0
+        return self._rds.sync.srem(WORKERS_CORDONED_SET_KEY, member) > 0
+
+    async def set_cordon_async(self, cordon: WorkerCordon, cordoned: bool) -> bool:
+        """Add or remove a cordon. Returns whether the cordon set changed."""
+        member = _cordon_member(cordon.node_alias, cordon.alias)
+        if cordoned:
+            return await self._rds.asyncio.sadd(WORKERS_CORDONED_SET_KEY, member) > 0
+        return await self._rds.asyncio.srem(WORKERS_CORDONED_SET_KEY, member) > 0
+
     def idle_satisfying_pool(self, task: TaskEnvelope) -> list[Worker]:
         available: list[Worker] = []
+        cordoned = self._cordoned_members()
         for worker_id in self.get_worker_ids():
             worker = self.get_worker(worker_id)
             if not worker or worker.status is not WorkerStatus.IDLE:
                 continue
             if self.is_worker_stale(worker.id):
+                continue
+            if _is_cordoned(worker, cordoned):
                 continue
             if (
                 hw_satisfies(worker, task)
@@ -457,11 +530,16 @@ class WorkerRegistry:
         return self.sort_workers(available)
 
     def satisfying_workers(self, task: TaskEnvelope) -> list[Worker]:
-        """Non-stale workers whose hardware and capabilities satisfy the task."""
+        """Non-stale, uncordoned workers whose hardware and capabilities satisfy
+        the task.
+        """
         available: list[Worker] = []
+        cordoned = self._cordoned_members()
         for worker_id in self.get_worker_ids():
             worker = self.get_worker(worker_id)
             if not worker or self.is_worker_stale(worker.id):
+                continue
+            if _is_cordoned(worker, cordoned):
                 continue
             if hw_satisfies(worker, task) and capability_satisfies(worker, task):
                 available.append(worker)
@@ -861,3 +939,29 @@ def _parse_worker_from_redis(
         cache_updated_ts=cache_updated_ts,
         cost_per_hour=cost_per_hour,
     )
+
+
+def _cordon_member(node_alias: str, alias: str) -> str:
+    return json.dumps([node_alias, alias], separators=(",", ":"))
+
+
+def _parse_cordon_members(members: Iterable[str]) -> list[WorkerCordon]:
+    cordons: list[WorkerCordon] = []
+    for member in members:
+        try:
+            node_alias, alias = json.loads(member)
+        except (ValueError, TypeError):
+            continue
+        if isinstance(node_alias, str) and isinstance(alias, str):
+            cordons.append(WorkerCordon(node_alias=node_alias, alias=alias))
+    return sorted(cordons, key=lambda c: (c.node_alias, c.alias))
+
+
+def _matches_cordon(worker: Worker, cordon: WorkerCordon) -> bool:
+    return worker.node_alias == cordon.node_alias and worker.alias == cordon.alias
+
+
+def _is_cordoned(worker: Worker, cordoned_members: set[str]) -> bool:
+    if not worker.alias:
+        return False
+    return _cordon_member(worker.node_alias, worker.alias) in cordoned_members

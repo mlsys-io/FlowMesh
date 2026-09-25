@@ -55,6 +55,7 @@ WORKFLOW_LOGS_STREAM_PREFIX = "logs:workflow:"
 WORKERS_SET_KEY = "workers:ids"
 WORKER_ID_SEQ_KEY = "workers:id_seq"
 WORKER_EVENT_CHANNEL = "workers:events"
+WORKERS_CORDONED_SET_KEY = "workers:cordoned"
 
 NODES_SET_KEY = "nodes:ids"
 NODE_ID_SEQ_KEY = "nodes:id_seq"
@@ -341,17 +342,19 @@ class SyncRedisClient:
     def sismember(self, key: str, member: str) -> bool:
         return bool(self._control.sismember(key, member))
 
-    def sadd(self, key: str, *members: str) -> None:
-        if members:
-            self._control.sadd(key, *members)
+    def sadd(self, key: str, *members: str) -> int:
+        if not members:
+            return 0
+        return int(_sync(self._control.sadd(key, *members)))
 
     def sadd_telemetry(self, key: str, *members: str) -> None:
         if members:
             self._telemetry.sadd(key, *members)
 
-    def srem(self, key: str, *members: str) -> None:
-        if members:
-            self._control.srem(key, *members)
+    def srem(self, key: str, *members: str) -> int:
+        if not members:
+            return 0
+        return int(_sync(self._control.srem(key, *members)))
 
     def srem_telemetry(self, key: str, *members: str) -> None:
         if members:
@@ -547,17 +550,19 @@ class AsyncRedisClient:
     async def sismember(self, key: str, member: str) -> bool:
         return bool(await _awaitable(self._control.sismember(key, member)))
 
-    async def sadd(self, key: str, *members: str) -> None:
-        if members:
-            await _awaitable(self._control.sadd(key, *members))
+    async def sadd(self, key: str, *members: str) -> int:
+        if not members:
+            return 0
+        return int(await _awaitable(self._control.sadd(key, *members)))
 
     async def sadd_telemetry(self, key: str, *members: str) -> None:
         if members:
             await _awaitable(self._telemetry.sadd(key, *members))
 
-    async def srem(self, key: str, *members: str) -> None:
-        if members:
-            await _awaitable(self._control.srem(key, *members))
+    async def srem(self, key: str, *members: str) -> int:
+        if not members:
+            return 0
+        return int(await _awaitable(self._control.srem(key, *members)))
 
     async def srem_telemetry(self, key: str, *members: str) -> None:
         if members:

@@ -14,6 +14,12 @@ from ...auth.security import (
 )
 from ...hooks import ResourceAction, ResourceKind
 from ...registries.worker import WorkerInfo, WorkerRegistry
+from ...schemas.worker import (
+    WorkerCordon,
+    WorkerCordonByAlias,
+    WorkerCordonRequest,
+    WorkerCordonResult,
+)
 from ...utils.misc import filter_models_by_queries
 
 router = APIRouter(prefix="/workers", tags=["Workers"])
@@ -41,6 +47,29 @@ async def list_workers(
     return filter_models_by_queries(workers, queries)
 
 
+# Declared before "/{worker_id}", which would otherwise match "/cordons".
+@router.get(
+    "/cordons",
+    summary="List cordons",
+    description="List the (node alias, worker alias) pairs excluded from dispatch.",
+    response_description="Active cordons",
+)
+async def list_cordons(
+    principal: PrincipalContext = Depends(authenticate_connection),
+    registry: WorkerRegistry = Depends(get_worker_registry),
+    logger: logging.Logger = Depends(get_logger),
+) -> list[WorkerCordon]:
+    cordons = await registry.list_cordons_async()
+    allowed = await resolve_accessible_ids(
+        principal, ResourceKind.WORKER, ResourceAction.READ, logger
+    )
+    if allowed is None:
+        return cordons
+    workers = await registry.get_workers_async(sorted(allowed))
+    keys = {(w.node_alias, w.alias) for w in workers if w is not None}
+    return [c for c in cordons if (c.node_alias, c.alias) in keys]
+
+
 @router.get(
     "/{worker_id}",
     summary="Get a worker",
@@ -62,4 +91,87 @@ async def get_worker(
             status_code=status.HTTP_404_NOT_FOUND, detail="worker not found"
         )
     stale = await registry.is_worker_stale_async(worker.id)
-    return WorkerInfo(**worker.model_dump(), stale=stale)
+    cordoned = await registry.is_cordoned_async(worker)
+    return WorkerInfo(**worker.model_dump(), stale=stale, cordoned=cordoned)
+
+
+async def _resolve_cordon(
+    request: WorkerCordonRequest, registry: WorkerRegistry
+) -> WorkerCordon:
+    if isinstance(request, WorkerCordonByAlias):
+        return WorkerCordon(node_alias=request.node_alias, alias=request.alias)
+    worker = await registry.get_worker_async(request.worker_id)
+    if not worker:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="worker not found"
+        )
+    if not worker.alias:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"worker {worker.id} has no alias; reconnect it, then retry",
+        )
+    return WorkerCordon(node_alias=worker.node_alias, alias=worker.alias)
+
+
+async def _set_cordon(
+    request: WorkerCordonRequest,
+    cordoned: bool,
+    registry: WorkerRegistry,
+    principal: PrincipalContext,
+    logger: logging.Logger,
+) -> WorkerCordonResult:
+    # A cordon outlives its worker and applies to whichever worker registers
+    # under the key next, so no per-worker permission can authorize it.
+    await require_permission(
+        principal, ResourceKind.SYSTEM, None, ResourceAction.ADMIN, logger
+    )
+    cordon = await _resolve_cordon(request, registry)
+    changed = await registry.set_cordon_async(cordon, cordoned=cordoned)
+    worker_ids = await registry.live_worker_ids_for_cordon_async(cordon)
+    logger.info(
+        "%s %s/%s (workers: %s)",
+        "Cordoned" if cordoned else "Uncordoned",
+        cordon.node_alias,
+        cordon.alias,
+        ", ".join(worker_ids) or "none",
+    )
+    return WorkerCordonResult(
+        **cordon.model_dump(), cordoned=cordoned, changed=changed, worker_ids=worker_ids
+    )
+
+
+@router.post(
+    "/cordon",
+    summary="Cordon a worker",
+    description=(
+        "Stop offering new tasks to a worker, selected by `worker_id` or by "
+        "`node_alias` and `alias`. Work already dispatched runs to completion, "
+        "and the cordon persists until uncordoned."
+    ),
+    response_description="Cordon result",
+)
+async def cordon_worker(
+    request: WorkerCordonRequest,
+    principal: PrincipalContext = Depends(authenticate_connection),
+    registry: WorkerRegistry = Depends(get_worker_registry),
+    logger: logging.Logger = Depends(get_logger),
+) -> WorkerCordonResult:
+    return await _set_cordon(request, True, registry, principal, logger)
+
+
+@router.post(
+    "/uncordon",
+    summary="Uncordon a worker",
+    description=(
+        "Allow a worker, selected by `worker_id` or by `node_alias` and `alias`, "
+        "to receive new tasks again."
+    ),
+    response_description="Cordon result",
+)
+async def uncordon_worker(
+    request: WorkerCordonRequest,
+    principal: PrincipalContext = Depends(authenticate_connection),
+    registry: WorkerRegistry = Depends(get_worker_registry),
+    logger: logging.Logger = Depends(get_logger),
+) -> WorkerCordonResult:
+    return await _set_cordon(request, False, registry, principal, logger)

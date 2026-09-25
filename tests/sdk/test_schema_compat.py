@@ -36,6 +36,8 @@ from flowmesh.models import (
     TaskUsage,
     VersionResponse,
     Worker,
+    WorkerCordon,
+    WorkerCordonResult,
     WorkerHardware,
     WorkerInfo,
     WorkerRegisterResponse,
@@ -75,6 +77,8 @@ from server.schemas.node import NodeWorkerInfo as SrvNodeWorkerInfo
 from server.schemas.node import StorageInfo as SrvStorageInfo
 from server.schemas.node import WorkerHardware as SrvWorkerHardware
 from server.schemas.node import WorkerRegisterResponse as SrvWorkerRegisterResponse
+from server.schemas.worker import WorkerCordon as SrvWorkerCordon
+from server.schemas.worker import WorkerCordonResult as SrvWorkerCordonResult
 from server.schemas.workflow import WorkflowSubmitResponse as SrvWorkflowSubmitResponse
 from server.schemas.workflow import (
     WorkflowSubmitTaskEntry as SrvWorkflowSubmitTaskEntry,
@@ -172,6 +176,8 @@ MODEL_PAIRS = [
     # Worker models
     (SrvWorker, Worker),
     (SrvWorkerInfo, WorkerInfo),
+    (SrvWorkerCordon, WorkerCordon),
+    (SrvWorkerCordonResult, WorkerCordonResult),
     # Node schemas
     (SrvNode, Node),
     (SrvNodeRegisterResponse, NodeRegisterResponse),
