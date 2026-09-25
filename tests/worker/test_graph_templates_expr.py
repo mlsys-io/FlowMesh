@@ -27,8 +27,11 @@ def test_expr_over_list_of_models_with_alias() -> None:
         status_code=200,
         items=[_item("c0"), _item("c1")],
     )
-    value = _evaluate_expr("Up.items.json.choices[0].message.content", {"Up": upstream})
+    value, grouped = _evaluate_expr(
+        "Up.items.json.choices[0].message.content", {"Up": upstream}
+    )
     assert value == ["c0", "c1"]
+    assert grouped is False
 
 
 def test_expr_over_nested_lists_of_models() -> None:
@@ -45,10 +48,11 @@ def test_expr_over_nested_lists_of_models() -> None:
             APIGroupItem(index=1, rows=[_item("c2")]),
         ],
     )
-    value = _evaluate_expr(
+    value, grouped = _evaluate_expr(
         "Up.items.rows.json.choices[0].message.content", {"Up": upstream}
     )
     assert value == [["c0", "c1"], ["c2"]]
+    assert grouped is True
 
 
 def test_build_grouped_dataframes_all_empty_columns_yield_zero_rows() -> None:
