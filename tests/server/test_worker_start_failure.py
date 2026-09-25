@@ -31,7 +31,6 @@ class TestStartWorkerFailure:
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
         wm = StubWorkerManager()
-        wm._stop_and_destroy_worker = AsyncMock(return_value=True)  # type: ignore[method-assign]
         worker = _worker(started=False)
 
         with caplog.at_level(logging.ERROR, logger="test.supervisor"):
