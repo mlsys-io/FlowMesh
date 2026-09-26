@@ -307,7 +307,6 @@ def _run_supervisor(
     # --- GPU detection & NodeInfo construction ---
     max_gpu_count = 0
     current_gpu_count_getter = None
-    rm: ResourceManager | None = None
     try:
         rm = ResourceManager.get_instance()
         max_gpu_count = rm.total_gpu_count()
@@ -367,7 +366,6 @@ def _run_supervisor(
         worker_adapter_registry,
         logger,
         capacity_change_callback=lifecycle.heartbeat_now,
-        resource_manager=rm,
     )
     command_listener = CommandListener(
         redis=redis_client.sync,

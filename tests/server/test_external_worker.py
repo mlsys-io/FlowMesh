@@ -328,8 +328,10 @@ def _build_servicer(
         registry,
         logging.getLogger("test.wm"),
         capacity_change_callback=capacity_change_callback,
-        resource_manager=resource_manager,
     )
+    factory = manager._providers["external"].factory
+    assert isinstance(factory, ExternalWorkerFactory)
+    factory._rm = resource_manager
     manager._is_started = True
     manager._default_worker_config = {}
     servicer = SupervisorServicer.__new__(SupervisorServicer)

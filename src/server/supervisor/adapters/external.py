@@ -143,17 +143,17 @@ class ExternalWorkerFactory(WorkerFactory):
     the index a worker reports is local to its container) from registration
     until it unregisters or is destroyed. A crash releases nothing: the process
     is usually restarted onto the same cards, which must not have been handed
-    to another worker meanwhile. With no `resource_manager` (a host without
-    Docker) there is no pool to hold GPUs in.
+    to another worker meanwhile. A host without Docker has no pool, so nothing
+    is held.
     """
 
-    def __init__(
-        self,
-        system_principal: PrincipalContext,
-        resource_manager: ResourceManager | None = None,
-    ) -> None:
+    def __init__(self, system_principal: PrincipalContext) -> None:
         super().__init__(system_principal)
-        self._rm = resource_manager
+        self._rm: ResourceManager | None
+        try:
+            self._rm = ResourceManager.get_instance()
+        except Exception:
+            self._rm = None
 
     def create_worker(
         self, token: WorkerTokenType, config: ExternalWorkerConfig, alias: str = ""
@@ -214,15 +214,12 @@ class ExternalWorkerFactory(WorkerFactory):
         return self._rm.available_gpu_count() != before
 
 
-def get_provider_spec(
-    system_principal: PrincipalContext,
-    resource_manager: ResourceManager | None = None,
-) -> ProviderSpec:
+def get_provider_spec(system_principal: PrincipalContext) -> ProviderSpec:
     return ProviderSpec(
         name=_PROVIDER_NAME,
         config_cls=ExternalWorkerConfig,
         adapter_cls=ExternalWorkerAdapter,
-        factory=ExternalWorkerFactory(system_principal, resource_manager),
+        factory=ExternalWorkerFactory(system_principal),
     )
 
 

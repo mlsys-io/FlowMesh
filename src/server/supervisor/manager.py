@@ -14,7 +14,6 @@ from .adapters.external import get_provider_spec as external_provider_spec
 from .adapters.external import verify_external_token
 from .adapters.vastai import get_provider_spec as vastai_provider_spec
 from .registry import WorkerRegistry
-from .resource_manager import ResourceManager
 from .schemas import WorkerHardware, WorkerInfo, WorkerStatus
 
 _MAX_PARALLELISM: int = 16
@@ -74,7 +73,6 @@ class WorkerManager:
         registry: WorkerRegistry,
         logger: logging.Logger,
         capacity_change_callback: Callable[[], None] | None = None,
-        resource_manager: ResourceManager | None = None,
     ) -> None:
         self.config_path = config_path
         self.logger = logger
@@ -84,7 +82,7 @@ class WorkerManager:
         self._is_started: bool = False
         self._capacity_change_callback = capacity_change_callback
         # External provider is always available.
-        specs = [external_provider_spec(system_principal, resource_manager)]
+        specs = [external_provider_spec(system_principal)]
         try:
             specs.append(docker_provider_spec(system_principal))
         except Exception as exc:
