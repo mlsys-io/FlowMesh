@@ -200,7 +200,9 @@ scripts/dev/            compile_protos, sync_requirements, check_env_examples
   worker crashes: its orchestrator usually restarts it onto the same cards, so
   a crashed worker's hold is freed by destroying it. A card another worker
   already holds is shared with a warning, never refused, and returns to the
-  pool only once every holder releases it. Holds live in the supervisor's
+  pool only once every holder releases it. A worker listing's `held_gpus`
+  shows the host GPUs the pool holds for each worker; a remote worker's GPUs
+  are never this host's, so it holds none. Holds live in the supervisor's
   memory: after a restart, the Docker workers in its config reserve first and
   an external worker claims its cards again when it re-registers.
 - **A worker's GPUs are the ones CUDA lets it use.** NVML lists every GPU the

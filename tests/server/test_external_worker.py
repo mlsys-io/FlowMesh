@@ -19,6 +19,7 @@ from server.clients.redis import (
     worker_key,
 )
 from server.hooks import PrincipalContext
+from server.schemas.node import NodeWorkerInfo
 from server.supervisor.adapters.external import (
     ExternalWorkerAdapter,
     ExternalWorkerConfig,
@@ -158,6 +159,7 @@ class TestExternalAdapter:
         #: The supervisor cannot introspect a machine it does not own, so there
         #: is no hardware until the worker reports its own.
         assert info.hardware is None
+        assert info.held_gpus == []
 
     def test_get_info_reports_the_hardware_the_worker_reported(self) -> None:
         adapter = self._adapter()
@@ -680,6 +682,22 @@ class TestExternalGpuHolds:
         assert rm._env.available_gpus == {0, 3}
         assert self._held(servicer) == [1, 2]
         assert len(calls) == 2  # admission, then the claim
+        info = servicer._worker_manager.get_worker_info("fm-worker-0")
+        assert info is not None and info.held_gpus == [1, 2]
+
+    @pytest.mark.asyncio
+    async def test_node_worker_listing_carries_held_gpus(self) -> None:
+        """GET_WORKERS dumps each WorkerInfo; the root re-validates it as
+        NodeWorkerInfo, which must keep the field."""
+        servicer = self._servicer(_host_pool(2))
+        await self._register(servicer, "GPU-1")
+
+        [info] = servicer._worker_manager.list_workers()
+        node_info = NodeWorkerInfo.model_validate(
+            info.model_dump() | {"node_id": "nde-1", "status": "IDLE"}
+        )
+
+        assert node_info.held_gpus == [1]
 
     @pytest.mark.asyncio
     async def test_reregistering_the_same_gpus_changes_nothing(self) -> None:
@@ -706,6 +724,7 @@ class TestExternalGpuHolds:
 
     @pytest.mark.asyncio
     async def test_gpus_of_another_host_are_not_held(self) -> None:
+        """A remote worker's GPUs have UUIDs this host's pool never lists."""
         rm, calls = _host_pool(2), list[int]()
         servicer = self._servicer(rm, calls)
 
@@ -713,6 +732,8 @@ class TestExternalGpuHolds:
 
         assert rm.available_gpu_count() == 2
         assert len(calls) == 1  # admission only
+        info = servicer._worker_manager.get_worker_info("fm-worker-0")
+        assert info is not None and info.held_gpus == []
 
     @pytest.mark.asyncio
     async def test_worker_sent_unregister_releases(self) -> None:

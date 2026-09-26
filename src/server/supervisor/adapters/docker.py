@@ -197,6 +197,7 @@ class DockerWorkerAdapter(WorkerAdapter):
             provider=_PROVIDER_NAME,
             status=self.status,
             hardware=hardware,
+            held_gpus=list(self.cuda_devices or []),
             ssh_limits=self.config.ssh.to_limits() if self.config.enable_ssh else None,
         )
 

@@ -27,6 +27,16 @@ class WorkerInfo(BaseModel):
     hardware: Annotated[
         WorkerHardware | None, Field(default=None, description="Hardware metadata")
     ]
+    held_gpus: Annotated[
+        list[int] | None,
+        Field(
+            default=None,
+            description=(
+                "Host GPU indices this node's GPU pool holds for the worker; "
+                "None when its provider reserves no host GPUs."
+            ),
+        ),
+    ] = None
     ssh_limits: Annotated[
         SSHLimits | None,
         Field(

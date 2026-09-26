@@ -54,3 +54,4 @@ class NodeWorkerInfo(BaseModel):
     version: str | None = None
     status: str
     hardware: WorkerHardware | None = None
+    held_gpus: list[int] | None = None

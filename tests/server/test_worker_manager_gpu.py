@@ -20,6 +20,7 @@ from server.supervisor.resource_manager import (
     ResourceManager,
     _parse_gpu_query,
 )
+from server.supervisor.schemas import WorkerStatus
 from tests.server.supervisor_helpers import StubWorkerManager
 
 # ------------------------------------------------------------------ #
@@ -314,7 +315,18 @@ class TestDockerWorkerRuntimeSelection:
         worker.container_name = "worker-gpu-3"
         worker.cuda_devices = [3]
         worker.gpu_arch = GpuArch.BLACKWELL
+        worker._worker_id = None
+        worker._status = WorkerStatus.STOPPED
+        worker._hardware = None
         return worker
+
+    def test_info_reports_the_host_gpus_the_worker_holds(self) -> None:
+        assert self._worker().get_info().held_gpus == [3]
+
+    def test_info_reports_no_held_gpus_for_a_cpu_worker(self) -> None:
+        worker = self._worker()
+        worker.cuda_devices = None
+        assert worker.get_info().held_gpus == []
 
     def test_gpu_worker_omits_runtime_by_default(
         self, monkeypatch: pytest.MonkeyPatch

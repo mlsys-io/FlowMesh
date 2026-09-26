@@ -69,7 +69,7 @@ self-authenticate the same way, sending `FLOWMESH_API_KEY` as the bearer.
 | GET | `/api/v1/workers/cordons` | List cordoned workers. |
 | GET | `/api/v1/nodes` | List nodes (supervisors). |
 | POST | `/api/v1/nodes/register` | Register a node; `409 Conflict` while another live node holds the same alias. |
-| GET | `/api/v1/nodes/{id}/workers` | List workers under a node. |
+| GET | `/api/v1/nodes/{id}/workers` | List workers under a node. Each worker's `held_gpus` lists the host GPU indices the node's pool holds for it (`null` when its provider reserves none). |
 | POST | `/api/v1/nodes/{id}/workers/register` | Register worker under node. |
 | POST | `/api/v1/nodes/{id}/workers/{alias}/{start,stop}` | Start/stop a worker. |
 
