@@ -188,8 +188,8 @@ class ExternalWorkerFactory(WorkerFactory):
             )
         if overlapping:
             logger.warning(
-                "External worker %s uses host GPUs %s that another worker already "
-                "holds; they are now shared",
+                "External worker %s shares host GPUs %s with another worker; "
+                "expected only for MIG slices of one GPU",
                 worker.alias,
                 overlapping,
             )

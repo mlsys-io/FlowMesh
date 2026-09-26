@@ -796,7 +796,7 @@ class TestExternalGpuHolds:
             await self._register(servicer, "GPU-0", "GPU-1")
 
         assert self._held(servicer) == [0, 1]
-        assert "already holds" in caplog.text
+        assert "shares host GPUs [0]" in caplog.text
         # The other holder's release leaves the card held by this worker.
         rm.deallocate_gpus([0])
         assert rm.available_gpu_count() == 0
