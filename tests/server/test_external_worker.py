@@ -5,6 +5,7 @@ CONFIGURATION verifies after the supervisor has forgotten everything, whereas a
 runtime-minted `uuid4()` token cannot.
 """
 
+import asyncio
 import logging
 from collections.abc import AsyncIterator, Callable
 from threading import Lock
@@ -793,13 +794,29 @@ class TestExternalGpuHolds:
         rm = _host_pool(2)
         servicer = self._servicer(rm)
         await self._register(servicer, "GPU-0")
+        opened, send = asyncio.Event(), asyncio.Event()
+        payload: dict[str, Any] = {}
+
+        async def messages() -> AsyncIterator[supervisor_pb2.EventMessage]:
+            opened.set()
+            await send.wait()
+            message = supervisor_pb2.EventMessage()
+            message.payload.update(payload)
+            yield message
+
+        # The stream opens -- and resolves its adapter -- before the destroy.
+        stream = asyncio.create_task(
+            servicer.PushEvents(messages(), cast(Any, _FakeContext(self.TOKEN)))
+        )
+        await opened.wait()
         await servicer._worker_manager.destroy_worker("fm-worker-0")
-        worker_id = await self._register(servicer, "GPU-1")
+        payload.update(
+            type="UNREGISTER", worker_id=await self._register(servicer, "GPU-1")
+        )
         assert rm._env.available_gpus == {0}
 
-        await _push_events(
-            servicer, self.TOKEN, {"type": "UNREGISTER", "worker_id": worker_id}
-        )
+        send.set()
+        await stream
 
         assert rm._env.available_gpus == {0, 1}
 
