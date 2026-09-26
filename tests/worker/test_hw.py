@@ -113,11 +113,11 @@ _HOST = [
 _MIG = {2: {0: "MIG-aaaa-1", 1: "MIG-aaaa-2"}, 3: {0: "MIG-bbbb-1"}}
 
 
-def _host_migs(index: int) -> dict[int, str]:
-    return _MIG.get(index, {})
-
-
 class TestVisibleDeviceOrder:
+    @pytest.fixture(autouse=True)
+    def _host_migs(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(hw, "_mig_uuids", lambda index: _MIG.get(index, {}))
+
     @pytest.mark.parametrize(
         ("value", "expected"),
         [
@@ -147,7 +147,7 @@ class TestVisibleDeviceOrder:
             monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
         else:
             monkeypatch.setenv("CUDA_VISIBLE_DEVICES", value)
-        order = hw.visible_device_order(_HOST, _host_migs)
+        order = hw.visible_device_order(_HOST)
         assert [index for index, _ in order] == expected
 
     @pytest.mark.parametrize(
@@ -164,13 +164,13 @@ class TestVisibleDeviceOrder:
         expected: list[tuple[int, int | None]],
     ) -> None:
         monkeypatch.setenv("CUDA_VISIBLE_DEVICES", value)
-        assert hw.visible_device_order(_HOST, _host_migs) == expected
+        assert hw.visible_device_order(_HOST) == expected
 
     def test_warns_on_a_mig_entry_it_cannot_resolve(
         self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
     ) -> None:
         monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "MIG-GPU-aaaa/1/0")
-        assert hw.visible_device_order(_HOST, _host_migs) == []
+        assert hw.visible_device_order(_HOST) == []
         assert "MIG-GPU-aaaa/1/0" in caplog.text
 
     def test_mig_slices_are_not_listed_without_a_mig_entry(
@@ -181,7 +181,8 @@ class TestVisibleDeviceOrder:
         def unexpected(_index: int) -> dict[int, str]:
             raise AssertionError("MIG devices listed with no MIG entry")
 
-        assert hw.visible_device_order(_HOST, unexpected) == [(0, None), (1, None)]
+        monkeypatch.setattr(hw, "_mig_uuids", unexpected)
+        assert hw.visible_device_order(_HOST) == [(0, None), (1, None)]
 
     def test_warns_when_positions_are_ambiguous_on_mixed_gpus(
         self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
@@ -205,7 +206,7 @@ class TestVisibleDeviceOrder:
         value: str,
     ) -> None:
         monkeypatch.setenv("CUDA_VISIBLE_DEVICES", value)
-        hw.visible_device_order(_HOST, _host_migs)
+        hw.visible_device_order(_HOST)
         assert "names no unlisted GPU" in caplog.text
 
     @pytest.mark.parametrize("value", ["", "-1", "NoDevFiles", "1,-1"])
@@ -216,7 +217,7 @@ class TestVisibleDeviceOrder:
         value: str,
     ) -> None:
         monkeypatch.setenv("CUDA_VISIBLE_DEVICES", value)
-        hw.visible_device_order(_HOST, _host_migs)
+        hw.visible_device_order(_HOST)
         assert caplog.text == ""
 
     @pytest.mark.parametrize("value", ["", "NoDevFiles", "GPU-b"])

@@ -10,7 +10,6 @@ import platform
 import re
 import socket
 import sys
-from collections.abc import Callable
 from ctypes import CDLL, POINTER, byref, c_int
 from ctypes.util import find_library
 from dataclasses import dataclass
@@ -129,7 +128,6 @@ def _mig_uuids(nvml_index: int) -> dict[int, str]:
 
 def visible_device_order(
     devices: list[tuple[str, str]],
-    mig_uuids: Callable[[int], dict[int, str]] = _mig_uuids,
 ) -> list[tuple[int, int | None]]:
     """Return the devices `CUDA_VISIBLE_DEVICES` leaves visible, in CUDA order.
 
@@ -140,9 +138,8 @@ def visible_device_order(
     entry that names no device ends the list. Integers are read in PCI bus
     order, which is NVML's and matches CUDA's only under
     `CUDA_DEVICE_ORDER=PCI_BUS_ID` or on identical GPUs. A `MIG-` entry names a
-    slice of a GPU (`mig_uuids` lists an NVML device's MIG device UUIDs by
-    slot); it also ends the list, since a CUDA process enumerates at most one
-    MIG device.
+    slice of a GPU; it also ends the list, since a CUDA process enumerates at
+    most one MIG device.
     """
     value = os.environ.get("CUDA_VISIBLE_DEVICES")
     if value is None:
@@ -155,7 +152,7 @@ def visible_device_order(
             slices = [
                 (i, slot)
                 for i in range(len(devices))
-                for slot, mig in mig_uuids(i).items()
+                for slot, mig in _mig_uuids(i).items()
                 if mig.lower().startswith(entry.lower())
             ]
             if len(slices) != 1:
