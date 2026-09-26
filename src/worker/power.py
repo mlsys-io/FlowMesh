@@ -9,6 +9,8 @@ import pynvml
 
 from shared.utils.time import now_iso
 
+from .hw import visible_gpus
+
 logger = logging.getLogger(__name__)
 
 
@@ -31,33 +33,6 @@ def _detect_cpu_energy_file() -> str | None:
     return None
 
 
-def _parse_cuda_visible_devices(value: str | None) -> set[int] | None:
-    """Parse CUDA_VISIBLE_DEVICES into a set of GPU indices."""
-    if value is None:
-        return None
-
-    stripped = value.strip()
-    if stripped == "":
-        return set()
-
-    tokens = [token.strip() for token in value.split(",") if token.strip()]
-    if not tokens:
-        return set()
-
-    indices: set[int] = set()
-    for token in tokens:
-        lowered = token.lower()
-        if lowered == "nodevfiles":
-            return set()
-        try:
-            indices.add(int(token))
-        except ValueError:
-            # Non-numeric tokens (e.g. GPU UUIDs/MIG identifiers) are not handled;
-            # fall back.
-            return None
-    return indices
-
-
 class PowerMonitor:
     """Tracks CPU/GPU power draw samples and aggregates averages."""
 
@@ -72,9 +47,6 @@ class PowerMonitor:
         self._gpu_total_sum = 0.0
         self._gpu_total_samples = 0
         self._per_gpu: dict[str, dict[str, float]] = {}
-        self._visible_gpu_indices = _parse_cuda_visible_devices(
-            os.environ.get("CUDA_VISIBLE_DEVICES")
-        )
         self._nvml_initialized: bool | None = None
         self._nvml_handles: dict[int, Any] = {}
 
@@ -206,24 +178,19 @@ class PowerMonitor:
         return True
 
     def _read_gpu_power(self) -> list[dict[str, Any]]:
-        visible = self._visible_gpu_indices
-        if visible is not None and not visible:
-            return []
-
         if not self._ensure_nvml():
             return []
 
         entries: list[dict[str, Any]] = []
         try:
-            for idx in range(pynvml.nvmlDeviceGetCount()):
-                if visible is not None and idx not in visible:
-                    continue
-                handle = self._nvml_handles.get(idx)
+            for gpu in visible_gpus():
+                handle = self._nvml_handles.get(gpu.ordinal)
                 if handle is None:
-                    handle = pynvml.nvmlDeviceGetHandleByIndex(idx)
-                    self._nvml_handles[idx] = handle
+                    # NVML reports power per GPU, so a MIG slice reads its whole GPU.
+                    handle = pynvml.nvmlDeviceGetHandleByIndex(gpu.nvml_index)
+                    self._nvml_handles[gpu.ordinal] = handle
                 power = pynvml.nvmlDeviceGetPowerUsage(handle) / 1000.0
-                entries.append({"index": idx, "power_w": power})
+                entries.append({"index": gpu.ordinal, "power_w": power})
         except pynvml.NVMLError:
             pass
         return entries
