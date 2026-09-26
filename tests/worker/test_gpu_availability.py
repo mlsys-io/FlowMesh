@@ -1,5 +1,6 @@
 """Per-device GPU availability: what the worker observes and what it reports."""
 
+from collections.abc import Iterator
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -30,6 +31,7 @@ from worker.gpu_availability import (
     NvmlDeviceProbe,
     decide_availability,
 )
+from worker.hw import visible_gpus
 from worker.lifecycle import Lifecycle
 from worker.runner import Runner
 
@@ -78,7 +80,22 @@ class TestDecide:
 
 
 class TestNvmlDeviceProbe:
-    def _fake_nvml(self, devices: dict[int, tuple[str, str, int, int]]) -> Any:
+    @pytest.fixture(autouse=True)
+    def _fresh_visible_gpus(self, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+        monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
+        visible_gpus.cache_clear()
+        yield
+        visible_gpus.cache_clear()
+
+    def _install(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        devices: dict[int, tuple[str, str, int, int]],
+        mig: dict[tuple[int, int], tuple[str, int, int]] | None = None,
+    ) -> None:
+        """Fake NVML with the given devices and MIG slices (by (index, slot))."""
+        slices = mig or {}
+
         class FakeNvml:
             NVMLError = RuntimeError
 
@@ -99,35 +116,48 @@ class TestNvmlDeviceProbe:
                 return devices[handle][0]
 
             @staticmethod
-            def nvmlDeviceGetUUID(handle: int) -> str:
+            def nvmlDeviceGetUUID(handle: int | tuple[int, int]) -> str:
+                if isinstance(handle, tuple):
+                    return slices[handle][0]
                 return devices[handle][1]
 
             @staticmethod
-            def nvmlDeviceGetMemoryInfo(handle: int) -> Any:
-                _, _, used, free = devices[handle]
+            def nvmlDeviceGetMaxMigDeviceCount(handle: int) -> int:
+                return max((slot + 1 for i, slot in slices if i == handle), default=0)
+
+            @staticmethod
+            def nvmlDeviceGetMigDeviceHandleByIndex(
+                handle: int, slot: int
+            ) -> tuple[int, int]:
+                if (handle, slot) not in slices:
+                    raise RuntimeError("empty slot")
+                return (handle, slot)
+
+            @staticmethod
+            def nvmlDeviceGetMemoryInfo(handle: int | tuple[int, int]) -> Any:
+                if isinstance(handle, tuple):
+                    _, used, free = slices[handle]
+                else:
+                    _, _, used, free = devices[handle]
                 return SimpleNamespace(used=used, free=free)
 
-        return FakeNvml
+        monkeypatch.setattr("worker.gpu_availability.pynvml", FakeNvml)
+        monkeypatch.setattr("worker.hw.pynvml", FakeNvml)
 
     def test_keys_by_uuid_not_index(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # Index is only meaningful relative to CUDA_VISIBLE_DEVICES.
-        monkeypatch.setattr(
-            "worker.gpu_availability.pynvml",
-            self._fake_nvml({0: ("dedicated", GPU_A, 40_000 * MIB, 8 * MIB)}),
-        )
+        self._install(monkeypatch, {0: ("dedicated", GPU_A, 40_000 * MIB, 8 * MIB)})
         assert NvmlDeviceProbe()() == {GPU_A: _reading(40_000.0, free_bytes=8 * MIB)}
 
     def test_unified_devices_are_omitted(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # Their "used" figure is system RAM, not a card another tenant holds --
         # so they report nothing rather than reporting free.
-        monkeypatch.setattr(
-            "worker.gpu_availability.pynvml",
-            self._fake_nvml(
-                {
-                    0: ("unified", GPU_A, 40_000 * MIB, 0),
-                    1: ("dedicated", GPU_B, 0, 48 * 1024 * MIB),
-                }
-            ),
+        self._install(
+            monkeypatch,
+            {
+                0: ("unified", GPU_A, 40_000 * MIB, 0),
+                1: ("dedicated", GPU_B, 0, 48 * 1024 * MIB),
+            },
         )
         readings = NvmlDeviceProbe(lambda index, _name: index == 0)()
         assert set(readings) == {GPU_B}
@@ -137,14 +167,13 @@ class TestNvmlDeviceProbe:
     ) -> None:
         # NVML also lists GPUs CUDA_VISIBLE_DEVICES hides from the worker; those
         # belong to someone else and are not the worker's to report.
-        monkeypatch.setattr(
-            "worker.gpu_availability.pynvml",
-            self._fake_nvml(
-                {
-                    0: ("dedicated", GPU_A, 40_000 * MIB, 8 * MIB),
-                    1: ("dedicated", GPU_B, 0, 48 * 1024 * MIB),
-                }
-            ),
+        monkeypatch.setenv("CUDA_VISIBLE_DEVICES", GPU_B)
+        self._install(
+            monkeypatch,
+            {
+                0: ("dedicated", GPU_A, 40_000 * MIB, 8 * MIB),
+                1: ("dedicated", GPU_B, 0, 48 * 1024 * MIB),
+            },
         )
         seen: list[int] = []
 
@@ -152,10 +181,25 @@ class TestNvmlDeviceProbe:
             seen.append(ordinal)
             return False
 
-        readings = NvmlDeviceProbe(is_unified, {GPU_B: 0})()
+        readings = NvmlDeviceProbe(is_unified)()
         assert set(readings) == {GPU_B}
         # The unified-memory check takes the CUDA ordinal, not the NVML index.
         assert seen == [0]
+
+    def test_a_mig_slice_is_read_on_its_own(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A sibling slice's tenant fills the GPU; the worker's own slice is idle.
+        monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "MIG-own")
+        self._install(
+            monkeypatch,
+            {0: ("dedicated", GPU_A, 40_000 * MIB, 0)},
+            mig={
+                (0, 0): ("MIG-sibling", 40_000 * MIB, 0),
+                (0, 1): ("MIG-own", 5 * MIB, 10 * 1024 * MIB),
+            },
+        )
+        assert NvmlDeviceProbe()() == {GPU_A: _reading(5.0, free_bytes=10 * 1024 * MIB)}
 
     def test_nvml_failure_returns_empty(self, monkeypatch: pytest.MonkeyPatch) -> None:
         class Broken:

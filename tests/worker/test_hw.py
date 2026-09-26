@@ -1,10 +1,18 @@
 """Tests for worker hardware detection."""
 
+from collections.abc import Iterator
 from unittest.mock import mock_open, patch
 
 import pytest
 
 from worker import hw
+
+
+@pytest.fixture(autouse=True)
+def _fresh_visible_gpus() -> Iterator[None]:
+    hw.visible_gpus.cache_clear()
+    yield
+    hw.visible_gpus.cache_clear()
 
 
 class _FakeNvmlError(Exception):
@@ -102,11 +110,11 @@ _HOST = [
     ("GPU-cccc-3333", "NVIDIA H100"),
     ("GPU-cccd-4444", "NVIDIA H100"),
 ]
-_MIG = {2: ["MIG-aaaa-1", "MIG-aaaa-2"], 3: ["MIG-bbbb-1"]}
+_MIG = {2: {0: "MIG-aaaa-1", 1: "MIG-aaaa-2"}, 3: {0: "MIG-bbbb-1"}}
 
 
-def _host_migs(index: int) -> list[str]:
-    return _MIG.get(index, [])
+def _host_migs(index: int) -> dict[int, str]:
+    return _MIG.get(index, {})
 
 
 class TestVisibleDeviceOrder:
@@ -139,6 +147,23 @@ class TestVisibleDeviceOrder:
             monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
         else:
             monkeypatch.setenv("CUDA_VISIBLE_DEVICES", value)
+        order = hw.visible_device_order(_HOST, _host_migs)
+        assert [index for index, _ in order] == expected
+
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        [
+            ("MIG-aaaa-2", [(2, 1)]),
+            ("1,MIG-bbbb-1", [(1, None), (3, 0)]),
+        ],
+    )
+    def test_a_mig_entry_carries_its_slot(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        value: str,
+        expected: list[tuple[int, int | None]],
+    ) -> None:
+        monkeypatch.setenv("CUDA_VISIBLE_DEVICES", value)
         assert hw.visible_device_order(_HOST, _host_migs) == expected
 
     def test_warns_on_a_mig_entry_it_cannot_resolve(
@@ -153,10 +178,10 @@ class TestVisibleDeviceOrder:
     ) -> None:
         monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "0,1")
 
-        def unexpected(_index: int) -> list[str]:
+        def unexpected(_index: int) -> dict[int, str]:
             raise AssertionError("MIG devices listed with no MIG entry")
 
-        assert hw.visible_device_order(_HOST, unexpected) == [0, 1]
+        assert hw.visible_device_order(_HOST, unexpected) == [(0, None), (1, None)]
 
     def test_warns_when_positions_are_ambiguous_on_mixed_gpus(
         self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
@@ -164,7 +189,7 @@ class TestVisibleDeviceOrder:
         mixed = [("GPU-a", "NVIDIA H100"), ("GPU-b", "NVIDIA L4")]
         monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "1")
         monkeypatch.delenv("CUDA_DEVICE_ORDER", raising=False)
-        assert hw.visible_device_order(mixed) == [1]
+        assert hw.visible_device_order(mixed) == [(1, None)]
         assert "PCI_BUS_ID" in caplog.text
 
         caplog.clear()
@@ -249,6 +274,11 @@ class _MigPynvml(_FourGpuPynvml):
             return f"MIG-slice-{handle[0]}-{handle[1]}".encode()
         return _HOST[handle][0].encode()
 
+    @staticmethod
+    def nvmlDeviceGetMemoryInfo(handle: int | tuple[int, int]) -> object:
+        total = (10 << 30) if isinstance(handle, tuple) else (80 << 30)
+        return type("Mem", (), {"total": total})()
+
 
 def test_collect_hw_reports_the_gpu_a_mig_slice_belongs_to(
     monkeypatch: pytest.MonkeyPatch,
@@ -261,4 +291,7 @@ def test_collect_hw_reports_the_gpu_a_mig_slice_belongs_to(
     ):
         hardware = hw.collect_hw()
 
-    assert [(d.index, d.uuid) for d in hardware.gpu.devices] == [(0, "GPU-cccc-3333")]
+    [device] = hardware.gpu.devices
+    assert (device.index, device.uuid) == (0, "GPU-cccc-3333")
+    # The slice's memory, not the whole GPU's.
+    assert device.memory_total_bytes == 10 << 30

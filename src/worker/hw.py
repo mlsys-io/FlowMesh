@@ -13,7 +13,9 @@ import sys
 from collections.abc import Callable
 from ctypes import CDLL, POINTER, byref, c_int
 from ctypes.util import find_library
+from dataclasses import dataclass
 from functools import cache
+from typing import Any
 
 import pynvml
 
@@ -107,18 +109,18 @@ def _decode(value: bytes | str) -> str:
     return value.decode() if isinstance(value, bytes) else value
 
 
-def _mig_uuids(nvml_index: int) -> list[str]:
-    """UUIDs of the MIG devices carved out of an NVML device, if any."""
+def _mig_uuids(nvml_index: int) -> dict[int, str]:
+    """UUIDs of the MIG devices carved out of an NVML device, by MIG slot."""
     try:
         handle = pynvml.nvmlDeviceGetHandleByIndex(nvml_index)
         count = pynvml.nvmlDeviceGetMaxMigDeviceCount(handle)
     except pynvml.NVMLError:
-        return []
-    uuids: list[str] = []
+        return {}
+    uuids: dict[int, str] = {}
     for slot in range(count):
         try:
             mig = pynvml.nvmlDeviceGetMigDeviceHandleByIndex(handle, slot)
-            uuids.append(_decode(pynvml.nvmlDeviceGetUUID(mig)))
+            uuids[slot] = _decode(pynvml.nvmlDeviceGetUUID(mig))
         except pynvml.NVMLError:
             continue
     return uuids
@@ -126,42 +128,43 @@ def _mig_uuids(nvml_index: int) -> list[str]:
 
 def visible_device_order(
     devices: list[tuple[str, str]],
-    mig_uuids: Callable[[int], list[str]] = _mig_uuids,
-) -> list[int]:
-    """Return the NVML indices `CUDA_VISIBLE_DEVICES` leaves visible, in CUDA order.
+    mig_uuids: Callable[[int], dict[int, str]] = _mig_uuids,
+) -> list[tuple[int, int | None]]:
+    """Return the devices `CUDA_VISIBLE_DEVICES` leaves visible, in CUDA order.
 
     `devices` is each NVML device's (uuid, name), in NVML order; NVML itself
-    ignores the variable. Entries follow CUDA's rules: a `GPU-` entry names a
+    ignores the variable. Each result is an NVML index and, for a MIG slice of
+    that GPU, its MIG slot. Entries follow CUDA's rules: a `GPU-` entry names a
     device by a unique UUID prefix, an integer by its position, and the first
     entry that names no device ends the list. Integers are read in PCI bus
     order, which is NVML's and matches CUDA's only under
-    `CUDA_DEVICE_ORDER=PCI_BUS_ID` or on identical GPUs. A `MIG-` entry names
-    a slice of a GPU and yields that GPU (`mig_uuids` lists an NVML device's
-    MIG device UUIDs); it also ends the list, since a CUDA process enumerates
-    at most one MIG device.
+    `CUDA_DEVICE_ORDER=PCI_BUS_ID` or on identical GPUs. A `MIG-` entry names a
+    slice of a GPU (`mig_uuids` lists an NVML device's MIG device UUIDs by
+    slot); it also ends the list, since a CUDA process enumerates at most one
+    MIG device.
     """
     value = os.environ.get("CUDA_VISIBLE_DEVICES")
     if value is None:
-        return list(range(len(devices)))
+        return [(i, None) for i in range(len(devices))]
     uuids = [uuid.lower() for uuid, _ in devices]
-    order: list[int] = []
+    order: list[tuple[int, int | None]] = []
     by_position = False
     for entry in (token.strip() for token in value.split(",")):
         if entry.upper().startswith("MIG-"):
-            parents = [
-                i
+            slices = [
+                (i, slot)
                 for i in range(len(devices))
-                for mig in mig_uuids(i)
+                for slot, mig in mig_uuids(i).items()
                 if mig.lower().startswith(entry.lower())
             ]
-            if len(parents) != 1:
+            if len(slices) != 1:
                 logger.warning(
                     "CUDA_VISIBLE_DEVICES entry %s names no single MIG device; "
                     "reporting no GPUs from it on",
                     entry,
                 )
-            elif parents[0] not in order:
-                order.append(parents[0])
+            elif all(i != slices[0][0] for i, _ in order):
+                order.append(slices[0])
             break
         if entry.upper().startswith("GPU-"):
             matches = [
@@ -176,9 +179,9 @@ def visible_device_order(
             if index is not None and not 0 <= index < len(devices):
                 index = None
             by_position = by_position or index is not None
-        if index is None or index in order:
+        if index is None or any(i == index for i, _ in order):
             break
-        order.append(index)
+        order.append((index, None))
     if (
         by_position
         and len({name for _, name in devices}) > 1
@@ -190,6 +193,51 @@ def visible_device_order(
             "CUDA_DEVICE_ORDER=PCI_BUS_ID"
         )
     return order
+
+
+@dataclass(frozen=True)
+class VisibleGpu:
+    """A GPU this process's CUDA calls can use, located in NVML."""
+
+    ordinal: int
+    """The device's CUDA ordinal."""
+    nvml_index: int
+    uuid: str
+    """The physical GPU's UUID, also when the process sees a MIG slice of it."""
+    name: str
+    mig_slot: int | None = None
+    """The MIG slot of the slice the process sees, if it sees only a slice."""
+
+
+@cache
+def visible_gpus() -> tuple[VisibleGpu, ...]:
+    """The GPUs `CUDA_VISIBLE_DEVICES` leaves visible, in CUDA order.
+
+    Needs NVML initialised, and raises `pynvml.NVMLError` when it cannot be read.
+    Resolved once per process, as CUDA does, so an executor rewriting the variable
+    later does not move the worker's devices.
+    """
+    devices: list[tuple[str, str]] = []
+    for idx in range(pynvml.nvmlDeviceGetCount()):
+        handle = pynvml.nvmlDeviceGetHandleByIndex(idx)
+        devices.append(
+            (
+                _decode(pynvml.nvmlDeviceGetUUID(handle)),
+                _decode(pynvml.nvmlDeviceGetName(handle)),
+            )
+        )
+    return tuple(
+        VisibleGpu(ordinal, nvml_index, *devices[nvml_index], mig_slot)
+        for ordinal, (nvml_index, mig_slot) in enumerate(visible_device_order(devices))
+    )
+
+
+def nvml_memory_handle(gpu: VisibleGpu) -> Any:
+    """The NVML handle whose memory is the process's: its MIG slice, if any."""
+    handle = pynvml.nvmlDeviceGetHandleByIndex(gpu.nvml_index)
+    if gpu.mig_slot is None:
+        return handle
+    return pynvml.nvmlDeviceGetMigDeviceHandleByIndex(handle, gpu.mig_slot)
 
 
 def collect_hw(*, bandwidth_bytes_per_sec: float | None = None) -> WorkerHardware:
@@ -217,32 +265,26 @@ def collect_hw(*, bandwidth_bytes_per_sec: float | None = None) -> WorkerHardwar
         driver_version = raw.decode() if isinstance(raw, bytes) else raw
         cuda_raw = pynvml.nvmlSystemGetCudaDriverVersion()
         cuda_version = f"{cuda_raw // 1000}.{(cuda_raw % 1000) // 10}"
-        nvml_devices = []
-        for idx in range(pynvml.nvmlDeviceGetCount()):
-            handle = pynvml.nvmlDeviceGetHandleByIndex(idx)
-            name = _decode(pynvml.nvmlDeviceGetName(handle))
-            uuid = _decode(pynvml.nvmlDeviceGetUUID(handle))
-            nvml_devices.append((handle, uuid, name))
-        order = visible_device_order([(uuid, name) for _, uuid, name in nvml_devices])
-        # A device is reported under its CUDA ordinal, the index this process's
-        # CUDA calls see.
-        for ordinal, nvml_index in enumerate(order):
-            handle, uuid, name = nvml_devices[nvml_index]
-            gpu_uses_unified_memory = device_uses_unified_memory(ordinal, name)
+        for visible in visible_gpus():
+            gpu_uses_unified_memory = device_uses_unified_memory(
+                visible.ordinal, visible.name
+            )
             unified_memory = unified_memory or gpu_uses_unified_memory
             mem_total: int | None = None
             if not gpu_uses_unified_memory:
                 try:
-                    mem_total_raw = pynvml.nvmlDeviceGetMemoryInfo(handle).total
+                    mem_total_raw = pynvml.nvmlDeviceGetMemoryInfo(
+                        nvml_memory_handle(visible)
+                    ).total
                 except pynvml.NVMLError:
                     mem_total_raw = None
                 if mem_total_raw:
                     mem_total = int(mem_total_raw)
             devices.append(
                 GpuInfo(
-                    index=ordinal,
-                    name=name,
-                    uuid=uuid,
+                    index=visible.ordinal,
+                    name=visible.name,
+                    uuid=visible.uuid,
                     memory_total_bytes=mem_total,
                 )
             )
