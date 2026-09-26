@@ -29,13 +29,7 @@ class WorkerInfo(BaseModel):
     ]
     held_gpus: Annotated[
         list[int] | None,
-        Field(
-            default=None,
-            description=(
-                "Host GPU indices this node's GPU pool holds for the worker; "
-                "None when its provider reserves no host GPUs."
-            ),
-        ),
+        Field(default=None, description="Host GPU indices held for the worker"),
     ] = None
     ssh_limits: Annotated[
         SSHLimits | None,

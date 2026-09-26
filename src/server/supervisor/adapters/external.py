@@ -115,7 +115,7 @@ class ExternalWorkerAdapter(WorkerAdapter):
             provider=_PROVIDER_NAME,
             status=self._status,
             hardware=self._hardware,
-            held_gpus=list(self.held_gpus),
+            held_gpus=self.held_gpus.copy(),
         )
 
     async def start(self) -> bool:
