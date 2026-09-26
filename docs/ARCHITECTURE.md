@@ -198,9 +198,11 @@ scripts/dev/            compile_protos, sync_requirements, check_env_examples
   them and the node's free GPU count excludes them. The hold lasts until the
   worker unregisters, is destroyed, or the supervisor stops, but not when the
   worker crashes: its orchestrator usually restarts it onto the same cards, so
-  a crashed worker's hold is freed by destroying it. A card another worker
-  already holds is shared with a warning, never refused, and returns to the
-  pool only once every holder releases it. A worker listing's `held_gpus`
+  a crashed worker's hold is freed by destroying it (`flowmesh stack worker
+  down <alias>` on its node, i.e. `DELETE /api/v1/stack/workers/{alias}`).
+  Destroying a live external worker frees its cards only until it next
+  registers. A card another worker already holds is shared with a warning,
+  never refused, and returns to the pool only once every holder releases it. A worker listing's `held_gpus`
   shows the host GPUs the pool holds for each worker; a remote worker's GPUs
   are never this host's, so it holds none. Holds live in the supervisor's
   memory: after a restart, the Docker workers in its config reserve first and
