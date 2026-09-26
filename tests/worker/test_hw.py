@@ -197,6 +197,28 @@ class TestVisibleDeviceOrder:
         hw.visible_device_order(mixed)
         assert caplog.text == ""
 
+    @pytest.mark.parametrize("value", ["GPU-zzzz", "7", "all", "0,0", "0,GPU-z"])
+    def test_warns_on_an_entry_that_names_no_gpu(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+        value: str,
+    ) -> None:
+        monkeypatch.setenv("CUDA_VISIBLE_DEVICES", value)
+        hw.visible_device_order(_HOST, _host_migs)
+        assert "names no unlisted GPU" in caplog.text
+
+    @pytest.mark.parametrize("value", ["", "-1", "NoDevFiles", "1,-1"])
+    def test_hiding_entries_do_not_warn(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+        value: str,
+    ) -> None:
+        monkeypatch.setenv("CUDA_VISIBLE_DEVICES", value)
+        hw.visible_device_order(_HOST, _host_migs)
+        assert caplog.text == ""
+
     @pytest.mark.parametrize("value", ["", "NoDevFiles", "GPU-b"])
     def test_no_warning_when_no_position_was_read(
         self,

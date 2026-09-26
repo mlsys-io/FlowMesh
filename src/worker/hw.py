@@ -32,6 +32,7 @@ logger = logging.getLogger(__name__)
 
 _UNIFIED_GPU_NAME_PATTERN = re.compile(r"\b(?:gb10|tegra|thor)\b", re.IGNORECASE)
 _CUDA_DEV_ATTR_INTEGRATED = 18
+_HIDING_ENTRIES = frozenset({"", "-1", "NoDevFiles"})
 
 
 def _is_unified_memory_gpu(name: str) -> bool:
@@ -180,6 +181,12 @@ def visible_device_order(
                 index = None
             by_position = by_position or index is not None
         if index is None or any(i == index for i, _ in order):
+            if entry not in _HIDING_ENTRIES:
+                logger.warning(
+                    "CUDA_VISIBLE_DEVICES entry %s names no unlisted GPU; "
+                    "reporting no GPUs from it on",
+                    entry,
+                )
             break
         order.append((index, None))
     if (
