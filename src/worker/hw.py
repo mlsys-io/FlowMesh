@@ -137,7 +137,7 @@ def visible_device_order(devices: list[tuple[str, str]]) -> list[int]:
                 index = None
             if index is not None and not 0 <= index < len(devices):
                 index = None
-            by_position = True
+            by_position = by_position or index is not None
         if index is None or index in order:
             break
         order.append(index)

@@ -145,6 +145,19 @@ class TestVisibleDeviceOrder:
         hw.visible_device_order(mixed)
         assert caplog.text == ""
 
+    @pytest.mark.parametrize("value", ["", "NoDevFiles", "GPU-b"])
+    def test_no_warning_when_no_position_was_read(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+        value: str,
+    ) -> None:
+        mixed = [("GPU-a", "NVIDIA H100"), ("GPU-b", "NVIDIA L4")]
+        monkeypatch.setenv("CUDA_VISIBLE_DEVICES", value)
+        monkeypatch.delenv("CUDA_DEVICE_ORDER", raising=False)
+        hw.visible_device_order(mixed)
+        assert caplog.text == ""
+
 
 class _FourGpuPynvml(_FakePynvml):
     @staticmethod
