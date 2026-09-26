@@ -23,12 +23,10 @@ class TestTranslateN8nWorkflow:
         ]
         result = translate_n8n_workflow({"nodes": nodes, "connections": {}})
 
-        # Top-level shape
         assert result["kind"] == "APITask"
         assert result["apiVersion"] == "flowmesh/v1"
         assert "spec" in result
 
-        # Task type and API spec
         spec = result["spec"]
         assert spec["taskType"] == "api"
         assert "api" in spec
@@ -36,9 +34,9 @@ class TestTranslateN8nWorkflow:
         assert api["method"] == "POST"
         assert api["body"]["model"] == "gpt-4"
 
-        # Prompt content preserved in messages
-        messages = api["body"]["messages"]
-        assert any("Hello, world!" in m.get("content", "") for m in messages)
+        assert spec["data"]["type"] == "list"
+        assert spec["data"]["items"] == ["Hello, world!"]
+        assert api["body"]["messages"][0]["content"] == "{{prompt}}"
 
     def test_no_task_nodes_raises_value_error(self) -> None:
         """Workflow with no recognized task nodes should raise ValueError."""
@@ -49,6 +47,40 @@ class TestTranslateN8nWorkflow:
         """Non-JSON input to n8n format should raise ValueError."""
         with pytest.raises(ValueError, match="Invalid JSON"):
             parse_workflow("not json at all {{{", format="n8n")
+
+    def test_api_dependency_resolves_first_row_text(self) -> None:
+        """A dependent API node reads the upstream API stage's first-row text."""
+        nodes = [
+            {
+                "name": "Upstream",
+                "type": "@n8n/n8n-nodes-langchain.openAi",
+                "parameters": {
+                    "modelId": {"value": "gpt-4"},
+                    "responses": {"values": [{"content": "First answer"}]},
+                },
+            },
+            {
+                "name": "Downstream",
+                "type": "@n8n/n8n-nodes-langchain.openAi",
+                "parameters": {
+                    "modelId": {"value": "gpt-4"},
+                    "responses": {"values": [{"content": "Simplify this"}]},
+                },
+            },
+        ]
+        connections = {
+            "Upstream": {"ai_languageModel": [[{"node": "Downstream"}]]},
+        }
+        result = translate_n8n_workflow({"nodes": nodes, "connections": connections})
+
+        graph = result["spec"]["graph"]["nodes"]
+        assert [n["name"] for n in graph] == ["Upstream", "Downstream"]
+        downstream = next(n for n in graph if n["name"] == "Downstream")
+        assert downstream["dependsOn"] == ["Upstream"]
+        assert downstream["spec"]["data"]["items"] == [
+            "The previous stage's response is as follows. Simplify this\n"
+            "${Upstream.items.0.text}"
+        ]
 
 
 class TestDecodeSecretPart:

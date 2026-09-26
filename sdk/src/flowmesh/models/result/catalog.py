@@ -18,6 +18,7 @@ from .payloads import (
     AgentItem,
     AgentMetadata,
     AgentUsage,
+    APIItem,
     CostEstimates,
     DataRetrievalItem,
     EchoItem,
@@ -212,6 +213,7 @@ class APIResult(StrictExecutorResult):
     response_json: Any = Field(default=None, alias="json")
     usage: dict[str, Any] | None = None
     text: str | None = None
+    items: list[APIItem] = Field(default_factory=list)
 
 
 class SSHResult(StrictExecutorResult):

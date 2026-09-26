@@ -207,3 +207,24 @@ class EchoItem(StrictModel):
     """One echoed value."""
 
     output: JsonValue = None
+
+
+class APIItem(StrictModel):
+    """One row's HTTP response in a batched API task.
+
+    ``response_json`` is the upstream API's own payload and stays an open
+    mapping; ``populate_by_name`` lets code construct by field name while the
+    wire key stays ``json``.
+    """
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    index: int
+    url: str
+    status_code: int
+    truncated: bool = False
+    headers: dict[str, str] | None = None
+    response_json: Any = Field(default=None, alias="json")
+    usage: dict[str, Any] | None = None
+    text: str | None = None
+    prompt: str | None = None

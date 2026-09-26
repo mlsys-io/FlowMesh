@@ -152,6 +152,7 @@ _RESULT_MODEL_NAMES = [
     "RagHit",
     "RagQuery",
     "EchoItem",
+    "APIItem",
 ]
 
 RESULT_MODEL_PAIRS = [

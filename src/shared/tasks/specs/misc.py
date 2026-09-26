@@ -14,6 +14,7 @@ from .common import (
 class ApiSpecStrict(TaskSpecStrictBase):
     taskType: Literal[TaskType.API]
     api: dict[str, Any] | None = None
+    data: dict[str, Any] | None = None
 
     def redact_credentials(self) -> Self:
         spec = super().redact_credentials()
@@ -30,6 +31,7 @@ class ApiSpecStrict(TaskSpecStrictBase):
 class ApiSpecTemplate(TaskSpecTemplateBase):
     taskType: Literal[TaskType.API]
     api: dict[str, Any] | None = None
+    data: dict[str, Any] | None = None
 
     def redact_credentials(self) -> Self:
         spec = super().redact_credentials()
