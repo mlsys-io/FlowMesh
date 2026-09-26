@@ -4,6 +4,8 @@ Imports both server Pydantic models (via conftest stubs) and SDK models,
 then compares ``model_fields`` to detect drift.
 """
 
+from typing import Any
+
 import pytest
 from flowmesh import models as sdk_models
 
@@ -153,6 +155,7 @@ _RESULT_MODEL_NAMES = [
     "RagQuery",
     "EchoItem",
     "APIItem",
+    "APIGroupItem",
 ]
 
 RESULT_MODEL_PAIRS = [
@@ -248,6 +251,20 @@ def test_task_info_fields() -> None:
 
 def test_worker_register_response_fields() -> None:
     assert_fields_match(SrvWorkerRegisterResponse, WorkerRegisterResponse)
+
+
+def _union_member_names(annotation: Any) -> set[str]:
+    """Names of the members of a ``list[A | B]`` field annotation."""
+    list_args = annotation.__args__[0]
+    return {t.__name__ for t in list_args.__args__}
+
+
+def test_api_result_items_union_matches() -> None:
+    """APIResult.items must be the same union on both sides; the field-name
+    check alone misses a type drift (e.g. SDK-only list[APIItem])."""
+    srv_items = srv_results.APIResult.model_fields["items"].annotation
+    sdk_items = sdk_models.APIResult.model_fields["items"].annotation
+    assert _union_member_names(srv_items) == _union_member_names(sdk_items)
 
 
 # ------------------------------------------------------------------ #

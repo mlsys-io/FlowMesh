@@ -1,5 +1,6 @@
 import json
 import logging
+import math
 import os
 import threading
 import time
@@ -9,7 +10,7 @@ from typing import Any, ClassVar
 
 import httpx
 
-from shared.schemas.result import APIItem, APIResult
+from shared.schemas.result import APIGroupItem, APIItem, APIResult
 from shared.tasks.specs import ApiSpecStrict
 from shared.tasks.task_type import TaskType
 from shared.utils.redact import is_credential_key
@@ -38,6 +39,53 @@ _MAX_CONCURRENCY = 8
 def _is_retryable_status(status_code: int) -> bool:
     """Whether an HTTP status is transient and worth retrying."""
     return status_code >= 500 or status_code in (408, 429)
+
+
+def _fmt(value: Any) -> str:
+    """Render a log field, using ``-`` for a missing value."""
+    return "-" if value is None else str(value)
+
+
+def _percentile(values: list[float], pct: float) -> float:
+    """Nearest-rank percentile of a non-empty list of latencies."""
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    rank = max(1, math.ceil(pct / 100 * len(ordered)))
+    return ordered[rank - 1]
+
+
+def _chat_completion_stats(body: Any) -> tuple[Any, Any, Any, Any, Any]:
+    """Extract token and finish-reason fields from a chat-completion body.
+
+    Returns ``(prompt_tokens, completion_tokens, reasoning_tokens,
+    finish_reason, backend)`` with ``None`` for any missing field. Never
+    raises on an unexpected body shape.
+    """
+    if not isinstance(body, dict):
+        return None, None, None, None, None
+    usage = body.get("usage")
+    prompt_tokens = completion_tokens = reasoning_tokens = None
+    if isinstance(usage, dict):
+        prompt_tokens = usage.get("prompt_tokens")
+        completion_tokens = usage.get("completion_tokens")
+        details = usage.get("completion_tokens_details")
+        if isinstance(details, dict):
+            reasoning_tokens = details.get("reasoning_tokens")
+    choices = body.get("choices")
+    finish_reason = None
+    if isinstance(choices, list) and choices and isinstance(choices[0], dict):
+        finish_reason = choices[0].get("finish_reason")
+    backend = body.get("provider")
+    if backend is None:
+        backend = body.get("system_fingerprint")
+    return (
+        prompt_tokens,
+        completion_tokens,
+        reasoning_tokens,
+        finish_reason,
+        backend,
+    )
 
 
 class APIExecutor(DataMixin, Executor):
@@ -145,12 +193,13 @@ class APIExecutor(DataMixin, Executor):
         params: dict[str, Any] | None,
         request_kwargs: dict[str, Any],
         retries: int,
-    ) -> httpx.Response:
+    ) -> tuple[httpx.Response, int]:
         """Issue the request, retrying transient failures up to ``retries`` times.
 
         A retryable failure is a connection error or a transient HTTP status
         (5xx, 408, 429). Non-retryable failures and a cancelled task stop the
         loop immediately. The final attempt's failure propagates to the caller.
+        Returns the response and the number of attempts used.
         """
         attempt = 0
         while True:
@@ -175,7 +224,7 @@ class APIExecutor(DataMixin, Executor):
                     attempt += 1
                     time.sleep(_RETRY_BACKOFF_SEC)
                     continue
-            return resp
+            return resp, attempt + 1
 
     @classmethod
     def close_all_clients(cls) -> None:
@@ -193,20 +242,18 @@ class APIExecutor(DataMixin, Executor):
         """Close the connection pool when the runner deactivates this executor."""
         self.close_all_clients()
 
-    @staticmethod
-    def _prompt_to_str(prompt: Any) -> str:
-        """Render a row's prompt as a string for body substitution."""
-        if isinstance(prompt, str):
-            return prompt
-        return json.dumps(prompt)
-
     @classmethod
-    def _substitute_prompt(cls, value: Any, prompt: str) -> Any:
-        """Replace ``{{prompt}}`` in the request body with a row's prompt."""
+    def _substitute_prompt(cls, value: Any, prompt: Any) -> Any:
+        """Replace ``{{prompt}}`` in the request body with a row's prompt.
+
+        A body value that is exactly ``{{prompt}}`` is replaced by the prompt
+        object as-is (a message list stays a list of ``{"role", "content"}``
+        dicts); an embedded placeholder inside a longer string keeps string
+        substitution."""
         if isinstance(value, str):
             if value == _PROMPT_PLACEHOLDER:
                 return prompt
-            return value.replace(_PROMPT_PLACEHOLDER, prompt)
+            return value.replace(_PROMPT_PLACEHOLDER, str(prompt))
         if isinstance(value, dict):
             return {k: cls._substitute_prompt(v, prompt) for k, v in value.items()}
         if isinstance(value, list):
@@ -214,7 +261,7 @@ class APIExecutor(DataMixin, Executor):
         return value
 
     def _build_request_kwargs(
-        self, api_cfg: dict[str, Any], prompt: str | None
+        self, api_cfg: dict[str, Any], prompt: Any | None
     ) -> dict[str, Any]:
         """Build httpx request kwargs from ``spec.api``, substituting the row
         prompt when batching."""
@@ -303,6 +350,42 @@ class APIExecutor(DataMixin, Executor):
 
         return item, body_text
 
+    def _log_summary(
+        self,
+        task_id: str,
+        total: int,
+        failures: int,
+        total_retries: int,
+        wall: float,
+        latencies: list[float],
+        sum_prompt: int,
+        sum_completion: int,
+        sum_reasoning: int,
+        backend_counts: dict[str, int],
+    ) -> None:
+        """Log one summary line for a finished API task."""
+        backends = ",".join(
+            f"{name}={count}" for name, count in sorted(backend_counts.items())
+        )
+        logger.info(
+            "api summary task=%s calls=%d failures=%d retries=%d wall=%.3fs "
+            "latency_p50=%.3fs latency_p95=%.3fs latency_max=%.3fs "
+            "prompt_tokens=%d completion_tokens=%d reasoning_tokens=%d "
+            "backends=%s",
+            task_id,
+            total,
+            failures,
+            total_retries,
+            wall,
+            _percentile(latencies, 50),
+            _percentile(latencies, 95),
+            max(latencies) if latencies else 0.0,
+            sum_prompt,
+            sum_completion,
+            sum_reasoning,
+            backends or "-",
+        )
+
     def run(self, task: ExecutorTask, out_dir: Path) -> APIResult:
         with self._cancel_lock:
             if self._cancel_event.is_set() and self._cancel_task_id == task.task_id:
@@ -370,18 +453,83 @@ class APIExecutor(DataMixin, Executor):
 
         entry = self._collect_prompts_for_spec(spec, task_id=task.task_id)
         prompts = entry.prompts
-        if not prompts:
+        if not prompts and not entry.tables:
             raise ExecutionError("spec.data produced no rows")
 
         request_kwargs = self._build_request_kwargs(api_cfg, None)
 
+        total = len(prompts)
+        done = 0
+        failures = 0
+        total_retries = 0
+        latencies: list[float] = []
+        sum_prompt = 0
+        sum_completion = 0
+        sum_reasoning = 0
+        backend_counts: dict[str, int] = {}
+        task_start = time.monotonic()
+        in_flight: dict[int, float] = {}
+        in_flight_lock = threading.Lock()
+
+        def _record_call(
+            idx: int,
+            attempts: int,
+            status: Any,
+            start: float,
+            body: Any,
+            *,
+            failed: bool,
+        ) -> None:
+            nonlocal done, failures, total_retries
+            nonlocal sum_prompt, sum_completion, sum_reasoning
+            wall = time.monotonic() - start
+            with in_flight_lock:
+                in_flight.pop(idx, None)
+            done += 1
+            if failed:
+                failures += 1
+            total_retries += max(0, attempts - 1)
+            latencies.append(wall)
+            (
+                prompt_tokens,
+                completion_tokens,
+                reasoning_tokens,
+                finish_reason,
+                backend,
+            ) = _chat_completion_stats(body)
+            if prompt_tokens is not None:
+                sum_prompt += prompt_tokens
+            if completion_tokens is not None:
+                sum_completion += completion_tokens
+            if reasoning_tokens is not None:
+                sum_reasoning += reasoning_tokens
+            if backend is not None:
+                backend_counts[backend] = backend_counts.get(backend, 0) + 1
+            logger.info(
+                "api call task=%s row=%d attempts=%d status=%s wall=%.3fs "
+                "prompt_tokens=%s completion_tokens=%s reasoning_tokens=%s "
+                "finish_reason=%s backend=%s",
+                task.task_id,
+                idx,
+                attempts,
+                _fmt(status),
+                wall,
+                _fmt(prompt_tokens),
+                _fmt(completion_tokens),
+                _fmt(reasoning_tokens),
+                _fmt(finish_reason),
+                _fmt(backend),
+            )
+
         def _issue(idx: int, prompt: Any) -> APIItem:
             if self._cancel_event.is_set():
                 raise TaskCancelledError("API task cancelled")
-            prompt_str = self._prompt_to_str(prompt)
-            kwargs = self._substitute_prompt(request_kwargs, prompt_str)
+            kwargs = self._substitute_prompt(request_kwargs, prompt)
+            start = time.monotonic()
+            with in_flight_lock:
+                in_flight[idx] = start
             try:
-                resp = self._request_with_retries(
+                resp, attempts = self._request_with_retries(
                     client,
                     method,
                     str(url),
@@ -391,6 +539,7 @@ class APIExecutor(DataMixin, Executor):
                     retries,
                 )
             except httpx.RequestError as exc:
+                _record_call(idx, 0, exc.__class__.__name__, start, None, failed=True)
                 raise ExecutionError(
                     f"API request failed (row {idx}): {exc}", retryable=True
                 ) from exc
@@ -401,6 +550,7 @@ class APIExecutor(DataMixin, Executor):
                 if body_text:
                     message = f"{message}: {body_text}"
                 retryable = resp.status_code >= 500 or resp.status_code in (408, 429)
+                _record_call(idx, attempts, resp.status_code, start, None, failed=True)
                 raise ExecutionError(message, retryable=retryable)
 
             item, _ = self._parse_response(
@@ -409,34 +559,127 @@ class APIExecutor(DataMixin, Executor):
                 max_body_bytes=max_body_bytes,
             )
             item.index = idx
-            item.prompt = prompt_str
+            item.prompt = json.dumps(prompt) if not isinstance(prompt, str) else prompt
 
             if self._cancel_event.is_set():
                 raise TaskCancelledError("API task cancelled")
 
+            _record_call(
+                idx,
+                attempts,
+                resp.status_code,
+                start,
+                item.response_json,
+                failed=False,
+            )
             return item
 
         results: dict[int, APIItem] = {}
-        with ThreadPoolExecutor(max_workers=concurrency) as pool:
-            futures = {}
-            for idx, prompt in enumerate(prompts):
-                if self._cancel_event.is_set():
-                    raise TaskCancelledError("API task cancelled")
-                futures[pool.submit(_issue, idx, prompt)] = idx
-            for future in as_completed(futures):
-                idx = futures[future]
-                if self._cancel_event.is_set():
-                    raise TaskCancelledError("API task cancelled")
-                results[idx] = future.result()
+        heartbeat_stop = threading.Event()
+
+        def _heartbeat() -> None:
+            while not heartbeat_stop.wait(60):
+                with in_flight_lock:
+                    outstanding = dict(in_flight)
+                if not outstanding:
+                    continue
+                oldest = min(outstanding.values())
+                logger.info(
+                    "api heartbeat task=%s done=%d/%d in_flight=%d oldest_age=%.0fs",
+                    task.task_id,
+                    done,
+                    total,
+                    len(outstanding),
+                    time.monotonic() - oldest,
+                )
+
+        heartbeat = threading.Thread(target=_heartbeat, daemon=True)
+        heartbeat.start()
+        try:
+            with ThreadPoolExecutor(max_workers=concurrency) as pool:
+                futures = {}
+                for idx, prompt in enumerate(prompts):
+                    if self._cancel_event.is_set():
+                        raise TaskCancelledError("API task cancelled")
+                    futures[pool.submit(_issue, idx, prompt)] = idx
+                for future in as_completed(futures):
+                    idx = futures[future]
+                    if self._cancel_event.is_set():
+                        raise TaskCancelledError("API task cancelled")
+                    results[idx] = future.result()
+        finally:
+            heartbeat_stop.set()
+            heartbeat.join(timeout=5)
+            wall = time.monotonic() - task_start
+            self._log_summary(
+                task.task_id,
+                total,
+                failures,
+                total_retries,
+                wall,
+                latencies,
+                sum_prompt,
+                sum_completion,
+                sum_reasoning,
+                backend_counts,
+            )
 
         items = [results[idx] for idx in range(len(prompts))]
+
+        result_items: list[APIItem | APIGroupItem] = []
+        if entry.tables:
+            # Grouped data: one result item per table, holding that group's
+            # row responses in order (same slicing as DataMixin._populate_table).
+            grouped: list[APIGroupItem] = []
+            cur = 0
+            for group_index, df in enumerate(entry.tables):
+                size = len(df)
+                grouped.append(
+                    APIGroupItem(index=group_index, rows=items[cur : cur + size])
+                )
+                cur += size
+            if cur != len(items):
+                raise ExecutionError(
+                    f"Output length {len(items)} does not match "
+                    f"the total number of rows {cur} in table stores."
+                )
+            result_items.extend(grouped)
+        else:
+            result_items.extend(items)
+
+        if result_items:
+            first = result_items[0]
+            if isinstance(first, APIGroupItem):
+                status_code = next(
+                    (
+                        r.status_code
+                        for g in result_items
+                        if isinstance(g, APIGroupItem)
+                        for r in g.rows
+                    ),
+                    0,
+                )
+                truncated = any(
+                    r.truncated
+                    for g in result_items
+                    if isinstance(g, APIGroupItem)
+                    for r in g.rows
+                )
+            else:
+                status_code = first.status_code
+                truncated = any(
+                    item.truncated for item in result_items if isinstance(item, APIItem)
+                )
+        else:
+            status_code = 0
+            truncated = False
 
         return APIResult(
             ok=True,
             executor=self.name,
             method=method,
             url=str(url),
-            status_code=items[0].status_code,
-            truncated=any(item.truncated for item in items),
-            items=items,
+            status_code=status_code,
+            truncated=truncated,
+            items=result_items,
         )

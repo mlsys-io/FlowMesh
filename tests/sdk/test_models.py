@@ -5,7 +5,9 @@ from datetime import UTC, datetime
 import pytest
 from flowmesh.models import (
     ActiveWaitBreakdown,
+    APIGroupItem,
     APIItem,
+    APIResult,
     AssetSummary,
     CriticalPathSummary,
     E2EBreakdown,
@@ -515,3 +517,80 @@ class TestAPIItem:
             {"index": 1, "url": "u", "status_code": 200, "json": {"a": 1}}
         )
         assert by_alias.response_json == {"a": 1}
+
+    def test_dump_json_uses_json_alias(self) -> None:
+        """``model_dump(mode="json")`` serializes the row payload under the
+        ``json`` wire key, not ``response_json``."""
+        item = APIItem.model_validate(
+            {"index": 0, "url": "u", "status_code": 200, "json": {"a": 1}}
+        )
+        dumped = item.model_dump(mode="json")
+        assert "json" in dumped
+        assert dumped["json"] == {"a": 1}
+        assert "response_json" not in dumped
+
+
+class TestAPIGroupResult:
+    def test_grouped_api_result_round_trip(self) -> None:
+        """A grouped API result (items carrying ``rows``) validates in the SDK
+        and round-trips through ``model_dump(by_alias=True)`` then
+        ``model_validate``."""
+        payload = {
+            "task_type": "api",
+            "executor": "api",
+            "method": "POST",
+            "url": "http://example.com/v1/chat/completions",
+            "status_code": 200,
+            "items": [
+                {
+                    "index": 0,
+                    "rows": [
+                        {
+                            "index": 0,
+                            "url": "http://example.com/v1/chat/completions",
+                            "status_code": 200,
+                            "json": {"choices": [{"message": {"content": "hi"}}]},
+                            "text": "hi",
+                        }
+                    ],
+                }
+            ],
+        }
+        result = APIResult.model_validate(payload)
+        assert isinstance(result.items[0], APIGroupItem)
+        assert (
+            result.items[0].rows[0].response_json["choices"][0]["message"]["content"]
+            == "hi"
+        )
+        wire = result.model_dump(by_alias=True)
+        reloaded = APIResult.model_validate(wire)
+        assert isinstance(reloaded.items[0], APIGroupItem)
+        assert reloaded.items[0].rows[0].text == "hi"
+
+    def test_grouped_dump_json_uses_json_alias(self) -> None:
+        """A grouped APIResult dumps each row's payload under the ``json`` wire
+        key, so a downstream walk of ``items[].rows[].json`` succeeds."""
+        payload = {
+            "ok": True,
+            "executor": "api",
+            "method": "POST",
+            "url": "u",
+            "status_code": 200,
+            "items": [
+                {
+                    "index": 0,
+                    "rows": [
+                        {
+                            "index": 0,
+                            "url": "u",
+                            "status_code": 200,
+                            "json": {"a": 1},
+                        }
+                    ],
+                }
+            ],
+        }
+        result = APIResult.model_validate(payload)
+        row = result.model_dump(mode="json")["items"][0]["rows"][0]
+        assert row["json"] == {"a": 1}
+        assert "response_json" not in row

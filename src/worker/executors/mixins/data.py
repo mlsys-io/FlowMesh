@@ -429,7 +429,7 @@ class DataMixin(GovernanceMixin):
                 if expr:
                     context = self._spec_upstream_results(spec)
                     resolved_expr = expr.strip()
-                    items = _evaluate_expr(resolved_expr, context)
+                    items, _ = _evaluate_expr(resolved_expr, context)
                     root_node = resolved_expr.split(".", 1)[0] or None
             if not isinstance(items, list):
                 raise ExecutionError(
@@ -589,16 +589,15 @@ class DataMixin(GovernanceMixin):
             for column in resolved_columns:
                 label = column["label"]
                 value = column["value"]
-                if (
-                    isinstance(value, list)
-                    and value
-                    and all(isinstance(v, list) for v in value)
-                ):
+                if column.get("grouped"):
+                    if not isinstance(value, list):
+                        raise ExecutionError(
+                            f"Column '{label}' is grouped but did not resolve "
+                            "to a list."
+                        )
                     groups = value
-                elif isinstance(value, list):
-                    groups = [value]
                 else:
-                    groups = [[value]]
+                    groups = [value]
                 grouped_columns[label] = groups
 
             group_count = max(len(groups) for groups in grouped_columns.values())
@@ -612,7 +611,7 @@ class DataMixin(GovernanceMixin):
 
             table_stores_list = []
             for group_idx in range(group_count):
-                max_len = 1
+                max_len = 0
                 raw_group_values: dict[str, list[Any]] = {}
                 for label, groups in grouped_columns.items():
                     values = groups[group_idx]
@@ -680,7 +679,7 @@ class DataMixin(GovernanceMixin):
             resolved_node = node_hint
             if not resolved_node and isinstance(expr, str):
                 resolved_node = expr.split(".", 1)[0].strip() or None
-            image_embedding_spec: Any = _evaluate_expr(expr.strip(), context)
+            image_embedding_spec: Any = _evaluate_expr(expr.strip(), context)[0]
             artifact_source = maybe_resolve_artifact_ref(
                 image_embedding_spec, context, resolved_node
             )

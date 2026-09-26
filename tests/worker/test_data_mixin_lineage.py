@@ -470,3 +470,41 @@ def test_collect_prompts_dict_origin_url_sends_auth_headers(
     assert len(entry.images) == 1
     assert entry.images[0] is not None
     assert entry.images[0].size == (2, 2)
+
+
+def test_collect_prompts_all_empty_dataframe_columns_yield_zero_rows() -> None:
+    """A dataframe whose columns all resolve to zero values yields an empty
+    DataFrame (zero rows) with the column labels, not a row mismatch."""
+    mixin = _Mixin()
+    upstream = BaseExecutorResult.model_validate(
+        {
+            "items": [],
+            "count": 0,
+        }
+    )
+    spec = cast(
+        Any,
+        SimpleNamespace(
+            data={
+                "type": "dataframe",
+                "columns": [
+                    {"label": "text", "node": "Up", "path": "items.output.text"},
+                    {
+                        "label": "statement",
+                        "node": "Up",
+                        "path": "items.output.statement",
+                    },
+                ],
+                "messages": [{"role": "user", "content": "row {text} {statement}"}],
+            },
+            inference={},
+            upstreamResults={"Up": upstream},
+        ),
+    )
+
+    entry = mixin._collect_prompts_for_spec(spec, "tsk-df-empty")
+
+    assert entry.prompts == []
+    assert len(entry.tables) == 1
+    assert entry.tables[0].empty
+    assert list(entry.tables[0].columns) == ["text", "statement"]

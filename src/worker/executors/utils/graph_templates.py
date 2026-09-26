@@ -7,7 +7,7 @@ from typing import Any
 import pandas as pd
 from pydantic import BaseModel
 
-from shared.schemas.result import BaseExecutorResult
+from shared.schemas.result import APIGroupItem, BaseExecutorResult
 from shared.tasks.specs import TaskSpecStrictBase
 from shared.utils.json import validate_keys
 
@@ -141,10 +141,11 @@ def _resolve_columns(
 
         if expr:
             assert data is None
-            value = _evaluate_expr(expr.strip(), context)
+            value, grouped = _evaluate_expr(expr.strip(), context)
             if value is None:
                 if "default" in raw:
                     value = raw.get("default")
+                    grouped = False
                 else:
                     raise ExecutionError(
                         f"Column '{label}' expression '{expr}' resolved to null."
@@ -162,10 +163,12 @@ def _resolve_columns(
                     if not isinstance(items, list):
                         raise ExecutionError("data.items must be a list.")
                     value = items
+                    grouped = False
                 case "dataframe":
                     nested_columns_cfg = data.get("columns")
                     nested_columns = _resolve_columns(nested_columns_cfg, context)
                     value = _build_grouped_dataframes(nested_columns)
+                    grouped = True
                 case _:
                     raise ExecutionError(f"Unsupported column 'data' type: {dtype}")
         else:
@@ -178,6 +181,7 @@ def _resolve_columns(
                 "label": label,
                 "value": value,
                 "expr": expr,
+                "grouped": grouped,
             }
         )
 
@@ -192,16 +196,14 @@ def _build_grouped_dataframes(columns: list[dict[str, Any]]) -> list[pd.DataFram
     for column in columns:
         label = column["label"]
         value = column["value"]
-        if (
-            isinstance(value, list)
-            and value
-            and all(isinstance(v, list) for v in value)
-        ):
+        if column.get("grouped"):
+            if not isinstance(value, list):
+                raise ExecutionError(
+                    f"Column '{label}' is grouped but did not resolve to a list."
+                )
             groups = value
-        elif isinstance(value, list):
-            groups = [value]
         else:
-            groups = [[value]]
+            groups = [value]
         grouped_columns[label] = groups
 
     group_count = max(len(groups) for groups in grouped_columns.values())
@@ -215,7 +217,7 @@ def _build_grouped_dataframes(columns: list[dict[str, Any]]) -> list[pd.DataFram
 
     dataframes: list[pd.DataFrame] = []
     for group_idx in range(group_count):
-        max_len = 1
+        max_len = 0
         raw_values: dict[str, list[Any]] = {}
         for label, groups in grouped_columns.items():
             values = groups[group_idx]
@@ -586,71 +588,113 @@ def _format_column_line(label: str, value: str) -> str:
     return f"• {label}: {indented}"
 
 
-def _evaluate_expr(expr: str, context: dict[str, BaseExecutorResult]) -> Any:
+def _evaluate_expr(
+    expr: str, context: dict[str, BaseExecutorResult]
+) -> tuple[Any, bool]:
+    """Resolve an expression against upstream results.
+
+    Returns ``(value, grouped)``. ``grouped`` is True only when the resolved
+    value is a list of groups, decided from the upstream structure (a list of
+    ``APIGroupItem.rows``, or nested lists) — never from the shape of the cell
+    values. A per-row list is a cell value, not a group.
+    """
     if not expr:
-        return None
+        return None, False
 
     parts = expr.split(".")
     root = parts[0]
     result = context.get(root)
     if result is None:
-        return None
+        return None, False
 
     value: Any = result
+    grouped = False
     for token in parts[1:]:
         if not token:
             continue
         attr, indexes = _split_indexes(token)
         if attr:
-            if isinstance(value, dict) and attr in value:
-                value = value[attr]
-            elif isinstance(value, list) and all(
-                isinstance(v, dict) and attr in v for v in value
-            ):
-                value = [v[attr] for v in value]
-            elif isinstance(value, list) and all(
-                isinstance(v, pd.DataFrame) for v in value
-            ):
-                if any(attr not in v.columns for v in value):
-                    raise ExecutionError(
-                        f"{attr} not a valid column in one of the "
-                        f"DataFrames for {token}."
-                    )
-                value = [v[attr].tolist() for v in value]
-            elif isinstance(value, pd.DataFrame):
-                if attr not in value.columns:
-                    raise ExecutionError(
-                        f"{attr} not a valid column in DataFrame for {token}."
-                    )
-                value = value[attr].tolist()
-            elif isinstance(value, BaseModel):
-                resolved = getattr(value, attr, _SENTINEL)
-                if resolved is _SENTINEL:
-                    raise ExecutionError(
-                        f"{attr} not a valid attribute of {type(value).__name__} "
-                        f"for {token}."
-                    )
-                value = resolved
-            else:
-                raise ExecutionError(
-                    f"{attr} in {parts} is not a valid key - "
-                    f"{type(value).__name__}, {value}"
-                )
+            value, grouped = _apply_attr(value, attr, token, parts, grouped)
         for idx in indexes:
-            if isinstance(value, list) and -len(value) <= idx < len(value):
-                value = value[idx]
-            elif isinstance(value, list) and all(isinstance(v, list) for v in value):
-                value = [v[idx] for v in value]
-            else:
-                raise ExecutionError(
-                    f"{idx} not a valid index in {token} - {len(value)}"
-                )
+            value, grouped = _apply_index(value, idx, token, grouped)
         # Attempt to deserialize DataFrame if applicable
         if isinstance(value, dict):
             value = try_deserialize_dataframe(value)
         elif isinstance(value, list) and all(isinstance(v, dict) for v in value):
             value = [try_deserialize_dataframe(v) for v in value]
-    return value
+    return value, grouped
+
+
+def _apply_attr(
+    value: Any, attr: str, token: str, parts: list[str], grouped: bool
+) -> tuple[Any, bool]:
+    """Resolve an attribute access, mapping over lists of dicts, DataFrames,
+    or pydantic models (including nested lists)."""
+    if isinstance(value, dict) and attr in value:
+        return value[attr], grouped
+    if isinstance(value, list):
+        if all(isinstance(v, dict) and attr in v for v in value):
+            return [v[attr] for v in value], grouped
+        if all(isinstance(v, pd.DataFrame) for v in value):
+            if any(attr not in v.columns for v in value):
+                raise ExecutionError(
+                    f"{attr} not a valid column in one of the "
+                    f"DataFrames for {token}."
+                )
+            return [v[attr].tolist() for v in value], grouped
+        if all(isinstance(v, BaseModel) for v in value):
+            is_grouped = attr == "rows" and all(
+                isinstance(v, APIGroupItem) for v in value
+            )
+            return (
+                [_model_attr(v, attr, token) for v in value],
+                grouped or is_grouped,
+            )
+        if all(isinstance(v, list) for v in value):
+            # Each inner list of records is one group; a per-row list cell is not.
+            is_grouped = bool(value) and all(
+                all(isinstance(r, (dict, BaseModel)) for r in v) for v in value
+            )
+            mapped: list[Any] = []
+            for v in value:
+                inner, _ = _apply_attr(v, attr, token, parts, grouped)
+                mapped.append(inner)
+            return mapped, grouped or is_grouped
+    if isinstance(value, pd.DataFrame):
+        if attr not in value.columns:
+            raise ExecutionError(f"{attr} not a valid column in DataFrame for {token}.")
+        return value[attr].tolist(), grouped
+    if isinstance(value, BaseModel):
+        return _model_attr(value, attr, token), grouped
+    raise ExecutionError(
+        f"{attr} in {parts} is not a valid key - " f"{type(value).__name__}, {value}"
+    )
+
+
+def _model_attr(value: BaseModel, attr: str, token: str) -> Any:
+    """Resolve a declared pydantic field by name or alias, never a method."""
+    fields = type(value).model_fields
+    field = fields.get(attr)
+    if field is not None:
+        return getattr(value, attr)
+    for name, f in fields.items():
+        if f.alias == attr:
+            return getattr(value, name)
+    extras = getattr(value, "__pydantic_extra__", None)
+    if extras and attr in extras:
+        return extras[attr]
+    raise ExecutionError(
+        f"{attr} not a valid attribute of {type(value).__name__} for {token}."
+    )
+
+
+def _apply_index(value: Any, idx: int, token: str, grouped: bool) -> tuple[Any, bool]:
+    """Index into a list, mapping over a list of lists (one per group)."""
+    if isinstance(value, list) and all(isinstance(v, list) for v in value):
+        return [_apply_index(v, idx, token, grouped)[0] for v in value], grouped
+    if isinstance(value, list) and -len(value) <= idx < len(value):
+        return value[idx], grouped
+    raise ExecutionError(f"{idx} not a valid index in {token} - {len(value)}")
 
 
 def _split_indexes(token: str) -> tuple[str, list[int]]:
