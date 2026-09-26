@@ -808,16 +808,16 @@ class TestExternalGpuHolds:
         stream = asyncio.create_task(
             servicer.PushEvents(messages(), cast(Any, _FakeContext(self.TOKEN)))
         )
-        await opened.wait()
+        await asyncio.wait_for(opened.wait(), timeout=5)
         await servicer._worker_manager.destroy_worker("fm-worker-0")
-        payload.update(
-            type="UNREGISTER", worker_id=await self._register(servicer, "GPU-1")
-        )
+        worker_id = await self._register(servicer, "GPU-1")
+        payload.update(type="UNREGISTER", worker_id=worker_id)
         assert rm._env.available_gpus == {0}
 
         send.set()
-        await stream
+        await asyncio.wait_for(stream, timeout=5)
 
+        assert servicer._registry.get_worker_id(cast(Any, self.TOKEN)) == worker_id
         assert rm._env.available_gpus == {0, 1}
 
     @pytest.mark.asyncio
