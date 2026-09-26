@@ -35,6 +35,7 @@ def _resource_manager(available: set[int]) -> ResourceManager:
         cpu_count=16,
         gpu_families={i: GpuArch.UNKNOWN for i in available},
         available_gpus=set(available),
+        gpu_uuids={},
     )
     return rm
 
@@ -143,6 +144,7 @@ class TestReserveGpusAtomicity:
             cpu_count=16,
             gpu_families={0: GpuArch.HOPPER, 1: GpuArch.BLACKWELL},
             available_gpus={0, 1},
+            gpu_uuids={},
         )
         with pytest.raises(ValueError, match="different architectures"):
             rm.reserve_gpus(devices=[0, 1])

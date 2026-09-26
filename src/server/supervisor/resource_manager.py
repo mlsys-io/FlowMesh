@@ -34,7 +34,7 @@ class MachineEnv(BaseModel):
     cpu_count: int
     gpu_families: dict[int, GpuArch]
     available_gpus: set[int]
-    gpu_uuids: dict[str, int] = Field(default_factory=dict)
+    gpu_uuids: dict[str, int]
     """Host GPU index by device UUID."""
     hold_counts: dict[int, int] = Field(default_factory=dict)
     """Number of workers holding each reserved GPU."""
