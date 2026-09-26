@@ -1,12 +1,16 @@
+import logging
 import re
+from collections.abc import Iterable
 from enum import StrEnum
 from typing import Any
 
 from docker.types import DeviceRequest
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from .. import env
 from ..utils.helpers import get_docker_client
+
+logger = logging.getLogger("supervisor")
 
 
 class GpuArch(StrEnum):
@@ -30,6 +34,10 @@ class MachineEnv(BaseModel):
     cpu_count: int
     gpu_families: dict[int, GpuArch]
     available_gpus: set[int]
+    gpu_uuids: dict[str, int]
+    """Host GPU index by device UUID."""
+    hold_counts: dict[int, int] = Field(default_factory=dict)
+    """Number of workers holding each reserved GPU."""
 
     @property
     def gpu_count(self) -> int:
@@ -97,10 +105,42 @@ class ResourceManager:
         arch = archs.pop()
 
         available_gpus.difference_update(picked)
+        self._hold(picked)
         return picked, arch
 
+    def claim_gpus_by_uuid(self, uuids: Iterable[str]) -> tuple[list[int], list[int]]:
+        """Hold the host GPUs with the given UUIDs, whoever else holds them.
+
+        UUIDs that are not GPUs of this host are ignored. Returns the host
+        indices that were free before the claim and those that were already
+        held; the caller holds both and releases both with `deallocate_gpus`.
+        Never raises. The same event-loop atomicity rule as `reserve_gpus`
+        applies.
+        """
+        gpu_uuids = self._env.gpu_uuids
+        devices = sorted({gpu_uuids[u] for u in uuids if u in gpu_uuids})
+        available_gpus = self._env.available_gpus
+        claimed = [d for d in devices if d in available_gpus]
+        overlapping = [d for d in devices if d not in available_gpus]
+        available_gpus.difference_update(devices)
+        self._hold(devices)
+        return claimed, overlapping
+
     def deallocate_gpus(self, devices: list[int]) -> None:
-        self._env.available_gpus.update(devices)
+        """Drop one hold on each device; a device with no holds left is free."""
+        hold_counts = self._env.hold_counts
+        for device in devices:
+            remaining = hold_counts.get(device, 0) - 1
+            if remaining > 0:
+                hold_counts[device] = remaining
+            else:
+                hold_counts.pop(device, None)
+                self._env.available_gpus.add(device)
+
+    def _hold(self, devices: list[int]) -> None:
+        hold_counts = self._env.hold_counts
+        for device in devices:
+            hold_counts[device] = hold_counts.get(device, 0) + 1
 
     def _detect_machine_env(self) -> MachineEnv:
         info = self._docker_client.info()
@@ -108,6 +148,7 @@ class ResourceManager:
 
         gpu_families: dict[int, GpuArch] = {}
         available_gpus: set[int] = set()
+        gpu_uuids: dict[str, int] = {}
 
         visible_devices: set[int] | None
         if env.CUDA_VISIBLE_DEVICES is None:
@@ -129,17 +170,16 @@ class ResourceManager:
                 nvidia_smi_output = self._docker_client.containers.run(
                     image=env.SERVER_CUDA_PROBE_IMAGE,
                     device_requests=[DeviceRequest(count=-1, capabilities=[["gpu"]])],
-                    command="nvidia-smi --query-gpu=index,name --format=csv,noheader",
+                    command=(
+                        "nvidia-smi --query-gpu=index,name,uuid --format=csv,noheader"
+                    ),
                     remove=True,
                     **optional_kwargs,
                 )
-                output_str = nvidia_smi_output.decode("utf-8").strip()
-                for line in output_str.split("\n"):
-                    index_str, name = line.split(",", maxsplit=1)
-                    index = int(index_str.strip())
-                    if visible_devices is None or index in visible_devices:
-                        available_gpus.add(index)
-                        gpu_families[index] = GpuArch.from_name(name)
+                gpu_families, gpu_uuids = _parse_gpu_query(
+                    nvidia_smi_output.decode("utf-8"), visible_devices
+                )
+                available_gpus = set(gpu_families)
             except Exception:
                 pass
 
@@ -147,4 +187,34 @@ class ResourceManager:
             cpu_count=cpu_count,
             gpu_families=gpu_families,
             available_gpus=available_gpus,
+            gpu_uuids=gpu_uuids,
         )
+
+
+def _parse_gpu_query(
+    output: str, visible_devices: set[int] | None
+) -> tuple[dict[int, GpuArch], dict[str, int]]:
+    """Parse `nvidia-smi --query-gpu=index,name[,uuid]` CSV rows.
+
+    Each row stands alone: one malformed row is skipped rather than costing
+    the rest, and a row without a trailing `GPU-` UUID still yields its GPU.
+    """
+    gpu_families: dict[int, GpuArch] = {}
+    gpu_uuids: dict[str, int] = {}
+    for line in output.strip().splitlines():
+        index_str, _, rest = line.partition(",")
+        try:
+            index = int(index_str.strip())
+        except ValueError:
+            logger.debug("Skipping unparsable GPU probe row: %r", line)
+            continue
+        if visible_devices is not None and index not in visible_devices:
+            continue
+        name, uuid = rest, ""
+        head, sep, tail = rest.rpartition(",")
+        if sep and tail.strip().startswith("GPU-"):
+            name, uuid = head, tail.strip()
+        gpu_families[index] = GpuArch.from_name(name)
+        if uuid:
+            gpu_uuids[uuid] = index
+    return gpu_families, gpu_uuids

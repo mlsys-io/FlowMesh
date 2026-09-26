@@ -197,6 +197,7 @@ class DockerWorkerAdapter(WorkerAdapter):
             provider=_PROVIDER_NAME,
             status=self.status,
             hardware=hardware,
+            held_gpus=(self.cuda_devices or []).copy(),
             ssh_limits=self.config.ssh.to_limits() if self.config.enable_ssh else None,
         )
 
@@ -731,8 +732,10 @@ class DockerWorkerFactory(WorkerFactory):
         if not isinstance(worker, DockerWorkerAdapter):
             raise ValueError("Invalid worker type")
 
-        if worker.cuda_devices:
-            self._rm.deallocate_gpus(worker.cuda_devices)
+        # Taken, not read: a repeated destroy must not drop another holder's hold.
+        devices, worker.cuda_devices = worker.cuda_devices, None
+        if devices:
+            self._rm.deallocate_gpus(devices)
 
     def cleanup(self) -> None:
         self._remove_ssh_network()

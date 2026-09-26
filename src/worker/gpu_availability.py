@@ -29,6 +29,8 @@ from dataclasses import dataclass
 
 import pynvml
 
+from .hw import nvml_memory_handle, visible_gpus
+
 logger = logging.getLogger(__name__)
 
 MIB = 1024 * 1024
@@ -104,11 +106,11 @@ def decide_availability(
 
 
 class NvmlDeviceProbe:
-    """Per-UUID memory readings for the GPUs this process can see.
+    """Per-UUID memory readings for the worker's own GPUs (see `visible_gpus`).
 
-    A worker container is only given its own GPU(s), so every device NVML enumerates
-    here belongs to this worker. Unified-memory devices (e.g. GB10) are omitted: their
-    "used" figure is system RAM, not a card another tenant is holding.
+    A MIG slice is read on its own, so a tenant of a sibling slice does not show.
+    Unified-memory devices (e.g. GB10) are omitted: their "used" figure is system
+    RAM, not a card another tenant is holding.
 
     Returns ``{}`` when NVML itself cannot be reached, which the monitor reads as total
     probe failure. A device that individually fails to read is simply absent from the
@@ -126,17 +128,16 @@ class NvmlDeviceProbe:
                 pynvml.nvmlInit()
                 self._initialised = True
             readings: dict[str, DeviceReading] = {}
-            for idx in range(pynvml.nvmlDeviceGetCount()):
-                handle = pynvml.nvmlDeviceGetHandleByIndex(idx)
-                name = _decode(pynvml.nvmlDeviceGetName(handle))
-                if self._is_unified is not None and self._is_unified(idx, name):
+            for gpu in visible_gpus():
+                if self._is_unified is not None and self._is_unified(
+                    gpu.ordinal, gpu.name
+                ):
                     continue
                 try:
-                    info = pynvml.nvmlDeviceGetMemoryInfo(handle)
-                    uuid = _decode(pynvml.nvmlDeviceGetUUID(handle))
+                    info = pynvml.nvmlDeviceGetMemoryInfo(nvml_memory_handle(gpu))
                 except pynvml.NVMLError:
                     continue
-                readings[uuid] = DeviceReading(
+                readings[gpu.uuid] = DeviceReading(
                     used_mib=float(info.used) / MIB, free_bytes=int(info.free)
                 )
             return readings
@@ -149,10 +150,6 @@ class NvmlDeviceProbe:
                 )
                 self._warned = True
             return {}
-
-
-def _decode(value: bytes | str) -> str:
-    return value.decode() if isinstance(value, bytes) else value
 
 
 class GpuAvailabilityMonitor:

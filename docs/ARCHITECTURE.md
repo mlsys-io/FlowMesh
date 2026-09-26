@@ -190,6 +190,20 @@ scripts/dev/            compile_protos, sync_requirements, check_env_examples
   any other node record with the alias, so a node that crashed or was taken
   over does not linger beside its replacement. `(node_alias, alias)` is
   therefore a worker's durable, unique address.
+- **External workers' hardware and GPUs.** An `external` worker's hardware is
+  the report it sends at registration. The supervisor holds the GPUs of its own
+  host that the report names (by UUID) out of its pool, so Docker workers are
+  not given them. The hold lasts until the worker is destroyed (`flowmesh stack
+  worker down <alias>`), re-registers with other GPUs, or the supervisor stops;
+  a worker that exits or crashes keeps it for its restart. A card two workers
+  hold returns to the pool once both release it. Worker listings show each
+  worker's host GPUs as `held_gpus`.
+- **A worker's GPUs are the ones CUDA lets it use.** A worker reports, probes,
+  and samples power for only the GPUs `CUDA_VISIBLE_DEVICES` leaves visible,
+  each under its CUDA ordinal. Integer entries are read in PCI bus order, so
+  set `CUDA_DEVICE_ORDER=PCI_BUS_ID` on a host with mixed GPU models. A MIG
+  slice reports its own memory and is probed on its own, under the UUID of its
+  GPU.
 - **Worker cordon.** A cordoned worker keeps running and finishes what it was
   already dispatched, but is left out of both the idle pool and the eligibility
   set, so tasks neither go to it nor wait for it. The cordon is keyed on

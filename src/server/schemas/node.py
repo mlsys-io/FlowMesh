@@ -144,6 +144,9 @@ class NodeWorkerInfo(BaseModel):
     hardware: WorkerHardware | None = Field(
         default=None, description="Hardware metadata"
     )
+    held_gpus: list[int] | None = Field(
+        default=None, description="Host GPU indices held for the worker"
+    )
 
 
 __all__ = [

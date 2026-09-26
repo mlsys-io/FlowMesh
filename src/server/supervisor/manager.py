@@ -8,13 +8,13 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field
 
 from ..hooks import PrincipalContext
-from .adapters.base import ProviderSpec, WorkerAdapter, WorkerTokenType
+from .adapters.base import ProviderSpec, WorkerAdapter, WorkerFactory, WorkerTokenType
 from .adapters.docker import get_provider_spec as docker_provider_spec
 from .adapters.external import get_provider_spec as external_provider_spec
 from .adapters.external import verify_external_token
 from .adapters.vastai import get_provider_spec as vastai_provider_spec
 from .registry import WorkerRegistry
-from .schemas import WorkerInfo, WorkerStatus
+from .schemas import WorkerHardware, WorkerInfo, WorkerStatus
 
 _MAX_PARALLELISM: int = 16
 
@@ -237,6 +237,15 @@ class WorkerManager:
             self.logger.warning("Failed to admit worker: %s", exc)
             return None
 
+    def worker_registered(
+        self, worker: WorkerAdapter, hardware: WorkerHardware | None
+    ) -> None:
+        """Apply what a worker reported when it registered."""
+        if hardware is not None:
+            worker.observe_reported_hardware(hardware)
+        if self._factory_for(worker).on_worker_registered(worker):
+            self._report_capacity_change()
+
     def available_providers(self) -> list[str]:
         return sorted(self._providers)
 
@@ -343,10 +352,12 @@ class WorkerManager:
         return True
 
     def _destroy_worker(self, worker: WorkerAdapter) -> None:
+        self._factory_for(worker).destroy_worker(worker)
+
+    def _factory_for(self, worker: WorkerAdapter) -> WorkerFactory:
         for spec in self._providers.values():
             if isinstance(worker, spec.adapter_cls):
-                spec.factory.destroy_worker(worker)
-                return
+                return spec.factory
         raise ValueError(f"Unsupported worker type: {type(worker)}")
 
     def _report_capacity_change(self) -> None:

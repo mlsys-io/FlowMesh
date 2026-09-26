@@ -6,6 +6,7 @@ runtime-minted `uuid4()` token cannot.
 """
 
 import logging
+from collections.abc import AsyncIterator, Callable
 from threading import Lock
 from typing import Any, cast
 
@@ -18,6 +19,7 @@ from server.clients.redis import (
     worker_key,
 )
 from server.hooks import PrincipalContext
+from server.schemas.node import NodeWorkerInfo
 from server.supervisor.adapters.external import (
     ExternalWorkerAdapter,
     ExternalWorkerConfig,
@@ -31,12 +33,46 @@ from server.supervisor.manager import (
     WorkerManager,
 )
 from server.supervisor.registry import WorkerRegistry
-from server.supervisor.schemas import WorkerStatus
+from server.supervisor.resource_manager import GpuArch, MachineEnv, ResourceManager
+from server.supervisor.schemas import WorkerHardware, WorkerStatus
 from server.supervisor.services.grpc_server import SupervisorServicer
+from server.supervisor.services.relay_service import RelayService
 from server.supervisor.services.task_listener import TaskListener
 from shared.grpc.supervisor.v1 import supervisor_pb2
+from shared.tasks.worker_message import (
+    CPUInfo,
+    GpuInfo,
+    GpuPlatformInfo,
+    MemoryInfo,
+    NetworkInfo,
+)
+from shared.tasks.worker_message import WorkerHardware as ReportedHardware
 
 SECRET = "s3cret-shared-across-the-fleet"
+
+
+def _hardware_json(*gpu_uuids: str) -> str:
+    """The `hardware_json` a worker sends, as `worker.hw` builds it."""
+    return ReportedHardware(
+        cpu=CPUInfo(logical_cores=8, model="x86_64"),
+        memory=MemoryInfo(total_bytes=64 << 30),
+        gpu=GpuPlatformInfo(
+            driver_version="550.54",
+            cuda_version="12.4",
+            devices=[
+                GpuInfo(
+                    index=i,
+                    name="NVIDIA H100",
+                    uuid=uuid,
+                    memory_total_bytes=80 << 30,
+                    memory_free_bytes=80 << 30,
+                    gpu_available=True,
+                )
+                for i, uuid in enumerate(gpu_uuids)
+            ],
+        ),
+        network=NetworkInfo(ip="10.0.0.5", bandwidth_bytes_per_sec=None),
+    ).model_dump_json()
 
 
 class TestTokenVerification:
@@ -120,9 +156,19 @@ class TestExternalAdapter:
         info = self._adapter().get_info()
         assert info.provider == "external"
         assert info.alias == "fm-worker-0"
-        #: The supervisor cannot introspect a machine it does not own; a made-up
-        #: profile would be fed straight to the scheduler.
+        #: The supervisor cannot introspect a machine it does not own, so there
+        #: is no hardware until the worker reports its own.
         assert info.hardware is None
+        assert info.held_gpus == []
+
+    def test_get_info_reports_the_hardware_the_worker_reported(self) -> None:
+        adapter = self._adapter()
+        adapter.observe_reported_hardware(
+            WorkerHardware.model_validate_json(_hardware_json())
+        )
+        info = adapter.get_info()
+        assert info.hardware is not None
+        assert info.hardware.cpu.logical_cores == 8
 
     def test_create_worker_refuses_a_token_with_no_verifiable_name(self) -> None:
         factory = ExternalWorkerFactory(system_principal=None)  # type: ignore[arg-type]
@@ -258,10 +304,20 @@ class _FakeTaskListener:
         self.added.append(worker_id)
 
 
+class _FakeRelayService:
+    def __init__(self) -> None:
+        self.events: list[dict[str, Any]] = []
+
+    def add_event(self, payload: dict[str, Any]) -> None:
+        self.events.append(payload)
+
+
 def _build_servicer(
     redis: _FakeRedis | None = None,
     node_alias: str = "node-a",
     node_id: str = "nde-1",
+    resource_manager: ResourceManager | None = None,
+    capacity_change_callback: Callable[[], None] | None = None,
 ) -> tuple[SupervisorServicer, _FakeRedis]:
     redis = redis or _FakeRedis()
     registry = WorkerRegistry()
@@ -270,7 +326,11 @@ def _build_servicer(
         "/nonexistent-worker-config.yaml",
         registry,
         logging.getLogger("test.wm"),
+        capacity_change_callback=capacity_change_callback,
     )
+    factory = manager._providers["external"].factory
+    assert isinstance(factory, ExternalWorkerFactory)
+    factory._rm = resource_manager
     manager._is_started = True
     manager._default_worker_config = {}
     servicer = SupervisorServicer.__new__(SupervisorServicer)
@@ -282,15 +342,21 @@ def _build_servicer(
     servicer._lock = Lock()
     servicer._task_listener = cast(TaskListener, _FakeTaskListener())
     servicer._worker_manager = manager
+    servicer._relay_service = cast(RelayService, _FakeRelayService())
     return servicer, redis
 
 
 async def _register(
-    servicer: SupervisorServicer, token: str, alias: str | None = None
+    servicer: SupervisorServicer,
+    token: str,
+    alias: str | None = None,
+    meta: dict[str, Any] | None = None,
 ) -> str:
     request = supervisor_pb2.RegisterRequest()
     if alias is not None:
         request.meta.update({"alias": alias})
+    if meta is not None:
+        request.meta.update(meta)
     resp = await servicer.RegisterWorker(request, cast(Any, _FakeContext(token)))
     return resp.worker_id
 
@@ -438,6 +504,59 @@ class TestRegisterWorkerExternalEnrollment:
         assert worker_id in redis.worker_ids
 
 
+class TestRegisterWorkerRecordsReportedHardware:
+    """The supervisor's view of an external worker's hardware is the worker's
+    own registration report."""
+
+    @pytest.mark.asyncio
+    async def test_register_records_reported_hardware(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("server.env.EXTERNAL_WORKER_TOKEN", SECRET)
+        servicer, _ = _build_servicer()
+        token = mint_external_token(SECRET, "fm-worker-0")
+
+        await _register(
+            servicer, token, meta={"hardware_json": _hardware_json("GPU-aaa")}
+        )
+
+        info = servicer._worker_manager.get_worker_info("fm-worker-0")
+        assert info is not None and info.hardware is not None
+        assert info.hardware.cpu.logical_cores == 8
+        assert [d.uuid for d in info.hardware.gpu.devices] == ["GPU-aaa"]
+
+    @pytest.mark.asyncio
+    async def test_unreadable_hardware_does_not_fail_registration(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("server.env.EXTERNAL_WORKER_TOKEN", SECRET)
+        servicer, redis = _build_servicer()
+        token = mint_external_token(SECRET, "fm-worker-0")
+
+        worker_id = await _register(servicer, token, meta={"hardware_json": "{oops"})
+
+        assert worker_id in redis.worker_ids
+        info = servicer._worker_manager.get_worker_info("fm-worker-0")
+        assert info is not None and info.hardware is None
+
+    @pytest.mark.asyncio
+    async def test_reenrollment_after_restart_restores_hardware(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("server.env.EXTERNAL_WORKER_TOKEN", SECRET)
+        redis = _FakeRedis()
+        token = mint_external_token(SECRET, "fm-worker-0")
+        meta = {"hardware_json": _hardware_json("GPU-aaa")}
+
+        before, _ = _build_servicer(redis=redis)
+        await _register(before, token, meta=meta)
+        after, _ = _build_servicer(redis=redis)
+        await _register(after, token, meta=meta)
+
+        info = after._worker_manager.get_worker_info("fm-worker-0")
+        assert info is not None and info.hardware is not None
+
+
 class TestRegisterWorkerRecordsVerifiedAlias:
     """The recorded alias is the name the supervisor can verify, never the
     self-reported one."""
@@ -500,3 +619,193 @@ def test_worker_environment_carries_name_as_alias() -> None:
         alias="resolved-name",
     )
     assert worker._base_environment()["WORKER_ALIAS"] == "resolved-name"
+
+
+def _host_pool(n: int) -> ResourceManager:
+    """A host with GPUs 0..n-1 whose UUIDs are `GPU-<index>`."""
+    rm = object.__new__(ResourceManager)
+    rm._env = MachineEnv(
+        cpu_count=16,
+        gpu_families={i: GpuArch.HOPPER for i in range(n)},
+        available_gpus=set(range(n)),
+        gpu_uuids={f"GPU-{i}": i for i in range(n)},
+    )
+    return rm
+
+
+async def _push_events(
+    servicer: SupervisorServicer, token: str, *payloads: dict[str, Any]
+) -> None:
+    async def messages() -> AsyncIterator[supervisor_pb2.EventMessage]:
+        for payload in payloads:
+            message = supervisor_pb2.EventMessage()
+            message.payload.update(payload)
+            yield message
+
+    await servicer.PushEvents(messages(), cast(Any, _FakeContext(token)))
+
+
+class TestExternalGpuHolds:
+    """An external worker on the supervisor's host holds its GPUs out of the
+    pool until it is destroyed or re-registers with other GPUs."""
+
+    TOKEN = mint_external_token(SECRET, "fm-worker-0")
+
+    @pytest.fixture(autouse=True)
+    def _secret(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr("server.env.EXTERNAL_WORKER_TOKEN", SECRET)
+
+    def _servicer(
+        self, rm: ResourceManager | None, calls: list[int] | None = None
+    ) -> SupervisorServicer:
+        callback = None if calls is None else (lambda: calls.append(1))
+        servicer, _ = _build_servicer(
+            resource_manager=rm, capacity_change_callback=callback
+        )
+        return servicer
+
+    async def _register(self, servicer: SupervisorServicer, *uuids: str) -> str:
+        return await _register(
+            servicer, self.TOKEN, meta={"hardware_json": _hardware_json(*uuids)}
+        )
+
+    def _held(self, servicer: SupervisorServicer) -> list[int]:
+        worker = servicer._registry.try_get(cast(Any, self.TOKEN))
+        assert isinstance(worker, ExternalWorkerAdapter)
+        return worker.held_gpus
+
+    @pytest.mark.asyncio
+    async def test_registration_holds_the_reported_host_gpus(self) -> None:
+        rm, calls = _host_pool(4), list[int]()
+        servicer = self._servicer(rm, calls)
+
+        await self._register(servicer, "GPU-1", "GPU-2")
+
+        assert rm._env.available_gpus == {0, 3}
+        assert self._held(servicer) == [1, 2]
+        assert len(calls) == 2  # admission, then the claim
+        info = servicer._worker_manager.get_worker_info("fm-worker-0")
+        assert info is not None and info.held_gpus == [1, 2]
+
+    @pytest.mark.asyncio
+    async def test_node_worker_listing_carries_held_gpus(self) -> None:
+        """GET_WORKERS dumps each WorkerInfo; the root re-validates it as
+        NodeWorkerInfo, which must keep the field."""
+        servicer = self._servicer(_host_pool(2))
+        await self._register(servicer, "GPU-1")
+
+        [info] = servicer._worker_manager.list_workers()
+        node_info = NodeWorkerInfo.model_validate(
+            info.model_dump() | {"node_id": "nde-1", "status": "IDLE"}
+        )
+
+        assert node_info.held_gpus == [1]
+
+    @pytest.mark.asyncio
+    async def test_reregistering_the_same_gpus_changes_nothing(self) -> None:
+        rm, calls = _host_pool(4), list[int]()
+        servicer = self._servicer(rm, calls)
+        await self._register(servicer, "GPU-1")
+        before = len(calls)
+
+        await self._register(servicer, "GPU-1")
+
+        assert rm._env.available_gpus == {0, 2, 3}
+        assert len(calls) == before
+
+    @pytest.mark.asyncio
+    async def test_reregistering_other_gpus_moves_the_hold(self) -> None:
+        rm = _host_pool(4)
+        servicer = self._servicer(rm)
+        await self._register(servicer, "GPU-1")
+
+        await self._register(servicer, "GPU-3")
+
+        assert rm._env.available_gpus == {0, 1, 2}
+        assert self._held(servicer) == [3]
+
+    @pytest.mark.asyncio
+    async def test_gpus_of_another_host_are_not_held(self) -> None:
+        """A remote worker's GPUs have UUIDs this host's pool never lists."""
+        rm, calls = _host_pool(2), list[int]()
+        servicer = self._servicer(rm, calls)
+
+        await self._register(servicer, "GPU-elsewhere")
+
+        assert rm.available_gpu_count() == 2
+        assert len(calls) == 1  # admission only
+        info = servicer._worker_manager.get_worker_info("fm-worker-0")
+        assert info is not None and info.held_gpus == []
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("unregisters", [True, False])
+    async def test_the_worker_going_away_keeps_the_hold(
+        self, unregisters: bool
+    ) -> None:
+        """Whether it shuts down cleanly or crashes, the worker is usually
+        restarted onto the same cards."""
+        rm, calls = _host_pool(2), list[int]()
+        servicer = self._servicer(rm, calls)
+        worker_id = await self._register(servicer, "GPU-0")
+        before = len(calls)
+        events: list[dict[str, Any]] = [{"type": "REGISTER", "worker_id": worker_id}]
+        if unregisters:
+            events.append({"type": "UNREGISTER", "worker_id": worker_id})
+
+        await _push_events(servicer, self.TOKEN, *events)
+
+        relayed = cast(_FakeRelayService, servicer._relay_service).events
+        assert relayed[-1]["type"] == "UNREGISTER"
+        assert rm._env.available_gpus == {1}
+        assert self._held(servicer) == [0]
+        assert len(calls) == before
+
+    @pytest.mark.asyncio
+    async def test_destroy_releases_and_is_idempotent(self) -> None:
+        rm = _host_pool(2)
+        servicer = self._servicer(rm)
+        await self._register(servicer, "GPU-0")
+        worker = servicer._registry.try_get(cast(Any, self.TOKEN))
+        assert worker is not None
+
+        await servicer._worker_manager.destroy_worker("fm-worker-0")
+        factory = servicer._worker_manager._providers["external"].factory
+        factory.destroy_worker(worker)
+
+        assert rm.available_gpu_count() == 2
+
+    @pytest.mark.asyncio
+    async def test_supervisor_shutdown_releases(self) -> None:
+        rm = _host_pool(2)
+        servicer = self._servicer(rm)
+        await self._register(servicer, "GPU-0", "GPU-1")
+
+        await servicer._worker_manager.stop()
+
+        assert rm.available_gpu_count() == 2
+
+    @pytest.mark.asyncio
+    async def test_a_card_another_worker_holds_is_shared_with_a_warning(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        rm = _host_pool(2)
+        rm.reserve_gpus(devices=[0])
+        servicer = self._servicer(rm)
+
+        with caplog.at_level(logging.WARNING, logger="supervisor"):
+            await self._register(servicer, "GPU-0", "GPU-1")
+
+        assert self._held(servicer) == [0, 1]
+        assert "shares host GPUs [0]" in caplog.text
+        # The other holder's release leaves the card held by this worker.
+        rm.deallocate_gpus([0])
+        assert rm.available_gpu_count() == 0
+
+    @pytest.mark.asyncio
+    async def test_dockerless_host_admits_without_holding(self) -> None:
+        servicer = self._servicer(None)
+
+        worker_id = await self._register(servicer, "GPU-0")
+
+        assert worker_id
+        assert self._held(servicer) == []
