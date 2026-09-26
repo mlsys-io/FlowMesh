@@ -24,7 +24,7 @@ Two kinds of "cannot read" are deliberately distinguished:
 """
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
 import pynvml
@@ -104,19 +104,27 @@ def decide_availability(
 
 
 class NvmlDeviceProbe:
-    """Per-UUID memory readings for the GPUs this process can see.
+    """Per-UUID memory readings for the worker's own GPUs.
 
-    A worker container is only given its own GPU(s), so every device NVML enumerates
-    here belongs to this worker. Unified-memory devices (e.g. GB10) are omitted: their
-    "used" figure is system RAM, not a card another tenant is holding.
+    NVML lists every GPU the process can reach, including ones
+    `CUDA_VISIBLE_DEVICES` hides from it, so given ``devices`` (the worker's
+    reported devices, UUID to CUDA ordinal) only those are read. Without it every
+    NVML device is read, under its NVML index. Unified-memory devices (e.g. GB10)
+    are omitted: their "used" figure is system RAM, not a card another tenant is
+    holding.
 
     Returns ``{}`` when NVML itself cannot be reached, which the monitor reads as total
     probe failure. A device that individually fails to read is simply absent from the
     result, leaving whatever the monitor last knew about it untouched.
     """
 
-    def __init__(self, is_unified: Callable[[int, str], bool] | None = None) -> None:
+    def __init__(
+        self,
+        is_unified: Callable[[int, str], bool] | None = None,
+        devices: Mapping[str, int] | None = None,
+    ) -> None:
         self._is_unified = is_unified
+        self._devices = devices
         self._warned = False
         self._initialised = False
 
@@ -129,11 +137,17 @@ class NvmlDeviceProbe:
             for idx in range(pynvml.nvmlDeviceGetCount()):
                 handle = pynvml.nvmlDeviceGetHandleByIndex(idx)
                 name = _decode(pynvml.nvmlDeviceGetName(handle))
-                if self._is_unified is not None and self._is_unified(idx, name):
+                try:
+                    uuid = _decode(pynvml.nvmlDeviceGetUUID(handle))
+                except pynvml.NVMLError:
+                    continue
+                ordinal = idx if self._devices is None else self._devices.get(uuid)
+                if ordinal is None:
+                    continue
+                if self._is_unified is not None and self._is_unified(ordinal, name):
                     continue
                 try:
                     info = pynvml.nvmlDeviceGetMemoryInfo(handle)
-                    uuid = _decode(pynvml.nvmlDeviceGetUUID(handle))
                 except pynvml.NVMLError:
                     continue
                 readings[uuid] = DeviceReading(

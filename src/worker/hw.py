@@ -4,6 +4,7 @@
 Collects lightweight CPU/memory/GPU/network information for registration.
 """
 
+import logging
 import os
 import platform
 import re
@@ -23,6 +24,8 @@ from shared.tasks.worker_message import (
     NetworkInfo,
     WorkerHardware,
 )
+
+logger = logging.getLogger(__name__)
 
 _UNIFIED_GPU_NAME_PATTERN = re.compile(r"\b(?:gb10|tegra|thor)\b", re.IGNORECASE)
 _CUDA_DEV_ATTR_INTEGRATED = 18
@@ -99,6 +102,58 @@ def device_uses_unified_memory(device_index: int, name: str) -> bool:
     return _is_unified_memory_gpu(name)
 
 
+def visible_device_order(devices: list[tuple[str, str]]) -> list[int]:
+    """Return the NVML indices `CUDA_VISIBLE_DEVICES` leaves visible, in CUDA order.
+
+    `devices` is each NVML device's (uuid, name), in NVML order; NVML itself
+    ignores the variable. Entries follow CUDA's rules: a `GPU-` entry names a
+    device by a unique UUID prefix, an integer by its position, and the first
+    entry that names no device ends the list. Integers are read in PCI bus
+    order, which is NVML's and matches CUDA's only under
+    `CUDA_DEVICE_ORDER=PCI_BUS_ID` or on identical GPUs. A `MIG-` entry cannot be
+    resolved to its GPU here, so it leaves every device visible.
+    """
+    value = os.environ.get("CUDA_VISIBLE_DEVICES")
+    if value is None:
+        return list(range(len(devices)))
+    uuids = [uuid.lower() for uuid, _ in devices]
+    order: list[int] = []
+    by_position = False
+    for entry in (token.strip() for token in value.split(",")):
+        if entry.upper().startswith("MIG-"):
+            logger.warning(
+                "CUDA_VISIBLE_DEVICES names a MIG instance; reporting every GPU"
+            )
+            return list(range(len(devices)))
+        if entry.upper().startswith("GPU-"):
+            matches = [
+                i for i, uuid in enumerate(uuids) if uuid.startswith(entry.lower())
+            ]
+            index = matches[0] if len(matches) == 1 else None
+        else:
+            try:
+                index = int(entry)
+            except ValueError:
+                index = None
+            if index is not None and not 0 <= index < len(devices):
+                index = None
+            by_position = True
+        if index is None or index in order:
+            break
+        order.append(index)
+    if (
+        by_position
+        and len({name for _, name in devices}) > 1
+        and os.environ.get("CUDA_DEVICE_ORDER") != "PCI_BUS_ID"
+    ):
+        logger.warning(
+            "CUDA_VISIBLE_DEVICES lists GPUs by position on a host with mixed GPU "
+            "models; reading positions in PCI bus order, which CUDA uses only under "
+            "CUDA_DEVICE_ORDER=PCI_BUS_ID"
+        )
+    return order
+
+
 def collect_hw(*, bandwidth_bytes_per_sec: float | None = None) -> WorkerHardware:
     # CPU
     cpu = CPUInfo(
@@ -124,13 +179,20 @@ def collect_hw(*, bandwidth_bytes_per_sec: float | None = None) -> WorkerHardwar
         driver_version = raw.decode() if isinstance(raw, bytes) else raw
         cuda_raw = pynvml.nvmlSystemGetCudaDriverVersion()
         cuda_version = f"{cuda_raw // 1000}.{(cuda_raw % 1000) // 10}"
+        nvml_devices = []
         for idx in range(pynvml.nvmlDeviceGetCount()):
             handle = pynvml.nvmlDeviceGetHandleByIndex(idx)
             name_raw = pynvml.nvmlDeviceGetName(handle)
             uuid_raw = pynvml.nvmlDeviceGetUUID(handle)
             name = name_raw.decode() if isinstance(name_raw, bytes) else name_raw
             uuid = uuid_raw.decode() if isinstance(uuid_raw, bytes) else uuid_raw
-            gpu_uses_unified_memory = device_uses_unified_memory(idx, name)
+            nvml_devices.append((handle, uuid, name))
+        order = visible_device_order([(uuid, name) for _, uuid, name in nvml_devices])
+        # A device is reported under its CUDA ordinal, the index this process's
+        # CUDA calls see.
+        for ordinal, nvml_index in enumerate(order):
+            handle, uuid, name = nvml_devices[nvml_index]
+            gpu_uses_unified_memory = device_uses_unified_memory(ordinal, name)
             unified_memory = unified_memory or gpu_uses_unified_memory
             mem_total: int | None = None
             if not gpu_uses_unified_memory:
@@ -142,7 +204,7 @@ def collect_hw(*, bandwidth_bytes_per_sec: float | None = None) -> WorkerHardwar
                     mem_total = int(mem_total_raw)
             devices.append(
                 GpuInfo(
-                    index=idx,
+                    index=ordinal,
                     name=name,
                     uuid=uuid,
                     memory_total_bytes=mem_total,

@@ -132,6 +132,31 @@ class TestNvmlDeviceProbe:
         readings = NvmlDeviceProbe(lambda index, _name: index == 0)()
         assert set(readings) == {GPU_B}
 
+    def test_reads_only_the_workers_own_devices(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # NVML also lists GPUs CUDA_VISIBLE_DEVICES hides from the worker; those
+        # belong to someone else and are not the worker's to report.
+        monkeypatch.setattr(
+            "worker.gpu_availability.pynvml",
+            self._fake_nvml(
+                {
+                    0: ("dedicated", GPU_A, 40_000 * MIB, 8 * MIB),
+                    1: ("dedicated", GPU_B, 0, 48 * 1024 * MIB),
+                }
+            ),
+        )
+        seen: list[int] = []
+
+        def is_unified(ordinal: int, _name: str) -> bool:
+            seen.append(ordinal)
+            return False
+
+        readings = NvmlDeviceProbe(is_unified, {GPU_B: 0})()
+        assert set(readings) == {GPU_B}
+        # The unified-memory check takes the CUDA ordinal, not the NVML index.
+        assert seen == [0]
+
     def test_nvml_failure_returns_empty(self, monkeypatch: pytest.MonkeyPatch) -> None:
         class Broken:
             NVMLError = RuntimeError

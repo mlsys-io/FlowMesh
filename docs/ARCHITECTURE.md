@@ -202,10 +202,14 @@ scripts/dev/            compile_protos, sync_requirements, check_env_examples
   already holds is shared with a warning, never refused, and returns to the
   pool only once every holder releases it. Holds live in the supervisor's
   memory: after a restart, the Docker workers in its config reserve first and
-  an external worker claims its cards again when it re-registers. The report
-  lists every GPU NVML shows the worker, and `CUDA_VISIBLE_DEVICES` does not
-  narrow it, so limit an external worker's GPUs at the device level (the
-  container's `--gpus`, a Kubernetes device plugin).
+  an external worker claims its cards again when it re-registers.
+- **A worker's GPUs are the ones CUDA lets it use.** NVML lists every GPU the
+  worker process can reach, so the worker narrows its report, and the devices
+  its foreign-GPU probe reads, to those `CUDA_VISIBLE_DEVICES` leaves visible,
+  each under its CUDA ordinal. A `GPU-` UUID entry is exact. An integer entry is
+  read in PCI bus order, which is CUDA's only under
+  `CUDA_DEVICE_ORDER=PCI_BUS_ID` or on identical GPUs (the worker warns
+  otherwise). A `MIG-` entry leaves every GPU reported.
 - **Worker cordon.** A cordoned worker keeps running and finishes what it was
   already dispatched, but is left out of both the idle pool and the eligibility
   set, so tasks neither go to it nor wait for it. The cordon is keyed on
