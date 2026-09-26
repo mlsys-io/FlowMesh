@@ -102,6 +102,11 @@ _HOST = [
     ("GPU-cccc-3333", "NVIDIA H100"),
     ("GPU-cccd-4444", "NVIDIA H100"),
 ]
+_MIG = {2: ["MIG-aaaa-1", "MIG-aaaa-2"], 3: ["MIG-bbbb-1"]}
+
+
+def _host_migs(index: int) -> list[str]:
+    return _MIG.get(index, [])
 
 
 class TestVisibleDeviceOrder:
@@ -119,7 +124,11 @@ class TestVisibleDeviceOrder:
             ("1,1,2", [1]),
             ("GPU-ccc,1", []),
             ("NoDevFiles", []),
-            ("MIG-5c2a,1", [0, 1, 2, 3]),
+            ("MIG-aaaa-1", [2]),
+            ("MIG-aaaa-1,MIG-aaaa-2,MIG-bbbb", [2, 3]),
+            ("1,MIG-bbbb-1", [1, 3]),
+            ("MIG-aaaa", []),
+            ("MIG-zzzz,1", []),
         ],
     )
     def test_follows_cuda_rules(
@@ -129,7 +138,17 @@ class TestVisibleDeviceOrder:
             monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
         else:
             monkeypatch.setenv("CUDA_VISIBLE_DEVICES", value)
-        assert hw.visible_device_order(_HOST) == expected
+        assert hw.visible_device_order(_HOST, _host_migs) == expected
+
+    def test_mig_slices_are_not_listed_without_a_mig_entry(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "0,1")
+
+        def unexpected(_index: int) -> list[str]:
+            raise AssertionError("MIG devices listed with no MIG entry")
+
+        assert hw.visible_device_order(_HOST, unexpected) == [0, 1]
 
     def test_warns_when_positions_are_ambiguous_on_mixed_gpus(
         self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
@@ -199,3 +218,39 @@ def test_collect_hw_reports_only_visible_gpus_under_their_cuda_ordinals(
         (1, "GPU-bbbb-2222"),
     ]
     assert probed == [0, 1]
+
+
+class _MigPynvml(_FourGpuPynvml):
+    """GPU 2 is split into two MIG devices."""
+
+    @staticmethod
+    def nvmlDeviceGetMaxMigDeviceCount(handle: int) -> int:
+        if handle != 2:
+            raise _FakeNvmlError("MIG not enabled")
+        return 3
+
+    @staticmethod
+    def nvmlDeviceGetMigDeviceHandleByIndex(handle: int, slot: int) -> tuple[int, int]:
+        if slot == 2:
+            raise _FakeNvmlError("empty slot")
+        return (handle, slot)
+
+    @staticmethod
+    def nvmlDeviceGetUUID(handle: int | tuple[int, int]) -> bytes:
+        if isinstance(handle, tuple):
+            return f"MIG-slice-{handle[0]}-{handle[1]}".encode()
+        return _HOST[handle][0].encode()
+
+
+def test_collect_hw_reports_the_gpu_a_mig_slice_belongs_to(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "MIG-slice-2-1")
+
+    with (
+        patch.object(hw, "pynvml", _MigPynvml),
+        patch("worker.hw._cuda_device_is_integrated", return_value=False),
+    ):
+        hardware = hw.collect_hw()
+
+    assert [(d.index, d.uuid) for d in hardware.gpu.devices] == [(0, "GPU-cccc-3333")]

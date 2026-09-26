@@ -10,6 +10,7 @@ import platform
 import re
 import socket
 import sys
+from collections.abc import Callable
 from ctypes import CDLL, POINTER, byref, c_int
 from ctypes.util import find_library
 from functools import cache
@@ -102,7 +103,31 @@ def device_uses_unified_memory(device_index: int, name: str) -> bool:
     return _is_unified_memory_gpu(name)
 
 
-def visible_device_order(devices: list[tuple[str, str]]) -> list[int]:
+def _decode(value: bytes | str) -> str:
+    return value.decode() if isinstance(value, bytes) else value
+
+
+def _mig_uuids(nvml_index: int) -> list[str]:
+    """UUIDs of the MIG devices carved out of an NVML device, if any."""
+    try:
+        handle = pynvml.nvmlDeviceGetHandleByIndex(nvml_index)
+        count = pynvml.nvmlDeviceGetMaxMigDeviceCount(handle)
+    except pynvml.NVMLError:
+        return []
+    uuids: list[str] = []
+    for slot in range(count):
+        try:
+            mig = pynvml.nvmlDeviceGetMigDeviceHandleByIndex(handle, slot)
+            uuids.append(_decode(pynvml.nvmlDeviceGetUUID(mig)))
+        except pynvml.NVMLError:
+            continue
+    return uuids
+
+
+def visible_device_order(
+    devices: list[tuple[str, str]],
+    mig_uuids: Callable[[int], list[str]] = _mig_uuids,
+) -> list[int]:
     """Return the NVML indices `CUDA_VISIBLE_DEVICES` leaves visible, in CUDA order.
 
     `devices` is each NVML device's (uuid, name), in NVML order; NVML itself
@@ -110,21 +135,31 @@ def visible_device_order(devices: list[tuple[str, str]]) -> list[int]:
     device by a unique UUID prefix, an integer by its position, and the first
     entry that names no device ends the list. Integers are read in PCI bus
     order, which is NVML's and matches CUDA's only under
-    `CUDA_DEVICE_ORDER=PCI_BUS_ID` or on identical GPUs. A `MIG-` entry cannot be
-    resolved to its GPU here, so it leaves every device visible.
+    `CUDA_DEVICE_ORDER=PCI_BUS_ID` or on identical GPUs. A `MIG-` entry names
+    a slice of a GPU and yields that GPU (`mig_uuids` lists an NVML device's
+    MIG device UUIDs); further slices of the same GPU add nothing.
     """
     value = os.environ.get("CUDA_VISIBLE_DEVICES")
     if value is None:
         return list(range(len(devices)))
     uuids = [uuid.lower() for uuid, _ in devices]
+    mig_parents: list[tuple[str, int]] | None = None
     order: list[int] = []
     by_position = False
     for entry in (token.strip() for token in value.split(",")):
         if entry.upper().startswith("MIG-"):
-            logger.warning(
-                "CUDA_VISIBLE_DEVICES names a MIG instance; reporting every GPU"
-            )
-            return list(range(len(devices)))
+            if mig_parents is None:
+                mig_parents = [
+                    (mig.lower(), i)
+                    for i in range(len(devices))
+                    for mig in mig_uuids(i)
+                ]
+            parents = [i for mig, i in mig_parents if mig.startswith(entry.lower())]
+            if len(parents) != 1:
+                break
+            if parents[0] not in order:
+                order.append(parents[0])
+            continue
         if entry.upper().startswith("GPU-"):
             matches = [
                 i for i, uuid in enumerate(uuids) if uuid.startswith(entry.lower())
@@ -182,10 +217,8 @@ def collect_hw(*, bandwidth_bytes_per_sec: float | None = None) -> WorkerHardwar
         nvml_devices = []
         for idx in range(pynvml.nvmlDeviceGetCount()):
             handle = pynvml.nvmlDeviceGetHandleByIndex(idx)
-            name_raw = pynvml.nvmlDeviceGetName(handle)
-            uuid_raw = pynvml.nvmlDeviceGetUUID(handle)
-            name = name_raw.decode() if isinstance(name_raw, bytes) else name_raw
-            uuid = uuid_raw.decode() if isinstance(uuid_raw, bytes) else uuid_raw
+            name = _decode(pynvml.nvmlDeviceGetName(handle))
+            uuid = _decode(pynvml.nvmlDeviceGetUUID(handle))
             nvml_devices.append((handle, uuid, name))
         order = visible_device_order([(uuid, name) for _, uuid, name in nvml_devices])
         # A device is reported under its CUDA ordinal, the index this process's
