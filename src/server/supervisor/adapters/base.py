@@ -224,10 +224,6 @@ class WorkerFactory(ABC):
         """React to the worker registering. Returns whether node capacity changed."""
         return False
 
-    def on_worker_unregistered(self, worker: WorkerAdapter) -> bool:
-        """React to the worker unregistering. Returns whether node capacity changed."""
-        return False
-
     def cleanup(self) -> None:
         pass
 

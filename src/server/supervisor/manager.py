@@ -246,11 +246,6 @@ class WorkerManager:
         if self._factory_for(worker).on_worker_registered(worker):
             self._report_capacity_change()
 
-    def worker_unregistered(self, worker: WorkerAdapter) -> None:
-        """Apply a worker's own announcement that it is shutting down."""
-        if self._factory_for(worker).on_worker_unregistered(worker):
-            self._report_capacity_change()
-
     def available_providers(self) -> list[str]:
         return sorted(self._providers)
 

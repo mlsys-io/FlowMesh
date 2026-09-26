@@ -139,12 +139,10 @@ class ExternalWorkerAdapter(WorkerAdapter):
 class ExternalWorkerFactory(WorkerFactory):
     """Creates external workers and holds the host GPUs they report.
 
-    A worker on this supervisor's host holds its GPUs (matched by UUID, since
-    the index a worker reports is local to its container) from registration
-    until it unregisters or is destroyed. A crash releases nothing: the process
-    is usually restarted onto the same cards, which must not have been handed
-    to another worker meanwhile. A host without Docker has no pool, so nothing
-    is held.
+    A worker holds the host GPUs whose UUIDs it reports until it is destroyed or
+    re-registers with other GPUs. Its going away, cleanly or not, releases
+    nothing: it is usually restarted onto the same cards. A host without Docker
+    has no pool, so nothing is held.
     """
 
     def __init__(self, system_principal: PrincipalContext) -> None:
@@ -196,13 +194,6 @@ class ExternalWorkerFactory(WorkerFactory):
                 overlapping,
             )
         return changed or bool(claimed)
-
-    def on_worker_unregistered(self, worker: WorkerAdapter) -> bool:
-        if not isinstance(worker, ExternalWorkerAdapter):
-            return False
-        changed = self._release(worker)
-        worker.claimed_gpu_uuids = None
-        return changed
 
     def _release(self, worker: ExternalWorkerAdapter) -> bool:
         devices, worker.held_gpus = worker.held_gpus, []

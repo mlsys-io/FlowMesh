@@ -5,7 +5,6 @@ CONFIGURATION verifies after the supervisor has forgotten everything, whereas a
 runtime-minted `uuid4()` token cannot.
 """
 
-import asyncio
 import logging
 from collections.abc import AsyncIterator, Callable
 from threading import Lock
@@ -648,7 +647,7 @@ async def _push_events(
 
 class TestExternalGpuHolds:
     """An external worker on the supervisor's host holds its GPUs out of the
-    pool until it unregisters or is destroyed -- never because it crashed."""
+    pool until it is destroyed or re-registers with other GPUs."""
 
     TOKEN = mint_external_token(SECRET, "fm-worker-0")
 
@@ -739,88 +738,27 @@ class TestExternalGpuHolds:
         assert info is not None and info.held_gpus == []
 
     @pytest.mark.asyncio
-    async def test_worker_sent_unregister_releases(self) -> None:
+    @pytest.mark.parametrize("unregisters", [True, False])
+    async def test_the_worker_going_away_keeps_the_hold(
+        self, unregisters: bool
+    ) -> None:
+        """Whether it shuts down cleanly or crashes, the worker is usually
+        restarted onto the same cards."""
         rm, calls = _host_pool(2), list[int]()
         servicer = self._servicer(rm, calls)
         worker_id = await self._register(servicer, "GPU-0")
         before = len(calls)
+        events: list[dict[str, Any]] = [{"type": "REGISTER", "worker_id": worker_id}]
+        if unregisters:
+            events.append({"type": "UNREGISTER", "worker_id": worker_id})
 
-        await _push_events(
-            servicer,
-            self.TOKEN,
-            {"type": "REGISTER", "worker_id": worker_id},
-            {"type": "UNREGISTER", "worker_id": worker_id},
-        )
-
-        assert rm.available_gpu_count() == 2
-        assert len(calls) == before + 1
-
-    @pytest.mark.asyncio
-    async def test_stream_ending_without_unregister_keeps_the_hold(self) -> None:
-        """A crash closes the stream; the supervisor fabricates an UNREGISTER
-        for the server, but the cards stay held for the restarted worker."""
-        rm = _host_pool(2)
-        servicer = self._servicer(rm)
-        worker_id = await self._register(servicer, "GPU-0")
-
-        await _push_events(
-            servicer, self.TOKEN, {"type": "REGISTER", "worker_id": worker_id}
-        )
+        await _push_events(servicer, self.TOKEN, *events)
 
         relayed = cast(_FakeRelayService, servicer._relay_service).events
         assert relayed[-1]["type"] == "UNREGISTER"
         assert rm._env.available_gpus == {1}
         assert self._held(servicer) == [0]
-
-    @pytest.mark.asyncio
-    async def test_unregister_of_a_superseded_registration_keeps_the_hold(
-        self,
-    ) -> None:
-        rm = _host_pool(2)
-        servicer = self._servicer(rm)
-        await self._register(servicer, "GPU-0")
-
-        await _push_events(
-            servicer, self.TOKEN, {"type": "UNREGISTER", "worker_id": "wkr-stale"}
-        )
-
-        assert rm._env.available_gpus == {1}
-
-    @pytest.mark.asyncio
-    async def test_unregister_on_an_old_stream_releases_the_current_adapter(
-        self,
-    ) -> None:
-        """After a destroy and re-admission, the worker's graceful UNREGISTER
-        can arrive on a stream opened for the destroyed adapter. It carries the
-        current id, so the current adapter's holds are released."""
-        rm = _host_pool(2)
-        servicer = self._servicer(rm)
-        await self._register(servicer, "GPU-0")
-        opened, send = asyncio.Event(), asyncio.Event()
-        payload: dict[str, Any] = {}
-
-        async def messages() -> AsyncIterator[supervisor_pb2.EventMessage]:
-            opened.set()
-            await send.wait()
-            message = supervisor_pb2.EventMessage()
-            message.payload.update(payload)
-            yield message
-
-        # The stream opens -- and resolves its adapter -- before the destroy.
-        stream = asyncio.create_task(
-            servicer.PushEvents(messages(), cast(Any, _FakeContext(self.TOKEN)))
-        )
-        await asyncio.wait_for(opened.wait(), timeout=5)
-        await servicer._worker_manager.destroy_worker("fm-worker-0")
-        worker_id = await self._register(servicer, "GPU-1")
-        payload.update(type="UNREGISTER", worker_id=worker_id)
-        assert rm._env.available_gpus == {0}
-
-        send.set()
-        await asyncio.wait_for(stream, timeout=5)
-
-        assert servicer._registry.get_worker_id(cast(Any, self.TOKEN)) == worker_id
-        assert rm._env.available_gpus == {0, 1}
+        assert len(calls) == before
 
     @pytest.mark.asyncio
     async def test_destroy_releases_and_is_idempotent(self) -> None:
