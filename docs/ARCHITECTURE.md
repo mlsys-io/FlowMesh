@@ -190,32 +190,20 @@ scripts/dev/            compile_protos, sync_requirements, check_env_examples
   any other node record with the alias, so a node that crashed or was taken
   over does not linger beside its replacement. `(node_alias, alias)` is
   therefore a worker's durable, unique address.
-- **External workers' hardware and GPUs.** The supervisor cannot probe a worker
-  it did not launch, so an `external` worker's hardware is the report it sends
-  at registration. If that report names GPUs of the supervisor's own host
-  (matched by UUID, since a worker's device index is local to its container),
-  the supervisor holds them out of its pool, so Docker workers aren't given them
-  and the node's free GPU count excludes them. The hold lasts until the worker
-  unregisters, is destroyed, or the supervisor stops, but not when the worker
-  crashes: its orchestrator usually restarts it onto the same cards, so a
-  crashed worker's hold is freed by destroying it (`flowmesh stack worker down
-  <alias>` on its node, i.e. `DELETE /api/v1/stack/workers/{alias}`). Destroying
-  a live external worker frees its cards only until it next registers. A card
-  another worker already holds is shared with a warning, never refused, and
-  returns to the pool only once every holder releases it. A worker listing's
-  `held_gpus` shows the host GPUs the pool holds for each worker; a remote
-  worker's GPUs are never this host's, so it holds none. Holds live in the
-  supervisor's memory: after a restart, the Docker workers in its config reserve
-  first and an external worker claims its cards again when it re-registers.
-- **A worker's GPUs are the ones CUDA lets it use.** NVML lists every GPU the
-  worker process can reach, so the worker narrows its report, and the devices
-  its foreign-GPU probe reads, to those `CUDA_VISIBLE_DEVICES` leaves visible,
-  each under its CUDA ordinal. A `GPU-` UUID entry is exact. An integer entry is
-  read in PCI bus order, which is CUDA's only under
-  `CUDA_DEVICE_ORDER=PCI_BUS_ID` or on identical GPUs (the worker warns
-  otherwise). A `MIG-` entry is reported as the GPU it is a slice of, so an
-  external worker on one slice holds only that card, and ends the list, since
-  a CUDA process enumerates at most one MIG device.
+- **External workers' hardware and GPUs.** An `external` worker's hardware is
+  the report it sends at registration. The supervisor holds the GPUs of its own
+  host that the report names (by UUID) out of its pool, so Docker workers are
+  not given them. The hold lasts until the worker is destroyed (`flowmesh stack
+  worker down <alias>`), re-registers with other GPUs, or the supervisor stops;
+  a worker that exits or crashes keeps it for its restart. A card two workers
+  hold returns to the pool once both release it. Worker listings show each
+  worker's host GPUs as `held_gpus`.
+- **A worker's GPUs are the ones CUDA lets it use.** A worker reports, probes,
+  and samples power for only the GPUs `CUDA_VISIBLE_DEVICES` leaves visible,
+  each under its CUDA ordinal. Integer entries are read in PCI bus order, so
+  set `CUDA_DEVICE_ORDER=PCI_BUS_ID` on a host with mixed GPU models. A MIG
+  slice reports its own memory and is probed on its own, under the UUID of its
+  GPU.
 - **Worker cordon.** A cordoned worker keeps running and finishes what it was
   already dispatched, but is left out of both the idle pool and the eligibility
   set, so tasks neither go to it nor wait for it. The cordon is keyed on
