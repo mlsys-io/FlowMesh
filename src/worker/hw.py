@@ -137,29 +137,32 @@ def visible_device_order(
     order, which is NVML's and matches CUDA's only under
     `CUDA_DEVICE_ORDER=PCI_BUS_ID` or on identical GPUs. A `MIG-` entry names
     a slice of a GPU and yields that GPU (`mig_uuids` lists an NVML device's
-    MIG device UUIDs); further slices of the same GPU add nothing.
+    MIG device UUIDs); it also ends the list, since a CUDA process enumerates
+    at most one MIG device.
     """
     value = os.environ.get("CUDA_VISIBLE_DEVICES")
     if value is None:
         return list(range(len(devices)))
     uuids = [uuid.lower() for uuid, _ in devices]
-    mig_parents: list[tuple[str, int]] | None = None
     order: list[int] = []
     by_position = False
     for entry in (token.strip() for token in value.split(",")):
         if entry.upper().startswith("MIG-"):
-            if mig_parents is None:
-                mig_parents = [
-                    (mig.lower(), i)
-                    for i in range(len(devices))
-                    for mig in mig_uuids(i)
-                ]
-            parents = [i for mig, i in mig_parents if mig.startswith(entry.lower())]
+            parents = [
+                i
+                for i in range(len(devices))
+                for mig in mig_uuids(i)
+                if mig.lower().startswith(entry.lower())
+            ]
             if len(parents) != 1:
-                break
-            if parents[0] not in order:
+                logger.warning(
+                    "CUDA_VISIBLE_DEVICES entry %s names no single MIG device; "
+                    "reporting no GPUs from it on",
+                    entry,
+                )
+            elif parents[0] not in order:
                 order.append(parents[0])
-            continue
+            break
         if entry.upper().startswith("GPU-"):
             matches = [
                 i for i, uuid in enumerate(uuids) if uuid.startswith(entry.lower())

@@ -125,8 +125,9 @@ class TestVisibleDeviceOrder:
             ("GPU-ccc,1", []),
             ("NoDevFiles", []),
             ("MIG-aaaa-1", [2]),
-            ("MIG-aaaa-1,MIG-aaaa-2,MIG-bbbb", [2, 3]),
+            ("MIG-aaaa-1,MIG-bbbb-1", [2]),
             ("1,MIG-bbbb-1", [1, 3]),
+            ("2,MIG-aaaa-1", [2]),
             ("MIG-aaaa", []),
             ("MIG-zzzz,1", []),
         ],
@@ -139,6 +140,13 @@ class TestVisibleDeviceOrder:
         else:
             monkeypatch.setenv("CUDA_VISIBLE_DEVICES", value)
         assert hw.visible_device_order(_HOST, _host_migs) == expected
+
+    def test_warns_on_a_mig_entry_it_cannot_resolve(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "MIG-GPU-aaaa/1/0")
+        assert hw.visible_device_order(_HOST, _host_migs) == []
+        assert "MIG-GPU-aaaa/1/0" in caplog.text
 
     def test_mig_slices_are_not_listed_without_a_mig_entry(
         self, monkeypatch: pytest.MonkeyPatch
