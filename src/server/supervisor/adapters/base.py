@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, SecretStr
 
 from ... import env
 from ...hooks import PrincipalContext
-from ..schemas import WorkerInfo, WorkerStatus
+from ..schemas import WorkerHardware, WorkerInfo, WorkerStatus
 from .utils import env_to_secret_str, to_env_str
 
 
@@ -134,6 +134,13 @@ class WorkerAdapter(ABC):
     async def start(self) -> bool:
         """Start worker. Returns whether the worker was successfully started."""
         pass
+
+    def observe_reported_hardware(self, hardware: WorkerHardware) -> None:
+        """Record the hardware the worker reported when it registered.
+
+        A no-op for providers that probe the hardware themselves.
+        """
+        return None
 
     async def prepare(self) -> None:
         """Prepare worker (e.g., collecting hardware information) without starting

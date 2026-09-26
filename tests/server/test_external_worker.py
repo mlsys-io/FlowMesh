@@ -31,12 +31,44 @@ from server.supervisor.manager import (
     WorkerManager,
 )
 from server.supervisor.registry import WorkerRegistry
-from server.supervisor.schemas import WorkerStatus
+from server.supervisor.schemas import WorkerHardware, WorkerStatus
 from server.supervisor.services.grpc_server import SupervisorServicer
 from server.supervisor.services.task_listener import TaskListener
 from shared.grpc.supervisor.v1 import supervisor_pb2
+from shared.tasks.worker_message import (
+    CPUInfo,
+    GpuInfo,
+    GpuPlatformInfo,
+    MemoryInfo,
+    NetworkInfo,
+)
+from shared.tasks.worker_message import WorkerHardware as ReportedHardware
 
 SECRET = "s3cret-shared-across-the-fleet"
+
+
+def _hardware_json(*gpu_uuids: str) -> str:
+    """The `hardware_json` a worker sends, as `worker.hw` builds it."""
+    return ReportedHardware(
+        cpu=CPUInfo(logical_cores=8, model="x86_64"),
+        memory=MemoryInfo(total_bytes=64 << 30),
+        gpu=GpuPlatformInfo(
+            driver_version="550.54",
+            cuda_version="12.4",
+            devices=[
+                GpuInfo(
+                    index=i,
+                    name="NVIDIA H100",
+                    uuid=uuid,
+                    memory_total_bytes=80 << 30,
+                    memory_free_bytes=80 << 30,
+                    gpu_available=True,
+                )
+                for i, uuid in enumerate(gpu_uuids)
+            ],
+        ),
+        network=NetworkInfo(ip="10.0.0.5", bandwidth_bytes_per_sec=None),
+    ).model_dump_json()
 
 
 class TestTokenVerification:
@@ -120,9 +152,18 @@ class TestExternalAdapter:
         info = self._adapter().get_info()
         assert info.provider == "external"
         assert info.alias == "fm-worker-0"
-        #: The supervisor cannot introspect a machine it does not own; a made-up
-        #: profile would be fed straight to the scheduler.
+        #: The supervisor cannot introspect a machine it does not own, so there
+        #: is no hardware until the worker reports its own.
         assert info.hardware is None
+
+    def test_get_info_reports_the_hardware_the_worker_reported(self) -> None:
+        adapter = self._adapter()
+        adapter.observe_reported_hardware(
+            WorkerHardware.model_validate_json(_hardware_json())
+        )
+        info = adapter.get_info()
+        assert info.hardware is not None
+        assert info.hardware.cpu.logical_cores == 8
 
     def test_create_worker_refuses_a_token_with_no_verifiable_name(self) -> None:
         factory = ExternalWorkerFactory(system_principal=None)  # type: ignore[arg-type]
@@ -286,11 +327,16 @@ def _build_servicer(
 
 
 async def _register(
-    servicer: SupervisorServicer, token: str, alias: str | None = None
+    servicer: SupervisorServicer,
+    token: str,
+    alias: str | None = None,
+    meta: dict[str, Any] | None = None,
 ) -> str:
     request = supervisor_pb2.RegisterRequest()
     if alias is not None:
         request.meta.update({"alias": alias})
+    if meta is not None:
+        request.meta.update(meta)
     resp = await servicer.RegisterWorker(request, cast(Any, _FakeContext(token)))
     return resp.worker_id
 
@@ -436,6 +482,59 @@ class TestRegisterWorkerExternalEnrollment:
         worker_id = await _register(servicer, cast(str, token))
 
         assert worker_id in redis.worker_ids
+
+
+class TestRegisterWorkerRecordsReportedHardware:
+    """The supervisor's view of an external worker's hardware is the worker's
+    own registration report."""
+
+    @pytest.mark.asyncio
+    async def test_register_records_reported_hardware(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("server.env.EXTERNAL_WORKER_TOKEN", SECRET)
+        servicer, _ = _build_servicer()
+        token = mint_external_token(SECRET, "fm-worker-0")
+
+        await _register(
+            servicer, token, meta={"hardware_json": _hardware_json("GPU-aaa")}
+        )
+
+        info = servicer._worker_manager.get_worker_info("fm-worker-0")
+        assert info is not None and info.hardware is not None
+        assert info.hardware.cpu.logical_cores == 8
+        assert [d.uuid for d in info.hardware.gpu.devices] == ["GPU-aaa"]
+
+    @pytest.mark.asyncio
+    async def test_unreadable_hardware_does_not_fail_registration(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("server.env.EXTERNAL_WORKER_TOKEN", SECRET)
+        servicer, redis = _build_servicer()
+        token = mint_external_token(SECRET, "fm-worker-0")
+
+        worker_id = await _register(servicer, token, meta={"hardware_json": "{oops"})
+
+        assert worker_id in redis.worker_ids
+        info = servicer._worker_manager.get_worker_info("fm-worker-0")
+        assert info is not None and info.hardware is None
+
+    @pytest.mark.asyncio
+    async def test_reenrollment_after_restart_restores_hardware(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("server.env.EXTERNAL_WORKER_TOKEN", SECRET)
+        redis = _FakeRedis()
+        token = mint_external_token(SECRET, "fm-worker-0")
+        meta = {"hardware_json": _hardware_json("GPU-aaa")}
+
+        before, _ = _build_servicer(redis=redis)
+        await _register(before, token, meta=meta)
+        after, _ = _build_servicer(redis=redis)
+        await _register(after, token, meta=meta)
+
+        info = after._worker_manager.get_worker_info("fm-worker-0")
+        assert info is not None and info.hardware is not None
 
 
 class TestRegisterWorkerRecordsVerifiedAlias:

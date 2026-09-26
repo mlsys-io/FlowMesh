@@ -14,7 +14,7 @@ from .adapters.external import get_provider_spec as external_provider_spec
 from .adapters.external import verify_external_token
 from .adapters.vastai import get_provider_spec as vastai_provider_spec
 from .registry import WorkerRegistry
-from .schemas import WorkerInfo, WorkerStatus
+from .schemas import WorkerHardware, WorkerInfo, WorkerStatus
 
 _MAX_PARALLELISM: int = 16
 
@@ -236,6 +236,13 @@ class WorkerManager:
         except ValueError as exc:
             self.logger.warning("Failed to admit worker: %s", exc)
             return None
+
+    def worker_registered(
+        self, worker: WorkerAdapter, hardware: WorkerHardware | None
+    ) -> None:
+        """Apply what a worker reported when it registered."""
+        if hardware is not None:
+            worker.observe_reported_hardware(hardware)
 
     def available_providers(self) -> list[str]:
         return sorted(self._providers)

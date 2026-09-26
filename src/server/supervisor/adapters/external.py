@@ -14,7 +14,7 @@ from shared.utils.worker_token import EXTERNAL_ALIAS_SEP, split_external_token
 
 from ... import env
 from ...hooks import PrincipalContext
-from ..schemas import WorkerInfo, WorkerStatus
+from ..schemas import WorkerHardware, WorkerInfo, WorkerStatus
 from .base import (
     ProviderSpec,
     WorkerAdapter,
@@ -77,6 +77,7 @@ class ExternalWorkerAdapter(WorkerAdapter):
         super().__init__(token, alias, config, owner)
         # An external worker is already running when it presents its token.
         self._status: WorkerStatus = WorkerStatus.RUNNING
+        self._hardware: WorkerHardware | None = None
 
     @property
     def status(self) -> WorkerStatus:
@@ -85,14 +86,22 @@ class ExternalWorkerAdapter(WorkerAdapter):
     def set_status(self, status: WorkerStatus) -> None:
         self._status = status
 
+    def observe_reported_hardware(self, hardware: WorkerHardware) -> None:
+        """Keep the worker's own hardware report.
+
+        The supervisor cannot probe a machine it does not own, so the report is
+        the only source; `get_info()` reports no hardware until the worker
+        registers.
+        """
+        self._hardware = hardware
+
     def get_info(self) -> WorkerInfo:
         return WorkerInfo(
             id=self.worker_id,
             alias=self.alias,
             provider=_PROVIDER_NAME,
             status=self._status,
-            # Externally managed workers' hardware is not known to the supervisor.
-            hardware=None,
+            hardware=self._hardware,
         )
 
     async def start(self) -> bool:
