@@ -8,12 +8,14 @@ individual machine, cannot be revoked per worker, and admits nobody unless set.
 """
 
 import hmac
+import logging
 from hashlib import sha256
 
 from shared.utils.worker_token import EXTERNAL_ALIAS_SEP, split_external_token
 
 from ... import env
 from ...hooks import PrincipalContext
+from ..resource_manager import ResourceManager
 from ..schemas import WorkerHardware, WorkerInfo, WorkerStatus
 from .base import (
     ProviderSpec,
@@ -24,6 +26,8 @@ from .base import (
 )
 
 _PROVIDER_NAME = "external"
+
+logger = logging.getLogger("supervisor")
 
 
 def mint_external_token(secret: str, alias: str) -> WorkerTokenType:
@@ -78,6 +82,10 @@ class ExternalWorkerAdapter(WorkerAdapter):
         # An external worker is already running when it presents its token.
         self._status: WorkerStatus = WorkerStatus.RUNNING
         self._hardware: WorkerHardware | None = None
+        self.claimed_gpu_uuids: frozenset[str] | None = None
+        """GPU UUIDs the current holds were claimed for; None before a claim."""
+        self.held_gpus: list[int] = []
+        """Host GPU indices this worker holds in the supervisor's pool."""
 
     @property
     def status(self) -> WorkerStatus:
@@ -94,6 +102,11 @@ class ExternalWorkerAdapter(WorkerAdapter):
         registers.
         """
         self._hardware = hardware
+
+    def reported_gpu_uuids(self) -> frozenset[str]:
+        if self._hardware is None:
+            return frozenset()
+        return frozenset(d.uuid for d in self._hardware.gpu.devices if d.uuid)
 
     def get_info(self) -> WorkerInfo:
         return WorkerInfo(
@@ -123,6 +136,24 @@ class ExternalWorkerAdapter(WorkerAdapter):
 
 
 class ExternalWorkerFactory(WorkerFactory):
+    """Creates external workers and holds the host GPUs they report.
+
+    A worker on this supervisor's host holds its GPUs (matched by UUID, since
+    the index a worker reports is local to its container) from registration
+    until it unregisters or is destroyed. A crash releases nothing: the process
+    is usually restarted onto the same cards, which must not have been handed
+    to another worker meanwhile. With no `resource_manager` (a host without
+    Docker) there is no pool to hold GPUs in.
+    """
+
+    def __init__(
+        self,
+        system_principal: PrincipalContext,
+        resource_manager: ResourceManager | None = None,
+    ) -> None:
+        super().__init__(system_principal)
+        self._rm = resource_manager
+
     def create_worker(
         self, token: WorkerTokenType, config: ExternalWorkerConfig, alias: str = ""
     ) -> ExternalWorkerAdapter:
@@ -135,17 +166,62 @@ class ExternalWorkerFactory(WorkerFactory):
         return ExternalWorkerAdapter(token, resolved, config, self.system_principal)
 
     def destroy_worker(self, worker: WorkerAdapter) -> None:
-        # Nothing to release: no container, instance or reservation. The caller
-        # removes the registry entry.
-        return None
+        # Releases the GPU holds only: there is no container or instance, and
+        # the caller removes the registry entry.
+        if isinstance(worker, ExternalWorkerAdapter):
+            self._release(worker)
+
+    def on_worker_registered(self, worker: WorkerAdapter) -> bool:
+        if not isinstance(worker, ExternalWorkerAdapter):
+            return False
+        uuids = worker.reported_gpu_uuids()
+        if uuids == worker.claimed_gpu_uuids:
+            return False
+        changed = self._release(worker)
+        worker.claimed_gpu_uuids = uuids
+        if not uuids or self._rm is None:
+            return changed
+        claimed, overlapping = self._rm.claim_gpus_by_uuid(uuids)
+        worker.held_gpus = sorted(claimed + overlapping)
+        if worker.held_gpus:
+            logger.info(
+                "External worker %s holds host GPUs %s", worker.alias, worker.held_gpus
+            )
+        if overlapping:
+            logger.warning(
+                "External worker %s uses host GPUs %s that another worker already "
+                "holds; they are now shared",
+                worker.alias,
+                overlapping,
+            )
+        return changed or bool(claimed)
+
+    def on_worker_unregistered(self, worker: WorkerAdapter) -> bool:
+        if not isinstance(worker, ExternalWorkerAdapter):
+            return False
+        changed = self._release(worker)
+        worker.claimed_gpu_uuids = None
+        return changed
+
+    def _release(self, worker: ExternalWorkerAdapter) -> bool:
+        devices, worker.held_gpus = worker.held_gpus, []
+        if not devices or self._rm is None:
+            return False
+        before = self._rm.available_gpu_count()
+        self._rm.deallocate_gpus(devices)
+        logger.info("External worker %s released host GPUs %s", worker.alias, devices)
+        return self._rm.available_gpu_count() != before
 
 
-def get_provider_spec(system_principal: PrincipalContext) -> ProviderSpec:
+def get_provider_spec(
+    system_principal: PrincipalContext,
+    resource_manager: ResourceManager | None = None,
+) -> ProviderSpec:
     return ProviderSpec(
         name=_PROVIDER_NAME,
         config_cls=ExternalWorkerConfig,
         adapter_cls=ExternalWorkerAdapter,
-        factory=ExternalWorkerFactory(system_principal),
+        factory=ExternalWorkerFactory(system_principal, resource_manager),
     )
 
 

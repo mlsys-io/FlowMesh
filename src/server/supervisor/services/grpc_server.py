@@ -362,6 +362,7 @@ class SupervisorServicer(supervisor_pb2_grpc.SupervisorServicer):
                     worker.set_status(WorkerStatus.RUNNING)
                 case "UNREGISTER":
                     unregistered = True
+                    self._on_worker_unregister(worker.token, payload)
             self._relay_service.add_event(payload)
         self._logger.info("Event stream closed for worker %s", worker_id)
         if registered and not unregistered:
@@ -374,6 +375,22 @@ class SupervisorServicer(supervisor_pb2_grpc.SupervisorServicer):
             self._logger.warning(exc)
         worker.set_status(WorkerStatus.STOPPED)
         return Empty()
+
+    def _on_worker_unregister(self, token: WorkerTokenType, payload: dict) -> None:
+        # Key on the id the event carries, not the one this stream opened with:
+        # the worker stamps each event with its current registration, and a
+        # superseded registration must not release the current one's GPUs.
+        if payload.get("worker_id") != self._registry.get_worker_id(token):
+            return
+        worker = self._registry.try_get(token)
+        if worker is None:
+            return
+        try:
+            self._worker_manager.worker_unregistered(worker)
+        except Exception:
+            self._logger.exception(
+                "Failed to apply unregister of worker %s", worker.alias
+            )
 
     async def PushLogs(
         self,

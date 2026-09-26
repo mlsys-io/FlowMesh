@@ -190,6 +190,22 @@ scripts/dev/            compile_protos, sync_requirements, check_env_examples
   any other node record with the alias, so a node that crashed or was taken
   over does not linger beside its replacement. `(node_alias, alias)` is
   therefore a worker's durable, unique address.
+- **External workers' hardware and GPUs.** The supervisor cannot probe a worker
+  it did not launch, so an `external` worker's hardware is the report it sends
+  at registration. If that report names GPUs of the supervisor's own host
+  (matched by UUID, since a worker's device index is local to its container),
+  the supervisor holds them out of its pool, so Docker workers aren't given
+  them and the node's free GPU count excludes them. The hold lasts until the
+  worker unregisters, is destroyed, or the supervisor stops, but not when the
+  worker crashes: its orchestrator usually restarts it onto the same cards, so
+  a crashed worker's hold is freed by destroying it. A card another worker
+  already holds is shared with a warning, never refused, and returns to the
+  pool only once every holder releases it. Holds live in the supervisor's
+  memory: after a restart, the Docker workers in its config reserve first and
+  an external worker claims its cards again when it re-registers. The report
+  lists every GPU NVML shows the worker, and `CUDA_VISIBLE_DEVICES` does not
+  narrow it, so limit an external worker's GPUs at the device level (the
+  container's `--gpus`, a Kubernetes device plugin).
 - **Worker cordon.** A cordoned worker keeps running and finishes what it was
   already dispatched, but is left out of both the idle pool and the eligibility
   set, so tasks neither go to it nor wait for it. The cordon is keyed on

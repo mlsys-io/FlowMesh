@@ -220,6 +220,14 @@ class WorkerFactory(ABC):
     def destroy_worker(self, worker: WorkerAdapter) -> None:
         pass
 
+    def on_worker_registered(self, worker: WorkerAdapter) -> bool:
+        """React to the worker registering. Returns whether node capacity changed."""
+        return False
+
+    def on_worker_unregistered(self, worker: WorkerAdapter) -> bool:
+        """React to the worker unregistering. Returns whether node capacity changed."""
+        return False
+
     def cleanup(self) -> None:
         pass
 

@@ -10,10 +10,16 @@ from server.hooks import PrincipalContext
 from server.supervisor.adapters.docker import (
     DockerWorkerAdapter,
     DockerWorkerConfig,
+    DockerWorkerFactory,
     WorkerType,
 )
 from server.supervisor.manager import WorkerInitConfig
-from server.supervisor.resource_manager import GpuArch, MachineEnv, ResourceManager
+from server.supervisor.resource_manager import (
+    GpuArch,
+    MachineEnv,
+    ResourceManager,
+    _parse_gpu_query,
+)
 from tests.server.supervisor_helpers import StubWorkerManager
 
 # ------------------------------------------------------------------ #
@@ -143,6 +149,100 @@ class TestReserveGpusAtomicity:
         assert rm._env.available_gpus == {0, 1}
 
 
+def _uuid_resource_manager(available: set[int]) -> ResourceManager:
+    rm = _resource_manager(available)
+    rm._env.gpu_uuids = {f"GPU-{i}": i for i in available}
+    return rm
+
+
+class TestClaimGpusByUuid:
+    def test_claims_free_devices_by_uuid(self) -> None:
+        rm = _uuid_resource_manager({0, 1, 2, 3})
+        claimed, overlapping = rm.claim_gpus_by_uuid(["GPU-2", "GPU-1"])
+        assert (claimed, overlapping) == ([1, 2], [])
+        assert rm._env.available_gpus == {0, 3}
+
+    def test_unknown_uuids_are_ignored(self) -> None:
+        rm = _uuid_resource_manager({0, 1})
+        assert rm.claim_gpus_by_uuid(["GPU-other-host"]) == ([], [])
+        assert rm.available_gpu_count() == 2
+
+    def test_held_device_is_reported_as_overlapping_not_raised(self) -> None:
+        rm = _uuid_resource_manager({0, 1})
+        rm.reserve_gpus(devices=[0])
+        claimed, overlapping = rm.claim_gpus_by_uuid(["GPU-0", "GPU-1"])
+        assert (claimed, overlapping) == ([1], [0])
+        assert rm.available_gpu_count() == 0
+
+    def test_mixed_architectures_are_claimed(self) -> None:
+        rm = _uuid_resource_manager({0, 1})
+        rm._env.gpu_families = {0: GpuArch.HOPPER, 1: GpuArch.BLACKWELL}
+        assert rm.claim_gpus_by_uuid(["GPU-0", "GPU-1"]) == ([0, 1], [])
+
+
+class TestSharedHolds:
+    def test_device_stays_held_until_every_holder_releases(self) -> None:
+        rm = _uuid_resource_manager({0})
+        rm.reserve_gpus(devices=[0])
+        rm.claim_gpus_by_uuid(["GPU-0"])
+
+        rm.deallocate_gpus([0])
+        assert rm.available_gpu_count() == 0
+
+        rm.deallocate_gpus([0])
+        assert rm.available_gpu_count() == 1
+
+    def test_releasing_an_untracked_device_frees_it(self) -> None:
+        rm = _resource_manager(set())
+        rm.deallocate_gpus([2])
+        assert rm._env.available_gpus == {2}
+
+    def test_repeated_docker_destroy_does_not_free_a_shared_card(self) -> None:
+        rm = _uuid_resource_manager({3})
+        factory = object.__new__(DockerWorkerFactory)
+        factory._rm = rm
+        devices, _ = rm.reserve_gpus(devices=[3])
+        rm.claim_gpus_by_uuid(["GPU-3"])
+        worker = object.__new__(DockerWorkerAdapter)
+        worker.cuda_devices = devices
+
+        factory.destroy_worker(worker)
+        factory.destroy_worker(worker)
+
+        assert worker.cuda_devices is None
+        assert rm.available_gpu_count() == 0
+
+
+class TestParseGpuQuery:
+    def test_rows_with_uuid(self) -> None:
+        families, uuids = _parse_gpu_query(
+            "0, NVIDIA H100 80GB HBM3, GPU-aaa\n1, NVIDIA B200, GPU-bbb\n", None
+        )
+        assert families == {0: GpuArch.HOPPER, 1: GpuArch.BLACKWELL}
+        assert uuids == {"GPU-aaa": 0, "GPU-bbb": 1}
+
+    def test_row_without_uuid_still_yields_the_gpu(self) -> None:
+        families, uuids = _parse_gpu_query("0, NVIDIA H100\n", None)
+        assert families == {0: GpuArch.HOPPER}
+        assert uuids == {}
+
+    def test_name_containing_a_comma(self) -> None:
+        families, uuids = _parse_gpu_query("0, Odd, Name H100, GPU-aaa\n", None)
+        assert families == {0: GpuArch.HOPPER}
+        assert uuids == {"GPU-aaa": 0}
+
+    def test_malformed_row_is_skipped_not_fatal(self) -> None:
+        families, _ = _parse_gpu_query("garbage\n1, NVIDIA H100, GPU-bbb\n", None)
+        assert families == {1: GpuArch.HOPPER}
+
+    def test_visible_devices_filter(self) -> None:
+        families, uuids = _parse_gpu_query(
+            "0, NVIDIA H100, GPU-aaa\n1, NVIDIA H100, GPU-bbb\n", {1}
+        )
+        assert list(families) == [1]
+        assert uuids == {"GPU-bbb": 1}
+
+
 class TestAvailableGpuCount:
     def test_four_gpus(self) -> None:
         assert _resource_manager({0, 1, 2, 3}).available_gpu_count() == 4
@@ -160,7 +260,7 @@ class TestMachineEnvDetection:
     ) -> None:
         rm = object.__new__(ResourceManager)
         containers = MagicMock()
-        containers.run.return_value = b"0, NVIDIA H100\n"
+        containers.run.return_value = b"0, NVIDIA H100, GPU-aaa\n"
         rm._docker_client = MagicMock()
         rm._docker_client.info.return_value = {"NCPU": 32}
         rm._docker_client.containers = containers
@@ -173,6 +273,7 @@ class TestMachineEnvDetection:
         assert detected.cpu_count == 32
         assert detected.available_gpus == {0}
         assert detected.gpu_families == {0: GpuArch.HOPPER}
+        assert detected.gpu_uuids == {"GPU-aaa": 0}
         containers.run.assert_called_once()
         assert containers.run.call_args.kwargs["image"] == "example/probe:arm64"
         assert "runtime" not in containers.run.call_args.kwargs

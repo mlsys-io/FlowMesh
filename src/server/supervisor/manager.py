@@ -8,12 +8,13 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field
 
 from ..hooks import PrincipalContext
-from .adapters.base import ProviderSpec, WorkerAdapter, WorkerTokenType
+from .adapters.base import ProviderSpec, WorkerAdapter, WorkerFactory, WorkerTokenType
 from .adapters.docker import get_provider_spec as docker_provider_spec
 from .adapters.external import get_provider_spec as external_provider_spec
 from .adapters.external import verify_external_token
 from .adapters.vastai import get_provider_spec as vastai_provider_spec
 from .registry import WorkerRegistry
+from .resource_manager import ResourceManager
 from .schemas import WorkerHardware, WorkerInfo, WorkerStatus
 
 _MAX_PARALLELISM: int = 16
@@ -73,6 +74,7 @@ class WorkerManager:
         registry: WorkerRegistry,
         logger: logging.Logger,
         capacity_change_callback: Callable[[], None] | None = None,
+        resource_manager: ResourceManager | None = None,
     ) -> None:
         self.config_path = config_path
         self.logger = logger
@@ -82,7 +84,7 @@ class WorkerManager:
         self._is_started: bool = False
         self._capacity_change_callback = capacity_change_callback
         # External provider is always available.
-        specs = [external_provider_spec(system_principal)]
+        specs = [external_provider_spec(system_principal, resource_manager)]
         try:
             specs.append(docker_provider_spec(system_principal))
         except Exception as exc:
@@ -243,6 +245,13 @@ class WorkerManager:
         """Apply what a worker reported when it registered."""
         if hardware is not None:
             worker.observe_reported_hardware(hardware)
+        if self._factory_for(worker).on_worker_registered(worker):
+            self._report_capacity_change()
+
+    def worker_unregistered(self, worker: WorkerAdapter) -> None:
+        """Apply a worker's own announcement that it is shutting down."""
+        if self._factory_for(worker).on_worker_unregistered(worker):
+            self._report_capacity_change()
 
     def available_providers(self) -> list[str]:
         return sorted(self._providers)
@@ -350,10 +359,12 @@ class WorkerManager:
         return True
 
     def _destroy_worker(self, worker: WorkerAdapter) -> None:
+        self._factory_for(worker).destroy_worker(worker)
+
+    def _factory_for(self, worker: WorkerAdapter) -> WorkerFactory:
         for spec in self._providers.values():
             if isinstance(worker, spec.adapter_cls):
-                spec.factory.destroy_worker(worker)
-                return
+                return spec.factory
         raise ValueError(f"Unsupported worker type: {type(worker)}")
 
     def _report_capacity_change(self) -> None:
