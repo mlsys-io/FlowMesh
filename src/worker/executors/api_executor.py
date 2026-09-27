@@ -55,8 +55,7 @@ class APIExecutor(Executor):
         """Signal the executor to abort the current request and any retries."""
         with self._cancel_lock:
             if self._active_task_id is None:
-                # No run in flight: record the id so a cancellation addressed to
-                # a task that has not started yet still lands when it starts.
+                # No run in flight: record the id so a pre-start cancel lands.
                 self._cancelled_task_id = task_id
                 self._cancel_event.set()
             elif self._active_task_id == task_id:
