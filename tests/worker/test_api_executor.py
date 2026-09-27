@@ -1084,11 +1084,11 @@ class TestBatch:
 
         thread = threading.Thread(target=_run_in_thread)
         thread.start()
-        assert transport.requests or True
         while len(futures) < 2:
             time.sleep(0.01)
         for future in futures:
             assert future.done()
+        assert len(transport.requests) == 2
         executor.cancel("task-api-batch")
         collect_release.set()
         thread.join(timeout=10)
