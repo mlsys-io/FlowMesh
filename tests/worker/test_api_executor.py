@@ -1226,7 +1226,6 @@ class TestPromptSubstitution:
         body = json.loads(transport.requests[0].read())
         assert body["messages"][0]["content"] == "Q: hello"
 
-
 class TestDataframeRows:
     def test_dataframe_column_issues_one_request_per_row(self, tmp_path: Path) -> None:
         """A dataframe-spec API task whose column reads an upstream APIResult's
@@ -1762,18 +1761,74 @@ class TestCallLogging:
         assert "prompt_tokens=-" in msg
         assert "backend=-" in msg
 
+    def test_malformed_telemetry_does_not_fail_request(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A dict-valued provider and a string token count are skipped in the
+        stats, so a successful request still succeeds and logs a summary."""
+        task = _batch_task(["hi"])
+        transport = _SequenceTransport(
+            [
+                httpx.Response(
+                    200,
+                    json={
+                        "choices": [{"message": {"content": "ok"}}],
+                        "provider": {"name": "backend-a"},
+                        "usage": {"prompt_tokens": "ten", "completion_tokens": 5},
+                    },
+                )
+            ]
+        )
+        with caplog.at_level(logging.INFO, logger="worker.executors.api_executor"):
+            result = _run(_executor(), task, transport, tmp_path)
+        assert result.items[0].status_code == 200
+        call_lines = self._records(caplog, "api call")
+        assert len(call_lines) == 1
+        msg = call_lines[0]
+        assert "prompt_tokens=-" in msg
+        assert "completion_tokens=5" in msg
+        assert "backend=-" in msg
+        summary = self._records(caplog, "api summary")
+        assert len(summary) == 1
+        assert "calls=1" in summary[0]
+        assert "backends=-" in summary[0]
+
     def test_summary_reports_per_backend_counts(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
         """The summary line reports per-backend counts."""
-        task = _batch_task(["a", "b"])
-        transport = _EchoTransport()
+        task = _batch_task(["a", "b", "c"])
+        transport = _SequenceTransport(
+            [
+                httpx.Response(
+                    200,
+                    json={
+                        "choices": [{"message": {"content": "a"}}],
+                        "provider": "backend-a",
+                    },
+                ),
+                httpx.Response(
+                    200,
+                    json={
+                        "choices": [{"message": {"content": "b"}}],
+                        "provider": "backend-b",
+                    },
+                ),
+                httpx.Response(
+                    200,
+                    json={
+                        "choices": [{"message": {"content": "c"}}],
+                        "provider": "backend-a",
+                    },
+                ),
+            ]
+        )
         with caplog.at_level(logging.INFO, logger="worker.executors.api_executor"):
             _run(_executor(), task, transport, tmp_path)
         summary = self._records(caplog, "api summary")
         assert len(summary) == 1
         msg = summary[0]
-        assert "calls=2" in msg
+        assert "calls=3" in msg
         assert "failures=0" in msg
         assert "retries=0" in msg
-        assert "backends=-" in msg
+        assert "backends=backend-a=2,backend-b=1" in msg

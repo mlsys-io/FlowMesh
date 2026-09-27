@@ -80,12 +80,20 @@ def _chat_completion_stats(body: Any) -> tuple[Any, Any, Any, Any, Any]:
     if backend is None:
         backend = body.get("system_fingerprint")
     return (
-        prompt_tokens,
-        completion_tokens,
-        reasoning_tokens,
+        _as_token_count(prompt_tokens),
+        _as_token_count(completion_tokens),
+        _as_token_count(reasoning_tokens),
         finish_reason,
-        backend,
+        backend if isinstance(backend, str) else None,
     )
+
+
+def _as_token_count(value: Any) -> int | None:
+    """Coerce a token field to an int, skipping non-numeric values (including
+    bools) so malformed telemetry never changes a request's outcome."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value
 
 
 class APIExecutor(DataMixin, Executor):
@@ -496,6 +504,7 @@ class APIExecutor(DataMixin, Executor):
         task_start = time.monotonic()
         in_flight: dict[int, float] = {}
         in_flight_lock = threading.Lock()
+        stats_lock = threading.Lock()
 
         def _record_call(
             idx: int,
@@ -511,11 +520,6 @@ class APIExecutor(DataMixin, Executor):
             wall = time.monotonic() - start
             with in_flight_lock:
                 in_flight.pop(idx, None)
-            done += 1
-            if failed:
-                failures += 1
-            total_retries += max(0, attempts - 1)
-            latencies.append(wall)
             (
                 prompt_tokens,
                 completion_tokens,
@@ -523,14 +527,20 @@ class APIExecutor(DataMixin, Executor):
                 finish_reason,
                 backend,
             ) = _chat_completion_stats(body)
-            if prompt_tokens is not None:
-                sum_prompt += prompt_tokens
-            if completion_tokens is not None:
-                sum_completion += completion_tokens
-            if reasoning_tokens is not None:
-                sum_reasoning += reasoning_tokens
-            if backend is not None:
-                backend_counts[backend] = backend_counts.get(backend, 0) + 1
+            with stats_lock:
+                done += 1
+                if failed:
+                    failures += 1
+                total_retries += max(0, attempts - 1)
+                latencies.append(wall)
+                if prompt_tokens is not None:
+                    sum_prompt += prompt_tokens
+                if completion_tokens is not None:
+                    sum_completion += completion_tokens
+                if reasoning_tokens is not None:
+                    sum_reasoning += reasoning_tokens
+                if backend is not None:
+                    backend_counts[backend] = backend_counts.get(backend, 0) + 1
             logger.info(
                 "api call task=%s row=%d attempts=%d status=%s wall=%.3fs "
                 "prompt_tokens=%s completion_tokens=%s reasoning_tokens=%s "
@@ -610,11 +620,13 @@ class APIExecutor(DataMixin, Executor):
                     outstanding = dict(in_flight)
                 if not outstanding:
                     continue
+                with stats_lock:
+                    done_snapshot = done
                 oldest = min(outstanding.values())
                 logger.info(
                     "api heartbeat task=%s done=%d/%d in_flight=%d oldest_age=%.0fs",
                     task.task_id,
-                    done,
+                    done_snapshot,
                     total,
                     len(outstanding),
                     time.monotonic() - oldest,
@@ -638,17 +650,28 @@ class APIExecutor(DataMixin, Executor):
             heartbeat_stop.set()
             heartbeat.join(timeout=5)
             wall = time.monotonic() - task_start
+            with stats_lock:
+                summary = (
+                    done,
+                    failures,
+                    total_retries,
+                    list(latencies),
+                    sum_prompt,
+                    sum_completion,
+                    sum_reasoning,
+                    dict(backend_counts),
+                )
             self._log_summary(
                 task.task_id,
                 total,
-                failures,
-                total_retries,
+                summary[1],
+                summary[2],
                 wall,
-                latencies,
-                sum_prompt,
-                sum_completion,
-                sum_reasoning,
-                backend_counts,
+                summary[3],
+                summary[4],
+                summary[5],
+                summary[6],
+                summary[7],
             )
 
         items = [results[idx] for idx in range(len(prompts))]
