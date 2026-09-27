@@ -72,9 +72,9 @@ contract.
 ## API task
 
 `taskType: api` issues one HTTP request per row of `spec.data`, in parallel,
-and returns the responses row-aligned in `APIResult.items`. A single request
-is a one-row `spec.data`. `spec.data` is required, exactly as for the vLLM
-executor; it supports the same data types (`list`, `dataset`, `graph_template`,
+and returns the responses in `APIResult.items`. A single request is a one-row
+`spec.data`. `spec.data` is required, exactly as for the vLLM executor; it
+supports the same data types (`list`, `dataset`, `graph_template`,
 `dataframe`).
 
 By default it routes to the Nebula endpoint and authenticates with the worker's `NEBULA_API_TOKEN`.
@@ -105,16 +105,43 @@ spec:
 ### Batching
 
 When `spec.data` is present, the task batches: one request is issued per row,
-and the results are returned row-aligned in `APIResult.items`. Each row's
-prompt is substituted for the `{{prompt}}` placeholder in the request body.
-Server-side stage references are `${...}`; `{{prompt}}` is a worker-side
-per-row slot, so it is not touched by server-side resolution. A failure in any
-row fails the whole task rather than shifting the remaining rows.
-`spec.api.concurrency` bounds the number of in-flight requests and is capped
-at 8 (the default); values above 8 are clamped down. Cancelling the task
-prevents not-yet-started rows from issuing and marks the task cancelled once
-in-flight requests return; a request already inside the HTTP call is not
-interrupted.
+and the results are returned in `APIResult.items`. Each row's prompt is
+substituted for the `{{prompt}}` placeholder in the request body. Server-side
+stage references are `${...}`; `{{prompt}}` is a worker-side per-row slot, so
+it is not touched by server-side resolution. A failure in any row fails the
+whole task rather than shifting the remaining rows. `spec.api.concurrency`
+bounds the number of in-flight requests and is capped at 8 (the default);
+values above 8 are clamped down. Cancelling the task prevents not-yet-started
+rows from issuing and marks the task cancelled once in-flight requests return;
+a request already inside the HTTP call is not interrupted.
+
+A body value that is exactly `{{prompt}}` is replaced by the row's prompt
+object as-is (a message list stays a list of `{"role", "content"}` dicts). An
+embedded `{{prompt}}` inside a longer string keeps string substitution: a
+string prompt is inserted verbatim, and any other prompt value is rendered as
+JSON.
+
+### Grouped results
+
+When `spec.data` is a `dataframe` whose columns resolve to grouped upstream
+values, the result is grouped: `APIResult.items` holds one `APIGroupItem` per
+group, each with an `index` and a `rows` list of the group's row responses in
+order. A dataframe spec decides grouping from the upstream structure — a list
+of `APIGroupItem.rows`, or nested lists — never from the shape of the cell
+values; a per-row list is a cell value, not a group. Ungrouped data returns
+plain `APIItem`s directly in `items`.
+
+An empty group or a column that resolves to zero rows yields zero requests for
+that group; the group still appears as an `APIGroupItem` with an empty `rows`
+list so downstream paths resolve. The result's `status_code` is taken from the
+first row across all groups, so a leading empty group does not zero it.
+
+Downstream stages read grouped responses through the group shape:
+`items.rows.json...` addresses a field of each row within a group, while
+`items.json...` addresses a field of a plain (ungrouped) item. For example, a
+dataframe column that reads a grouped upstream's message content uses
+`path: items.rows.json.choices[0].message.content`; an ungrouped upstream uses
+`path: items.json.choices[0].message.content`.
 
 ```yaml
 spec:

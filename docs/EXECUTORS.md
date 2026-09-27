@@ -5,7 +5,7 @@ The worker resolves `spec.taskType` against an executor registry in
 
 | `taskType` | Executor | Use case |
 |-----------|----------|----------|
-| `echo` | `EchoExecutor` | Echo input back as result (smoke tests) |
+| `echo` | `EchoExecutor` | Echo input back as result, or run a sandboxed function over upstream values |
 | `inference` | `VLLMExecutor` / `TransformersExecutor` | LLM inference |
 | `embedding` | `VLLMEmbeddingExecutor` (text, when `model.vllm` is set) / `TransformersExecutor` (visual, `model.transformers.mode: visual-embedding`) | Text / visual embeddings |
 | `diffusion` | `DiffusersExecutor` | Image / video diffusion models |
@@ -64,3 +64,29 @@ Optional, for the search tools:
 
 - `SERPER_API_KEY`
 - `JINA_API_KEY`
+
+## Echo executor
+
+`taskType: echo` returns input values back as the result, or runs a sandboxed
+Python function over upstream values. It is useful for inspecting and shaping
+data between stages.
+
+`spec.data.type: list` echoes each `spec.data.items` entry. An entry is either
+a string literal or a mapping with an expression (`expr`, or both `node` and
+`path`) resolved against the upstream results. A resolved list is flattened
+into one echo item per element; a scalar becomes a single item.
+
+`spec.data.type: function` runs a sandboxed source function over upstream
+values. `spec.data.function` is the source of a function that takes the
+resolved arguments and returns a list of JSON values; each element becomes one
+echo item (the list is not flattened further). `spec.data.arguments` is a list
+of argument specs, each with exactly one of:
+
+- `{items: <list>}` — the whole list of upstream values, passed as-is.
+- `{expr: <string>}` — a single expression resolved against the upstream
+  results.
+- `{node: <name>, path: <path>}` — a node and path resolved against the
+  upstream results.
+
+The function is executed in a sandbox; it must return a list, and each element
+is emitted as one echo item. A function failure fails the task.
