@@ -651,27 +651,24 @@ class APIExecutor(DataMixin, Executor):
             heartbeat.join(timeout=5)
             wall = time.monotonic() - task_start
             with stats_lock:
-                summary = (
-                    done,
-                    failures,
-                    total_retries,
-                    list(latencies),
-                    sum_prompt,
-                    sum_completion,
-                    sum_reasoning,
-                    dict(backend_counts),
-                )
+                failures_snapshot = failures
+                retries_snapshot = total_retries
+                latencies_snapshot = list(latencies)
+                prompt_snapshot = sum_prompt
+                completion_snapshot = sum_completion
+                reasoning_snapshot = sum_reasoning
+                backends_snapshot = dict(backend_counts)
             self._log_summary(
                 task.task_id,
                 total,
-                summary[1],
-                summary[2],
+                failures_snapshot,
+                retries_snapshot,
                 wall,
-                summary[3],
-                summary[4],
-                summary[5],
-                summary[6],
-                summary[7],
+                latencies_snapshot,
+                prompt_snapshot,
+                completion_snapshot,
+                reasoning_snapshot,
+                backends_snapshot,
             )
 
         items = [results[idx] for idx in range(len(prompts))]
