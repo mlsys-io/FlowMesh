@@ -55,11 +55,30 @@ class _RecordingTransport(httpx.MockTransport):
         )
 
 
+class _BlockingTransport(httpx.MockTransport):
+    """MockTransport that blocks on the first request, then serves a sequence."""
+
+    def __init__(self, responses: list[httpx.Response]) -> None:
+        self.started = threading.Event()
+        self.release = threading.Event()
+        self.responses = list(responses)
+        self.calls = 0
+        super().__init__(self._handler)
+
+    def _handler(self, request: httpx.Request) -> httpx.Response:
+        self.calls += 1
+        if self.calls == 1:
+            self.started.set()
+            self.release.wait()
+        return self.responses.pop(0)
+
+
 def _run(
     executor: APIExecutor, task: WorkerTaskMessage, transport: httpx.MockTransport
 ) -> None:
     executor._cancel_event = threading.Event()
     executor._cancel_lock = threading.Lock()
+    executor._active_task_id = None
     executor._cancelled_task_id = None
     with patch.object(
         APIExecutor, "_get_client", return_value=httpx.Client(transport=transport)
@@ -244,6 +263,7 @@ class TestRetries:
         executor = APIExecutor.__new__(APIExecutor)
         executor._cancel_event = threading.Event()
         executor._cancel_lock = threading.Lock()
+        executor._active_task_id = None
         executor._cancelled_task_id = None
         task = self._task(retries=3)
         executor.cancel(task.task_id)
@@ -267,6 +287,7 @@ class TestRetries:
         executor = APIExecutor.__new__(APIExecutor)
         executor._cancel_event = threading.Event()
         executor._cancel_lock = threading.Lock()
+        executor._active_task_id = None
         executor._cancelled_task_id = None
 
         task_a = self._task(retries=0)
@@ -282,29 +303,84 @@ class TestRetries:
             executor.run(task_b, Path("/tmp/out"))
         assert transport.request is not None
 
-    def test_cancel_before_start_still_cancels(self) -> None:
-        """A cancellation addressed to a task before it starts still cancels it."""
+    def test_delayed_cancel_of_previous_task_does_not_cancel_next(self) -> None:
+        """A late cancellation for a prior task does not cancel a running task."""
         executor = APIExecutor.__new__(APIExecutor)
         executor._cancel_event = threading.Event()
         executor._cancel_lock = threading.Lock()
+        executor._active_task_id = None
         executor._cancelled_task_id = None
 
-        task = self._task(retries=3)
-        task.task_id = "task-b"
-        executor.cancel(task.task_id)
-        transport = _SequenceTransport([_error_response(504)])
-        with patch.object(
-            APIExecutor, "_get_client", return_value=httpx.Client(transport=transport)
-        ):
-            with pytest.raises(TaskCancelledError):
-                executor.run(task, Path("/tmp/out"))
-        assert transport.calls == 0
+        task_b = self._task(retries=1)
+        task_b.task_id = "task-b"
+        # First request blocks; once released it returns a retryable 503 so the
+        # loop re-checks the cancel event, then a 200 succeeds.
+        transport = _BlockingTransport([_error_response(503), _ok_response()])
+
+        errors: list[BaseException] = []
+
+        def _run_b() -> None:
+            try:
+                with patch.object(
+                    APIExecutor,
+                    "_get_client",
+                    return_value=httpx.Client(transport=transport),
+                ):
+                    executor.run(task_b, Path("/tmp/out"))
+            except BaseException as exc:
+                errors.append(exc)
+
+        thread = threading.Thread(target=_run_b)
+        thread.start()
+        assert transport.started.wait(2.0)
+        executor.cancel("task-a")
+        transport.release.set()
+        thread.join(2.0)
+        assert not thread.is_alive()
+        assert errors == []
+        assert transport.calls == 2
+
+    def test_cancel_of_active_task_still_cancels(self) -> None:
+        """A cancellation addressed to the running task still cancels it."""
+        executor = APIExecutor.__new__(APIExecutor)
+        executor._cancel_event = threading.Event()
+        executor._cancel_lock = threading.Lock()
+        executor._active_task_id = None
+        executor._cancelled_task_id = None
+
+        task_b = self._task(retries=3)
+        task_b.task_id = "task-b"
+        transport = _BlockingTransport([_error_response(503)])
+
+        errors: list[BaseException] = []
+
+        def _run_b() -> None:
+            try:
+                with patch.object(
+                    APIExecutor,
+                    "_get_client",
+                    return_value=httpx.Client(transport=transport),
+                ):
+                    executor.run(task_b, Path("/tmp/out"))
+            except BaseException as exc:
+                errors.append(exc)
+
+        thread = threading.Thread(target=_run_b)
+        thread.start()
+        assert transport.started.wait(2.0)
+        executor.cancel("task-b")
+        transport.release.set()
+        thread.join(2.0)
+        assert not thread.is_alive()
+        assert len(errors) == 1
+        assert isinstance(errors[0], TaskCancelledError)
 
     def test_cancel_during_backoff_stops_retrying(self) -> None:
         """A cancellation during the retry backoff aborts well before it ends."""
         executor = APIExecutor.__new__(APIExecutor)
         executor._cancel_event = threading.Event()
         executor._cancel_lock = threading.Lock()
+        executor._active_task_id = None
         executor._cancelled_task_id = None
 
         task = self._task(retries=3)
