@@ -2,10 +2,12 @@
 batch mode (one task, N row-aligned requests)."""
 
 import concurrent.futures
+import email.utils
 import json
 import logging
 import threading
 import time
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
 from unittest.mock import patch
@@ -16,7 +18,11 @@ import pytest
 from shared.schemas.result import APIGroupItem, APIItem, APIResult
 from shared.tasks.worker_message import WorkerTaskMessage
 from worker.executors import api_executor as api_executor_module
-from worker.executors.api_executor import APIExecutor
+from worker.executors.api_executor import (
+    _MAX_RETRIES,
+    _RETRY_BACKOFF_MAX_SEC,
+    APIExecutor,
+)
 from worker.executors.base_executor import ExecutionError, TaskCancelledError
 
 
@@ -102,6 +108,21 @@ class _EchoTransport(httpx.MockTransport):
                 "usage": {"total_tokens": len(prompt)},
             },
         )
+
+
+class _NotifyTransport(httpx.MockTransport):
+    """MockTransport that sets an event once it has served a request."""
+
+    def __init__(self, responses: list[httpx.Response]) -> None:
+        self.served = threading.Event()
+        self.responses = list(responses)
+        self.calls = 0
+        super().__init__(self._handler)
+
+    def _handler(self, request: httpx.Request) -> httpx.Response:
+        self.calls += 1
+        self.served.set()
+        return self.responses.pop(0)
 
 
 def _run(
@@ -301,8 +322,11 @@ class TestRetries:
             **spec_updates,
         )
 
-    def test_retry_succeeds_after_transient_failures(self) -> None:
+    def test_retry_succeeds_after_transient_failures(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """A 504 followed by a 200 succeeds when retries are configured."""
+        monkeypatch.setattr("worker.executors.api_executor._RETRY_BACKOFF_SEC", 0.0)
         task = self._task(retries=2)
         transport = _SequenceTransport(
             [_error_response(504), _error_response(504), _ok_response()]
@@ -310,8 +334,11 @@ class TestRetries:
         _run(_executor(), task, transport)
         assert transport.calls == 3
 
-    def test_retries_exhausted_still_fails(self) -> None:
+    def test_retries_exhausted_still_fails(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Persistent 5xx failures exhaust retries and raise loudly."""
+        monkeypatch.setattr("worker.executors.api_executor._RETRY_BACKOFF_SEC", 0.0)
         task = self._task(retries=2)
         transport = _SequenceTransport(
             [_error_response(504), _error_response(504), _error_response(504)]
@@ -484,13 +511,13 @@ class TestRetries:
 
         task = self._task(retries=3)
         task.task_id = "task-b"
-        transport = _SequenceTransport([_error_response(503)])
+        transport = _NotifyTransport([_error_response(503)])
 
-        def _cancel_after_delay() -> None:
-            time.sleep(0.05)
+        def _cancel_on_served() -> None:
+            transport.served.wait(2.0)
             executor.cancel(task.task_id)
 
-        canceller = threading.Thread(target=_cancel_after_delay)
+        canceller = threading.Thread(target=_cancel_on_served)
         canceller.start()
         start = time.monotonic()
         with patch.object(
@@ -502,6 +529,116 @@ class TestRetries:
         canceller.join()
         assert elapsed < 0.5
         assert transport.calls == 1
+
+    def _run_recording_delays(
+        self, task: WorkerTaskMessage, transport: httpx.MockTransport
+    ) -> list[float]:
+        """Run a task, recording each backoff delay instead of waiting."""
+        delays: list[float] = []
+
+        def _record(delay: float) -> None:
+            delays.append(delay)
+
+        executor = APIExecutor.__new__(APIExecutor)
+        executor._cancel_event = threading.Event()
+        executor._cancel_lock = threading.Lock()
+        executor._active_task_id = None
+        executor._pending_cancelled_ids = set()
+        with patch.object(APIExecutor, "_wait_for_backoff", side_effect=_record):
+            with patch.object(
+                APIExecutor,
+                "_get_client",
+                return_value=httpx.Client(transport=transport),
+            ):
+                executor.run(task, Path("/tmp/out"))
+        return delays
+
+    def test_retry_after_seconds_is_honoured(self) -> None:
+        """A Retry-After in seconds sets the wait for the next attempt."""
+        task = self._task(retries=1)
+        transport = _SequenceTransport(
+            [
+                httpx.Response(429, headers={"Retry-After": "5"}),
+                _ok_response(),
+            ]
+        )
+        delays = self._run_recording_delays(task, transport)
+        assert delays == [5.0]
+
+    def test_retry_after_date_is_honoured(self) -> None:
+        """A Retry-After HTTP date sets the wait for the next attempt."""
+        task = self._task(retries=1)
+        retry_at = datetime.now(UTC) + timedelta(seconds=5)
+        transport = _SequenceTransport(
+            [
+                httpx.Response(
+                    429, headers={"Retry-After": email.utils.format_datetime(retry_at)}
+                ),
+                _ok_response(),
+            ]
+        )
+        delays = self._run_recording_delays(task, transport)
+        assert delays == [pytest.approx(5.0, abs=1.0)]
+
+    def test_invalid_retry_after_falls_back_to_exponential(self) -> None:
+        """A broken Retry-After falls back to the exponential schedule."""
+        task = self._task(retries=2)
+        transport = _SequenceTransport(
+            [
+                httpx.Response(429, headers={"Retry-After": "nan"}),
+                httpx.Response(429, headers={"Retry-After": "not-a-date"}),
+                _ok_response(),
+            ]
+        )
+        delays = self._run_recording_delays(task, transport)
+        assert delays == [1.0, 2.0]
+
+    def test_exponential_backoff_schedule(self) -> None:
+        """Retries back off exponentially from the base delay."""
+        task = self._task(retries=3)
+        transport = _SequenceTransport(
+            [
+                _error_response(503),
+                _error_response(503),
+                _error_response(503),
+                _ok_response(),
+            ]
+        )
+        delays = self._run_recording_delays(task, transport)
+        assert delays == [1.0, 2.0, 4.0]
+
+    def test_retry_after_is_capped(self) -> None:
+        """A hostile Retry-After cannot stall a worker past the cap."""
+        task = self._task(retries=1)
+        transport = _SequenceTransport(
+            [
+                httpx.Response(429, headers={"Retry-After": "999999"}),
+                _ok_response(),
+            ]
+        )
+        delays = self._run_recording_delays(task, transport)
+        assert delays == [_RETRY_BACKOFF_MAX_SEC]
+
+    def test_retries_above_maximum_rejected(self) -> None:
+        """A retries value above the maximum is rejected."""
+        task = self._task(retries=_MAX_RETRIES + 1)
+        with pytest.raises(ExecutionError, match=f"at most {_MAX_RETRIES}"):
+            _run(_executor(), task, _RecordingTransport())
+
+    def test_one_warning_per_retry(self, caplog: pytest.LogCaptureFixture) -> None:
+        """Each retry logs one warning naming the attempt and the delay."""
+        task = self._task(retries=2)
+        transport = _SequenceTransport(
+            [_error_response(504), _error_response(504), _ok_response()]
+        )
+        with caplog.at_level(logging.WARNING, logger="worker.executors.api_executor"):
+            self._run_recording_delays(task, transport)
+        warnings = [
+            r for r in caplog.records if r.name == "worker.executors.api_executor"
+        ]
+        assert len(warnings) == 2
+        assert "attempt 1/2" in warnings[0].getMessage()
+        assert "attempt 2/2" in warnings[1].getMessage()
 
 
 class TestBatch:
