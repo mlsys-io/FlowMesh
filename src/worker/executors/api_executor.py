@@ -162,8 +162,7 @@ class APIExecutor(Executor):
 
     def run(self, task: ExecutorTask, out_dir: Path) -> APIResult:
         with self._cancel_lock:
-            # A cancellation left over from a previous task must not leak into
-            # this one; one addressed to this task still stands.
+            # A prior task's cancellation must not leak into this one.
             if self._cancelled_task_id != task.task_id:
                 self._cancel_event.clear()
                 self._cancelled_task_id = None
