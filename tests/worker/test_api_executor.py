@@ -632,6 +632,44 @@ class TestBatch:
         assert len(transport.requests) == 2
         assert len(result.items) == 2
 
+    def test_message_list_row_sends_json_array(self, tmp_path: Path) -> None:
+        """A chat-message list row with ``messages: "{{prompt}}"`` is sent as a
+        JSON array of ``{role, content}`` dicts, not a JSON string."""
+        messages = [
+            {"role": "system", "content": "rules"},
+            {"role": "user", "content": "hi"},
+        ]
+        task = _batch_task(
+            [messages],
+            body={"messages": "{{prompt}}"},
+        )
+        transport = _RecordingTransport()
+        _run(_executor(), task, transport, tmp_path)
+        assert transport.request is not None
+        body = json.loads(transport.request.read())
+        assert body["messages"] == messages
+
+    def test_message_list_row_embedded_in_string_sends_json_text(
+        self, tmp_path: Path
+    ) -> None:
+        """A chat-message list row embedded in a longer string is rendered as
+        valid JSON text inside the surrounding body."""
+        messages = [
+            {"role": "system", "content": "rules"},
+            {"role": "user", "content": "hi"},
+        ]
+        task = _batch_task(
+            [messages],
+            body={"messages": [{"role": "user", "content": "context: {{prompt}}"}]},
+        )
+        transport = _RecordingTransport()
+        _run(_executor(), task, transport, tmp_path)
+        assert transport.request is not None
+        body = json.loads(transport.request.read())
+        embedded = body["messages"][0]["content"]
+        assert embedded == f"context: {json.dumps(messages)}"
+        assert json.loads(embedded.removeprefix("context: ")) == messages
+
     def test_no_rows_raises(self, tmp_path: Path) -> None:
         task = _batch_task([])
         with pytest.raises(ExecutionError, match="no rows"):

@@ -211,12 +211,17 @@ class APIExecutor(DataMixin, Executor):
         return json.dumps(prompt)
 
     @classmethod
-    def _substitute_prompt(cls, value: Any, prompt: str) -> Any:
-        """Replace ``{{prompt}}`` in the request body with a row's prompt."""
+    def _substitute_prompt(cls, value: Any, prompt: Any) -> Any:
+        """Replace ``{{prompt}}`` in the request body with a row's prompt.
+
+        A value that is exactly ``{{prompt}}`` becomes the prompt object
+        itself, so a chat-message list stays a list of ``{role, content}``
+        dicts; a placeholder embedded in a longer string is rendered as text.
+        """
         if isinstance(value, str):
             if value == _PROMPT_PLACEHOLDER:
                 return prompt
-            return value.replace(_PROMPT_PLACEHOLDER, prompt)
+            return value.replace(_PROMPT_PLACEHOLDER, cls._prompt_to_str(prompt))
         if isinstance(value, dict):
             return {k: cls._substitute_prompt(v, prompt) for k, v in value.items()}
         if isinstance(value, list):
@@ -397,7 +402,7 @@ class APIExecutor(DataMixin, Executor):
             if self._cancel_event.is_set():
                 raise TaskCancelledError("API task cancelled")
             prompt_str = self._prompt_to_str(prompt)
-            kwargs = self._substitute_prompt(request_kwargs, prompt_str)
+            kwargs = self._substitute_prompt(request_kwargs, prompt)
             try:
                 resp = self._request_with_retries(
                     client,
