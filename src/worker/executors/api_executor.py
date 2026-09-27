@@ -49,14 +49,14 @@ class APIExecutor(Executor):
         self._cancel_event = threading.Event()
         self._cancel_lock = threading.Lock()
         self._active_task_id: str | None = None
-        self._cancelled_task_id: str | None = None
+        self._pending_cancelled_ids: set[str] = set()
 
     def cancel(self, task_id: str) -> None:
         """Signal the executor to abort the current request and any retries."""
         with self._cancel_lock:
             if self._active_task_id is None:
                 # No run in flight: record the id so a pre-start cancel lands.
-                self._cancelled_task_id = task_id
+                self._pending_cancelled_ids.add(task_id)
                 self._cancel_event.set()
             elif self._active_task_id == task_id:
                 self._cancel_event.set()
@@ -169,10 +169,10 @@ class APIExecutor(Executor):
     def run(self, task: ExecutorTask, out_dir: Path) -> APIResult:
         with self._cancel_lock:
             self._active_task_id = task.task_id
-            # A prior task's cancellation must not leak into this one.
-            if self._cancelled_task_id != task.task_id:
+            # Event is set iff this task's id was pending; other ids are stale.
+            if task.task_id not in self._pending_cancelled_ids:
                 self._cancel_event.clear()
-                self._cancelled_task_id = None
+            self._pending_cancelled_ids.clear()
         try:
             return self._run(task, out_dir)
         finally:

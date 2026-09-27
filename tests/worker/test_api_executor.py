@@ -69,7 +69,8 @@ class _BlockingTransport(httpx.MockTransport):
         self.calls += 1
         if self.calls == 1:
             self.started.set()
-            self.release.wait()
+            if not self.release.wait(5.0):
+                raise AssertionError("blocking transport was not released")
         return self.responses.pop(0)
 
 
@@ -79,7 +80,7 @@ def _run(
     executor._cancel_event = threading.Event()
     executor._cancel_lock = threading.Lock()
     executor._active_task_id = None
-    executor._cancelled_task_id = None
+    executor._pending_cancelled_ids = set()
     with patch.object(
         APIExecutor, "_get_client", return_value=httpx.Client(transport=transport)
     ):
@@ -264,7 +265,7 @@ class TestRetries:
         executor._cancel_event = threading.Event()
         executor._cancel_lock = threading.Lock()
         executor._active_task_id = None
-        executor._cancelled_task_id = None
+        executor._pending_cancelled_ids = set()
         task = self._task(retries=3)
         executor.cancel(task.task_id)
         transport = _SequenceTransport([_error_response(504)])
@@ -288,7 +289,7 @@ class TestRetries:
         executor._cancel_event = threading.Event()
         executor._cancel_lock = threading.Lock()
         executor._active_task_id = None
-        executor._cancelled_task_id = None
+        executor._pending_cancelled_ids = set()
 
         task_a = self._task(retries=0)
         task_a.task_id = "task-a"
@@ -303,13 +304,34 @@ class TestRetries:
             executor.run(task_b, Path("/tmp/out"))
         assert transport.request is not None
 
+    def test_late_cancel_of_previous_task_does_not_overwrite_next(self) -> None:
+        """A late cancel for A cannot overwrite a recorded cancel for B."""
+        executor = APIExecutor.__new__(APIExecutor)
+        executor._cancel_event = threading.Event()
+        executor._cancel_lock = threading.Lock()
+        executor._active_task_id = None
+        executor._pending_cancelled_ids = set()
+
+        task_b = self._task(retries=0)
+        task_b.task_id = "task-b"
+        executor.cancel(task_b.task_id)
+        executor.cancel("task-a")
+
+        transport = _RecordingTransport()
+        with patch.object(
+            APIExecutor, "_get_client", return_value=httpx.Client(transport=transport)
+        ):
+            with pytest.raises(TaskCancelledError):
+                executor.run(task_b, Path("/tmp/out"))
+        assert transport.request is None
+
     def test_delayed_cancel_of_previous_task_does_not_cancel_next(self) -> None:
         """A late cancellation for a prior task does not cancel a running task."""
         executor = APIExecutor.__new__(APIExecutor)
         executor._cancel_event = threading.Event()
         executor._cancel_lock = threading.Lock()
         executor._active_task_id = None
-        executor._cancelled_task_id = None
+        executor._pending_cancelled_ids = set()
 
         task_b = self._task(retries=1)
         task_b.task_id = "task-b"
@@ -332,9 +354,11 @@ class TestRetries:
 
         thread = threading.Thread(target=_run_b)
         thread.start()
-        assert transport.started.wait(2.0)
-        executor.cancel("task-a")
-        transport.release.set()
+        try:
+            assert transport.started.wait(2.0)
+            executor.cancel("task-a")
+        finally:
+            transport.release.set()
         thread.join(2.0)
         assert not thread.is_alive()
         assert errors == []
@@ -346,7 +370,7 @@ class TestRetries:
         executor._cancel_event = threading.Event()
         executor._cancel_lock = threading.Lock()
         executor._active_task_id = None
-        executor._cancelled_task_id = None
+        executor._pending_cancelled_ids = set()
 
         task_b = self._task(retries=3)
         task_b.task_id = "task-b"
@@ -367,9 +391,11 @@ class TestRetries:
 
         thread = threading.Thread(target=_run_b)
         thread.start()
-        assert transport.started.wait(2.0)
-        executor.cancel("task-b")
-        transport.release.set()
+        try:
+            assert transport.started.wait(2.0)
+            executor.cancel("task-b")
+        finally:
+            transport.release.set()
         thread.join(2.0)
         assert not thread.is_alive()
         assert len(errors) == 1
@@ -381,7 +407,7 @@ class TestRetries:
         executor._cancel_event = threading.Event()
         executor._cancel_lock = threading.Lock()
         executor._active_task_id = None
-        executor._cancelled_task_id = None
+        executor._pending_cancelled_ids = set()
 
         task = self._task(retries=3)
         task.task_id = "task-b"
