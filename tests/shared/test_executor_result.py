@@ -205,6 +205,8 @@ def test_api_item_round_trip_construct_serialize_validate() -> None:
         text="hello",
     )
     wire = item.model_dump_json()
+    assert '"json"' in wire
+    assert '"response_json"' not in wire
     reloaded = APIItem.model_validate_json(wire)
     assert reloaded.index == 0
     assert reloaded.response_json["choices"][0]["message"]["content"] == "hello"

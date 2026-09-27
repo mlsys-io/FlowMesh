@@ -507,6 +507,8 @@ class TestAPIItem:
             }
         )
         wire = item.model_dump_json()
+        assert '"json"' in wire
+        assert '"response_json"' not in wire
         reloaded = APIItem.model_validate_json(wire)
         assert reloaded.index == 0
         assert reloaded.response_json["choices"][0]["message"]["content"] == "hello"
