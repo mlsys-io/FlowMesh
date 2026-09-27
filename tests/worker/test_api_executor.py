@@ -1084,7 +1084,12 @@ class TestBatch:
 
         thread = threading.Thread(target=_run_in_thread)
         thread.start()
+        deadline = time.monotonic() + 5
         while len(futures) < 2:
+            if errors:
+                raise errors[0]
+            if time.monotonic() > deadline:
+                raise AssertionError("timed out waiting for both requests to submit")
             time.sleep(0.01)
         for future in futures:
             assert future.done()
