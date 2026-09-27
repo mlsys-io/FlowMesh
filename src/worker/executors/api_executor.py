@@ -41,6 +41,15 @@ def _is_retryable_status(status_code: int) -> bool:
     return status_code >= 500 or status_code in (408, 429)
 
 
+class _RequestFailed(Exception):
+    """A request that exhausted its retries, carrying the attempts used."""
+
+    def __init__(self, error: Exception, attempts: int) -> None:
+        super().__init__(str(error))
+        self.error = error
+        self.attempts = attempts
+
+
 def _fmt(value: Any) -> str:
     """Render a log field, using ``-`` for a missing value."""
     return "-" if value is None else str(value)
@@ -227,12 +236,12 @@ class APIExecutor(DataMixin, Executor):
                     params=params,
                     **request_kwargs,
                 )
-            except httpx.RequestError:
+            except httpx.RequestError as exc:
                 if attempt < retries:
                     attempt += 1
                     self._wait_for_backoff()
                     continue
-                raise
+                raise _RequestFailed(exc, attempt + 1) from None
             if resp.is_error and _is_retryable_status(resp.status_code):
                 if attempt < retries:
                     attempt += 1
@@ -575,11 +584,18 @@ class APIExecutor(DataMixin, Executor):
                     kwargs,
                     retries,
                 )
-            except httpx.RequestError as exc:
-                _record_call(idx, 0, exc.__class__.__name__, start, None, failed=True)
+            except _RequestFailed as exc:
+                _record_call(
+                    idx,
+                    exc.attempts,
+                    exc.error.__class__.__name__,
+                    start,
+                    None,
+                    failed=True,
+                )
                 raise ExecutionError(
-                    f"API request failed (row {idx}): {exc}", retryable=True
-                ) from exc
+                    f"API request failed (row {idx}): {exc.error}", retryable=True
+                ) from exc.error
 
             if raise_for_status and resp.is_error:
                 message = f"API request returned status {resp.status_code} (row {idx})"

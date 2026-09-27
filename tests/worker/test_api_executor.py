@@ -1790,6 +1790,31 @@ class TestCallLogging:
         assert len(call_lines) == 1
         assert "attempts=2" in call_lines[0]
 
+    def test_exhausted_connect_error_logs_attempts_and_retries(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A row whose connection errors exhaust retries logs the real attempt
+        count and the retry total, not zero."""
+        task = _batch_task(["hi"], retries=2)
+
+        class _RaisingTransport(httpx.MockTransport):
+            def __init__(self) -> None:
+                super().__init__(self._handler)
+
+            def _handler(self, request: httpx.Request) -> httpx.Response:
+                raise httpx.ConnectError("boom", request=request)
+
+        transport = _RaisingTransport()
+        with caplog.at_level(logging.INFO, logger="worker.executors.api_executor"):
+            with pytest.raises(ExecutionError, match="API request failed"):
+                _run(_executor(), task, transport, tmp_path)
+        call_lines = self._records(caplog, "api call")
+        assert len(call_lines) == 1
+        assert "attempts=3" in call_lines[0]
+        summary = self._records(caplog, "api summary")
+        assert len(summary) == 1
+        assert "retries=2" in summary[0]
+
     def test_non_json_body_logs_dash_without_raising(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
