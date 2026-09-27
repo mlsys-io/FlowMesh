@@ -1,6 +1,9 @@
+import email.utils
 import logging
+import math
 import os
 import threading
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -18,8 +21,12 @@ logger = logging.getLogger(__name__)
 # Cache key: (base_url, timeout_seconds, verify_tls, follow_redirects)
 _ClientKey = tuple[str, float, bool, bool]
 
-# Fixed delay between retry attempts.
+# Base delay between retry attempts, doubled each retry.
 _RETRY_BACKOFF_SEC = 1.0
+# Upper bound on any single retry wait.
+_RETRY_BACKOFF_MAX_SEC = 60.0
+# Upper bound on spec.api.retries.
+_MAX_RETRIES = 10
 
 
 def _is_retryable_status(status_code: int) -> bool:
@@ -132,22 +139,68 @@ class APIExecutor(Executor):
                     params=params,
                     **request_kwargs,
                 )
-            except httpx.RequestError:
-                if attempt < retries:
-                    attempt += 1
-                    self._wait_for_backoff()
-                    continue
-                raise
+            except httpx.RequestError as exc:
+                if attempt >= retries:
+                    raise
+                attempt += 1
+                delay = self._backoff_delay(attempt)
+                logger.warning(
+                    "API request failed (attempt %d/%d): %s; retrying in %.1fs",
+                    attempt,
+                    retries,
+                    exc,
+                    delay,
+                )
+                self._wait_for_backoff(delay)
+                continue
             if resp.is_error and _is_retryable_status(resp.status_code):
-                if attempt < retries:
-                    attempt += 1
-                    self._wait_for_backoff()
-                    continue
+                if attempt >= retries:
+                    return resp
+                attempt += 1
+                delay = self._backoff_delay(attempt, resp)
+                logger.warning(
+                    "API request returned %s (attempt %d/%d); retrying in %.1fs",
+                    resp.status_code,
+                    attempt,
+                    retries,
+                    delay,
+                )
+                self._wait_for_backoff(delay)
+                continue
             return resp
 
-    def _wait_for_backoff(self) -> None:
+    def _backoff_delay(self, attempt: int, resp: httpx.Response | None = None) -> float:
+        """Return the wait before the next attempt, honouring Retry-After."""
+        if resp is not None:
+            retry_after = self._retry_after_seconds(resp)
+            if retry_after is not None:
+                return min(retry_after, _RETRY_BACKOFF_MAX_SEC)
+        return min(_RETRY_BACKOFF_SEC * (2 ** (attempt - 1)), _RETRY_BACKOFF_MAX_SEC)
+
+    @staticmethod
+    def _retry_after_seconds(resp: httpx.Response) -> float | None:
+        """Parse the Retry-After header as seconds or an HTTP date."""
+        value = resp.headers.get("Retry-After")
+        if value is None:
+            return None
+        try:
+            seconds = float(value)
+        except ValueError:
+            pass
+        else:
+            if math.isfinite(seconds) and seconds >= 0:
+                return seconds
+        try:
+            retry_at = email.utils.parsedate_to_datetime(value)
+        except (TypeError, ValueError):
+            return None
+        if retry_at.tzinfo is None:
+            retry_at = retry_at.replace(tzinfo=UTC)
+        return max(0.0, (retry_at - datetime.now(UTC)).total_seconds())
+
+    def _wait_for_backoff(self, delay: float) -> None:
         """Wait out the retry backoff, aborting early if the task is cancelled."""
-        if self._cancel_event.wait(_RETRY_BACKOFF_SEC):
+        if self._cancel_event.wait(delay):
             raise TaskCancelledError("API request cancelled")
 
     @classmethod
@@ -252,6 +305,8 @@ class APIExecutor(Executor):
         retries = api_cfg.get("retries", 0)
         if not isinstance(retries, int) or isinstance(retries, bool) or retries < 0:
             raise ExecutionError("spec.api.retries must be a non-negative integer")
+        if retries > _MAX_RETRIES:
+            raise ExecutionError(f"spec.api.retries must be at most {_MAX_RETRIES}")
 
         try:
             base = self._base_url(str(url))
