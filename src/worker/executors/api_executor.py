@@ -1,7 +1,6 @@
 import logging
 import os
 import threading
-import time
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -48,10 +47,14 @@ class APIExecutor(Executor):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self._cancel_event = threading.Event()
+        self._cancel_lock = threading.Lock()
+        self._cancelled_task_id: str | None = None
 
     def cancel(self, task_id: str) -> None:
         """Signal the executor to abort the current request and any retries."""
-        self._cancel_event.set()
+        with self._cancel_lock:
+            self._cancelled_task_id = task_id
+            self._cancel_event.set()
 
     @classmethod
     def _base_url(cls, url: str) -> str:
@@ -126,15 +129,20 @@ class APIExecutor(Executor):
             except httpx.RequestError:
                 if attempt < retries:
                     attempt += 1
-                    time.sleep(_RETRY_BACKOFF_SEC)
+                    self._wait_for_backoff()
                     continue
                 raise
             if resp.is_error and _is_retryable_status(resp.status_code):
                 if attempt < retries:
                     attempt += 1
-                    time.sleep(_RETRY_BACKOFF_SEC)
+                    self._wait_for_backoff()
                     continue
             return resp
+
+    def _wait_for_backoff(self) -> None:
+        """Wait out the retry backoff, aborting early if the task is cancelled."""
+        if self._cancel_event.wait(_RETRY_BACKOFF_SEC):
+            raise TaskCancelledError("API request cancelled")
 
     @classmethod
     def close_all_clients(cls) -> None:
@@ -153,6 +161,12 @@ class APIExecutor(Executor):
         self.close_all_clients()
 
     def run(self, task: ExecutorTask, out_dir: Path) -> APIResult:
+        with self._cancel_lock:
+            # A cancellation left over from a previous task must not leak into
+            # this one; one addressed to this task still stands.
+            if self._cancelled_task_id != task.task_id:
+                self._cancel_event.clear()
+                self._cancelled_task_id = None
         spec = self.require_spec(task, ApiSpecStrict)
         api_cfg = spec.api or {}
         if not isinstance(api_cfg, dict):

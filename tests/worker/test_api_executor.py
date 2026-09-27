@@ -1,6 +1,7 @@
 """Tests for the API executor url override and Nebula credential handling."""
 
 import threading
+import time
 from pathlib import Path
 from unittest.mock import patch
 
@@ -58,6 +59,8 @@ def _run(
     executor: APIExecutor, task: WorkerTaskMessage, transport: httpx.MockTransport
 ) -> None:
     executor._cancel_event = threading.Event()
+    executor._cancel_lock = threading.Lock()
+    executor._cancelled_task_id = None
     with patch.object(
         APIExecutor, "_get_client", return_value=httpx.Client(transport=transport)
     ):
@@ -240,8 +243,10 @@ class TestRetries:
         """A cancelled task does not keep retrying."""
         executor = APIExecutor.__new__(APIExecutor)
         executor._cancel_event = threading.Event()
-        executor._cancel_event.set()
+        executor._cancel_lock = threading.Lock()
+        executor._cancelled_task_id = None
         task = self._task(retries=3)
+        executor.cancel(task.task_id)
         transport = _SequenceTransport([_error_response(504)])
         with patch.object(
             APIExecutor, "_get_client", return_value=httpx.Client(transport=transport)
@@ -256,3 +261,69 @@ class TestRetries:
             task = self._task(retries=bad)
             with pytest.raises(ExecutionError, match="spec.api.retries"):
                 _run(APIExecutor.__new__(APIExecutor), task, _RecordingTransport())
+
+    def test_cancel_previous_task_does_not_cancel_next(self) -> None:
+        """A cancellation left over from a prior task does not cancel the next."""
+        executor = APIExecutor.__new__(APIExecutor)
+        executor._cancel_event = threading.Event()
+        executor._cancel_lock = threading.Lock()
+        executor._cancelled_task_id = None
+
+        task_a = self._task(retries=0)
+        task_a.task_id = "task-a"
+        executor.cancel(task_a.task_id)
+
+        task_b = self._task(retries=0)
+        task_b.task_id = "task-b"
+        transport = _RecordingTransport()
+        with patch.object(
+            APIExecutor, "_get_client", return_value=httpx.Client(transport=transport)
+        ):
+            executor.run(task_b, Path("/tmp/out"))
+        assert transport.request is not None
+
+    def test_cancel_before_start_still_cancels(self) -> None:
+        """A cancellation addressed to a task before it starts still cancels it."""
+        executor = APIExecutor.__new__(APIExecutor)
+        executor._cancel_event = threading.Event()
+        executor._cancel_lock = threading.Lock()
+        executor._cancelled_task_id = None
+
+        task = self._task(retries=3)
+        task.task_id = "task-b"
+        executor.cancel(task.task_id)
+        transport = _SequenceTransport([_error_response(504)])
+        with patch.object(
+            APIExecutor, "_get_client", return_value=httpx.Client(transport=transport)
+        ):
+            with pytest.raises(TaskCancelledError):
+                executor.run(task, Path("/tmp/out"))
+        assert transport.calls == 0
+
+    def test_cancel_during_backoff_stops_retrying(self) -> None:
+        """A cancellation during the retry backoff aborts well before it ends."""
+        executor = APIExecutor.__new__(APIExecutor)
+        executor._cancel_event = threading.Event()
+        executor._cancel_lock = threading.Lock()
+        executor._cancelled_task_id = None
+
+        task = self._task(retries=3)
+        task.task_id = "task-b"
+        transport = _SequenceTransport([_error_response(503)])
+
+        def _cancel_after_delay() -> None:
+            time.sleep(0.05)
+            executor.cancel(task.task_id)
+
+        canceller = threading.Thread(target=_cancel_after_delay)
+        canceller.start()
+        start = time.monotonic()
+        with patch.object(
+            APIExecutor, "_get_client", return_value=httpx.Client(transport=transport)
+        ):
+            with pytest.raises(TaskCancelledError):
+                executor.run(task, Path("/tmp/out"))
+        elapsed = time.monotonic() - start
+        canceller.join()
+        assert elapsed < 0.5
+        assert transport.calls == 1
