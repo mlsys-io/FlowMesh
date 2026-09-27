@@ -1226,6 +1226,7 @@ class TestPromptSubstitution:
         body = json.loads(transport.requests[0].read())
         assert body["messages"][0]["content"] == "Q: hello"
 
+
 class TestDataframeRows:
     def test_dataframe_column_issues_one_request_per_row(self, tmp_path: Path) -> None:
         """A dataframe-spec API task whose column reads an upstream APIResult's
@@ -1346,6 +1347,57 @@ class TestDataframeRows:
         assert result.items[0].index == 0
         assert result.items[0].rows == []
         assert result.status_code == 0
+
+    def test_cancelled_zero_row_grouped_task_raises(self, tmp_path: Path) -> None:
+        """A zero-row grouped task with a pending cancellation for its id is
+        cancelled, not reported as a successful empty result."""
+        upstream = APIResult(
+            ok=True,
+            executor="api",
+            method="POST",
+            url="https://up.example.com",
+            status_code=200,
+            items=[],
+        )
+        payload = {
+            "task_id": "task-api-df-cancel-empty",
+            "workflow_id": "wf-1",
+            "owner_id": "owner",
+            "assigned_worker": "worker-1",
+            "dispatched_at": "2026-03-22T00:00:00Z",
+            "task": {
+                "apiVersion": "flowmesh/v1",
+                "kind": "Task",
+                "metadata": {"name": "wf:api"},
+                "spec": {
+                    "taskType": "api",
+                    "_upstreamResults": {"Up": upstream},
+                    "api": {
+                        "method": "POST",
+                        "url": "https://custom.example.com/v1/chat/completions",
+                        "json": {"messages": "{{prompt}}"},
+                    },
+                    "data": {
+                        "type": "dataframe",
+                        "columns": [
+                            {
+                                "label": "L",
+                                "node": "Up",
+                                "path": "items.json.choices[0].message.content",
+                            }
+                        ],
+                        "messages": [
+                            {"role": "user", "content": "row {L}"},
+                        ],
+                    },
+                },
+            },
+        }
+        task = WorkerTaskMessage.model_validate(payload)
+        executor = _executor()
+        executor.cancel(task.task_id)
+        with pytest.raises(TaskCancelledError):
+            _run(executor, task, _EchoTransport(), tmp_path)
 
     def test_zero_vs_three_rows_still_raises(self, tmp_path: Path) -> None:
         """A real mismatch (one column empty, another with rows) still raises."""

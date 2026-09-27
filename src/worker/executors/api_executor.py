@@ -671,6 +671,9 @@ class APIExecutor(DataMixin, Executor):
                 backends_snapshot,
             )
 
+        if self._cancel_event.is_set():
+            raise TaskCancelledError("API task cancelled")
+
         items = [results[idx] for idx in range(len(prompts))]
 
         result_items: list[APIItem | APIGroupItem] = []
