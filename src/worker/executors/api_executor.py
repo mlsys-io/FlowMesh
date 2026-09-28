@@ -22,10 +22,10 @@ from .base_executor import (
     ExecutionError,
     Executor,
     ExecutorTask,
+    RunControl,
     TaskCancelledError,
 )
 from .mixins.data import DataMixin
-from .run_control import RunControl
 
 logger = logging.getLogger(__name__)
 

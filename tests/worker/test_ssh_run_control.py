@@ -11,8 +11,11 @@ from shared.schemas.result import SSHResult
 from shared.tasks.worker_message import WorkerTaskMessage
 from tests.worker.factories import make_live_worker_config
 from worker.executors import ssh_executor as ssh_executor_module
-from worker.executors.base_executor import ExecutionError, TaskCancelledError
-from worker.executors.run_control import RunControl
+from worker.executors.base_executor import (
+    ExecutionError,
+    RunControl,
+    TaskCancelledError,
+)
 from worker.executors.ssh_executor import SSHExecutor
 from worker.executors.ssh_session import SessionRequest, SSHConfig, SSHSession
 from worker.executors.ssh_session.backends import docker as docker_backend_module

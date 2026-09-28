@@ -28,8 +28,7 @@ from shared.schemas.result import (
 from shared.tasks.specs import RagSpecStrict
 from shared.tasks.task_type import TaskType
 
-from .base_executor import ExecutionError, Executor, ExecutorTask
-from .run_control import RunControl
+from .base_executor import ExecutionError, Executor, ExecutorTask, RunControl
 from .utils.graph_templates import Message, build_prompts_from_graph_template
 
 logger = logging.getLogger("worker.rag")

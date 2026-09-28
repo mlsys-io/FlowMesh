@@ -22,8 +22,11 @@ from tests.worker.factories import (
     make_worker_task_message,
 )
 from worker.executors import vllm_serve_executor as mod
-from worker.executors.base_executor import ExecutionError, TaskCancelledError
-from worker.executors.run_control import RunControl
+from worker.executors.base_executor import (
+    ExecutionError,
+    RunControl,
+    TaskCancelledError,
+)
 from worker.executors.vllm_serve_executor import (
     ServeResult,
     VLLMServeExecutor,

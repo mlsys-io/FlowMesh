@@ -14,9 +14,8 @@ from shared.tasks.task_type import TaskType
 from shared.utils.json import to_json_serializable, validate_keys
 
 from ..connectors import get_connector_from_spec
-from .base_executor import ExecutionError, Executor, ExecutorTask
+from .base_executor import ExecutionError, Executor, ExecutorTask, RunControl
 from .mixins.data import DataMixin
-from .run_control import RunControl
 from .utils.graph_templates import _render_template, _resolve_columns
 
 logger = logging.getLogger(__name__)

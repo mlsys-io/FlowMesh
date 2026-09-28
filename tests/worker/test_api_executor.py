@@ -23,8 +23,11 @@ from worker.executors.api_executor import (
     _RETRY_BACKOFF_MAX_SEC,
     APIExecutor,
 )
-from worker.executors.base_executor import ExecutionError, TaskCancelledError
-from worker.executors.run_control import RunControl
+from worker.executors.base_executor import (
+    ExecutionError,
+    RunControl,
+    TaskCancelledError,
+)
 
 
 def _task_message(**spec_updates: object) -> WorkerTaskMessage:

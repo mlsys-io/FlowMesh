@@ -41,9 +41,8 @@ from shared.utils.manifest import scratch_dir
 from shared.utils.parsing import safe_float, safe_int, to_bool
 
 from ..utils.logging import configure_hf_library_logging
-from .base_executor import ExecutionError, Executor, ExecutorTask
+from .base_executor import ExecutionError, Executor, ExecutorTask, RunControl
 from .mixins.training import TrainingMixin
-from .run_control import RunControl
 from .utils.checkpoints import (
     archive_model_dir,
     get_http_destination,

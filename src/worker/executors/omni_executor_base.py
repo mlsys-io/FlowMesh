@@ -25,9 +25,8 @@ from shared.tasks.specs import TaskSpecStrictBase
 from shared.utils.parsing import to_bool, to_int
 from worker.config import WorkerConfig
 
-from .base_executor import ExecutionError, Executor, ExecutorTask
+from .base_executor import ExecutionError, Executor, ExecutorTask, RunControl
 from .mixins.inference import InferenceMixin
-from .run_control import RunControl
 from .utils.checkpoints import maybe_upload_artifacts, maybe_upload_traces
 
 try:

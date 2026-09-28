@@ -77,10 +77,9 @@ from shared.tasks.specs import InferenceSpecStrict
 from shared.tasks.specs.common import ModelSpecStrict
 from shared.tasks.task_type import TaskType
 
-from .base_executor import ExecutionError, Executor, ExecutorTask
+from .base_executor import ExecutionError, Executor, ExecutorTask, RunControl
 from .mixins.data import InferenceEntry
 from .mixins.inference import InferenceMixin, PreparedInferenceEntry
-from .run_control import RunControl
 from .utils.checkpoints import (
     maybe_upload_artifacts,
     maybe_upload_traces,

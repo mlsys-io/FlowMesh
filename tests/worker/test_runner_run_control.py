@@ -15,8 +15,7 @@ from tests.worker.factories import (
     make_worker_hardware,
     make_worker_task_message,
 )
-from worker.executors.base_executor import Executor, ExecutorTask
-from worker.executors.run_control import RunControl
+from worker.executors.base_executor import Executor, ExecutorTask, RunControl
 from worker.runner import _PENDING_SIGNAL_TTL_SEC, Runner
 
 

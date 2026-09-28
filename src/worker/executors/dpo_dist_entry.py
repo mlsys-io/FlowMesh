@@ -10,8 +10,8 @@ from shared.tasks.worker_message import WorkerTaskMessage
 from shared.utils.manifest import scratch_dir
 from worker.config import WorkerConfig
 
+from .base_executor import RunControl
 from .dpo_executor import DPOExecutor
-from .run_control import RunControl
 
 
 def main(argv: list[str]) -> int:

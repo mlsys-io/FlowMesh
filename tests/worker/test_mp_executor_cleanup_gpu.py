@@ -10,8 +10,8 @@ import pytest
 
 from shared.tasks.worker_message import WorkerTaskMessage
 from tests.worker.factories import make_live_worker_config, make_worker_hardware
+from worker.executors.base_executor import RunControl
 from worker.executors.mp_executor import MPExecutor
-from worker.executors.run_control import RunControl
 from worker.executors.vllm_executor import VLLMExecutor
 
 pynvml.nvmlInit()

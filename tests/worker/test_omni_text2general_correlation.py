@@ -17,9 +17,8 @@ pytest.importorskip("vllm", reason="vllm not installed (needs --extra inference)
 from shared.tasks.components.model import ModelConfig, ModelSource
 from shared.tasks.specs.omni import OmniText2GeneralSpecStrict
 from shared.tasks.task_type import TaskType
-from worker.executors.base_executor import ExecutionError
+from worker.executors.base_executor import ExecutionError, RunControl
 from worker.executors.omni_text2general_executor import OmniText2GeneralExecutor
-from worker.executors.run_control import RunControl
 
 from .factories import DEFAULT_WORKER_CONFIG, make_worker_task_message
 

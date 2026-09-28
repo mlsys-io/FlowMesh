@@ -7,8 +7,11 @@ import pytest
 
 from shared.tasks.specs import SSHSpecStrict
 from tests.worker.factories import DEFAULT_WORKER_CONFIG, make_live_worker_config
-from worker.executors.base_executor import ExecutionError, TaskCancelledError
-from worker.executors.run_control import RunControl
+from worker.executors.base_executor import (
+    ExecutionError,
+    RunControl,
+    TaskCancelledError,
+)
 from worker.executors.ssh_executor import SSHExecutor
 from worker.executors.ssh_session import SSHConfig, SSHSession
 from worker.executors.ssh_session.backends import docker as docker_backend_module

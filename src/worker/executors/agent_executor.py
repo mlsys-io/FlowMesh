@@ -27,8 +27,7 @@ from shared.schemas.result import (
 from shared.tasks.specs import AgentSpecStrict
 from shared.tasks.task_type import TaskType
 
-from .base_executor import ExecutionError, Executor, ExecutorTask
-from .run_control import RunControl
+from .base_executor import ExecutionError, Executor, ExecutorTask, RunControl
 from .utils.checkpoints import maybe_upload_artifacts, write_executor_result
 from .utils.graph_templates import build_prompts_from_graph_template
 

@@ -10,9 +10,8 @@ from typing import Any
 from shared.schemas.result import BaseExecutorResult
 from shared.tasks.worker_message import WorkerTaskMessage
 from tests.worker.factories import make_live_worker_config, make_worker_hardware
-from worker.executors.base_executor import Executor
+from worker.executors.base_executor import Executor, RunControl
 from worker.executors.mp_executor import MPExecutor
-from worker.executors.run_control import RunControl
 
 
 class ConnectorLoggingResult(BaseExecutorResult):

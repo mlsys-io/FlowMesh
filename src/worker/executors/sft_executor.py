@@ -29,9 +29,8 @@ from shared.tasks.task_type import TaskType
 from shared.utils.manifest import scratch_dir
 
 from ..utils.logging import configure_hf_library_logging
-from .base_executor import ExecutionError, Executor, ExecutorTask
+from .base_executor import ExecutionError, Executor, ExecutorTask, RunControl
 from .mixins.training import TrainingMixin
-from .run_control import RunControl
 from .utils.checkpoints import (
     archive_model_dir,
     determine_resume_path,
