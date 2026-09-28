@@ -1,5 +1,7 @@
 """Tests for n8n workflow translation."""
 
+import base64
+
 import pytest
 
 from server.task.n8n_parser import _decode_secret_part, translate_n8n_workflow
@@ -90,8 +92,6 @@ class TestDecodeSecretPart:
         assert _decode_secret_part(encoded) == data
 
     def test_base64_decode(self) -> None:
-        import base64
-
         data = b"hello world"
         encoded = base64.b64encode(data).decode()
         assert _decode_secret_part(encoded) == data

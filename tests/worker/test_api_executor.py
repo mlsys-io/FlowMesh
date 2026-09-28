@@ -14,12 +14,13 @@ from unittest.mock import patch
 
 import httpx
 import pytest
+from pydantic import ValidationError
 
 from shared.schemas.result import APIGroupItem, APIItem, APIResult
+from shared.tasks.specs.misc import _MAX_CONCURRENCY, _MAX_RETRIES
 from shared.tasks.worker_message import WorkerTaskMessage
 from worker.executors import api_executor as api_executor_module
 from worker.executors.api_executor import (
-    _MAX_RETRIES,
     _RETRY_BACKOFF_MAX_SEC,
     APIExecutor,
 )
@@ -377,11 +378,10 @@ class TestRetries:
         assert transport.calls == 0
 
     def test_invalid_retries_rejected(self) -> None:
-        """A negative or non-integer retries value is rejected."""
-        for bad in (-1, "2", 1.5, True):
-            task = self._task(retries=bad)
-            with pytest.raises(ExecutionError, match="spec.api.retries"):
-                _run(_executor(), task, _RecordingTransport())
+        """A negative, non-integer, or out-of-range retries value is rejected."""
+        for bad in (-1, "2", 1.5, True, _MAX_RETRIES + 1):
+            with pytest.raises(ValidationError):
+                self._task(retries=bad)
 
     def test_cancel_previous_task_does_not_cancel_next(self) -> None:
         """A cancellation left over from a prior task does not cancel the next."""
@@ -619,12 +619,6 @@ class TestRetries:
         delays = self._run_recording_delays(task, transport)
         assert delays == [_RETRY_BACKOFF_MAX_SEC]
 
-    def test_retries_above_maximum_rejected(self) -> None:
-        """A retries value above the maximum is rejected."""
-        task = self._task(retries=_MAX_RETRIES + 1)
-        with pytest.raises(ExecutionError, match=f"at most {_MAX_RETRIES}"):
-            _run(_executor(), task, _RecordingTransport())
-
     def test_one_warning_per_retry(self, caplog: pytest.LogCaptureFixture) -> None:
         """Each retry logs one warning naming the attempt and the delay."""
         task = self._task(retries=2)
@@ -746,11 +740,43 @@ class TestBatch:
                     },
                 )
 
-        task = _batch_task(["a", "b", "c"], response={"raise_for_status": True})
+        task = _batch_task(
+            ["a", "b", "c"],
+            concurrency=1,
+            response={"raise_for_status": True},
+        )
         transport = _FailRow("b")
         with pytest.raises(ExecutionError, match="row 1"):
             _run(_executor(), task, transport, tmp_path)
-        assert len(transport.requests) == 3
+        assert len(transport.requests) == 2
+
+    def test_row_failure_stops_later_rows_from_sending(self, tmp_path: Path) -> None:
+        """With concurrency 1, a failing first row stops later rows from sending."""
+
+        class _FailFirst(httpx.MockTransport):
+            def __init__(self) -> None:
+                self.requests: list[httpx.Request] = []
+                super().__init__(self._handler)
+
+            def _handler(self, request: httpx.Request) -> httpx.Response:
+                self.requests.append(request)
+                return httpx.Response(
+                    500,
+                    json={
+                        "choices": [{"message": {"content": "boom"}}],
+                        "usage": {"total_tokens": 1},
+                    },
+                )
+
+        task = _batch_task(
+            ["a", "b", "c"],
+            concurrency=1,
+            response={"raise_for_status": True},
+        )
+        transport = _FailFirst()
+        with pytest.raises(ExecutionError, match="row 0"):
+            _run(_executor(), task, transport, tmp_path)
+        assert len(transport.requests) == 1
 
     def test_placeholder_not_required_for_scalar_body(self, tmp_path: Path) -> None:
         """A batch task whose body has no placeholder still issues N requests."""
@@ -938,7 +964,7 @@ class TestBatch:
             _executor().run(task, tmp_path)
 
         assert mock_build.call_count == 1
-        assert mock_build.call_args.args[2] is None
+        assert len(mock_build.call_args.args) == 2
 
     @pytest.mark.parametrize("concurrency", [1, 4, 8])
     def test_client_pool_sized_to_concurrency(self, concurrency: int) -> None:
@@ -958,25 +984,16 @@ class TestBatch:
         finally:
             APIExecutor.close_all_clients()
 
-    def test_concurrency_capped_at_max(self, tmp_path: Path) -> None:
-        """A configured concurrency above the cap is clamped to the cap."""
-        task = _batch_task(["a", "b", "c"], concurrency=100)
-        captured: dict[str, Any] = {}
-
-        def _fake_get_client(*args: Any, **kwargs: Any) -> httpx.Client:
-            captured["concurrency"] = kwargs.get("concurrency", args[4])
-            return httpx.Client(transport=_EchoTransport())
-
-        with patch.object(APIExecutor, "_get_client", side_effect=_fake_get_client):
-            _executor().run(task, tmp_path)
-
-        assert captured["concurrency"] == 8
+    def test_concurrency_above_max_rejected(self) -> None:
+        """A concurrency above the cap is rejected, not clamped."""
+        with pytest.raises(ValidationError):
+            _batch_task(["a", "b", "c"], concurrency=_MAX_CONCURRENCY + 1)
 
     @pytest.mark.parametrize("concurrency", [1, 4])
     def test_run_passes_effective_concurrency_to_client(
         self, tmp_path: Path, concurrency: int
     ) -> None:
-        """run() forwards the uncapped configured concurrency to the client."""
+        """run() forwards the configured concurrency to the client."""
         task = _batch_task(["a", "b", "c"], concurrency=concurrency)
         captured: dict[str, Any] = {}
 
@@ -989,14 +1006,11 @@ class TestBatch:
 
         assert captured["concurrency"] == concurrency
 
-    @pytest.mark.parametrize("concurrency", [0, -1])
-    def test_concurrency_below_one_rejected(
-        self, tmp_path: Path, concurrency: int
-    ) -> None:
-        """A configured concurrency below 1 is rejected."""
-        task = _batch_task(["a", "b", "c"], concurrency=concurrency)
-        with pytest.raises(ExecutionError, match="spec.api.concurrency must be >= 1"):
-            _run(_executor(), task, _EchoTransport(), tmp_path)
+    @pytest.mark.parametrize("concurrency", [0, -1, "2", 1.5, True])
+    def test_invalid_concurrency_rejected(self, concurrency: object) -> None:
+        """A concurrency below 1, or a non-int or bool, is rejected."""
+        with pytest.raises(ValidationError):
+            _batch_task(["a", "b", "c"], concurrency=concurrency)
 
     def test_client_cache_key_includes_concurrency(self) -> None:
         """Pools built for different concurrency values are not shared."""
