@@ -111,7 +111,7 @@ async def _next(stream: DispatchStream) -> dict[str, Any] | None:
     return await asyncio.wait_for(stream.next(), timeout=2)
 
 
-def test_remove_from_another_thread_ends_every_reader(
+def test_remove_from_another_thread_drops_queued_frames_and_ends_the_stream(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     listener = TaskListener(_ANY_OBJECT, "nde-1", _LOGGER)
@@ -119,15 +119,12 @@ def test_remove_from_another_thread_ends_every_reader(
     async def scenario() -> list[dict[str, Any] | None]:
         listener._loop = asyncio.get_running_loop()
         listener.add_worker("wkr-1")
-        queue = listener._qs["wkr-1"]
-        readers = [
-            asyncio.ensure_future(DispatchStream("wkr-1", queue).next())
-            for _ in range(2)
-        ]
-        await asyncio.sleep(0)
+        stream = _attach(listener, "wkr-1")
+        listener._deliver("wkr-1", {"task_id": "A"})
 
         _run_in_thread(lambda: listener.remove_worker("wkr-1"))
-        results = await asyncio.wait_for(asyncio.gather(*readers), timeout=2)
+        await asyncio.sleep(0)
+        results = [await _next(stream), await _next(stream)]
 
         message = TaskMessage(worker_id="wkr-1", payload={"task_id": "tsk-1"})
         _run_in_thread(lambda: listener._handle_message(message.model_dump()))
@@ -141,6 +138,7 @@ def test_remove_from_another_thread_ends_every_reader(
     assert results == [None, None]
     assert "wkr-1" not in listener._qs
     assert listener.attach_stream("wkr-1") is None
+    assert "Dropping 1 queued dispatch(es) for released worker: wkr-1" in caplog.text
     assert "Dropping dispatch for unregistered worker: wkr-1" in caplog.text
 
 

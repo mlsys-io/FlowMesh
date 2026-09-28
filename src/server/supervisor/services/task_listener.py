@@ -28,7 +28,7 @@ class DispatchStream:
         """Return the next dispatch payload, or ``None`` once the queue is closed."""
         event = await self._queue.get()
         if event is _CLOSED:
-            # One sentinel wakes one reader; pass it on to any other reader.
+            # Keep the sentinel so every later call also returns None.
             self._queue.put_nowait(_CLOSED)
         return event
 
@@ -134,8 +134,19 @@ class TaskListener(RebindableReader):
     def _close_queue(self, worker_id: str) -> None:
         self._attached.pop(worker_id, None)
         q = self._qs.pop(worker_id, None)
-        if q is not None:
-            q.put_nowait(_CLOSED)
+        if q is None:
+            return
+        dropped = 0
+        while not q.empty():
+            q.get_nowait()
+            dropped += 1
+        if dropped:
+            self.logger.warning(
+                "Dropping %d queued dispatch(es) for released worker: %s",
+                dropped,
+                worker_id,
+            )
+        q.put_nowait(_CLOSED)
 
     def _deliver(self, worker_id: str, payload: dict[str, Any]) -> None:
         q = self._qs.get(worker_id)

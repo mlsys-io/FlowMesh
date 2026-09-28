@@ -202,7 +202,8 @@ scripts/dev/            compile_protos, sync_requirements, check_env_examples
   id within seconds; stop the process to remove it for good.
 - **Dispatch queues.** The supervisor keeps one dispatch queue per registered
   worker id and frees it when the worker's token is re-registered under a new
-  id or removed, which ends any task stream still reading it. A new
+  id or removed, which drops the frames still queued on it and ends any task
+  stream still reading it. A new
   `StreamTasks` on an id takes over the frames still queued, in order, and ends
   every older stream on that id, so a half-open stream receives no further
   dispatches once the worker's new stream attaches. A stream that ends makes
