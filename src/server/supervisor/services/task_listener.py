@@ -95,7 +95,8 @@ class TaskListener(RebindableReader):
 
     def add_worker(self, worker_id: str) -> None:
         """Create the dispatch queue for a newly registered worker id (loop only)."""
-        self._qs.setdefault(worker_id, asyncio.Queue())
+        if worker_id not in self._qs:
+            self._qs[worker_id] = asyncio.Queue()
 
     def attach_stream(self, worker_id: str) -> DispatchStream | None:
         """Make a new stream the only reader of a worker's dispatch queue (loop only).
