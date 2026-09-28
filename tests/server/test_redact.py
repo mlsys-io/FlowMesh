@@ -301,7 +301,7 @@ class TestTaskRecordSerializer:
             "data": {"access_token": "D"},
         }
         rec = _record(api)
-        dumped = rec.model_dump()
+        dumped = rec.model_dump(by_alias=True)
         dumped_api = dumped["task"]["spec"]["api"]
         for field in ("headers", "params", "body", "json", "data"):
             assert list(dumped_api[field].values()) == [REDACTED], field
@@ -323,7 +323,8 @@ class TestTaskRecordSerializer:
         rec = _record({"headers": {"Authorization": "Bearer SECRET"}})
         assert isinstance(rec.task.spec, ApiSpecTemplate)
         assert rec.task.spec.api is not None
-        assert rec.task.spec.api["headers"]["Authorization"] == "Bearer SECRET"
+        assert rec.task.spec.api.headers is not None
+        assert rec.task.spec.api.headers["Authorization"] == "Bearer SECRET"
 
     def test_dump_excluding_task_does_not_raise(self) -> None:
         rec = _record({"headers": {"Authorization": "Bearer SECRET"}})
@@ -393,8 +394,10 @@ class TestTaskRecordSerializer:
     def test_no_credential_unchanged(self) -> None:
         api = {"url": "http://x", "json": {"model": "gpt"}}
         rec = _record(api)
-        dumped = rec.model_dump()
-        assert dumped["task"]["spec"]["api"] == api
+        dumped = rec.model_dump(by_alias=True)
+        assert dumped["task"]["spec"]["api"]["url"] == "http://x"
+        assert dumped["task"]["spec"]["api"]["json"] == {"model": "gpt"}
+        assert dumped["task"]["spec"]["api"]["headers"] is None
 
     def test_redaction_cached_across_dumps(self) -> None:
         rec = _record(

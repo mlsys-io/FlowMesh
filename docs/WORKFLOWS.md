@@ -71,11 +71,10 @@ contract.
 
 ## API task
 
-`taskType: api` issues one HTTP request per row of `spec.data`, in parallel,
-and returns the responses row-aligned in `APIResult.items`. A single request
-is a one-row `spec.data`. `spec.data` is required, exactly as for the vLLM
-executor; it supports the same data types (`list`, `dataset`, `graph_template`,
-`dataframe`).
+`taskType: api` sends one HTTP request per `spec.data` row, in parallel, and
+returns one `APIResult.items` entry per row, in order. `spec.data` is required
+and accepts `list`, `dataset`, `graph_template`, and `dataframe`; row metadata
+and `dataframe` table grouping are not applied.
 
 By default it routes to the Nebula endpoint and authenticates with the worker's `NEBULA_API_TOKEN`.
 
@@ -83,11 +82,15 @@ By default it routes to the Nebula endpoint and authenticates with the worker's 
 
 Credential handling: a caller-supplied `Authorization` header is always used as-is and never overwritten. With no header, `NEBULA_API_TOKEN` is injected only when the call is on the Nebula url (no custom `spec.api.url`) — the Nebula token is never sent to a custom endpoint. A Nebula-path call with no token available fails closed.
 
-`spec.api.retries` (default `0`, at most `10`) sets how many times a transient failure is retried before the task fails. A transient failure is a connection error or an HTTP status of 5xx, 408, or 429; other 4xx statuses are never retried. Retries back off exponentially: the first waits 1s and each later one doubles, capped at 60s. When a retryable response carries a `Retry-After` header (seconds or an HTTP date), that wait is used instead, also capped at 60s. Each retry logs a warning with the attempt count and the wait. A cancelled task stops retrying immediately.
+`spec.api.retries` (default `0`, an integer from 0 to 10; any other value is rejected when the workflow is submitted) sets how many times a transient failure is retried before the task fails. A transient failure is a connection error or an HTTP status of 5xx, 408, or 429; other 4xx statuses are never retried. Retries back off exponentially: the first waits 1s and each later one doubles, capped at 60s. When a retryable response carries a `Retry-After` header (seconds or an HTTP date), that wait is used instead, also capped at 60s. Each retry logs a warning with the attempt count and the wait. A cancelled task stops retrying immediately.
 
 ```yaml
 spec:
   taskType: api
+  data:
+    type: list
+    items:
+      - Hello
   api:
     method: POST
     headers:
@@ -96,25 +99,19 @@ spec:
       model: gpt-4o
       messages:
         - role: user
-          content: Hello
+          content: "{{prompt}}"
     retries: 3
     response:
       parse_json: true
 ```
 
-### Batching
+### Per-row prompts
 
-When `spec.data` is present, the task batches: one request is issued per row,
-and the results are returned row-aligned in `APIResult.items`. Each row's
-prompt is substituted for the `{{prompt}}` placeholder in the request body.
-Server-side stage references are `${...}`; `{{prompt}}` is a worker-side
-per-row slot, so it is not touched by server-side resolution. A failure in any
-row fails the whole task rather than shifting the remaining rows.
-`spec.api.concurrency` bounds the number of in-flight requests and is capped
-at 8 (the default); values above 8 are clamped down. Cancelling the task
-prevents not-yet-started rows from issuing and marks the task cancelled once
-in-flight requests return; a request already inside the HTTP call is not
-interrupted.
+Each row's prompt replaces `{{prompt}}` in the request body; a value that is
+exactly `{{prompt}}` takes the prompt as-is, so a message-list row fills
+`messages`. `spec.api.concurrency` (default 8, an integer from 1 to 8; any other value is rejected when the workflow is submitted) bounds in-flight
+requests. Any failed row fails the task. Cancelling the task skips rows that
+have not started and marks it cancelled once in-flight requests return.
 
 ```yaml
 spec:
