@@ -10,7 +10,6 @@ from shared.schemas.command import (
 )
 
 from ...clients.redis import SyncRedisClient, node_dispatch_channel
-from ...utils.helpers import TSQueue
 from .pubsub_reader import RebindableReader
 
 
@@ -22,7 +21,8 @@ class TaskListener(RebindableReader):
     ) -> None:
         super().__init__(redis, node_id, logger)
         # TODO(kaiitunnz): Consider cleaning up old queues
-        self._qs: dict[str, TSQueue[dict[str, Any]]] = {}
+        # Queues belong to self._loop; other threads enqueue via call_soon_threadsafe.
+        self._qs: dict[str, asyncio.Queue[dict[str, Any]]] = {}
         self._thread: Thread | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
 
@@ -69,7 +69,7 @@ class TaskListener(RebindableReader):
 
     def add_worker(self, worker_id: str) -> None:
         if worker_id not in self._qs:
-            self._qs[worker_id] = TSQueue()
+            self._qs[worker_id] = asyncio.Queue()
 
     def remove_worker(self, worker_id: str) -> None:
         if worker_id in self._qs:
@@ -94,7 +94,7 @@ class TaskListener(RebindableReader):
             "relay_token": relay_token,
             "endpoint_id": endpoint_id,
         }
-        asyncio.run_coroutine_threadsafe(self._qs[worker_id].put(payload), loop)
+        loop.call_soon_threadsafe(self._qs[worker_id].put_nowait, payload)
         return True
 
     async def get_event(self, worker_id: str) -> dict[str, Any]:
@@ -140,4 +140,4 @@ class TaskListener(RebindableReader):
                 "Received dispatch for unregistered worker: %s", worker_id
             )
             return
-        asyncio.run_coroutine_threadsafe(self._qs[worker_id].put(payload), loop)
+        loop.call_soon_threadsafe(self._qs[worker_id].put_nowait, payload)
