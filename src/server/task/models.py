@@ -219,6 +219,21 @@ class TaskInfo(TaskRecord):
     completed: bool = Field(description="Whether the task completed successfully.")
     failed: bool = Field(description="Whether the task failed.")
 
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def raw_yaml(self) -> str:
+        """Deprecated mirror of ``source`` for SDK clients older than 0.1.10.
+
+        #137 renamed this response field ``raw_yaml`` -> ``source``. Clients
+        pinned to ``flowmesh-sdk<=0.1.9`` (every released Lumilake image,
+        v1.5.2 and v1.6.0 included) declare ``raw_yaml`` as REQUIRED, so
+        ``tasks.retrieve()`` raised a validation error on every task and each
+        Lumilake job failed with "Failed to fetch FlowMesh task description".
+        Emitting both keeps old and new clients working. Same redaction as
+        ``source`` -- this is the credential-redacted copy, never the raw text.
+        """
+        return self._redact_source()
+
 
 class TaskParsingResult(BaseModel):
     task_id: str = Field(description="Task identifier.")
