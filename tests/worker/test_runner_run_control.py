@@ -1,5 +1,6 @@
 """Which run a cancel or graceful-stop signal reaches, whenever it arrives."""
 
+import threading
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -155,6 +156,22 @@ class TestShutdown:
 
         assert cancelled == [True]
         assert _reported(lifecycle, "set_cancelled") == ["tsk-a"]
+
+    def test_stop_does_not_wait_on_the_runner_lock(self, tmp_path: Path) -> None:
+        """A signal handler may interrupt the task loop while it holds the lock."""
+        runner, _ = _runner(tmp_path, _RecordingExecutor(), [])
+        control = runner._begin_run("tsk-a")
+        returned = threading.Event()
+
+        def stop() -> None:
+            runner.stop()
+            returned.set()
+
+        with runner._cancel_lock:
+            threading.Thread(target=stop, daemon=True).start()
+            assert returned.wait(5.0)
+
+        assert control.wait_for_cancel(5.0)
 
 
 class TestRegistry:
