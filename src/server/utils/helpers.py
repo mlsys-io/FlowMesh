@@ -1,5 +1,4 @@
 import asyncio
-import queue
 import threading
 
 import docker
@@ -17,16 +16,33 @@ def get_docker_client() -> docker.DockerClient:
 
 
 class TSQueue[T]:
+    """Unbounded queue whose ``put``/``get`` run on the owning event loop.
+
+    Other threads hand items over with
+    ``asyncio.run_coroutine_threadsafe(q.put(item), loop)``.
+
+    ``get`` must never park an executor thread. It used to be
+    ``loop.run_in_executor(None, queue.Queue.get)``: a blocking get cannot be
+    cancelled, so every ``StreamTasks`` call that ended while idle (a worker
+    disconnecting, restarting or being recreated) left one thread of the loop's
+    default executor blocked on a queue nobody would ever fill again. That pool
+    is ``min(32, cpu_count + 4)`` threads; once every thread was parked, the
+    executor-backed ``put`` of each new dispatch never ran either, so tasks sat
+    DISPATCHED forever on workers that were connected, heartbeating and idle
+    -- with nothing logged anywhere.
+    """
+
     def __init__(self) -> None:
-        self._q: queue.Queue[T] = queue.Queue()
+        self._q: asyncio.Queue[T] = asyncio.Queue()
 
     async def put(self, item: T) -> None:
-        loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, self._q.put, item)
+        self._q.put_nowait(item)
 
     async def get(self) -> T:
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(None, self._q.get)
+        return await self._q.get()
+
+    def qsize(self) -> int:
+        return self._q.qsize()
 
 
 class ResourcePool[T]:
