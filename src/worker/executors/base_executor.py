@@ -27,8 +27,9 @@ Contract:
   local-only scratch data.
 - Optionally override `prepare()` and `teardown()` for lifecycle hooks.
 - Raise `ExecutionError` for user-visible failures.
-- Read `control` to end early on cancel (raise `TaskCancelledError`) or on a
-  graceful stop (return normally); register `control.on_cancel` /
+- Read `control` to end early. On cancel, raise `TaskCancelledError`. On a
+  graceful stop, finish and return a result, or raise `TaskCancelledError` if
+  the run has nothing to report yet. Register `control.on_cancel` /
   `control.on_stop` callbacks to interrupt blocking work.
 """
 
