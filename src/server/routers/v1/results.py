@@ -88,22 +88,48 @@ def _task_usage_from_envelope(
         return result.usage if result.usage is not None else UNKNOWN_USAGE
     if isinstance(result, InferenceResult):
         if isinstance(result.usage, GenerationUsage):
-            return APIUsage(
-                prompt_tokens=result.usage.prompt_tokens,
-                completion_tokens=result.usage.completion_tokens,
-                reasoning_tokens=0,
-                calls=result.usage.num_requests,
-                failures=0,
-                retries=0,
-                truncated_calls=0,
-                wall_sec=result.usage.latency_sec,
-            )
+            return _inference_usage(result)
         return UNKNOWN_USAGE
     if isinstance(result, _NO_USAGE_RESULT_TYPES):
         return None
     # Any other result type either carries a usage field we do not map to
     # APIUsage (embedding, agent, rag) or is an unknown model-calling type.
     return UNKNOWN_USAGE
+
+
+def _inference_usage(result: InferenceResult) -> APIUsage:
+    """Map an inference result's usage, subtracting merged children's shares.
+
+    In a merged dispatch the parent's ``GenerationUsage`` is the whole batch
+    total, while each child carries its own share in ``result.children``. Each
+    child is also ingested separately, so the parent must record only its own
+    share (total minus the children's sum) or the workflow would count every
+    child's tokens and calls twice. ``wall_sec`` stays per task as reported.
+    """
+    usage = result.usage
+    assert isinstance(usage, GenerationUsage)
+    prompt = usage.prompt_tokens
+    completion = usage.completion_tokens
+    calls = usage.num_requests
+    for child in result.children.values():
+        if not isinstance(child, InferenceResult):
+            continue
+        child_usage = child.usage
+        if not isinstance(child_usage, GenerationUsage):
+            continue
+        prompt -= child_usage.prompt_tokens
+        completion -= child_usage.completion_tokens
+        calls -= child_usage.num_requests
+    return APIUsage(
+        prompt_tokens=prompt,
+        completion_tokens=completion,
+        reasoning_tokens=0,
+        calls=calls,
+        failures=0,
+        retries=0,
+        truncated_calls=0,
+        wall_sec=usage.latency_sec,
+    )
 
 
 def _resolve_artifact_path(filename: str) -> Path:

@@ -434,3 +434,124 @@ async def test_mirror_task_results_records_no_usage_for_clone(
     usages = await registry.load_task_usages_async("tsk-clone")
     assert "tsk-clone" in usages
     assert usages["tsk-clone"] is None
+
+
+def _merged_parent() -> InferenceResult:
+    """A merged vLLM parent: batch total usage plus two children's shares."""
+    return InferenceResult(
+        ok=True,
+        model="m",
+        items=[],
+        usage=GenerationUsage(
+            prompt_tokens=100,
+            completion_tokens=50,
+            total_tokens=150,
+            num_requests=4,
+            latency_sec=1.0,
+        ),
+        children={
+            "tsk-child-1": InferenceResult(
+                ok=True,
+                model="m",
+                items=[],
+                usage=GenerationUsage(
+                    prompt_tokens=30,
+                    completion_tokens=20,
+                    total_tokens=50,
+                    num_requests=2,
+                    latency_sec=1.0,
+                ),
+            ),
+            "tsk-child-2": InferenceResult(
+                ok=True,
+                model="m",
+                items=[],
+                usage=GenerationUsage(
+                    prompt_tokens=10,
+                    completion_tokens=5,
+                    total_tokens=15,
+                    num_requests=1,
+                    latency_sec=1.0,
+                ),
+            ),
+        },
+    )
+
+
+def test_event_monitor_requires_workflow_registry() -> None:
+    """EventMonitor requires a workflow registry (no optional dependency)."""
+    from server.services.monitoring import EventMonitor
+
+    with pytest.raises(TypeError):
+        EventMonitor(  # type: ignore[call-arg]
+            redis_client=mock.Mock(),
+            logger=logging.getLogger("test"),
+            runtime=mock.Mock(),
+            dispatcher=mock.Mock(),
+            worker_registry=mock.Mock(),
+            node_registry=mock.Mock(),
+            metrics_recorder=mock.Mock(),
+            watchdog=mock.Mock(),
+        )
+
+
+def test_merged_parent_records_own_share_only() -> None:
+    """A merged parent records its total minus its children's shares."""
+    usage = results_router._task_usage_from_envelope(
+        ResultEnvelope(task_id="tsk-parent", result=_merged_parent())
+    )
+    assert isinstance(usage, APIUsage)
+    assert usage.prompt_tokens == 60  # 100 - 30 - 10
+    assert usage.completion_tokens == 25  # 50 - 20 - 5
+    assert usage.calls == 1  # 4 - 2 - 1
+    assert usage.wall_sec == 1.0
+
+
+@pytest.mark.anyio
+async def test_merged_parent_plus_children_sums_to_batch_total() -> None:
+    """Parent and children ingested separately sum to exactly the batch total."""
+    registry = _registry()
+    parent_usage = results_router._task_usage_from_envelope(
+        ResultEnvelope(task_id="tsk-parent", result=_merged_parent())
+    )
+    child1_usage = results_router._task_usage_from_envelope(
+        ResultEnvelope(
+            task_id="tsk-child-1",
+            result=_merged_parent().children["tsk-child-1"],
+        )
+    )
+    child2_usage = results_router._task_usage_from_envelope(
+        ResultEnvelope(
+            task_id="tsk-child-2",
+            result=_merged_parent().children["tsk-child-2"],
+        )
+    )
+    assert isinstance(parent_usage, APIUsage)
+    assert isinstance(child1_usage, APIUsage)
+    assert isinstance(child2_usage, APIUsage)
+    await registry.save_task_usage_async("tsk-parent", parent_usage)
+    await registry.save_task_usage_async("tsk-child-1", child1_usage)
+    await registry.save_task_usage_async("tsk-child-2", child2_usage)
+
+    usage = await _sum(registry, ["tsk-parent", "tsk-child-1", "tsk-child-2"])
+    assert usage is not None
+    assert usage.prompt_tokens == 100
+    assert usage.completion_tokens == 50
+    assert usage.calls == 4
+
+
+@pytest.mark.anyio
+async def test_merged_parent_plus_mirrored_child_sums_to_parent_total() -> None:
+    """A parent plus a mirrored child (no own result) sums to the parent total."""
+    registry = _registry()
+    parent_usage = results_router._task_usage_from_envelope(
+        ResultEnvelope(task_id="tsk-parent", result=_merged_parent())
+    )
+    assert isinstance(parent_usage, APIUsage)
+    await registry.save_task_usage_async("tsk-parent", parent_usage)
+    await registry.save_task_usage_async("tsk-mirrored", None)
+
+    usage = await _sum(registry, ["tsk-parent", "tsk-mirrored"])
+    assert usage is not None
+    assert usage.prompt_tokens == 60
+    assert usage.calls == 1
