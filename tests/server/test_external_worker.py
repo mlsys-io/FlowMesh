@@ -575,6 +575,30 @@ class TestStreamTasksLifecycle:
         await second.aclose()
 
     @pytest.mark.asyncio
+    async def test_reregistering_ends_the_old_id_stream(
+        self, monkeypatch: pytest.MonkeyPatch, listener: TaskListener
+    ) -> None:
+        monkeypatch.setattr("server.env.EXTERNAL_WORKER_TOKEN", SECRET)
+        listener._loop = asyncio.get_running_loop()
+        servicer, _ = _build_servicer(task_listener=listener)
+        token = mint_external_token(SECRET, "fm-worker-0")
+        await _register(servicer, token)
+        old = asyncio.ensure_future(_read_until_closed(_stream_tasks(servicer, token)))
+        await asyncio.sleep(0)
+
+        new_id = await _register(servicer, token)
+
+        assert await asyncio.wait_for(old, timeout=2) == []
+        assert list(listener._qs) == [new_id]
+        stream = _stream_tasks(servicer, token)
+        read = asyncio.ensure_future(anext(stream))
+        await asyncio.sleep(0)
+        listener._deliver(new_id, {"task_id": "tsk-1"})
+        message = await asyncio.wait_for(read, timeout=2)
+        assert message.task.payload["task_id"] == "tsk-1"
+        await stream.aclose()
+
+    @pytest.mark.asyncio
     async def test_stream_without_a_queue_finishes(
         self, monkeypatch: pytest.MonkeyPatch, listener: TaskListener
     ) -> None:

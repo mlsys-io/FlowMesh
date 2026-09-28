@@ -204,9 +204,9 @@ scripts/dev/            compile_protos, sync_requirements, check_env_examples
   worker id and frees it when the worker's token is re-registered under a new
   id or removed, which ends any task stream still reading it. A new
   `StreamTasks` on an id takes over the frames still queued, in order, and ends
-  every older stream on that id, so a half-open stream never receives
-  dispatches. A stream that ends makes the worker reconnect and resolve its
-  current id.
+  every older stream on that id, so a half-open stream receives no further
+  dispatches once the worker's new stream attaches. A stream that ends makes
+  the worker reconnect and resolve its current id.
 - **A worker's GPUs are the ones CUDA lets it use.** A worker reports, probes,
   and samples power for only the GPUs `CUDA_VISIBLE_DEVICES` leaves visible,
   each under its CUDA ordinal. Integer entries are read in PCI bus order, so
