@@ -4,6 +4,7 @@ import logging
 import math
 import os
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime
 from pathlib import Path
@@ -155,17 +156,21 @@ class APIExecutor(DataMixin, Executor):
         params: dict[str, Any] | None,
         request_kwargs: dict[str, Any],
         retries: int,
+        failed: threading.Event,
     ) -> httpx.Response:
         """Issue the request, retrying transient failures up to ``retries`` times.
 
         A retryable failure is a connection error or a transient HTTP status
-        (5xx, 408, 429). Non-retryable failures and a cancelled task stop the
-        loop immediately. The final attempt's failure propagates to the caller.
+        (5xx, 408, 429). Non-retryable failures, a cancelled task, or a row
+        already failed elsewhere stop the loop immediately. The final attempt's
+        failure propagates to the caller.
         """
         attempt = 0
         while True:
             if self._cancel_event.is_set():
                 raise TaskCancelledError("API request cancelled")
+            if failed.is_set():
+                raise ExecutionError("API task failed on an earlier row")
             try:
                 resp = client.request(
                     method,
@@ -186,7 +191,7 @@ class APIExecutor(DataMixin, Executor):
                     exc,
                     delay,
                 )
-                self._wait_for_backoff(delay)
+                self._wait_for_backoff(delay, failed)
                 continue
             if resp.is_error and _is_retryable_status(resp.status_code):
                 if attempt >= retries:
@@ -200,7 +205,7 @@ class APIExecutor(DataMixin, Executor):
                     retries,
                     delay,
                 )
-                self._wait_for_backoff(delay)
+                self._wait_for_backoff(delay, failed)
                 continue
             return resp
 
@@ -233,10 +238,19 @@ class APIExecutor(DataMixin, Executor):
             retry_at = retry_at.replace(tzinfo=UTC)
         return max(0.0, (retry_at - datetime.now(UTC)).total_seconds())
 
-    def _wait_for_backoff(self, delay: float) -> None:
-        """Wait out the retry backoff, aborting early if the task is cancelled."""
-        if self._cancel_event.wait(delay):
-            raise TaskCancelledError("API request cancelled")
+    def _wait_for_backoff(self, delay: float, failed: threading.Event) -> None:
+        """Wait out the retry backoff, aborting early if the task is cancelled
+        or another row has already failed."""
+        deadline = time.monotonic() + delay
+        while True:
+            if self._cancel_event.is_set():
+                raise TaskCancelledError("API request cancelled")
+            if failed.is_set():
+                raise ExecutionError("API task failed on an earlier row")
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return
+            self._cancel_event.wait(min(remaining, 0.1))
 
     @classmethod
     def close_all_clients(cls) -> None:
@@ -431,33 +445,49 @@ class APIExecutor(DataMixin, Executor):
                     params,
                     kwargs,
                     retries,
+                    failed,
                 )
+            except TaskCancelledError:
+                raise
             except httpx.RequestError as exc:
-                failed.set()
                 error = ExecutionError(
                     f"API request failed (row {idx}): {exc}", retryable=True
                 )
-                first_error.append(error)
+                if not first_error:
+                    first_error.append(error)
+                failed.set()
                 raise error from exc
+            except BaseException as exc:
+                if not first_error:
+                    first_error.append(exc)
+                failed.set()
+                raise
 
             if raise_for_status and resp.is_error:
-                failed.set()
                 message = f"API request returned status {resp.status_code} (row {idx})"
                 body_text = resp.text[:200]
                 if body_text:
                     message = f"{message}: {body_text}"
                 retryable = _is_retryable_status(resp.status_code)
                 error = ExecutionError(message, retryable=retryable)
-                first_error.append(error)
+                if not first_error:
+                    first_error.append(error)
+                failed.set()
                 raise error
 
-            item = self._parse_response(
-                resp,
-                response_cfg=response_cfg,
-                max_body_bytes=max_body_bytes,
-                idx=idx,
-                prompt_str=prompt_str,
-            )
+            try:
+                item = self._parse_response(
+                    resp,
+                    response_cfg=response_cfg,
+                    max_body_bytes=max_body_bytes,
+                    idx=idx,
+                    prompt_str=prompt_str,
+                )
+            except BaseException as exc:
+                if not first_error:
+                    first_error.append(exc)
+                failed.set()
+                raise
 
             if self._cancel_event.is_set():
                 raise TaskCancelledError("API task cancelled")
@@ -479,7 +509,9 @@ class APIExecutor(DataMixin, Executor):
                     raise TaskCancelledError("API task cancelled")
                 try:
                     results[idx] = future.result()
-                except ExecutionError:
+                except TaskCancelledError:
+                    raise
+                except BaseException:
                     pass
             if first_error:
                 raise first_error[0]

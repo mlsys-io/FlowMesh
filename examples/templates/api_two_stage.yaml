@@ -37,7 +37,7 @@ spec:
               - role: user
                 content: "{{prompt}}"
           response:
-            parse_json: false
+            parse_json: true
             return_body: true
             raise_for_status: true
 
