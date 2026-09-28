@@ -10,6 +10,7 @@ from shared.tasks.task_type import TaskType
 
 from .base_executor import ExecutionError, Executor, ExecutorTask
 from .mixins.data import DataMixin
+from .run_control import RunControl
 from .utils.checkpoints import maybe_upload_traces
 from .utils.graph_templates import _evaluate_expr
 
@@ -64,7 +65,7 @@ class EchoExecutor(DataMixin, Executor):
                 "a string literal or a mapping"
             )
 
-    def run(self, task: ExecutorTask, out_dir: Path) -> EchoResult:
+    def run(self, task: ExecutorTask, out_dir: Path, control: RunControl) -> EchoResult:
         spec = self.require_spec(task, EchoSpecStrict)
         task_id = task.task_id.strip()
         with self._task_span(

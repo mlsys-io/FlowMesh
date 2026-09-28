@@ -43,6 +43,7 @@ from shared.utils.parsing import safe_float, safe_int, to_bool
 from ..utils.logging import configure_hf_library_logging
 from .base_executor import ExecutionError, Executor, ExecutorTask
 from .mixins.training import TrainingMixin
+from .run_control import RunControl
 from .utils.checkpoints import maybe_upload_artifacts, write_executor_result
 from .utils.data_utils import resolve_jsonl_path
 from .utils.distributed import run_torchrun
@@ -414,7 +415,7 @@ class PPOExecutor(TrainingMixin, Executor):
         self._reward_module: _ExternalRewardModel | _RewardAdapter | None = None
         self._task_out_dir: Path | None = None
 
-    def run(self, task: ExecutorTask, out_dir: Path) -> PPOResult:
+    def run(self, task: ExecutorTask, out_dir: Path, control: RunControl) -> PPOResult:
         configure_hf_library_logging()
         logger.info("Starting PPO training task")
         spec = self.require_spec(task, PPOSpecStrict)

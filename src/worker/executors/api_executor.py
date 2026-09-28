@@ -25,6 +25,7 @@ from .base_executor import (
     TaskCancelledError,
 )
 from .mixins.data import DataMixin
+from .run_control import RunControl
 
 logger = logging.getLogger(__name__)
 
@@ -210,24 +211,6 @@ class APIExecutor(DataMixin, Executor):
     _clients: ClassVar[dict[_ClientKey, httpx.Client]] = {}
     _clients_lock: ClassVar[threading.Lock] = threading.Lock()
 
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        super().__init__(*args, **kwargs)
-        self._cancel_event = threading.Event()
-        self._cancel_lock = threading.Lock()
-        self._active_task_id: str | None = None
-        self._pending_cancelled_ids: set[str] = set()
-
-    def cancel(self, task_id: str) -> None:
-        """Signal the executor to abort the current request and any retries."""
-        with self._cancel_lock:
-            if self._active_task_id is None:
-                # No run in flight: record the id so a pre-start cancel lands.
-                self._pending_cancelled_ids.add(task_id)
-                self._cancel_event.set()
-            elif self._active_task_id == task_id:
-                self._cancel_event.set()
-            # A cancellation for a different task than the active one is ignored.
-
     @classmethod
     def _base_url(cls, url: str) -> str:
         """Extract scheme + host + port from a URL for pool keying."""
@@ -295,6 +278,7 @@ class APIExecutor(DataMixin, Executor):
         request_kwargs: dict[str, Any],
         retries: int,
         failed: threading.Event,
+        control: RunControl,
     ) -> tuple[httpx.Response, int]:
         """Issue the request, retrying transient failures up to ``retries`` times.
 
@@ -306,8 +290,7 @@ class APIExecutor(DataMixin, Executor):
         """
         attempt = 0
         while True:
-            if self._cancel_event.is_set():
-                raise TaskCancelledError("API request cancelled")
+            control.raise_if_cancelled("API request cancelled")
             if failed.is_set():
                 raise ExecutionError("API task failed on an earlier row")
             try:
@@ -330,7 +313,7 @@ class APIExecutor(DataMixin, Executor):
                     exc,
                     delay,
                 )
-                self._wait_for_backoff(delay, failed)
+                self._wait_for_backoff(delay, failed, control)
                 continue
             if resp.is_error and _is_retryable_status(resp.status_code):
                 if attempt >= retries:
@@ -344,7 +327,7 @@ class APIExecutor(DataMixin, Executor):
                     retries,
                     delay,
                 )
-                self._wait_for_backoff(delay, failed)
+                self._wait_for_backoff(delay, failed, control)
                 continue
             return resp, attempt + 1
 
@@ -377,19 +360,20 @@ class APIExecutor(DataMixin, Executor):
             retry_at = retry_at.replace(tzinfo=UTC)
         return max(0.0, (retry_at - datetime.now(UTC)).total_seconds())
 
-    def _wait_for_backoff(self, delay: float, failed: threading.Event) -> None:
+    def _wait_for_backoff(
+        self, delay: float, failed: threading.Event, control: RunControl
+    ) -> None:
         """Wait out the retry backoff, aborting early if the task is cancelled
         or another row has already failed."""
         deadline = time.monotonic() + delay
         while True:
-            if self._cancel_event.is_set():
-                raise TaskCancelledError("API request cancelled")
+            control.raise_if_cancelled("API request cancelled")
             if failed.is_set():
                 raise ExecutionError("API task failed on an earlier row")
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 return
-            self._cancel_event.wait(min(remaining, 0.1))
+            control.wait_for_cancel(min(remaining, 0.1))
 
     @classmethod
     def close_all_clients(cls) -> None:
@@ -528,20 +512,7 @@ class APIExecutor(DataMixin, Executor):
             backends or "-",
         )
 
-    def run(self, task: ExecutorTask, out_dir: Path) -> APIResult:
-        with self._cancel_lock:
-            self._active_task_id = task.task_id
-            # Event is set iff this task's id was pending; other ids are stale.
-            if task.task_id not in self._pending_cancelled_ids:
-                self._cancel_event.clear()
-            self._pending_cancelled_ids.clear()
-        try:
-            return self._run(task, out_dir)
-        finally:
-            with self._cancel_lock:
-                self._active_task_id = None
-
-    def _run(self, task: ExecutorTask, out_dir: Path) -> APIResult:
+    def run(self, task: ExecutorTask, out_dir: Path, control: RunControl) -> APIResult:
         spec = self.require_spec(task, ApiSpecStrict)
         api_cfg = spec.api or ApiConfig.model_validate({})
 
@@ -641,8 +612,7 @@ class APIExecutor(DataMixin, Executor):
             )
 
         def _issue(idx: int, prompt: Any) -> APIItem:
-            if self._cancel_event.is_set():
-                raise TaskCancelledError("API task cancelled")
+            control.raise_if_cancelled("API task cancelled")
             if failed.is_set():
                 raise ExecutionError(f"API task failed on an earlier row (row {idx})")
             prompt_str = self._prompt_to_str(prompt)
@@ -660,6 +630,7 @@ class APIExecutor(DataMixin, Executor):
                     kwargs,
                     retries,
                     failed,
+                    control,
                 )
             except _RequestFailed as exc:
                 _record_call(
@@ -714,8 +685,7 @@ class APIExecutor(DataMixin, Executor):
 
             _record_call(idx, attempts, resp.status_code, start, item.response_json)
 
-            if self._cancel_event.is_set():
-                raise TaskCancelledError("API task cancelled")
+            control.raise_if_cancelled("API task cancelled")
 
             return item
 
@@ -745,15 +715,13 @@ class APIExecutor(DataMixin, Executor):
             with ThreadPoolExecutor(max_workers=concurrency) as pool:
                 futures = {}
                 for idx, prompt in enumerate(prompts):
-                    if self._cancel_event.is_set():
-                        raise TaskCancelledError("API task cancelled")
+                    control.raise_if_cancelled("API task cancelled")
                     if failed.is_set():
                         break
                     futures[pool.submit(_issue, idx, prompt)] = idx
                 for future in as_completed(futures):
                     idx = futures[future]
-                    if self._cancel_event.is_set():
-                        raise TaskCancelledError("API task cancelled")
+                    control.raise_if_cancelled("API task cancelled")
                     try:
                         results[idx] = future.result()
                     except TaskCancelledError:
@@ -767,8 +735,7 @@ class APIExecutor(DataMixin, Executor):
             heartbeat.join(timeout=5)
             self._log_summary(task.task_id, tracker)
 
-        if self._cancel_event.is_set():
-            raise TaskCancelledError("API task cancelled")
+        control.raise_if_cancelled("API task cancelled")
 
         items = [results[idx] for idx in range(len(prompts))]
 

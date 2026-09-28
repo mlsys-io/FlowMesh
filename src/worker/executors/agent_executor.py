@@ -28,6 +28,7 @@ from shared.tasks.specs import AgentSpecStrict
 from shared.tasks.task_type import TaskType
 
 from .base_executor import ExecutionError, Executor, ExecutorTask
+from .run_control import RunControl
 from .utils.checkpoints import maybe_upload_artifacts, write_executor_result
 from .utils.graph_templates import build_prompts_from_graph_template
 
@@ -229,7 +230,9 @@ class AgentExecutor(Executor):
         else:
             raise ExecutionError(f"Unsupported spec.data.type: {dtype!r}")
 
-    def run(self, task: ExecutorTask, out_dir: Path) -> AgentResult:
+    def run(
+        self, task: ExecutorTask, out_dir: Path, control: RunControl
+    ) -> AgentResult:
         """Execute agent tasks using youtu-agent (utu) framework"""
         self.ensure_dir(out_dir)
 

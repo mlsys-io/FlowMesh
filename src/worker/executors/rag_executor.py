@@ -29,6 +29,7 @@ from shared.tasks.specs import RagSpecStrict
 from shared.tasks.task_type import TaskType
 
 from .base_executor import ExecutionError, Executor, ExecutorTask
+from .run_control import RunControl
 from .utils.graph_templates import Message, build_prompts_from_graph_template
 
 logger = logging.getLogger("worker.rag")
@@ -39,7 +40,7 @@ class RAGExecutor(Executor):
     name = EXECUTOR_NAME
     supported_task_types = frozenset({TaskType.RAG})
 
-    def run(self, task: ExecutorTask, out_dir: Path) -> RAGResult:
+    def run(self, task: ExecutorTask, out_dir: Path, control: RunControl) -> RAGResult:
         start_ts = time.time()
         spec = self.require_spec(task, RagSpecStrict)
 

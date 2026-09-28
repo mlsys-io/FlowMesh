@@ -10,12 +10,15 @@ Usage:
 
     class MyExecutor(Executor):
         name = "my-executor"
-        def run(self, task: ExecutorTask, out_dir: Path) -> MyResult:
+        def run(
+            self, task: ExecutorTask, out_dir: Path, control: RunControl
+        ) -> MyResult:
             # ... your logic ...
             return MyResult(echo=task.task_id)
 
 Contract:
-- Implement `run(task: ExecutorTask, out_dir: Path) -> BaseExecutorResult`.
+- Implement `run(task: ExecutorTask, out_dir: Path, control: RunControl)
+  -> BaseExecutorResult`.
   The runner writes the returned model to `out_dir/results.json` and
   injects the top-level `_artifacts` context — executors should not write
   that file themselves on the success path.
@@ -24,6 +27,9 @@ Contract:
   local-only scratch data.
 - Optionally override `prepare()` and `teardown()` for lifecycle hooks.
 - Raise `ExecutionError` for user-visible failures.
+- Read `control` to end early on cancel (raise `TaskCancelledError`) or on a
+  graceful stop (return normally); register `control.on_cancel` /
+  `control.on_stop` callbacks to interrupt blocking work.
 """
 
 import json
@@ -38,6 +44,8 @@ from shared.tasks.task_type import TaskType
 from shared.tasks.worker_message import WorkerHardware, WorkerTaskMessage
 from worker.config import WorkerConfig
 from worker.lifecycle import Lifecycle
+
+from .run_control import RunControl
 
 type ExecutorTask = WorkerTaskMessage
 type TaskReference = WorkerTaskMessage | MergedChildTaskStrict
@@ -124,13 +132,17 @@ class Executor(ABC):
         return None
 
     @abstractmethod
-    def run(self, task: ExecutorTask, out_dir: Path) -> BaseExecutorResult:
+    def run(
+        self, task: ExecutorTask, out_dir: Path, control: RunControl
+    ) -> BaseExecutorResult:
         """Execute a single task.
 
         Args:
             task: Parsed task payload.
             out_dir: Directory for any outputs. Implementations should create it
             if needed.
+            control: Cancel and graceful-stop signals for this run. Executors that
+            can end early read it; others may ignore it.
 
         Returns:
             A ``BaseExecutorResult`` subclass instance.
@@ -159,14 +171,6 @@ class Executor(ABC):
         """Optional: called after every `run` invocation (even on failure)."""
         return None
 
-    def cancel(self, task_id: str) -> None:
-        """Signal the executor to abort the current task."""
-        return None
-
-    def stop(self, task_id: str) -> None:
-        """Signal the executor to finish the current task successfully."""
-        return None
-
     # ---------- Convenience helpers ----------
     @staticmethod
     def ensure_dir(path: Path) -> None:
@@ -190,7 +194,7 @@ class EchoExecutor(Executor):
     name = "echo"
     supported_task_types = frozenset({TaskType.ECHO})
 
-    def run(self, task: ExecutorTask, out_dir: Path) -> EchoResult:
+    def run(self, task: ExecutorTask, out_dir: Path, control: RunControl) -> EchoResult:
         return EchoResult(
             executor=self.name,
             task_id=task.task_id,

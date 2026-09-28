@@ -25,6 +25,7 @@ from worker.executors.ssh_session import (
 )
 
 from .base_executor import ExecutionError, ExecutorTask
+from .run_control import RunControl
 from .session_executor import SessionExecutor
 
 __all__ = ["ResolvedSSHInput", "SSHConfig", "SSHExecutor", "SSHOutputConfig"]
@@ -36,10 +37,10 @@ class SSHExecutor(SessionExecutor):
     name = "ssh"
     supported_task_types = frozenset({TaskType.SSH})
 
-    def run(self, task: ExecutorTask, out_dir: Path) -> SSHResult:
+    def run(self, task: ExecutorTask, out_dir: Path, control: RunControl) -> SSHResult:
         spec = self.require_spec(task, SSHSpecStrict)
         cfg = self._config_for(spec)
-        outcome = self._run_session(task, out_dir, cfg)
+        outcome = self._run_session(task, out_dir, cfg, control)
         exit_code = outcome.end.exit_code
 
         result = SSHResult(session_id=outcome.session_id, exit_code=exit_code)

@@ -31,6 +31,7 @@ from worker.executors.api_executor import (
     APIExecutor,
 )
 from worker.executors.base_executor import ExecutionError, TaskCancelledError
+from worker.executors.run_control import RunControl
 
 
 def _task_message(**spec_updates: object) -> WorkerTaskMessage:
@@ -137,20 +138,19 @@ def _run(
     task: WorkerTaskMessage,
     transport: httpx.MockTransport,
     out_dir: Path = Path("/tmp/out"),
+    control: RunControl | None = None,
 ):
+    if control is None:
+        control = RunControl(task.task_id)
     with patch.object(
         APIExecutor, "_get_client", return_value=httpx.Client(transport=transport)
     ):
-        return executor.run(task, out_dir)
+        return executor.run(task, out_dir, control)
 
 
 def _executor() -> APIExecutor:
-    """Build an APIExecutor with cancellation state, without a WorkerConfig."""
+    """Build an APIExecutor without a WorkerConfig."""
     executor = APIExecutor.__new__(APIExecutor)
-    executor._cancel_event = threading.Event()
-    executor._active_task_id = None
-    executor._pending_cancelled_ids = set()
-    executor._cancel_lock = threading.Lock()
     executor._task_id = None
     executor._current_batch_id = None
     return executor
@@ -374,13 +374,14 @@ class TestRetries:
         """A cancelled task does not keep retrying."""
         executor = _executor()
         task = self._task(retries=3)
-        executor.cancel(task.task_id)
+        control = RunControl(task.task_id)
+        control.request_cancel()
         transport = _SequenceTransport([_error_response(504)])
         with patch.object(
             APIExecutor, "_get_client", return_value=httpx.Client(transport=transport)
         ):
             with pytest.raises(TaskCancelledError):
-                executor.run(task, Path("/tmp/out"))
+                executor.run(task, Path("/tmp/out"), control)
         assert transport.calls == 0
 
     def test_invalid_retries_rejected(self) -> None:
@@ -390,16 +391,9 @@ class TestRetries:
                 self._task(retries=bad)
 
     def test_cancel_previous_task_does_not_cancel_next(self) -> None:
-        """A cancellation left over from a prior task does not cancel the next."""
+        """A cancellation of a prior task's run does not cancel the next run."""
         executor = APIExecutor.__new__(APIExecutor)
-        executor._cancel_event = threading.Event()
-        executor._cancel_lock = threading.Lock()
-        executor._active_task_id = None
-        executor._pending_cancelled_ids = set()
-
-        task_a = self._task(retries=0)
-        task_a.task_id = "task-a"
-        executor.cancel(task_a.task_id)
+        RunControl("task-a").request_cancel()
 
         task_b = self._task(retries=0)
         task_b.task_id = "task-b"
@@ -407,42 +401,18 @@ class TestRetries:
         with patch.object(
             APIExecutor, "_get_client", return_value=httpx.Client(transport=transport)
         ):
-            executor.run(task_b, Path("/tmp/out"))
+            executor.run(task_b, Path("/tmp/out"), RunControl(task_b.task_id))
         assert transport.request is not None
-
-    def test_late_cancel_of_previous_task_does_not_overwrite_next(self) -> None:
-        """A late cancel for A cannot overwrite a recorded cancel for B."""
-        executor = APIExecutor.__new__(APIExecutor)
-        executor._cancel_event = threading.Event()
-        executor._cancel_lock = threading.Lock()
-        executor._active_task_id = None
-        executor._pending_cancelled_ids = set()
-
-        task_b = self._task(retries=0)
-        task_b.task_id = "task-b"
-        executor.cancel(task_b.task_id)
-        executor.cancel("task-a")
-
-        transport = _RecordingTransport()
-        with patch.object(
-            APIExecutor, "_get_client", return_value=httpx.Client(transport=transport)
-        ):
-            with pytest.raises(TaskCancelledError):
-                executor.run(task_b, Path("/tmp/out"))
-        assert transport.request is None
 
     def test_delayed_cancel_of_previous_task_does_not_cancel_next(self) -> None:
         """A late cancellation for a prior task does not cancel a running task."""
         executor = APIExecutor.__new__(APIExecutor)
-        executor._cancel_event = threading.Event()
-        executor._cancel_lock = threading.Lock()
-        executor._active_task_id = None
-        executor._pending_cancelled_ids = set()
 
         task_b = self._task(retries=1)
         task_b.task_id = "task-b"
+        control_a = RunControl("task-a")
         # First request blocks; once released it returns a retryable 503 so the
-        # loop re-checks the cancel event, then a 200 succeeds.
+        # loop re-checks the control, then a 200 succeeds.
         transport = _BlockingTransport([_error_response(503), _ok_response()])
 
         errors: list[BaseException] = []
@@ -454,7 +424,7 @@ class TestRetries:
                     "_get_client",
                     return_value=httpx.Client(transport=transport),
                 ):
-                    executor.run(task_b, Path("/tmp/out"))
+                    executor.run(task_b, Path("/tmp/out"), RunControl(task_b.task_id))
             except BaseException as exc:
                 errors.append(exc)
 
@@ -462,7 +432,7 @@ class TestRetries:
         thread.start()
         try:
             assert transport.started.wait(2.0)
-            executor.cancel("task-a")
+            control_a.request_cancel()
         finally:
             transport.release.set()
         thread.join(2.0)
@@ -473,13 +443,10 @@ class TestRetries:
     def test_cancel_of_active_task_still_cancels(self) -> None:
         """A cancellation addressed to the running task still cancels it."""
         executor = APIExecutor.__new__(APIExecutor)
-        executor._cancel_event = threading.Event()
-        executor._cancel_lock = threading.Lock()
-        executor._active_task_id = None
-        executor._pending_cancelled_ids = set()
 
         task_b = self._task(retries=3)
         task_b.task_id = "task-b"
+        control_b = RunControl(task_b.task_id)
         transport = _BlockingTransport([_error_response(503)])
 
         errors: list[BaseException] = []
@@ -491,7 +458,7 @@ class TestRetries:
                     "_get_client",
                     return_value=httpx.Client(transport=transport),
                 ):
-                    executor.run(task_b, Path("/tmp/out"))
+                    executor.run(task_b, Path("/tmp/out"), control_b)
             except BaseException as exc:
                 errors.append(exc)
 
@@ -499,7 +466,7 @@ class TestRetries:
         thread.start()
         try:
             assert transport.started.wait(2.0)
-            executor.cancel("task-b")
+            control_b.request_cancel()
         finally:
             transport.release.set()
         thread.join(2.0)
@@ -510,18 +477,15 @@ class TestRetries:
     def test_cancel_during_backoff_stops_retrying(self) -> None:
         """A cancellation during the retry backoff aborts well before it ends."""
         executor = APIExecutor.__new__(APIExecutor)
-        executor._cancel_event = threading.Event()
-        executor._cancel_lock = threading.Lock()
-        executor._active_task_id = None
-        executor._pending_cancelled_ids = set()
 
         task = self._task(retries=3)
         task.task_id = "task-b"
+        control = RunControl(task.task_id)
         transport = _NotifyTransport([_error_response(503)])
 
         def _cancel_on_served() -> None:
             transport.served.wait(2.0)
-            executor.cancel(task.task_id)
+            control.request_cancel()
 
         canceller = threading.Thread(target=_cancel_on_served)
         canceller.start()
@@ -530,7 +494,7 @@ class TestRetries:
             APIExecutor, "_get_client", return_value=httpx.Client(transport=transport)
         ):
             with pytest.raises(TaskCancelledError):
-                executor.run(task, Path("/tmp/out"))
+                executor.run(task, Path("/tmp/out"), control)
         elapsed = time.monotonic() - start
         canceller.join()
         assert elapsed < 0.5
@@ -542,21 +506,17 @@ class TestRetries:
         """Run a task, recording each backoff delay instead of waiting."""
         delays: list[float] = []
 
-        def _record(delay: float, failed: threading.Event) -> None:
+        def _record(delay: float, failed: threading.Event, control: RunControl) -> None:
             delays.append(delay)
 
         executor = APIExecutor.__new__(APIExecutor)
-        executor._cancel_event = threading.Event()
-        executor._cancel_lock = threading.Lock()
-        executor._active_task_id = None
-        executor._pending_cancelled_ids = set()
         with patch.object(APIExecutor, "_wait_for_backoff", side_effect=_record):
             with patch.object(
                 APIExecutor,
                 "_get_client",
                 return_value=httpx.Client(transport=transport),
             ):
-                executor.run(task, Path("/tmp/out"))
+                executor.run(task, Path("/tmp/out"), RunControl(task.task_id))
         return delays
 
     def test_retry_after_seconds_is_honoured(self) -> None:
@@ -967,7 +927,7 @@ class TestBatch:
             ) as mock_build,
         ):
             mock_build.side_effect = lambda *a, **k: real_build(*a, **k)
-            _executor().run(task, tmp_path)
+            _executor().run(task, tmp_path, RunControl(task.task_id))
 
         assert mock_build.call_count == 1
         assert len(mock_build.call_args.args) == 2
@@ -1008,7 +968,7 @@ class TestBatch:
             return httpx.Client(transport=_EchoTransport())
 
         with patch.object(APIExecutor, "_get_client", side_effect=_fake_get_client):
-            _executor().run(task, tmp_path)
+            _executor().run(task, tmp_path, RunControl(task.task_id))
 
         assert captured["concurrency"] == concurrency
 
@@ -1185,6 +1145,7 @@ class TestBatch:
 
         executor = _executor()
         task = _batch_task(["a", "b", "c", "d"], concurrency=1)
+        control = RunControl(task.task_id)
         transport = _BlockingTransport()
         errors: list[BaseException] = []
         submitted: list[Any] = []
@@ -1204,7 +1165,7 @@ class TestBatch:
                     "submit",
                     _recording_submit,
                 ):
-                    _run(executor, task, transport, tmp_path)
+                    _run(executor, task, transport, tmp_path, control)
             except BaseException as exc:  # noqa: BLE001 - captured for assertion
                 errors.append(exc)
 
@@ -1212,7 +1173,7 @@ class TestBatch:
         thread.start()
         assert transport.started.wait(timeout=5)
         assert all_submitted.wait(timeout=5)
-        executor.cancel("task-api-batch")
+        control.request_cancel()
         transport.release.set()
         thread.join(timeout=10)
 
@@ -1225,6 +1186,7 @@ class TestBatch:
         without submitting any future."""
         executor = _executor()
         task = _batch_task(["a", "b", "c", "d"])
+        control = RunControl(task.task_id)
         transport = _EchoTransport()
         errors: list[BaseException] = []
         submitted: list[Any] = []
@@ -1237,7 +1199,7 @@ class TestBatch:
 
         def _run_in_thread() -> None:
             def _cancel_then_base_url(url: str) -> str:
-                executor.cancel("task-api-batch")
+                control.request_cancel()
                 return real_base_url(url)
 
             try:
@@ -1253,7 +1215,7 @@ class TestBatch:
                         side_effect=_cancel_then_base_url,
                     ),
                 ):
-                    _run(executor, task, transport, tmp_path)
+                    _run(executor, task, transport, tmp_path, control)
             except BaseException as exc:  # noqa: BLE001 - captured for assertion
                 errors.append(exc)
 
@@ -1288,6 +1250,7 @@ class TestBatch:
 
         executor = _executor()
         task = _batch_task(["a", "b"], concurrency=2)
+        control = RunControl(task.task_id)
         transport = _RecordingTransport()
         errors: list[BaseException] = []
         futures: list[Any] = []
@@ -1316,7 +1279,7 @@ class TestBatch:
                         api_executor_module, "as_completed", _blocking_as_completed
                     ),
                 ):
-                    _run(executor, task, transport, tmp_path)
+                    _run(executor, task, transport, tmp_path, control)
             except BaseException as exc:  # noqa: BLE001 - captured for assertion
                 errors.append(exc)
 
@@ -1332,7 +1295,7 @@ class TestBatch:
         for future in futures:
             assert future.done()
         assert len(transport.requests) == 2
-        executor.cancel("task-api-batch")
+        control.request_cancel()
         collect_release.set()
         thread.join(timeout=10)
 
@@ -1343,46 +1306,14 @@ class TestBatch:
         """A cancel that lands before run() starts still cancels the run."""
         executor = _executor()
         task = _batch_task(["a", "b"])
+        control = RunControl(task.task_id)
         transport = _EchoTransport()
 
-        executor.cancel("task-api-batch")
+        control.request_cancel()
 
         with pytest.raises(TaskCancelledError):
-            _run(executor, task, transport, tmp_path)
+            _run(executor, task, transport, tmp_path, control)
         assert transport.requests == []
-
-    def test_cancel_during_run_setup_not_lost(self, tmp_path: Path) -> None:
-        """A cancel landing mid check-and-clear is not dropped."""
-        executor = _executor()
-        task = _batch_task(["a", "b"])
-        transport = _EchoTransport()
-        errors: list[BaseException] = []
-        in_clear = threading.Event()
-        release_clear = threading.Event()
-        real_clear = executor._cancel_event.clear
-
-        def _blocking_clear() -> None:
-            in_clear.set()
-            release_clear.wait(timeout=5)
-            real_clear()
-
-        executor._cancel_event.clear = _blocking_clear  # type: ignore[method-assign]
-
-        def _run_in_thread() -> None:
-            try:
-                _run(executor, task, transport, tmp_path)
-            except BaseException as exc:  # noqa: BLE001 - captured for assertion
-                errors.append(exc)
-
-        thread = threading.Thread(target=_run_in_thread)
-        thread.start()
-        assert in_clear.wait(timeout=5)
-        executor.cancel(task.task_id)
-        release_clear.set()
-        thread.join(timeout=10)
-
-        assert len(errors) == 1
-        assert isinstance(errors[0], TaskCancelledError)
 
 
 class TestPromptSubstitution:
@@ -1622,9 +1553,10 @@ class TestDataframeRows:
         }
         task = WorkerTaskMessage.model_validate(payload)
         executor = _executor()
-        executor.cancel(task.task_id)
+        control = RunControl(task.task_id)
+        control.request_cancel()
         with pytest.raises(TaskCancelledError):
-            _run(executor, task, _EchoTransport(), tmp_path)
+            _run(executor, task, _EchoTransport(), tmp_path, control)
 
     def test_zero_vs_three_rows_still_raises(self, tmp_path: Path) -> None:
         """A real mismatch (one column empty, another with rows) still raises."""

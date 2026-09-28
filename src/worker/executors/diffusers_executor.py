@@ -23,6 +23,7 @@ from shared.tasks.task_type import TaskType
 from ..utils.logging import configure_hf_library_logging
 from .base_executor import ExecutionError, Executor, ExecutorTask
 from .mixins.data import DataMixin
+from .run_control import RunControl
 from .utils.checkpoints import maybe_upload_artifacts, maybe_upload_traces
 
 try:
@@ -250,7 +251,9 @@ class DiffusersExecutor(DataMixin, Executor):
 
         return combined_pos, combined_neg, user_pos_pooled, user_neg_pooled
 
-    def run(self, task: ExecutorTask, out_dir: Path) -> DiffusionResult:
+    def run(
+        self, task: ExecutorTask, out_dir: Path, control: RunControl
+    ) -> DiffusionResult:
         configure_hf_library_logging()
         spec = self.require_spec(task, DiffusionSpecStrict)
         task_id = task.task_id.strip()

@@ -5,6 +5,7 @@ from pathlib import Path
 from shared.schemas.result import EchoResult
 from shared.tasks import TaskType
 from worker.executors.echo_executor import EchoExecutor
+from worker.executors.run_control import RunControl
 
 from .factories import make_worker_config, make_worker_task_message
 
@@ -23,7 +24,9 @@ def _run(
     task = make_worker_task_message(
         _spec(data, upstream), task_type=TaskType.ECHO, task_id="tsk-echo"
     )
-    return executor.run(task, tmp_path or Path("/tmp/echo-out"))
+    return executor.run(
+        task, tmp_path or Path("/tmp/echo-out"), RunControl(task.task_id)
+    )
 
 
 def test_literal_items_are_echoed() -> None:

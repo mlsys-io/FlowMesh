@@ -27,6 +27,7 @@ from worker.config import WorkerConfig
 
 from .base_executor import ExecutionError, Executor, ExecutorTask
 from .mixins.inference import InferenceMixin
+from .run_control import RunControl
 from .utils.checkpoints import maybe_upload_artifacts, maybe_upload_traces
 
 try:
@@ -83,7 +84,7 @@ class OmniExecutorBase(InferenceMixin, Executor):
     def is_available(cls, config: WorkerConfig) -> bool:
         return _HAS_OMNI
 
-    def run(self, task: ExecutorTask, out_dir: Path) -> OmniResult:
+    def run(self, task: ExecutorTask, out_dir: Path, control: RunControl) -> OmniResult:
         spec = self.require_spec(task, self._TASK_SPEC_TYPE)
         spec_dict = spec.model_dump(by_alias=True)
         out_dir = Path(out_dir).resolve()

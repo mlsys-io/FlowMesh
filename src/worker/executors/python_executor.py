@@ -47,6 +47,7 @@ from worker.executors.ssh_session import (
 from worker.executors.ssh_session.config import DEFAULT_INPUTS_ROOT
 
 from .base_executor import ExecutionError, ExecutorTask
+from .run_control import RunControl
 from .session_executor import SessionExecutor, SessionOutcome
 
 logger = logging.getLogger(__name__)
@@ -67,7 +68,9 @@ class PythonExecutor(SessionExecutor):
         backend = select_backend_cls(config)
         return backend is not None and issubclass(backend, DockerSessionBackend)
 
-    def run(self, task: ExecutorTask, out_dir: Path) -> PythonResult:
+    def run(
+        self, task: ExecutorTask, out_dir: Path, control: RunControl
+    ) -> PythonResult:
         spec = self.require_spec(task, PythonSpecStrict)
         if spec.inputs is None and task.upstream_task_ids:
             # No explicit inputs: the dispatcher resolved every direct
@@ -80,7 +83,7 @@ class PythonExecutor(SessionExecutor):
                 }
             )
         cfg = self._python_config(spec)
-        outcome = self._run_session(task, out_dir, cfg)
+        outcome = self._run_session(task, out_dir, cfg, control)
         artifacts = out_dir / ARTIFACTS_DIR
         _raise_unless_succeeded(outcome, cfg.ttl_sec, artifacts)
         return _read_result(artifacts, spec.emits or [])

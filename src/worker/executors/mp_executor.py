@@ -28,6 +28,7 @@ from shared.tasks.worker_message import WorkerHardware
 from worker.config import WorkerConfig
 
 from .base_executor import ExecutionError, Executor, ExecutorTask
+from .run_control import RunControl
 
 logger = logging.getLogger(__name__)
 
@@ -248,8 +249,8 @@ def _executor_worker(
 
     Protocol (tuples sent via `cmd_queue`):
       - ("run", task_payload, out_dir_str, request_id)
-          -> execute `executor.run(task, Path(out_dir))` and put (request_id, payload)
-          into result_queue
+          -> execute `executor.run(task, Path(out_dir), RunControl(task.task_id))`
+          and put (request_id, payload) into result_queue
       - ("shutdown", request_id)
           -> call `executor.cleanup_after_run()` and exit; put (request_id, ack_payload)
 
@@ -325,7 +326,7 @@ def _executor_worker(
                     result_queue.put((req_id, payload))
                     continue
                 try:
-                    result = executor.run(task, Path(out_dir))
+                    result = executor.run(task, Path(out_dir), RunControl(task.task_id))
                     payload = {"ok": True, "result": result}
                 except Exception as exc:
                     payload = {
@@ -457,7 +458,10 @@ class MPExecutor(Executor):
         self._log_thread = t
         t.start()
 
-    def run(self, task: ExecutorTask, out_dir: Path) -> BaseExecutorResult:
+    def run(
+        self, task: ExecutorTask, out_dir: Path, control: RunControl
+    ) -> BaseExecutorResult:
+        # Signals are not forwarded into the subprocess.
         with self._lock:
             if self._shutdown:
                 logger.info("Starting worker subprocess for %s", self.name)
