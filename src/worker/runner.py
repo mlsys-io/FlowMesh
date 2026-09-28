@@ -113,7 +113,7 @@ class Runner:
         self._controls: dict[str, _ControlEntry] = {}
         self._current_control: RunControl | None = None
         self._cancel_lock = threading.Lock()
-        self._shutdown_requested = threading.Event()
+        self._shutdown_requested = False
         self._shutdown_requests: queue.SimpleQueue[object] = queue.SimpleQueue()
         self._shutdown_thread: threading.Thread | None = None
 
@@ -264,16 +264,17 @@ class Runner:
                 self._active_executor_last_used_at = None
                 self._active_executor_used_gpu = False
 
-    def stop(self) -> None:
+    def stop(self, reason: str = "stop requested") -> None:
         """Request shutdown; the shutdown thread stops task intake and the run."""
         # Runs in a signal handler on the task-loop thread, which may be interrupted
-        # while holding a lock, so this takes none that thread could hold: nothing
-        # waits on the event, and SimpleQueue.put is reentrant.
-        self._shutdown_requested.set()
-        self._shutdown_requests.put(None)
+        # while holding a lock, or inside this handler by a second signal. So this
+        # takes no lock: it stores a flag and makes a reentrant SimpleQueue put.
+        self._shutdown_requested = True
+        self._shutdown_requests.put(reason)
 
     def _shutdown_loop(self) -> None:
-        while self._shutdown_requests.get() is not _SHUTDOWN_THREAD_EXIT:
+        while (reason := self._shutdown_requests.get()) is not _SHUTDOWN_THREAD_EXIT:
+            self.logger.info("Shutting down: %s", reason)
             try:
                 self.lifecycle.stop()
             except Exception:
@@ -585,7 +586,7 @@ class Runner:
         self._start_interrupt_monitor()
         try:
             for msg in self.task_stream:
-                if self._shutdown_requested.is_set():
+                if self._shutdown_requested:
                     break
                 assigned_worker = msg.assigned_worker
                 if assigned_worker and assigned_worker != self.lifecycle.worker_id:
