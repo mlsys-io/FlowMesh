@@ -1,6 +1,6 @@
 import threading
 import uuid
-from collections.abc import Generator
+from collections.abc import Callable, Generator, Iterable
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 
@@ -15,9 +15,27 @@ class _WorkerRegistryState:
 
 
 class WorkerRegistry:
-    def __init__(self) -> None:
+    """Thread-safe map of worker adapters by token and alias, and of each token's
+    current worker id.
+
+    ``on_worker_id_released`` is called with every worker id whose token binding is
+    replaced or removed, after the registry lock is released.
+    """
+
+    def __init__(
+        self, on_worker_id_released: Callable[[str], None] | None = None
+    ) -> None:
         self._state = _WorkerRegistryState()
         self._lock = threading.Lock()
+        self._on_worker_id_released = on_worker_id_released
+
+    def _release(self, worker_ids: Iterable[str | None]) -> None:
+        callback = self._on_worker_id_released
+        if callback is None:
+            return
+        for worker_id in worker_ids:
+            if worker_id is not None:
+                callback(worker_id)
 
     @contextmanager
     def _get_state(self) -> Generator[_WorkerRegistryState, None, None]:
@@ -54,8 +72,9 @@ class WorkerRegistry:
         with self._get_state() as state:
             worker = state.registry.pop(token)
             del state.alias_token_map[worker.alias]
-            state.token_id_map.pop(token, None)
-            return worker
+            released = state.token_id_map.pop(token, None)
+        self._release([released])
+        return worker
 
     def try_pop(self, token: WorkerTokenType) -> WorkerAdapter | None:
         with self._get_state() as state:
@@ -63,14 +82,17 @@ class WorkerRegistry:
             if worker is None:
                 return None
             del state.alias_token_map[worker.alias]
-            state.token_id_map.pop(token, None)
-            return worker
+            released = state.token_id_map.pop(token, None)
+        self._release([released])
+        return worker
 
     def clear(self) -> None:
         with self._get_state() as state:
             state.registry.clear()
             state.alias_token_map.clear()
+            released = list(state.token_id_map.values())
             state.token_id_map.clear()
+        self._release(released)
 
     def exists_by_alias(self, alias: str) -> bool:
         with self._get_state() as state:
@@ -92,16 +114,19 @@ class WorkerRegistry:
         with self._get_state() as state:
             token = state.alias_token_map.pop(alias)
             worker = state.registry.pop(token)
-            state.token_id_map.pop(token, None)
-            return worker
+            released = state.token_id_map.pop(token, None)
+        self._release([released])
+        return worker
 
     def try_pop_by_alias(self, alias: str) -> WorkerAdapter | None:
         with self._get_state() as state:
             token = state.alias_token_map.pop(alias, None)
             if token is None:
                 return None
-            state.token_id_map.pop(token, None)
-            return state.registry.pop(token)
+            released = state.token_id_map.pop(token, None)
+            worker = state.registry.pop(token)
+        self._release([released])
+        return worker
 
     def all_workers(self) -> list[WorkerAdapter]:
         with self._get_state() as state:
@@ -109,7 +134,10 @@ class WorkerRegistry:
 
     def set_worker_id(self, token: WorkerTokenType, worker_id: str) -> None:
         with self._get_state() as state:
+            previous = state.token_id_map.get(token)
             state.token_id_map[token] = worker_id
+        if previous != worker_id:
+            self._release([previous])
 
     def get_worker_id(self, token: WorkerTokenType) -> str | None:
         with self._get_state() as state:
