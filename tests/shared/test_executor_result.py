@@ -108,13 +108,11 @@ def test_open_passthrough_nulls_are_preserved() -> None:
             "url": "http://h",
             "status_code": 200,
             "json": {"present": None, "value": 1},
-            "usage": {"cost": None},
             "text": None,
         }
     )
     dumped = result.model_dump(by_alias=True)
     assert dumped["json"] == {"present": None, "value": 1}
-    assert dumped["usage"] == {"cost": None}
     assert "text" not in dumped
 
 

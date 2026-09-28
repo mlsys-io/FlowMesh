@@ -15,7 +15,7 @@ from unittest.mock import patch
 import httpx
 import pytest
 
-from shared.schemas.result import APIGroupItem, APIItem, APIResult
+from shared.schemas.result import APIGroupItem, APIItem, APIResult, APIUsage
 from shared.tasks.worker_message import WorkerTaskMessage
 from worker.executors import api_executor as api_executor_module
 from worker.executors.api_executor import (
@@ -2046,3 +2046,116 @@ class TestCallLogging:
         assert "failures=0" in msg
         assert "retries=0" in msg
         assert "backends=backend-a=2,backend-b=1" in msg
+
+
+class TestUsage:
+    @pytest.fixture(autouse=True)
+    def _nebula_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("NEBULA_API_BASE_URL", "https://nebula.example.com")
+        monkeypatch.setenv("NEBULA_API_TOKEN", "nebula-token")
+
+    def test_usage_totals_across_rows(self, tmp_path: Path) -> None:
+        """The result's usage sums tokens and calls across every row, counting
+        a finish_reason=length call as truncated."""
+        task = _batch_task(["a", "b", "c"])
+        transport = _SequenceTransport(
+            [
+                httpx.Response(
+                    200,
+                    json={
+                        "choices": [
+                            {
+                                "message": {"content": "a"},
+                                "finish_reason": "stop",
+                            }
+                        ],
+                        "usage": {
+                            "prompt_tokens": 10,
+                            "completion_tokens": 5,
+                            "completion_tokens_details": {"reasoning_tokens": 2},
+                        },
+                    },
+                ),
+                httpx.Response(
+                    200,
+                    json={
+                        "choices": [
+                            {
+                                "message": {"content": "b"},
+                                "finish_reason": "length",
+                            }
+                        ],
+                        "usage": {
+                            "prompt_tokens": 20,
+                            "completion_tokens": 7,
+                        },
+                    },
+                ),
+                httpx.Response(
+                    200,
+                    json={"choices": [{"message": {"content": "c"}}]},
+                ),
+            ]
+        )
+        result = _run(_executor(), task, transport, tmp_path)
+        assert result.usage is not None
+        assert result.usage.prompt_tokens == 30
+        assert result.usage.completion_tokens == 12
+        assert result.usage.reasoning_tokens == 2
+        assert result.usage.calls == 3
+        assert result.usage.failures == 0
+        assert result.usage.retries == 0
+        assert result.usage.truncated_calls == 1
+        assert result.usage.wall_sec >= 0
+
+    def test_usage_counts_retries(self, tmp_path: Path) -> None:
+        """A retried 503 then 200 counts the retry in usage."""
+        task = _batch_task(["a"], retries=2)
+        transport = _SequenceTransport(
+            [
+                _error_response(503),
+                httpx.Response(
+                    200,
+                    json={
+                        "choices": [{"message": {"content": "a"}}],
+                        "usage": {"prompt_tokens": 4, "completion_tokens": 1},
+                    },
+                ),
+            ]
+        )
+        result = _run(_executor(), task, transport, tmp_path)
+        assert result.usage is not None
+        assert result.usage.calls == 1
+        assert result.usage.retries == 1
+        assert result.usage.prompt_tokens == 4
+        assert result.usage.completion_tokens == 1
+
+    def test_usage_absent_when_no_rows(self, tmp_path: Path) -> None:
+        """A task with no rows raises before producing a usage object."""
+        task = _batch_task([])
+        with pytest.raises(ExecutionError, match="no rows"):
+            _run(_executor(), task, _EchoTransport(), tmp_path)
+
+    def test_single_call_usage_shape(self, tmp_path: Path) -> None:
+        """A one-row task's usage is a typed APIUsage, not a raw provider dict."""
+        task = _batch_task(["hi"])
+        transport = _SequenceTransport(
+            [
+                httpx.Response(
+                    200,
+                    json={
+                        "choices": [{"message": {"content": "hello"}}],
+                        "usage": {"prompt_tokens": 10, "completion_tokens": 5},
+                    },
+                )
+            ]
+        )
+        result = _run(_executor(), task, transport, tmp_path)
+        assert isinstance(result.usage, APIUsage)
+        assert result.usage.prompt_tokens == 10
+        assert result.usage.completion_tokens == 5
+        assert result.usage.reasoning_tokens == 0
+        assert result.usage.calls == 1
+        assert result.usage.failures == 0
+        assert result.usage.retries == 0
+        assert result.usage.truncated_calls == 0

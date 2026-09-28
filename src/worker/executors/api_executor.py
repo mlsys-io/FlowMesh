@@ -12,7 +12,7 @@ from typing import Any, ClassVar
 
 import httpx
 
-from shared.schemas.result import APIGroupItem, APIItem, APIResult
+from shared.schemas.result import APIGroupItem, APIItem, APIResult, APIUsage
 from shared.tasks.specs import ApiSpecStrict
 from shared.tasks.task_type import TaskType
 from shared.utils.redact import is_credential_key
@@ -563,6 +563,7 @@ class APIExecutor(DataMixin, Executor):
         sum_prompt = 0
         sum_completion = 0
         sum_reasoning = 0
+        truncated_calls = 0
         backend_counts: dict[str, int] = {}
         task_start = time.monotonic()
         in_flight: dict[int, float] = {}
@@ -579,7 +580,7 @@ class APIExecutor(DataMixin, Executor):
             failed: bool,
         ) -> None:
             nonlocal done, failures, total_retries
-            nonlocal sum_prompt, sum_completion, sum_reasoning
+            nonlocal sum_prompt, sum_completion, sum_reasoning, truncated_calls
             wall = time.monotonic() - start
             with in_flight_lock:
                 in_flight.pop(idx, None)
@@ -602,6 +603,8 @@ class APIExecutor(DataMixin, Executor):
                     sum_completion += completion_tokens
                 if reasoning_tokens is not None:
                     sum_reasoning += reasoning_tokens
+                if finish_reason == "length":
+                    truncated_calls += 1
                 if backend is not None:
                     backend_counts[backend] = backend_counts.get(backend, 0) + 1
             logger.info(
@@ -727,6 +730,7 @@ class APIExecutor(DataMixin, Executor):
                 prompt_snapshot = sum_prompt
                 completion_snapshot = sum_completion
                 reasoning_snapshot = sum_reasoning
+                truncated_snapshot = truncated_calls
                 backends_snapshot = dict(backend_counts)
             self._log_summary(
                 task.task_id,
@@ -802,4 +806,14 @@ class APIExecutor(DataMixin, Executor):
             status_code=status_code,
             truncated=truncated,
             items=result_items,
+            usage=APIUsage(
+                prompt_tokens=prompt_snapshot,
+                completion_tokens=completion_snapshot,
+                reasoning_tokens=reasoning_snapshot,
+                calls=total,
+                failures=failures_snapshot,
+                retries=retries_snapshot,
+                truncated_calls=truncated_snapshot,
+                wall_sec=wall,
+            ),
         )

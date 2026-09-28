@@ -21,6 +21,17 @@ class GenerationUsage(StrictModel):
     latency_sec: float
 
 
+class APIUsage(StrictModel):
+    prompt_tokens: int
+    completion_tokens: int
+    reasoning_tokens: int
+    calls: int
+    failures: int
+    retries: int
+    truncated_calls: int
+    wall_sec: float
+
+
 class EmbeddingUsage(StrictModel):
     prompt_tokens: int
     total_tokens: int
