@@ -27,7 +27,8 @@ class TaskInfo(BaseModel):
     owner_id: str
     org_id: str
     supplier_id: str
-    # Servers before 0.1.10 send this as ``raw_yaml``; accept either.
+    # TODO(deprecate): `raw_yaml` is for servers before 0.1.10, which send `source`
+    # under that key; remove in the next minor release.
     source: str = Field(validation_alias=AliasChoices("source", "raw_yaml"))
     task: dict[str, Any]
     status: TaskStatus

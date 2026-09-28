@@ -313,6 +313,7 @@ class TestTaskModels:
         assert task.task_id == "t-abc"
         assert task.completed is True
 
+    # TODO(deprecate): remove with the `raw_yaml` alias in flowmesh/models/tasks.py.
     @pytest.mark.parametrize("key", ["source", "raw_yaml"])
     def test_task_info_accepts_source_or_raw_yaml(self, key: str) -> None:
         payload = _dump(_SRV_TASK_INFO)

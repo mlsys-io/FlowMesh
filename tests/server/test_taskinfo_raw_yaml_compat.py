@@ -10,6 +10,9 @@ from server.task.models import TaskInfo
 from shared.tasks import TaskEnvelopeTemplate
 from shared.utils.redact import REDACTED
 
+# TODO(deprecate): remove this module with the `raw_yaml` shim in
+# server/task/models.py.
+
 
 # Top-level fields of flowmesh-sdk 0.1.9's TaskInfo; frozen, do not update.
 class _SdkV019TaskInfo(BaseModel):
