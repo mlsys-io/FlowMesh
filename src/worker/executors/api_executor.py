@@ -14,6 +14,7 @@ import httpx
 
 from shared.schemas.result import APIGroupItem, APIItem, APIResult, APIUsage
 from shared.tasks.specs import ApiSpecStrict
+from shared.tasks.specs.misc import ApiConfig, ApiResponseConfig
 from shared.tasks.task_type import TaskType
 from shared.utils.redact import is_credential_key
 
@@ -27,19 +28,16 @@ from .mixins.data import DataMixin
 
 logger = logging.getLogger(__name__)
 
+# Cache key: (base_url, timeout_seconds, verify_tls, follow_redirects, concurrency)
 _ClientKey = tuple[str, float, bool, bool, int]
 
 # Worker-side per-row slot; server-side stage references are ${...}.
 _PROMPT_PLACEHOLDER = "{{prompt}}"
 
-_MAX_CONCURRENCY = 8
-
 # Base delay between retry attempts, doubled each retry.
 _RETRY_BACKOFF_SEC = 1.0
 # Upper bound on any single retry wait.
 _RETRY_BACKOFF_MAX_SEC = 60.0
-# Upper bound on spec.api.retries.
-_MAX_RETRIES = 10
 
 
 def _is_retryable_status(status_code: int) -> bool:
@@ -347,14 +345,11 @@ class APIExecutor(DataMixin, Executor):
             return [cls._substitute_prompt(v, prompt) for v in value]
         return value
 
-    def _build_request_kwargs(
-        self, api_cfg: dict[str, Any], prompt: Any | None
-    ) -> dict[str, Any]:
-        """Build httpx request kwargs from ``spec.api``, substituting the row
-        prompt when batching."""
-        json_payload = api_cfg.get("json")
-        body = api_cfg.get("body")
-        data_payload = api_cfg.get("data")
+    def _build_request_kwargs(self, api_cfg: ApiConfig) -> dict[str, Any]:
+        """Build httpx request kwargs from ``spec.api``."""
+        json_payload = api_cfg.json_body
+        body = api_cfg.body
+        data_payload = api_cfg.data
 
         if json_payload is not None and body is not None:
             raise ExecutionError(
@@ -363,43 +358,26 @@ class APIExecutor(DataMixin, Executor):
 
         request_kwargs: dict[str, Any] = {}
         if json_payload is not None:
-            request_kwargs["json"] = (
-                self._substitute_prompt(json_payload, prompt)
-                if prompt is not None
-                else json_payload
-            )
+            request_kwargs["json"] = json_payload
         elif body is not None:
             if isinstance(body, (dict, list)):
-                request_kwargs["json"] = (
-                    self._substitute_prompt(body, prompt)
-                    if prompt is not None
-                    else body
-                )
+                request_kwargs["json"] = body
             else:
-                request_kwargs["content"] = (
-                    self._substitute_prompt(body, prompt)
-                    if prompt is not None
-                    else body
-                )
+                request_kwargs["content"] = body
         elif data_payload is not None:
-            request_kwargs["data"] = (
-                self._substitute_prompt(data_payload, prompt)
-                if prompt is not None
-                else data_payload
-            )
+            request_kwargs["data"] = data_payload
         return request_kwargs
 
     def _parse_response(
         self,
         resp: httpx.Response,
         *,
-        response_cfg: dict[str, Any],
+        response_cfg: ApiResponseConfig,
         max_body_bytes: int,
-    ) -> tuple[APIItem, str | None]:
-        """Turn one HTTP response into an APIItem, applying response config.
-
-        Returns the item and the raw body text (used for error messages).
-        """
+        idx: int,
+        prompt_str: str,
+    ) -> APIItem:
+        """Turn one HTTP response into an APIItem, applying response config."""
         body_bytes = resp.content
         truncated = False
         if max_body_bytes is not None and len(body_bytes) > max_body_bytes:
@@ -407,21 +385,22 @@ class APIExecutor(DataMixin, Executor):
             truncated = True
 
         item = APIItem(
-            index=0,
+            index=idx,
             url=str(resp.url),
             status_code=resp.status_code,
             truncated=truncated,
+            prompt=prompt_str,
         )
 
-        if response_cfg.get("include_headers", False):
+        if response_cfg.include_headers:
             item.headers = dict(resp.headers)
 
         body_text: str | None = None
-        if response_cfg.get("return_body", True):
+        if response_cfg.return_body:
             encoding = resp.encoding or "utf-8"
             body_text = body_bytes.decode(encoding, errors="replace")
 
-        if response_cfg.get("parse_json", True):
+        if response_cfg.parse_json:
             item.response_json = resp.json()
             if not isinstance(item.response_json, dict):
                 raise ExecutionError("Response is not a valid JSON mapping")
@@ -432,10 +411,10 @@ class APIExecutor(DataMixin, Executor):
                 item.text = item.response_json["choices"][0]["message"]["content"]
             except Exception:
                 item.text = None
-        elif response_cfg.get("return_body", True):
+        elif response_cfg.return_body:
             item.text = body_text
 
-        return item, body_text
+        return item
 
     def _log_summary(
         self,
@@ -488,15 +467,11 @@ class APIExecutor(DataMixin, Executor):
 
     def _run(self, task: ExecutorTask, out_dir: Path) -> APIResult:
         spec = self.require_spec(task, ApiSpecStrict)
-        api_cfg = spec.api or {}
-        if not isinstance(api_cfg, dict):
-            raise ExecutionError("spec.api must be a mapping")
+        api_cfg = spec.api or ApiConfig.model_validate({})
 
-        url = api_cfg.get("url")
-        method = str(api_cfg.get("method", "POST")).upper()
-        headers = api_cfg.get("headers", {})
-        if not isinstance(headers, dict):
-            raise ExecutionError("spec.api.headers must be a mapping")
+        url = api_cfg.url
+        method = api_cfg.method
+        headers = api_cfg.headers or {}
 
         if url is None:
             url = os.getenv("NEBULA_API_BASE_URL")
@@ -513,35 +488,19 @@ class APIExecutor(DataMixin, Executor):
                     )
                 headers["Authorization"] = f"Bearer {token}"
 
-        params = api_cfg.get("params")
-        if params is not None and not isinstance(params, dict):
-            raise ExecutionError("spec.api.params must be a mapping")
+        params = api_cfg.params
 
-        timeout_sec = api_cfg.get("timeout_sec", 60)
-        if not isinstance(timeout_sec, (int, float)):
-            raise ExecutionError("spec.api.timeout_sec must be a number")
-        timeout = httpx.Timeout(timeout_sec)
+        timeout = httpx.Timeout(api_cfg.timeout_sec)
 
-        verify_tls = api_cfg.get("verify_tls", True)
-        follow_redirects = api_cfg.get("follow_redirects", True)
+        verify_tls = api_cfg.verify_tls
+        follow_redirects = api_cfg.follow_redirects
 
-        response_cfg = api_cfg.get("response") or {}
-        if response_cfg and not isinstance(response_cfg, dict):
-            raise ExecutionError("spec.api.response must be a mapping")
+        response_cfg = api_cfg.response or ApiResponseConfig.model_validate({})
+        max_body_bytes = response_cfg.max_body_bytes
+        raise_for_status = response_cfg.raise_for_status
 
-        max_body_bytes = int(response_cfg.get("max_body_bytes", 200000))
-        raise_for_status = bool(response_cfg.get("raise_for_status", True))
-
-        retries = api_cfg.get("retries", 0)
-        if not isinstance(retries, int) or isinstance(retries, bool) or retries < 0:
-            raise ExecutionError("spec.api.retries must be a non-negative integer")
-        if retries > _MAX_RETRIES:
-            raise ExecutionError(f"spec.api.retries must be at most {_MAX_RETRIES}")
-
-        concurrency = int(api_cfg.get("concurrency", _MAX_CONCURRENCY))
-        if concurrency < 1:
-            raise ExecutionError("spec.api.concurrency must be >= 1")
-        concurrency = min(concurrency, _MAX_CONCURRENCY)
+        retries = api_cfg.retries
+        concurrency = api_cfg.concurrency
 
         base = self._base_url(str(url))
         client = self._get_client(
@@ -553,7 +512,10 @@ class APIExecutor(DataMixin, Executor):
         if not prompts and not entry.tables:
             raise ExecutionError("spec.data produced no rows")
 
-        request_kwargs = self._build_request_kwargs(api_cfg, None)
+        request_kwargs = self._build_request_kwargs(api_cfg)
+
+        failed = threading.Event()
+        first_error: list[BaseException] = []
 
         total = len(prompts)
         done = 0
@@ -626,6 +588,8 @@ class APIExecutor(DataMixin, Executor):
         def _issue(idx: int, prompt: Any) -> APIItem:
             if self._cancel_event.is_set():
                 raise TaskCancelledError("API task cancelled")
+            if failed.is_set():
+                raise ExecutionError(f"API task failed on an earlier row (row {idx})")
             prompt_str = self._prompt_to_str(prompt)
             kwargs = self._substitute_prompt(request_kwargs, prompt)
             start = time.monotonic()
@@ -650,26 +614,32 @@ class APIExecutor(DataMixin, Executor):
                     None,
                     failed=True,
                 )
-                raise ExecutionError(
+                failed.set()
+                error = ExecutionError(
                     f"API request failed (row {idx}): {exc.error}", retryable=True
-                ) from exc.error
+                )
+                first_error.append(error)
+                raise error from exc.error
 
             if raise_for_status and resp.is_error:
+                failed.set()
                 message = f"API request returned status {resp.status_code} (row {idx})"
                 body_text = resp.text[:200]
                 if body_text:
                     message = f"{message}: {body_text}"
-                retryable = resp.status_code >= 500 or resp.status_code in (408, 429)
+                retryable = _is_retryable_status(resp.status_code)
                 _record_call(idx, attempts, resp.status_code, start, None, failed=True)
-                raise ExecutionError(message, retryable=retryable)
+                error = ExecutionError(message, retryable=retryable)
+                first_error.append(error)
+                raise error
 
-            item, _ = self._parse_response(
+            item = self._parse_response(
                 resp,
                 response_cfg=response_cfg,
                 max_body_bytes=max_body_bytes,
+                idx=idx,
+                prompt_str=prompt_str,
             )
-            item.index = idx
-            item.prompt = prompt_str
 
             if self._cancel_event.is_set():
                 raise TaskCancelledError("API task cancelled")
@@ -713,12 +683,19 @@ class APIExecutor(DataMixin, Executor):
                 for idx, prompt in enumerate(prompts):
                     if self._cancel_event.is_set():
                         raise TaskCancelledError("API task cancelled")
+                    if failed.is_set():
+                        break
                     futures[pool.submit(_issue, idx, prompt)] = idx
                 for future in as_completed(futures):
                     idx = futures[future]
                     if self._cancel_event.is_set():
                         raise TaskCancelledError("API task cancelled")
-                    results[idx] = future.result()
+                    try:
+                        results[idx] = future.result()
+                    except ExecutionError:
+                        pass
+                if first_error:
+                    raise first_error[0]
         finally:
             heartbeat_stop.set()
             heartbeat.join(timeout=5)
@@ -752,8 +729,7 @@ class APIExecutor(DataMixin, Executor):
 
         result_items: list[APIItem | APIGroupItem] = []
         if entry.tables:
-            # Grouped data: one result item per table, holding that group's
-            # row responses in order (same slicing as DataMixin._populate_table).
+            # One result item per table, sliced as in DataMixin._populate_table.
             grouped: list[APIGroupItem] = []
             cur = 0
             for group_index, df in enumerate(entry.tables):
