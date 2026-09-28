@@ -93,6 +93,10 @@ def task_state_key(task_id: str) -> str:
     return f"task:{task_id}:state"
 
 
+def task_usage_key(task_id: str) -> str:
+    return f"task:{task_id}:usage"
+
+
 def worker_key(worker_id: str) -> str:
     return f"worker:{worker_id}"
 

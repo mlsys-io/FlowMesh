@@ -20,7 +20,15 @@ from pydantic import ValidationError
 
 from shared.schemas.result import (
     AnyExecutorResult,
+    APIResult,
+    APIUsage,
+    DataProfilingResult,
+    DataRetrievalResult,
+    EchoResult,
+    GenerationUsage,
+    InferenceResult,
     ResultEnvelope,
+    SSHResult,
     read_result,
     result_file_path,
     write_result,
@@ -32,6 +40,7 @@ from ...app_state import (
     get_logger,
     get_results_dir,
     get_runtime,
+    get_workflow_registry,
 )
 from ...auth.security import (
     PrincipalContext,
@@ -39,6 +48,7 @@ from ...auth.security import (
     require_permission,
 )
 from ...hooks import ResourceAction, ResourceKind
+from ...registries.workflow import UNKNOWN_USAGE, UnknownUsage, WorkflowRegistry
 from ...schemas.common import PathResponse
 from ...services.monitoring import EventMonitor
 from ...task.models import TERMINAL_TASK_STATUSES
@@ -50,6 +60,50 @@ _BUNDLE_SECTIONS_ACCEPTED = (*_BUNDLE_SECTIONS_CONCRETE, "all")
 _BUNDLE_SECTIONS_DEFAULT = ("results", "artifacts")
 
 router = APIRouter(prefix="/results", tags=["Results"])
+
+
+# Result types that make no model calls and therefore never carry usage.
+_NO_USAGE_RESULT_TYPES = (
+    EchoResult,
+    SSHResult,
+    DataProfilingResult,
+    DataRetrievalResult,
+)
+
+
+def _task_usage_from_envelope(
+    envelope: ResultEnvelope,
+) -> APIUsage | None | UnknownUsage:
+    """Return a task's usage contribution from its result envelope.
+
+    API tasks carry an ``APIUsage``; vLLM inference tasks map their
+    ``GenerationUsage`` token counts with reasoning 0, ``calls`` from
+    ``num_requests``, and ``wall_sec`` from ``latency_sec``. Task types that
+    make no model calls (echo, ssh, data profiling, data retrieval) contribute
+    nothing (``None``). A model-calling task whose usage cannot be mapped
+    returns ``UNKNOWN_USAGE`` so the workflow fails closed.
+    """
+    result = envelope.result
+    if isinstance(result, APIResult):
+        return result.usage if result.usage is not None else UNKNOWN_USAGE
+    if isinstance(result, InferenceResult):
+        if isinstance(result.usage, GenerationUsage):
+            return APIUsage(
+                prompt_tokens=result.usage.prompt_tokens,
+                completion_tokens=result.usage.completion_tokens,
+                reasoning_tokens=0,
+                calls=result.usage.num_requests,
+                failures=0,
+                retries=0,
+                truncated_calls=0,
+                wall_sec=result.usage.latency_sec,
+            )
+        return UNKNOWN_USAGE
+    if isinstance(result, _NO_USAGE_RESULT_TYPES):
+        return None
+    # Any other result type either carries a usage field we do not map to
+    # APIUsage (embedding, agent, rag) or is an unknown model-calling type.
+    return UNKNOWN_USAGE
 
 
 def _resolve_artifact_path(filename: str) -> Path:
@@ -77,6 +131,7 @@ async def ingest_result(
     runtime: TaskRuntime = Depends(get_runtime),
     event_monitor: EventMonitor = Depends(get_event_monitor),
     results_dir: Path = Depends(get_results_dir),
+    registry: WorkflowRegistry = Depends(get_workflow_registry),
     logger: logging.Logger = Depends(get_logger),
 ) -> PathResponse:
     await require_permission(
@@ -96,6 +151,8 @@ async def ingest_result(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to store result: {exc}",
         ) from exc
+
+    await registry.save_task_usage_async(task_id, _task_usage_from_envelope(envelope))
 
     expected_artifacts: list[str] = []
     record = runtime.get_record(task_id)

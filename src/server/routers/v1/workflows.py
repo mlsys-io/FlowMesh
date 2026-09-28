@@ -1,7 +1,6 @@
 import asyncio
 import json
 import logging
-from pathlib import Path
 from typing import Any
 
 from fastapi import (
@@ -16,20 +15,12 @@ from fastapi import (
 from fastapi.responses import StreamingResponse
 
 from shared.schemas.event import TaskEvent
-from shared.schemas.result import (
-    APIResult,
-    APIUsage,
-    GenerationUsage,
-    InferenceResult,
-    ResultEnvelope,
-    read_result,
-)
+from shared.schemas.result import APIUsage
 
 from ...app_state import (
     get_logger,
     get_metrics,
     get_redis_client,
-    get_results_dir,
     get_runtime,
     get_workflow_registry,
 )
@@ -46,7 +37,7 @@ from ...clients.redis import (
     workflow_log_stream_key,
 )
 from ...hooks import SUBMISSION_GUARDS, ResourceAction, ResourceKind
-from ...registries.workflow import Workflow, WorkflowRegistry
+from ...registries.workflow import UnknownUsage, Workflow, WorkflowRegistry
 from ...schemas.logs import LogEntry, LogEvent, LogQueryResponse
 from ...schemas.workflow import (
     WorkflowSubmitResponse,
@@ -81,53 +72,20 @@ _WORKFLOW_REQUEST_BODY_FORMAT = {
 router = APIRouter(prefix="/workflows", tags=["Workflows"])
 
 
-def _sum_usage(acc: dict[str, Any], usage: APIUsage) -> None:
-    """Accumulate one task's usage into the running per-workflow totals."""
-    acc["prompt_tokens"] += usage.prompt_tokens
-    acc["completion_tokens"] += usage.completion_tokens
-    acc["reasoning_tokens"] += usage.reasoning_tokens
-    acc["calls"] += usage.calls
-    acc["failures"] += usage.failures
-    acc["retries"] += usage.retries
-    acc["truncated_calls"] += usage.truncated_calls
-    acc["wall_sec"] += usage.wall_sec
+def _sum_usage(
+    usages: dict[str, APIUsage | None | UnknownUsage],
+    completed_tasks: list[str],
+    logger: logging.Logger,
+) -> APIUsage | None:
+    """Sum per-task usage into one workflow figure.
 
-
-def _task_usage(results_dir: Path, task_id: str) -> APIUsage | None:
-    """Return a finished task's usage contribution, or None if it has none.
-
-    API tasks carry an ``APIUsage``; vLLM inference tasks map their
-    ``GenerationUsage`` token counts with reasoning 0 and ``calls`` from
-    ``num_requests``. Tasks with no usage (echo, lambda) contribute nothing.
+    Fail closed: a completed task whose usage was never recorded (its result
+    missing or unparsable) or could not be mapped (``UNKNOWN_USAGE``) makes the
+    whole workflow's usage null, with one log line naming the task. A task type
+    that makes no model calls (echo, lambda) maps to ``None`` and contributes
+    nothing, which is not a failure. When every completed task is recorded, the
+    (possibly all-zero) sum is returned.
     """
-    try:
-        raw = read_result(results_dir, task_id)
-    except (FileNotFoundError, OSError):
-        return None
-    try:
-        result = ResultEnvelope.model_validate(json.loads(raw)).result
-    except Exception:
-        return None
-    if isinstance(result, APIResult):
-        return result.usage
-    if isinstance(result, InferenceResult) and isinstance(
-        result.usage, GenerationUsage
-    ):
-        return APIUsage(
-            prompt_tokens=result.usage.prompt_tokens,
-            completion_tokens=result.usage.completion_tokens,
-            reasoning_tokens=0,
-            calls=result.usage.num_requests,
-            failures=0,
-            retries=0,
-            truncated_calls=0,
-            wall_sec=0.0,
-        )
-    return None
-
-
-def _workflow_usage(results_dir: Path, workflow: Workflow) -> APIUsage | None:
-    """Sum usage over the workflow's finished tasks, or None if none report it."""
     totals: dict[str, Any] = {
         "prompt_tokens": 0,
         "completion_tokens": 0,
@@ -138,12 +96,30 @@ def _workflow_usage(results_dir: Path, workflow: Workflow) -> APIUsage | None:
         "truncated_calls": 0,
         "wall_sec": 0.0,
     }
-    for task_id in workflow.completed_tasks:
-        usage = _task_usage(results_dir, task_id)
-        if usage is not None:
-            _sum_usage(totals, usage)
-    if not totals["calls"] and not totals["prompt_tokens"]:
-        return None
+    for task_id in completed_tasks:
+        if task_id not in usages:
+            logger.warning(
+                "workflow usage unavailable: task %s has no recorded usage",
+                task_id,
+            )
+            return None
+        usage = usages[task_id]
+        if usage is None:
+            continue
+        if isinstance(usage, UnknownUsage):
+            logger.warning(
+                "workflow usage unavailable: task %s has unmappable usage",
+                task_id,
+            )
+            return None
+        totals["prompt_tokens"] += usage.prompt_tokens
+        totals["completion_tokens"] += usage.completion_tokens
+        totals["reasoning_tokens"] += usage.reasoning_tokens
+        totals["calls"] += usage.calls
+        totals["failures"] += usage.failures
+        totals["retries"] += usage.retries
+        totals["truncated_calls"] += usage.truncated_calls
+        totals["wall_sec"] += usage.wall_sec
     return APIUsage(**totals)
 
 
@@ -349,7 +325,6 @@ async def get_workflow(
     workflow_id: str,
     principal: PrincipalContext = Depends(authenticate_connection),
     registry: WorkflowRegistry = Depends(get_workflow_registry),
-    results_dir: Path = Depends(get_results_dir),
     logger: logging.Logger = Depends(get_logger),
 ) -> Workflow:
     await require_permission(
@@ -361,7 +336,8 @@ async def get_workflow(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Workflow '{workflow_id}' not found",
         )
-    workflow.usage = _workflow_usage(results_dir, workflow)
+    usages = await registry.load_task_usages_async(*workflow.completed_tasks)
+    workflow.usage = _sum_usage(usages, workflow.completed_tasks, logger)
     return workflow
 
 

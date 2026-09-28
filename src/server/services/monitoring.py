@@ -105,6 +105,7 @@ class EventMonitor:
         results_dir: Path | str = ".",
         log_stream_ttl_sec: int = 0,
         server_base_url: str = "http://localhost:8000",
+        workflow_registry: Any | None = None,
     ) -> None:
         self._redis_client = redis_client
         self._stop_event = threading.Event()
@@ -119,6 +120,7 @@ class EventMonitor:
         self._serve_proxy_enabled = serve_proxy_enabled
         self._port_forward = port_forward
         self._results_dir = Path(results_dir)
+        self._workflow_registry = workflow_registry
         self._log_stream_ttl_sec = max(0, int(log_stream_ttl_sec))
         self._server_base_url = self._validate_server_base_url(server_base_url)
 
@@ -277,6 +279,10 @@ class EventMonitor:
                 if record:
                     expected_artifacts = record.task.spec.get_artifacts()
                 sync_manifest(dst_dir, child_id, expected_artifacts)
+                # A clone made no calls of its own (the parent's usage already
+                # counts them), so it records the no-usage marker.
+                if self._workflow_registry is not None:
+                    self._workflow_registry.save_task_usage(child_id, None)
             except Exception as exc:
                 self._logger.debug(
                     "Failed to mirror results from %s to %s: %s",
