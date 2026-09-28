@@ -190,6 +190,11 @@ class TestShutdown:
             stopped.set()
 
         lifecycle.stop.side_effect = record_stop
+        logged_on: list[threading.Thread] = []
+        for level in ("debug", "info", "warning", "error", "exception"):
+            getattr(runner.logger, level).side_effect = lambda *_, **__: (
+                logged_on.append(threading.current_thread())
+            )
         runner._start_shutdown_thread()
         try:
             control = runner._begin_run("tsk-a")
@@ -202,6 +207,7 @@ class TestShutdown:
             runner._stop_shutdown_thread()
 
         assert stopped_on != [threading.current_thread()]
+        assert logged_on and threading.current_thread() not in logged_on
         assert runner._shutdown_thread is None
 
     def test_stop_before_start_skips_every_task(self, tmp_path: Path) -> None:
@@ -215,7 +221,7 @@ class TestShutdown:
         lifecycle.stop.assert_called_once_with()
 
     def test_signal_handler_stop_ends_an_idle_runner(self, tmp_path: Path) -> None:
-        """The task loop idles on the task queue when a SIGTERM-style signal lands."""
+        """End to end: a signal handler calling stop() ends a runner awaiting tasks."""
         tasks: queue.Queue[WorkerTaskMessage | None] = queue.Queue()
 
         def task_stream() -> Iterator[WorkerTaskMessage]:
@@ -241,7 +247,7 @@ class TestShutdown:
             signal.signal(signal.SIGUSR1, previous)
 
         lifecycle.stop.assert_called_once_with()
-        assert runner._shutdown_requested.is_set()
+        assert runner._shutdown_requested
 
 
 class TestRegistry:
