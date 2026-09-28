@@ -185,6 +185,15 @@ scripts/dev/            compile_protos, sync_requirements, check_env_examples
   refuses an id it has not published. Only `direct` mode needs the worker to be
   reachable. An endpoint no relay mode can carry is reported as `direct` at the
   address it listens on, and fails its task only when it published no address.
+- **Cancel and stop signals are scoped to a single run.** The worker runner
+  hands each executor run its own `RunControl` (`Executor.run(task, out_dir,
+  control)`), and executors read it, wait on it, or register callbacks on it to
+  interrupt blocking work. The runner retires a run's control when the run ends,
+  so a signal for a task that has already finished never reaches the next task on
+  the same warm executor. A signal for a task that has not started yet is kept
+  for `_PENDING_SIGNAL_TTL_SEC` (5 minutes) and is seen by that task's run when
+  its message arrives. Executors wrapped by `MPExecutor` receive a control that
+  is never signalled.
 - **Stale worker reaping.** The watchdog deletes a dead worker's registry record
   (`WORKERS_SET_KEY` membership + `worker_key` hash) after it has been stale past
   `WORKER_REAP_GRACE_SEC`, so a worker that leaves without a clean `UNREGISTER` — a
