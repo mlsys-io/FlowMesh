@@ -201,7 +201,12 @@ class Runner:
         with self._cancel_lock:
             control = self._control_locked(task_id)
             self._current_control = control
-            return control
+            # Read under the lock the shutdown thread reads the current control
+            # with, so a shutdown landing before this run began still cancels it.
+            shutting_down = self._shutdown_requested
+        if shutting_down:
+            control.request_cancel()
+        return control
 
     def _end_run(self, task_id: str) -> None:
         """Retire the task's control so a late signal cannot reach another run."""
