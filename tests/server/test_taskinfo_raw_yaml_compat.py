@@ -11,7 +11,7 @@ from shared.tasks import TaskEnvelopeTemplate
 from shared.utils.redact import REDACTED
 
 
-# Field set of flowmesh-sdk 0.1.9's TaskInfo; frozen, do not update.
+# Top-level fields of flowmesh-sdk 0.1.9's TaskInfo; frozen, do not update.
 class _SdkV019TaskInfo(BaseModel):
     task_id: str
     workflow_id: str
