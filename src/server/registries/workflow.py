@@ -13,6 +13,8 @@ from pydantic import (
     model_serializer,
 )
 
+from shared.schemas.result import APIUsage
+
 from ..clients.redis import (
     WORKFLOWS_SET_KEY,
     RedisClient,
@@ -103,6 +105,10 @@ class Workflow(BaseModel):
     completed_tasks: list[str] = Field(description="Completed task identifiers.")
     failed_tasks: list[str] = Field(description="Failed task identifiers.")
     cancelled_tasks: list[str] = Field(description="Cancelled task identifiers.")
+    usage: APIUsage | None = Field(
+        default=None,
+        description="Token/call usage summed over the workflow's finished tasks.",
+    )
 
 
 def _create_workflow_record(
