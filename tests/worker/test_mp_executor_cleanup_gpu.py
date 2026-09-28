@@ -11,6 +11,7 @@ import pytest
 from shared.tasks.worker_message import WorkerTaskMessage
 from tests.worker.factories import make_live_worker_config, make_worker_hardware
 from worker.executors.mp_executor import MPExecutor
+from worker.executors.run_control import RunControl
 from worker.executors.vllm_executor import VLLMExecutor
 
 pynvml.nvmlInit()
@@ -101,7 +102,11 @@ def test_mp_executor_cleans_up_vllm(caplog, tmp_path: Path) -> None:
         }
     )
 
-    mp.run(task_payload, Path(tempfile.mkdtemp(prefix="test-cleanup-")))
+    mp.run(
+        task_payload,
+        Path(tempfile.mkdtemp(prefix="test-cleanup-")),
+        RunControl(task_payload.task_id),
+    )
 
     # Let the worker process and potential children settle
     time.sleep(2.0)

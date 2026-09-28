@@ -5,6 +5,7 @@ import logging
 import threading
 import time
 from collections.abc import Iterable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -29,9 +30,19 @@ from shared.utils.manifest import prepare_output_dir, sync_manifest
 from shared.utils.time import now_iso
 
 from .executors.base_executor import ExecutionError, Executor, TaskCancelledError
+from .executors.run_control import RunControl
 from .executors.utils.checkpoints import get_http_destination, write_executor_result
 from .lifecycle import Lifecycle
 from .utils.logging import TaskLogEmitter
+
+# How long a signal for a task that has not started on this worker is kept.
+_PENDING_SIGNAL_TTL_SEC = 300.0
+
+
+@dataclass
+class _ControlEntry:
+    control: RunControl
+    created_at: float
 
 
 def _declared_gpu_req(spec: TaskSpecStrict) -> GPURequirements | None:
@@ -86,9 +97,9 @@ class Runner:
         # Interrupt monitoring thread and control event
         self._interrupt_thread: threading.Thread | None = None
         self._interrupt_stop_event: threading.Event | None = None
-        self._current_task_id: str | None = None
-        self._pending_cancels: set[str] = set()
-        self._pending_stops: set[str] = set()
+        # Guarded by _cancel_lock: one control per task, pending or running.
+        self._controls: dict[str, _ControlEntry] = {}
+        self._current_control: RunControl | None = None
         self._cancel_lock = threading.Lock()
         self._shutdown_requested = threading.Event()
 
@@ -157,22 +168,72 @@ class Runner:
         """
         self._active_executor_used_gpu |= spec.uses_gpu()
 
-    def _cancel_active_executor(self) -> None:
-        with self._active_executor_lock:
-            executor = self._active_executor
-            if executor is None:
-                return
-            current_task_id = self._current_task_id
-            if current_task_id is not None:
-                try:
-                    executor.cancel(current_task_id)
-                except Exception as exc:
-                    self.logger.debug(
-                        "Error cancelling active executor during shutdown: %s", exc
-                    )
+    def _control_locked(self, task_id: str) -> RunControl:
+        """Return the task's control, creating it if absent. Hold ``_cancel_lock``."""
+        entry = self._controls.get(task_id)
+        if entry is None:
+            entry = _ControlEntry(RunControl(task_id), time.monotonic())
+            self._controls[task_id] = entry
+        return entry.control
+
+    def _control_for(self, task_id: str) -> tuple[RunControl, bool]:
+        """Return the task's control and whether it belongs to the running task."""
+        with self._cancel_lock:
+            control = self._control_locked(task_id)
+            return control, control is self._current_control
+
+    def _begin_run(self, task_id: str) -> RunControl:
+        """Make the task's control, with any signal already pending, the current one."""
+        with self._cancel_lock:
+            control = self._control_locked(task_id)
+            self._current_control = control
+            return control
+
+    def _end_run(self, task_id: str) -> None:
+        """Retire the task's control so a late signal cannot reach another run."""
+        with self._cancel_lock:
+            self._controls.pop(task_id, None)
+            self._current_control = None
+
+    def _handle_interrupt(self, task_id: str, reason: str) -> None:
+        control, running = self._control_for(task_id)
+        if running:
+            self.logger.info(
+                "Interrupt for running task %s (reason=%s)", task_id, reason
+            )
+        control.request_cancel()
+
+    def _handle_stop(self, task_id: str, reason: str) -> None:
+        control, running = self._control_for(task_id)
+        if running:
+            self.logger.info(
+                "Graceful stop for running task %s (reason=%s)", task_id, reason
+            )
+        control.request_stop()
+
+    def _sweep_pending_controls(self) -> None:
+        """Drop signals for tasks that have not started within the retention TTL."""
+        cutoff = time.monotonic() - _PENDING_SIGNAL_TTL_SEC
+        with self._cancel_lock:
+            expired = [
+                task_id
+                for task_id, entry in self._controls.items()
+                if entry.control is not self._current_control
+                and entry.created_at < cutoff
+            ]
+            for task_id in expired:
+                del self._controls[task_id]
+        for task_id in expired:
+            self.logger.debug("Dropped expired pending signal for task %s", task_id)
+
+    def _cancel_current_run(self) -> None:
+        with self._cancel_lock:
+            control = self._current_control
+        if control is not None:
+            control.request_cancel()
 
     def _cleanup_active_executor(self) -> None:
-        self._cancel_active_executor()
+        self._cancel_current_run()
         with self._active_executor_lock:
             executor = self._active_executor
             if executor is None:
@@ -192,7 +253,13 @@ class Runner:
     def stop(self) -> None:
         self._shutdown_requested.set()
         self.lifecycle.stop()
-        self._cancel_active_executor()
+        # Called from a signal handler on the task-loop thread, which may already
+        # hold the locks that cancelling takes.
+        threading.Thread(
+            target=self._cancel_current_run,
+            daemon=True,
+            name="flowmesh-shutdown-cancel",
+        ).start()
 
     def _resolve_output_dir(self, task_id: str) -> Path:
         """Prepare and return the canonical output directory for a task's results."""
@@ -408,37 +475,10 @@ class Runner:
             while not stop_event.wait(0.5):
                 try:
                     for task_id, reason in self.lifecycle.client.iter_interrupts():
-                        with self._cancel_lock:
-                            self._pending_cancels.add(task_id)
-                        if self._current_task_id != task_id:
-                            continue
-                        self.logger.info(
-                            "Interrupt for running task %s (reason=%s)", task_id, reason
-                        )
-                        with self._active_executor_lock:
-                            executor = self._active_executor
-                        if executor is not None:
-                            try:
-                                executor.cancel(task_id)
-                            except Exception as exc:
-                                self.logger.warning("Executor cancel() raised: %s", exc)
+                        self._handle_interrupt(task_id, reason)
                     for task_id, reason in self.lifecycle.client.iter_stops():
-                        if self._current_task_id != task_id:
-                            with self._cancel_lock:
-                                self._pending_stops.add(task_id)
-                            continue
-                        self.logger.info(
-                            "Graceful stop for running task %s (reason=%s)",
-                            task_id,
-                            reason,
-                        )
-                        with self._active_executor_lock:
-                            executor = self._active_executor
-                        if executor is not None:
-                            try:
-                                executor.stop(task_id)
-                            except Exception as exc:
-                                self.logger.warning("Executor stop() raised: %s", exc)
+                        self._handle_stop(task_id, reason)
+                    self._sweep_pending_controls()
                 except Exception as exc:
                     self.logger.warning("Interrupt monitor encountered error: %s", exc)
         except Exception:
@@ -522,18 +562,11 @@ class Runner:
                 start_wall = time.time()
                 notified_task_started: bool = False
                 try:
-                    with self._cancel_lock:
-                        cancelled_before_start = task_id in self._pending_cancels
-                        if cancelled_before_start:
-                            self._pending_cancels.discard(task_id)
-                        stop_before_start = task_id in self._pending_stops
-                        if stop_before_start:
-                            self._pending_stops.discard(task_id)
-                    if cancelled_before_start:
+                    control = self._begin_run(task_id)
+                    if control.cancel_requested:
                         raise TaskCancelledError(
                             f"Task {task_id} was cancelled before execution"
                         )
-                    self._current_task_id = task_id
                     self._refuse_if_gpu_is_held(spec)
                     if task_type == "inference":
                         assert isinstance(spec, InferenceSpecStrict)
@@ -591,9 +624,7 @@ class Runner:
                         # Disable idle checker during execution
                         self._active_executor_last_used_at = None
                         executor_to_run = self._active_executor
-                        if stop_before_start:
-                            executor_to_run.stop(task_id)
-                    out = executor_to_run.run(msg, out_dir)
+                    out = executor_to_run.run(msg, out_dir, control)
                     self._write_results(task_id, spec, merged_children, out_dir, out)
                     metadata = self._build_task_metadata(
                         task_type,
@@ -653,7 +684,7 @@ class Runner:
                     else:
                         self.logger.exception("Task %s failed", task_id)
                 finally:
-                    self._current_task_id = None
+                    self._end_run(task_id)
                     with self._active_executor_lock:
                         self._active_executor_last_used_at = time.time()
                     self.lifecycle.set_idle(task_id)

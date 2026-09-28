@@ -12,6 +12,7 @@ from shared.tasks.worker_message import WorkerTaskMessage
 from tests.worker.factories import make_live_worker_config, make_worker_hardware
 from worker.executors.base_executor import Executor
 from worker.executors.mp_executor import MPExecutor
+from worker.executors.run_control import RunControl
 
 
 class ConnectorLoggingResult(BaseExecutorResult):
@@ -27,7 +28,7 @@ class ConnectorLoggingExecutor(Executor):
     def prepare(self) -> None:
         pass
 
-    def run(self, task, out_dir: Path) -> ConnectorLoggingResult:
+    def run(self, task, out_dir: Path, control: RunControl) -> ConnectorLoggingResult:
         """Run a simple test that logs from different modules."""
 
         # Get loggers from different modules that would be used in real execution
@@ -88,7 +89,7 @@ def test_connector_logs_printed_to_stderr(tmp_path: Path) -> None:
     )
 
     with tempfile.TemporaryDirectory() as out_dir:
-        result = mp.run(task_payload, Path(out_dir))
+        result = mp.run(task_payload, Path(out_dir), RunControl(task_payload.task_id))
 
     # Give subprocess a moment to flush logs
     time.sleep(0.5)

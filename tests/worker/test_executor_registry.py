@@ -12,6 +12,7 @@ from shared.tasks.task_type import TaskType
 from tests.worker.factories import make_worker_config
 from worker.executors import EXECUTOR_MODULES, EXECUTOR_REGISTRY, IMPORT_ERRORS
 from worker.executors.base_executor import Executor, ExecutorTask
+from worker.executors.run_control import RunControl
 from worker.main import build_capabilities
 
 
@@ -85,7 +86,9 @@ class TestExecutorRegistry:
 
 
 class _StubExecutor(Executor):
-    def run(self, task: ExecutorTask, out_dir: Path) -> BaseExecutorResult:
+    def run(
+        self, task: ExecutorTask, out_dir: Path, control: RunControl
+    ) -> BaseExecutorResult:
         raise NotImplementedError
 
 
@@ -112,7 +115,9 @@ class TestSupportedTaskTypes:
 class _EmptyCaps(Executor):
     """Stand-in for a live MPExecutor wrapper: reports no task types of its own."""
 
-    def run(self, task: ExecutorTask, out_dir: Path) -> BaseExecutorResult:
+    def run(
+        self, task: ExecutorTask, out_dir: Path, control: RunControl
+    ) -> BaseExecutorResult:
         raise NotImplementedError
 
 

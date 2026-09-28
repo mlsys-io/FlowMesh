@@ -16,6 +16,7 @@ from shared.utils.json import to_json_serializable, validate_keys
 from ..connectors import get_connector_from_spec
 from .base_executor import ExecutionError, Executor, ExecutorTask
 from .mixins.data import DataMixin
+from .run_control import RunControl
 from .utils.graph_templates import _render_template, _resolve_columns
 
 logger = logging.getLogger(__name__)
@@ -27,7 +28,9 @@ class DataProfilingExecutor(DataMixin, Executor):
     name = "data_profiling"
     supported_task_types = frozenset({TaskType.DATA_PROFILING})
 
-    def run(self, task: ExecutorTask, out_dir: Path) -> DataProfilingResult:
+    def run(
+        self, task: ExecutorTask, out_dir: Path, control: RunControl
+    ) -> DataProfilingResult:
         spec = self.require_spec(task, DataProfilingSpecStrict)
         task_id = task.task_id
         merge_children = task.merged_children or []

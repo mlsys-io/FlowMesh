@@ -11,6 +11,7 @@ from shared.utils.manifest import scratch_dir
 from worker.config import WorkerConfig
 
 from .ppo_executor import PPOExecutor
+from .run_control import RunControl
 
 
 def main(argv: list[str]) -> int:
@@ -30,7 +31,7 @@ def main(argv: list[str]) -> int:
         task = WorkerTaskMessage.model_validate(json.load(fh))
     executor = PPOExecutor(WorkerConfig.from_env())
     try:
-        result = executor.run(task, args.out_dir)
+        result = executor.run(task, args.out_dir, RunControl(task.task_id))
         if args.local_rank in (None, 0):
             try:
                 (scratch_dir(args.out_dir) / "distributed_result.json").write_text(

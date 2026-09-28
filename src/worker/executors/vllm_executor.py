@@ -80,6 +80,7 @@ from shared.tasks.task_type import TaskType
 from .base_executor import ExecutionError, Executor, ExecutorTask
 from .mixins.data import InferenceEntry
 from .mixins.inference import InferenceMixin, PreparedInferenceEntry
+from .run_control import RunControl
 from .utils.checkpoints import (
     maybe_upload_artifacts,
     maybe_upload_traces,
@@ -1033,7 +1034,9 @@ Summary:"""
     # --------------------------------------------------------------------- #
     # Execution
     # --------------------------------------------------------------------- #
-    def run(self, task: ExecutorTask, out_dir: Path) -> BaseExecutorResult:
+    def run(
+        self, task: ExecutorTask, out_dir: Path, control: RunControl
+    ) -> BaseExecutorResult:
         task_id = task.task_id.strip()
         if not task_id:
             raise ExecutionError("task_id is required for vLLM execution")

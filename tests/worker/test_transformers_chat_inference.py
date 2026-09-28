@@ -18,6 +18,7 @@ from shared.tasks.components.model import ModelConfig, ModelSource
 from shared.tasks.specs import InferenceSpecStrict
 from shared.tasks.task_type import TaskType
 from tests.worker.factories import DEFAULT_WORKER_CONFIG, make_worker_task_message
+from worker.executors.run_control import RunControl
 from worker.executors.transformers_executor import HFTransformersExecutor
 
 
@@ -114,7 +115,7 @@ def test_transformers_executor_supports_chat_prompts_and_jsonl_export(
     executor._model_name = "org/model"
 
     with patch.object(executor, "_ensure_model") as mock_ensure_model:
-        result = executor.run(task, tmp_path)
+        result = executor.run(task, tmp_path, RunControl(task.task_id))
     mock_ensure_model.assert_called_once_with(spec)
 
     assert isinstance(result, InferenceResult)
