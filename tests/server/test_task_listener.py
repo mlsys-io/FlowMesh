@@ -5,7 +5,7 @@ import asyncio
 import logging
 import threading
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Any
 
 from server.supervisor.services.task_listener import TaskListener
@@ -21,17 +21,31 @@ def _run_in_thread(target: Callable[[], Any]) -> None:
     thread.join(timeout=2)
 
 
-def test_cancelled_get_events_do_not_starve_later_dispatch() -> None:
+class _RecordingExecutor(ThreadPoolExecutor):
+    """Records submitted work and never runs it, so nothing can occupy a thread."""
+
+    def __init__(self) -> None:
+        super().__init__(max_workers=1)
+        self.submitted: list[Callable[..., Any]] = []
+
+    def submit(
+        self, fn: Callable[..., Any], /, *args: Any, **kwargs: Any
+    ) -> Future[Any]:
+        self.submitted.append(fn)
+        return Future()
+
+
+def test_dispatch_after_cancelled_get_events_uses_no_executor() -> None:
     listener = TaskListener(_ANY_OBJECT, "nde-1", _LOGGER)
-    dead_ids = [f"wkr-dead-{i}" for i in range(10)]
-    executor = ThreadPoolExecutor(max_workers=2)
+    executor = _RecordingExecutor()
     loop = asyncio.new_event_loop()
     loop.set_default_executor(executor)
     listener._loop = loop
 
     async def scenario() -> dict[str, Any] | None:
         dead = []
-        for worker_id in dead_ids:
+        for i in range(10):
+            worker_id = f"wkr-dead-{i}"
             listener.add_worker(worker_id)
             dead.append(asyncio.ensure_future(listener.get_event(worker_id)))
         await asyncio.sleep(0.01)
@@ -52,12 +66,8 @@ def test_cancelled_get_events_do_not_starve_later_dispatch() -> None:
     try:
         result = loop.run_until_complete(scenario())
     finally:
-        # Unblock any executor thread a get_event left parked so a regression
-        # fails the assertion below instead of hanging the run.
-        for worker_id in dead_ids:
-            listener._qs[worker_id].put_nowait({})
-        executor.shutdown(wait=True)
         loop.close()
+    assert executor.submitted == []
     assert result == {"task_id": "tsk-1"}
 
 
