@@ -1,7 +1,9 @@
 """Which run a cancel or graceful-stop signal reaches, whenever it arrives."""
 
+import queue
+import signal
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
@@ -17,6 +19,24 @@ from tests.worker.factories import (
 )
 from worker.executors.base_executor import Executor, ExecutorTask, RunControl
 from worker.runner import _PENDING_SIGNAL_TTL_SEC, Runner
+
+
+class _SameThreadGuard:
+    """A lock that fails instead of deadlocking when its holder re-acquires it."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._owner: int | None = None
+
+    def __enter__(self) -> None:
+        if self._owner == threading.get_ident():
+            raise AssertionError("lock re-acquired by the thread holding it")
+        self._lock.acquire()
+        self._owner = threading.get_ident()
+
+    def __exit__(self, *_: object) -> None:
+        self._owner = None
+        self._lock.release()
 
 
 class _RecordingExecutor(Executor):
@@ -156,21 +176,72 @@ class TestShutdown:
         assert cancelled == [True]
         assert _reported(lifecycle, "set_cancelled") == ["tsk-a"]
 
-    def test_stop_does_not_wait_on_the_runner_lock(self, tmp_path: Path) -> None:
-        """A signal handler may interrupt the task loop while it holds the lock."""
-        runner, _ = _runner(tmp_path, _RecordingExecutor(), [])
-        control = runner._begin_run("tsk-a")
-        returned = threading.Event()
+    def test_stop_takes_no_lock_and_leaves_the_work_to_the_shutdown_thread(
+        self, tmp_path: Path
+    ) -> None:
+        """A signal handler runs on the task-loop thread, which may hold any lock."""
+        runner, lifecycle = _runner(tmp_path, _RecordingExecutor(), [])
+        runner._cancel_lock = _SameThreadGuard()  # type: ignore[assignment]
+        stopped_on: list[threading.Thread] = []
+        stopped = threading.Event()
 
-        def stop() -> None:
-            runner.stop()
-            returned.set()
+        def record_stop() -> None:
+            stopped_on.append(threading.current_thread())
+            stopped.set()
 
-        with runner._cancel_lock:
-            threading.Thread(target=stop, daemon=True).start()
-            assert returned.wait(5.0)
+        lifecycle.stop.side_effect = record_stop
+        runner._start_shutdown_thread()
+        try:
+            control = runner._begin_run("tsk-a")
+            with runner._cancel_lock:
+                runner.stop()
+                assert not control.cancel_requested
+            assert stopped.wait(5.0)
+            assert control.wait_for_cancel(5.0)
+        finally:
+            runner._stop_shutdown_thread()
 
-        assert control.wait_for_cancel(5.0)
+        assert stopped_on != [threading.current_thread()]
+        assert runner._shutdown_thread is None
+
+    def test_stop_before_start_skips_every_task(self, tmp_path: Path) -> None:
+        executor = _RecordingExecutor()
+        runner, lifecycle = _runner(tmp_path, executor, ["tsk-a"])
+
+        runner.stop()
+        runner.start()
+
+        assert executor.controls == {}
+        lifecycle.stop.assert_called_once_with()
+
+    def test_signal_handler_stop_ends_an_idle_runner(self, tmp_path: Path) -> None:
+        """The task loop idles on the task queue when a SIGTERM-style signal lands."""
+        tasks: queue.Queue[WorkerTaskMessage | None] = queue.Queue()
+
+        def task_stream() -> Iterator[WorkerTaskMessage]:
+            while (msg := tasks.get()) is not None:
+                yield msg
+
+        runner, lifecycle = _runner(tmp_path, _RecordingExecutor(), [])
+        runner.task_stream = task_stream()
+        lifecycle.stop.side_effect = lambda: tasks.put(None)
+        previous = signal.signal(signal.SIGUSR1, lambda *_: runner.stop())
+        send = threading.Timer(
+            0.2, signal.pthread_kill, (threading.get_ident(), signal.SIGUSR1)
+        )
+        # Ends the loop without stopping the lifecycle if the signal never does.
+        give_up = threading.Timer(5.0, tasks.put, (None,))
+        try:
+            send.start()
+            give_up.start()
+            runner.start()
+        finally:
+            send.cancel()
+            give_up.cancel()
+            signal.signal(signal.SIGUSR1, previous)
+
+        lifecycle.stop.assert_called_once_with()
+        assert runner._shutdown_requested.is_set()
 
 
 class TestRegistry:

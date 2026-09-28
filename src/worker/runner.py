@@ -2,6 +2,7 @@
 
 import json
 import logging
+import queue
 import threading
 import time
 from collections.abc import Iterable
@@ -46,6 +47,8 @@ from .utils.result_delivery import hydrate_task, publish_result
 
 # How long a signal for a task that has not started on this worker is kept.
 _PENDING_SIGNAL_TTL_SEC = 300.0
+
+_SHUTDOWN_THREAD_EXIT = object()
 
 
 @dataclass
@@ -111,6 +114,8 @@ class Runner:
         self._current_control: RunControl | None = None
         self._cancel_lock = threading.Lock()
         self._shutdown_requested = threading.Event()
+        self._shutdown_requests: queue.SimpleQueue[object] = queue.SimpleQueue()
+        self._shutdown_thread: threading.Thread | None = None
 
     def has_active_gpu_executor(self) -> bool:
         """Whether the loaded executor may still be holding GPU memory.
@@ -260,15 +265,36 @@ class Runner:
                 self._active_executor_used_gpu = False
 
     def stop(self) -> None:
+        """Request shutdown; the shutdown thread stops task intake and the run."""
+        # Runs in a signal handler on the task-loop thread, which may be interrupted
+        # while holding a lock, so this takes none that thread could hold: nothing
+        # waits on the event, and SimpleQueue.put is reentrant.
         self._shutdown_requested.set()
-        self.lifecycle.stop()
-        # Called from a signal handler on the task-loop thread, which may already
-        # hold the locks that cancelling takes.
-        threading.Thread(
-            target=self._cancel_current_run,
-            daemon=True,
-            name="flowmesh-shutdown-cancel",
-        ).start()
+        self._shutdown_requests.put(None)
+
+    def _shutdown_loop(self) -> None:
+        while self._shutdown_requests.get() is not _SHUTDOWN_THREAD_EXIT:
+            try:
+                self.lifecycle.stop()
+            except Exception:
+                self.logger.warning("Stopping task intake failed", exc_info=True)
+            self._cancel_current_run()
+
+    def _start_shutdown_thread(self) -> None:
+        if self._shutdown_thread and self._shutdown_thread.is_alive():
+            return
+        thread = threading.Thread(
+            target=self._shutdown_loop, daemon=True, name="flowmesh-shutdown"
+        )
+        self._shutdown_thread = thread
+        thread.start()
+
+    def _stop_shutdown_thread(self) -> None:
+        if not self._shutdown_thread:
+            return
+        self._shutdown_requests.put(_SHUTDOWN_THREAD_EXIT)
+        self._shutdown_thread.join(timeout=2.0)
+        self._shutdown_thread = None
 
     def _resolve_output_dir(self, task_id: str) -> Path:
         """Prepare and return the canonical output directory for a task's results."""
@@ -554,6 +580,7 @@ class Runner:
             self._interrupt_stop_event = None
 
     def start(self) -> None:
+        self._start_shutdown_thread()
         self._start_idle_checker()
         self._start_interrupt_monitor()
         try:
@@ -758,6 +785,7 @@ class Runner:
             self._cleanup_active_executor()
             self._stop_interrupt_monitor()
             self._stop_idle_checker()
+            self._stop_shutdown_thread()
 
     def _create_task_logger(
         self, task_id: str, msg: WorkerTaskMessage, out_dir: Path
