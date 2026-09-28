@@ -1,16 +1,60 @@
-"""GET /tasks responses keep the pre-#137 ``raw_yaml`` key for old SDK clients.
-
-flowmesh-sdk<=0.1.9 (every released Lumilake image) declares ``raw_yaml`` as a
-required field of TaskInfo. When the server stopped emitting it, every
-``tasks.retrieve()`` raised and every Lumilake job failed with "Failed to fetch
-FlowMesh task description".
-"""
+"""TaskInfo responses carry a redacted ``raw_yaml`` copy of ``source`` that the 0.1.9
+SDK TaskInfo parses."""
 
 import json
+from typing import Any
+
+from pydantic import BaseModel
 
 from server.task.models import TaskInfo
 from shared.tasks import TaskEnvelopeTemplate
 from shared.utils.redact import REDACTED
+
+
+# Field set of flowmesh-sdk 0.1.9's TaskInfo; frozen, do not update.
+class _SdkV019TaskInfo(BaseModel):
+    task_id: str
+    workflow_id: str
+    owner_id: str
+    org_id: str
+    supplier_id: str
+    raw_yaml: str
+    task: dict[str, Any]
+    status: str
+    task_type: str | None = None
+    category: str | None = None
+    assigned_worker: str | None = None
+    topic: str | None = None
+    submitted_at: str
+    submitted_ts: float
+    dispatched_ts: float | None = None
+    started_ts: float | None = None
+    finished_ts: float | None = None
+    usages: list[dict[str, Any]]
+    error: str | None = None
+    attempts: int
+    max_attempts: int
+    parent_task_id: str | None = None
+    shard_index: int | None = None
+    shard_total: int | None = None
+    next_retry_at: str | None = None
+    last_failed_worker: str | None = None
+    last_error: str | None = None
+    local_name: str | None = None
+    graph_node_name: str | None = None
+    load: int
+    position_in_epoch: int | None = None
+    selected_worker: list[str] | None = None
+    merged_children: list[str] | None = None
+    merged_parent_id: str | None = None
+    merge_slice: dict[str, int] | None = None
+    merge_key: str | None = None
+    latest_update: dict[str, Any] | None = None
+    depends_on: list[str]
+    pending_dependencies: list[str]
+    dependents: list[str]
+    completed: bool
+    failed: bool
 
 
 def _info(source: str) -> TaskInfo:
@@ -57,12 +101,7 @@ def test_round_trip_through_dump_validates() -> None:
     assert again.source == info.source
 
 
-def test_old_sdk_shape_parses_response() -> None:
-    """A client model that REQUIRES raw_yaml (sdk<=0.1.9) accepts the dump."""
-    from pydantic import BaseModel
-
-    class OldSdkTaskInfo(BaseModel):
-        task_id: str
-        raw_yaml: str
-
-    OldSdkTaskInfo.model_validate(_info("spec: {}\n").model_dump(mode="json"))
+def test_sdk_0_1_9_task_info_parses_response() -> None:
+    dumped = _info("spec: {}\n").model_dump(mode="json")
+    old = _SdkV019TaskInfo.model_validate(dumped)
+    assert old.raw_yaml == dumped["source"]

@@ -313,6 +313,13 @@ class TestTaskModels:
         assert task.task_id == "t-abc"
         assert task.completed is True
 
+    @pytest.mark.parametrize("key", ["source", "raw_yaml"])
+    def test_task_info_accepts_source_or_raw_yaml(self, key: str) -> None:
+        payload = _dump(_SRV_TASK_INFO)
+        expected = payload["source"]
+        payload.pop("raw_yaml" if key == "source" else "source")
+        assert TaskInfo.model_validate(payload).source == expected
+
     def test_task_usage(self) -> None:
         usage = TaskUsage.model_validate(_dump(_SRV_TASK_USAGE))
         assert usage.runtime_sec == 60.0
