@@ -5,13 +5,15 @@ CONFIGURATION verifies after the supervisor has forgotten everything, whereas a
 runtime-minted `uuid4()` token cannot.
 """
 
+import asyncio
 import logging
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncGenerator, AsyncIterator, Callable
 from threading import Lock
 from typing import Any, cast
 
 import grpc
 import pytest
+from google.protobuf.empty_pb2 import Empty
 
 from server.clients.redis import (
     WORKERS_SET_KEY,
@@ -318,9 +320,12 @@ def _build_servicer(
     node_id: str = "nde-1",
     resource_manager: ResourceManager | None = None,
     capacity_change_callback: Callable[[], None] | None = None,
+    task_listener: TaskListener | None = None,
 ) -> tuple[SupervisorServicer, _FakeRedis]:
     redis = redis or _FakeRedis()
-    registry = WorkerRegistry()
+    registry = WorkerRegistry(
+        on_worker_id_released=task_listener.remove_worker if task_listener else None
+    )
     manager = WorkerManager(
         cast(Any, None),
         "/nonexistent-worker-config.yaml",
@@ -340,7 +345,7 @@ def _build_servicer(
     servicer._node_alias = node_alias
     servicer._logger = logging.getLogger("test.external.enroll")
     servicer._lock = Lock()
-    servicer._task_listener = cast(TaskListener, _FakeTaskListener())
+    servicer._task_listener = task_listener or cast(TaskListener, _FakeTaskListener())
     servicer._worker_manager = manager
     servicer._relay_service = cast(RelayService, _FakeRelayService())
     return servicer, redis
@@ -502,6 +507,84 @@ class TestRegisterWorkerExternalEnrollment:
         worker_id = await _register(servicer, cast(str, token))
 
         assert worker_id in redis.worker_ids
+
+
+def _stream_tasks(
+    servicer: SupervisorServicer, token: str
+) -> AsyncGenerator[supervisor_pb2.DispatchMessage, None]:
+    return cast(
+        AsyncGenerator[supervisor_pb2.DispatchMessage, None],
+        servicer.StreamTasks(Empty(), cast(Any, _FakeContext(token))),
+    )
+
+
+async def _read_until_closed(
+    stream: AsyncIterator[supervisor_pb2.DispatchMessage],
+) -> list[supervisor_pb2.DispatchMessage]:
+    return [message async for message in stream]
+
+
+class TestStreamTasksLifecycle:
+    """StreamTasks ends normally once its dispatch queue is released or taken over."""
+
+    @pytest.fixture
+    def listener(self) -> TaskListener:
+        return TaskListener(cast(SyncRedisClient, None), "nde-1", logging.getLogger())
+
+    @pytest.mark.asyncio
+    async def test_destroyed_worker_stream_finishes(
+        self, monkeypatch: pytest.MonkeyPatch, listener: TaskListener
+    ) -> None:
+        monkeypatch.setattr("server.env.EXTERNAL_WORKER_TOKEN", SECRET)
+        listener._loop = asyncio.get_running_loop()
+        servicer, _ = _build_servicer(task_listener=listener)
+        token = mint_external_token(SECRET, "fm-worker-0")
+        worker_id = await _register(servicer, token)
+        reader = asyncio.ensure_future(
+            _read_until_closed(_stream_tasks(servicer, token))
+        )
+        await asyncio.sleep(0)
+
+        await servicer._worker_manager.destroy_worker("fm-worker-0")
+
+        assert await asyncio.wait_for(reader, timeout=2) == []
+        assert worker_id not in listener._qs
+
+    @pytest.mark.asyncio
+    async def test_second_stream_ends_the_first(
+        self, monkeypatch: pytest.MonkeyPatch, listener: TaskListener
+    ) -> None:
+        monkeypatch.setattr("server.env.EXTERNAL_WORKER_TOKEN", SECRET)
+        listener._loop = asyncio.get_running_loop()
+        servicer, _ = _build_servicer(task_listener=listener)
+        token = mint_external_token(SECRET, "fm-worker-0")
+        worker_id = await _register(servicer, token)
+        first = asyncio.ensure_future(
+            _read_until_closed(_stream_tasks(servicer, token))
+        )
+        await asyncio.sleep(0)
+
+        second = _stream_tasks(servicer, token)
+        second_read = asyncio.ensure_future(anext(second))
+        await asyncio.sleep(0)
+        listener._deliver(worker_id, {"task_id": "tsk-1"})
+
+        assert await asyncio.wait_for(first, timeout=2) == []
+        message = await asyncio.wait_for(second_read, timeout=2)
+        assert message.task.payload["task_id"] == "tsk-1"
+        await second.aclose()
+
+    @pytest.mark.asyncio
+    async def test_stream_without_a_queue_finishes(
+        self, monkeypatch: pytest.MonkeyPatch, listener: TaskListener
+    ) -> None:
+        monkeypatch.setattr("server.env.EXTERNAL_WORKER_TOKEN", SECRET)
+        servicer, _ = _build_servicer(task_listener=listener)
+        token = mint_external_token(SECRET, "fm-worker-0")
+        worker_id = await _register(servicer, token)
+        del listener._qs[worker_id]
+
+        assert await _read_until_closed(_stream_tasks(servicer, token)) == []
 
 
 class TestRegisterWorkerRecordsReportedHardware:
