@@ -11,8 +11,7 @@ from shared.schemas.result import BaseExecutorResult
 from shared.tasks.task_type import TaskType
 from tests.worker.factories import make_worker_config
 from worker.executors import EXECUTOR_MODULES, EXECUTOR_REGISTRY, IMPORT_ERRORS
-from worker.executors.base_executor import Executor, ExecutorTask
-from worker.executors.run_control import RunControl
+from worker.executors.base_executor import Executor, ExecutorTask, RunControl
 from worker.main import build_capabilities
 
 

@@ -6,8 +6,7 @@ from collections.abc import Callable
 
 import pytest
 
-from worker.executors.base_executor import TaskCancelledError
-from worker.executors.run_control import RunControl
+from worker.executors.base_executor import RunControl, TaskCancelledError
 
 
 class TestSignals:

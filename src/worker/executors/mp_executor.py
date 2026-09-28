@@ -27,8 +27,7 @@ from shared.schemas.result import BaseExecutorResult
 from shared.tasks.worker_message import WorkerHardware
 from worker.config import WorkerConfig
 
-from .base_executor import ExecutionError, Executor, ExecutorTask
-from .run_control import RunControl
+from .base_executor import ExecutionError, Executor, ExecutorTask, RunControl
 
 logger = logging.getLogger(__name__)
 

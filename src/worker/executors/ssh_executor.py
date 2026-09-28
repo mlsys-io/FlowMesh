@@ -24,8 +24,7 @@ from worker.executors.ssh_session import (
     SSHOutputConfig,
 )
 
-from .base_executor import ExecutionError, ExecutorTask
-from .run_control import RunControl
+from .base_executor import ExecutionError, ExecutorTask, RunControl
 from .session_executor import SessionExecutor
 
 __all__ = ["ResolvedSSHInput", "SSHConfig", "SSHExecutor", "SSHOutputConfig"]

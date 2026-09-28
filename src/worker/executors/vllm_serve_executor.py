@@ -26,8 +26,13 @@ from shared.tasks.task_type import TaskType
 from shared.utils.parsing import parse_float_env
 from worker.config import WorkerConfig
 
-from .base_executor import ExecutionError, Executor, ExecutorTask, TaskCancelledError
-from .run_control import RunControl
+from .base_executor import (
+    ExecutionError,
+    Executor,
+    ExecutorTask,
+    RunControl,
+    TaskCancelledError,
+)
 
 logger = logging.getLogger(__name__)
 

@@ -28,9 +28,8 @@ from shared.utils.json import validate_keys
 
 from ..connectors import LumidDataConnector, PostgreSQLConnector, S3Connector
 from ..utils.serialization import serialize_dataframe
-from .base_executor import ExecutionError, Executor, ExecutorTask
+from .base_executor import ExecutionError, Executor, ExecutorTask, RunControl
 from .mixins.data import DataMixin
-from .run_control import RunControl
 from .utils.checkpoints import maybe_upload_artifacts, maybe_upload_traces
 from .utils.graph_templates import _render_template, _resolve_columns
 

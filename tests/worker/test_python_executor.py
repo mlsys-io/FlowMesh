@@ -22,14 +22,13 @@ from shared.schemas.result import PythonResult, SSHResult
 from shared.tasks.specs import PythonSpecStrict, SSHSpecStrict
 from tests.worker.factories import DEFAULT_WORKER_CONFIG, make_live_worker_config
 from worker.executors import python_executor as python_executor_module
-from worker.executors.base_executor import ExecutionError
+from worker.executors.base_executor import ExecutionError, RunControl
 from worker.executors.python_executor import (
     BOOTSTRAP_PATH,
     CODE_PATH,
     OUTPUT_MOUNT_PATH,
     PythonExecutor,
 )
-from worker.executors.run_control import RunControl
 from worker.executors.session_executor import (
     SessionEnd,
     SessionEndReason,

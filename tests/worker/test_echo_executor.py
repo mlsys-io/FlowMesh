@@ -4,8 +4,8 @@ from pathlib import Path
 
 from shared.schemas.result import EchoResult
 from shared.tasks import TaskType
+from worker.executors.base_executor import RunControl
 from worker.executors.echo_executor import EchoExecutor
-from worker.executors.run_control import RunControl
 
 from .factories import make_worker_config, make_worker_task_message
 

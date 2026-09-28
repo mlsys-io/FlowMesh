@@ -21,9 +21,8 @@ from shared.tasks.specs import DiffusionSpecStrict
 from shared.tasks.task_type import TaskType
 
 from ..utils.logging import configure_hf_library_logging
-from .base_executor import ExecutionError, Executor, ExecutorTask
+from .base_executor import ExecutionError, Executor, ExecutorTask, RunControl
 from .mixins.data import DataMixin
-from .run_control import RunControl
 from .utils.checkpoints import maybe_upload_artifacts, maybe_upload_traces
 
 try:

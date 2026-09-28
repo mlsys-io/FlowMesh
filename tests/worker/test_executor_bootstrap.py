@@ -15,8 +15,7 @@ import pytest
 
 from shared.schemas.result import BaseExecutorResult
 from tests.worker.factories import make_live_worker_config, make_worker_hardware
-from worker.executors.base_executor import Executor, ExecutorTask
-from worker.executors.run_control import RunControl
+from worker.executors.base_executor import Executor, ExecutorTask, RunControl
 from worker.executors.ssh_executor import SSHExecutor
 from worker.executors.ssh_session.backends import docker as docker_backend_mod
 from worker.executors.ssh_session.backends import process as process_backend_mod

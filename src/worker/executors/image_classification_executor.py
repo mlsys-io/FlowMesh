@@ -34,9 +34,8 @@ from shared.tasks.specs import ImageClassificationTrainingSpecStrict
 from shared.tasks.task_type import TaskType
 
 from ..utils.logging import configure_hf_library_logging
-from .base_executor import ExecutionError, Executor, ExecutorTask
+from .base_executor import ExecutionError, Executor, ExecutorTask, RunControl
 from .mixins.training import TrainingMixin
-from .run_control import RunControl
 from .utils.checkpoints import (
     determine_resume_path,
     maybe_upload_artifacts,

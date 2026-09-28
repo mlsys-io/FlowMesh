@@ -16,7 +16,7 @@ from shared.tasks.worker_message import WorkerTaskMessage
 from shared.utils.manifest import scratch_dir
 from worker.config import WorkerConfig
 
-from .run_control import RunControl
+from .base_executor import RunControl
 from .sft_executor import SFTExecutor
 
 

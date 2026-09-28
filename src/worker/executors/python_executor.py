@@ -46,8 +46,7 @@ from worker.executors.ssh_session import (
 )
 from worker.executors.ssh_session.config import DEFAULT_INPUTS_ROOT
 
-from .base_executor import ExecutionError, ExecutorTask
-from .run_control import RunControl
+from .base_executor import ExecutionError, ExecutorTask, RunControl
 from .session_executor import SessionExecutor, SessionOutcome
 
 logger = logging.getLogger(__name__)

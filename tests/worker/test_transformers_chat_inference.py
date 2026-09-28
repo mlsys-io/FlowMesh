@@ -18,7 +18,7 @@ from shared.tasks.components.model import ModelConfig, ModelSource
 from shared.tasks.specs import InferenceSpecStrict
 from shared.tasks.task_type import TaskType
 from tests.worker.factories import DEFAULT_WORKER_CONFIG, make_worker_task_message
-from worker.executors.run_control import RunControl
+from worker.executors.base_executor import RunControl
 from worker.executors.transformers_executor import HFTransformersExecutor
 
 

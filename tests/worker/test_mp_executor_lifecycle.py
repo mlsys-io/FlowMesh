@@ -21,9 +21,8 @@ from tests.worker.factories import (
     make_worker_task_message,
 )
 from worker.executors import mp_executor as mp_executor_module
-from worker.executors.base_executor import ExecutionError, Executor
+from worker.executors.base_executor import ExecutionError, Executor, RunControl
 from worker.executors.mp_executor import MPExecutor
-from worker.executors.run_control import RunControl
 
 
 class _SimpleMPResult(BaseExecutorResult):

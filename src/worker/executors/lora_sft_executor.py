@@ -24,9 +24,8 @@ from shared.tasks.specs import LoRASFTSpecStrict
 from shared.tasks.task_type import TaskType
 
 from ..utils.logging import configure_hf_library_logging
-from .base_executor import ExecutionError, Executor, ExecutorTask
+from .base_executor import ExecutionError, Executor, ExecutorTask, RunControl
 from .mixins.training import TrainingMixin
-from .run_control import RunControl
 from .sft_executor import SFTExecutor
 from .utils.checkpoints import (
     archive_model_dir,

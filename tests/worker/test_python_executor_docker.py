@@ -19,9 +19,8 @@ from shared.schemas.worker import SSHLimits
 from shared.tasks.specs import PythonSpecStrict, SSHSpecStrict
 from shared.tasks.task_type import TaskType
 from tests.worker.factories import make_live_worker_config, make_worker_task_message
-from worker.executors.base_executor import ExecutionError
+from worker.executors.base_executor import ExecutionError, RunControl
 from worker.executors.python_executor import PythonExecutor
-from worker.executors.run_control import RunControl
 from worker.executors.ssh_executor import SSHExecutor
 from worker.executors.utils.docker import docker_available
 

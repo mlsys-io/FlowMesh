@@ -8,9 +8,8 @@ from shared.schemas.result import EchoResult
 from shared.tasks.specs import EchoSpecStrict
 from shared.tasks.task_type import TaskType
 
-from .base_executor import ExecutionError, Executor, ExecutorTask
+from .base_executor import ExecutionError, Executor, ExecutorTask, RunControl
 from .mixins.data import DataMixin
-from .run_control import RunControl
 from .utils.checkpoints import maybe_upload_traces
 from .utils.graph_templates import _evaluate_expr
 
