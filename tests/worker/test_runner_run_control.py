@@ -210,6 +210,29 @@ class TestShutdown:
         assert logged_on and threading.current_thread() not in logged_on
         assert runner._shutdown_thread is None
 
+    def test_stop_just_before_a_task_begins_cancels_it(self, tmp_path: Path) -> None:
+        """The shutdown thread's cancel pass finds no run; the run starts after it."""
+        executor = _RecordingExecutor()
+        runner, lifecycle = _runner(tmp_path, executor, ["tsk-a"])
+        passed = threading.Event()
+        cancel_current_run = runner._cancel_current_run
+
+        def cancel_pass() -> None:
+            cancel_current_run()
+            passed.set()
+
+        def stop_after_the_intake_check(task_id: str) -> None:
+            runner.stop()
+            assert passed.wait(5.0)
+
+        runner._cancel_current_run = cancel_pass  # type: ignore[method-assign]
+        lifecycle.set_busy.side_effect = stop_after_the_intake_check
+
+        runner.start()
+
+        assert executor.controls == {}
+        assert _reported(lifecycle, "set_cancelled") == ["tsk-a"]
+
     def test_stop_before_start_skips_every_task(self, tmp_path: Path) -> None:
         executor = _RecordingExecutor()
         runner, lifecycle = _runner(tmp_path, executor, ["tsk-a"])
