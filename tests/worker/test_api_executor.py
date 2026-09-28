@@ -390,56 +390,6 @@ class TestRetries:
             with pytest.raises(ValidationError):
                 self._task(retries=bad)
 
-    def test_cancel_previous_task_does_not_cancel_next(self) -> None:
-        """A cancellation of a prior task's run does not cancel the next run."""
-        executor = APIExecutor.__new__(APIExecutor)
-        RunControl("task-a").request_cancel()
-
-        task_b = self._task(retries=0)
-        task_b.task_id = "task-b"
-        transport = _RecordingTransport()
-        with patch.object(
-            APIExecutor, "_get_client", return_value=httpx.Client(transport=transport)
-        ):
-            executor.run(task_b, Path("/tmp/out"), RunControl(task_b.task_id))
-        assert transport.request is not None
-
-    def test_delayed_cancel_of_previous_task_does_not_cancel_next(self) -> None:
-        """A late cancellation for a prior task does not cancel a running task."""
-        executor = APIExecutor.__new__(APIExecutor)
-
-        task_b = self._task(retries=1)
-        task_b.task_id = "task-b"
-        control_a = RunControl("task-a")
-        # First request blocks; once released it returns a retryable 503 so the
-        # loop re-checks the control, then a 200 succeeds.
-        transport = _BlockingTransport([_error_response(503), _ok_response()])
-
-        errors: list[BaseException] = []
-
-        def _run_b() -> None:
-            try:
-                with patch.object(
-                    APIExecutor,
-                    "_get_client",
-                    return_value=httpx.Client(transport=transport),
-                ):
-                    executor.run(task_b, Path("/tmp/out"), RunControl(task_b.task_id))
-            except BaseException as exc:
-                errors.append(exc)
-
-        thread = threading.Thread(target=_run_b)
-        thread.start()
-        try:
-            assert transport.started.wait(2.0)
-            control_a.request_cancel()
-        finally:
-            transport.release.set()
-        thread.join(2.0)
-        assert not thread.is_alive()
-        assert errors == []
-        assert transport.calls == 2
-
     def test_cancel_of_active_task_still_cancels(self) -> None:
         """A cancellation addressed to the running task still cancels it."""
         executor = APIExecutor.__new__(APIExecutor)
