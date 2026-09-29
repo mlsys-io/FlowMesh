@@ -134,35 +134,19 @@ spec:
 
 ## Python task
 
-`taskType: python` runs one function from `spec.code` in its own container on
-the Docker session backend; a worker without Docker does not accept python
-tasks. A supervisor-launched worker gets Docker access only when SSH is enabled
-for it (`enable_ssh`), and its SSH caps and TTL bound python tasks too (see
-[`ENV.md`](ENV.md)).
+`taskType: python` runs a function from `spec.code` in its own container, and
+its return value and metrics become the task's result. It runs on workers with
+Docker session support; a supervisor-launched worker has it when SSH is enabled
+for it (`enable_ssh`), and the worker's SSH caps and TTL apply (see
+[`ENV.md`](ENV.md)). `${...}` in `code` is ordinary Python, not a stage
+reference.
 
-| Field | Meaning |
-|-------|---------|
-| `code` | Python source defining the entrypoint (at most 256 KiB). Passed verbatim: `${...}` in it is ordinary text, not a stage reference. |
-| `entrypoint` | Function to call (default `main`). |
-| `image` | Container image providing `python3` (default `python:3.12-slim`). |
-| `requirements` | pip specifiers installed before the call. Requires `network: bridge`. |
-| `network` | `none` (default) or `bridge`. |
-| `inputs` | Upstream stages to mount, as for SSH tasks. When omitted, every direct dependency is mounted at `/mnt/flowmesh/inputs/<stage>`. |
-| `timeoutSeconds` | Wall-clock limit (default 600, at most 3600 and at most the worker's `SSH_MAX_TTL_SEC`). Reaching it fails the task. |
-| `env` | Extra environment variables. |
-| `emits` | Metric names the code must report; a missing one fails the task. |
-| `pythonOutput.maxBytes` | Cap on the output directory. |
-| `resources` | CPU, memory and GPU requests, capped by the worker's SSH limits. |
-
-The return value must be JSON-serialisable. It is written to
-`artifacts/result.json` and returned as `PythonResult.value`. Metrics come
-from a `"metrics"` mapping in the return value and from any `metrics.json` the
-code writes into `$FLOWMESH_OUTPUT`. Both are merged into
-`artifacts/metrics.json` and `PythonResult.metrics`, and must be finite
-numbers. The task succeeds only when the function returns and every promised
-metric is present. An exception, `sys.exit()`, a non-serialisable or
-non-finite value, a timeout or a memory kill fails it, and the code's own
-exception message becomes the task error.
+The entrypoint (default `main`) returns a JSON-serialisable value, returned as
+`PythonResult.value`. Metrics, reported under a `"metrics"` key of the return
+value or written to `$FLOWMESH_OUTPUT/metrics.json`, are returned as
+`PythonResult.metrics` and must be finite numbers. The task fails, with the
+error as its message, when the code raises, calls `sys.exit()`, runs past
+`timeoutSeconds`, or does not report a metric named in `emits`.
 
 ```yaml
 spec:
@@ -188,18 +172,16 @@ See `examples/templates/python_two_stage.yaml` for a runnable workflow.
 
 ### Reading upstream stages
 
-The entrypoint is called with keyword arguments, bound by parameter name:
+A python task's inputs are the stages in `inputs`, or each of its direct
+dependencies when `inputs` is omitted. The entrypoint receives them as keyword
+arguments, bound by parameter name:
 
 - A parameter named after an input stage receives that stage's output: a
   python stage's return value, `None` for a stage skipped by its condition,
-  and for any other task type its result object as `flowmesh result fetch`
-  shows it (for an echo stage, `{"task_type": "echo", "items": [...], ...}`).
+  and for any other task type its result as `flowmesh result fetch` shows it.
 - A parameter named `inputs` receives every input stage as a `StageInput`.
-- `**kwargs` collects the input stages no other parameter took, including
-  stage names that are not Python identifiers.
-- A parameter with a default that matches no stage keeps its default. Any
-  other parameter that matches no stage, `*args`, or a positional-only
-  parameter fails the task before the call, naming the available stages.
+- `**kwargs` collects the input stages no other parameter took.
+- Any other parameter without a default fails the task before the call.
 
 ```python
 def main(train, evaluate, inputs):
@@ -207,19 +189,15 @@ def main(train, evaluate, inputs):
     return {"metrics": {"accuracy": evaluate["accuracy"]}}
 ```
 
-A `StageInput` is path-like (`open`, `os.path.join` and `Path` accept it) and
-exposes `output`, `result` (the full result object), `metadata`, `skipped`,
-`task_type`, `artifacts` (the stage's artifacts directory) and
-`artifact(ref)`, which resolves an `{"path": ...}` reference or relative path
-under `artifacts`. A stage's `results.json` is read only when its output or
-result is first used, so a large result the code never touches is not parsed.
-A missing or unreadable `results.json` fails the task.
+A `StageInput` is path-like and exposes the stage's `output`, `result`,
+`metadata`, `skipped`, `task_type` and `artifacts` directory, plus
+`artifact(ref)` to resolve an artifact reference under `artifacts`.
 
 ### Isolation
 
-The code runs as uid 65534 with no effective capabilities, `/tmp` as its
-writable scratch space, and no network unless `network: bridge` is set. It
-sees GPUs only when `resources.hardware.gpu` asks for them.
+The code runs as an unprivileged user with `/tmp` as its writable scratch
+space. It has no network unless `network: bridge` is set, which `requirements`
+need to install, and sees GPUs only when `resources.hardware.gpu` asks for them.
 
 ## data_retrieval: type lumid
 

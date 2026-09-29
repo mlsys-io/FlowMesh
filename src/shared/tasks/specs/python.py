@@ -1,20 +1,5 @@
-"""User-authored Python as a workflow stage.
-
-A ``python`` task runs one function from the caller's code in its own sibling
-container: the worker runs it through the SSH Docker session backend in
-non-interactive mode, so it inherits that backend's per-task image, cgroup
-limits, GPU slice, upstream-stage input mounts and output collection. What this
-spec adds on top is the contract: ``code`` defines the entrypoint, which receives
-each input stage's output through the parameter of the same name; its
-JSON-serialisable return value becomes ``result.json``, and any ``metrics`` it
-reports become ``metrics.json`` — the file an experiment harvests.
-
-Isolation defaults to the strict end: no network, all capabilities dropped
-except the few the bootstrap needs before it switches to an unprivileged uid.
-``requirements`` need the network to install, so they are only accepted with
-``network: bridge``; code that must run offline brings its dependencies in
-``image``.
-"""
+"""Spec for ``python`` tasks: a function from ``code``, run in an isolated
+container, whose return value and metrics become the task's result."""
 
 from typing import Any, ClassVar, Literal, Self
 
@@ -94,7 +79,10 @@ class PythonSpecStrict(TaskSpecStrictBase):
 
     placeholder_exempt_fields: ClassVar[frozenset[str]] = frozenset({"code"})
 
-    code: str = Field(description="Python source defining the entrypoint function.")
+    code: str = Field(
+        description="Python source defining the entrypoint function, at most "
+        "256 KiB. Taken verbatim: ${...} in it is not a stage reference.",
+    )
     entrypoint: str = Field(
         default="main",
         description="Function to call. Each parameter named after an input "
@@ -102,25 +90,41 @@ class PythonSpecStrict(TaskSpecStrictBase):
         "receives every input stage.",
     )
     image: str | None = Field(
-        default=None, description="Container image; must provide python3."
+        default=None,
+        description="Container image; must provide python3. Defaults to "
+        "python:3.12-slim.",
     )
     requirements: list[str] | None = Field(
-        default=None, description="pip requirement specifiers (needs network)."
+        default=None,
+        description="pip requirement specifiers installed before the call; "
+        "needs network: bridge.",
     )
     inputs: list[SSHInputSpec] | None = Field(
         default=None,
-        description="Upstream stages to mount. Omitted: every stage this task "
-        "depends on, each at /mnt/flowmesh/inputs/<stage>.",
+        description="Upstream stages to mount. Omitted: each direct dependency, "
+        "at /mnt/flowmesh/inputs/<stage>.",
     )
-    timeoutSeconds: float | None = None
-    network: Literal["none", "bridge"] = "none"
-    env: dict[str, Any] | None = None
+    timeoutSeconds: float | None = Field(
+        default=None,
+        description="Wall-clock limit, default 600 and at most 3600; the "
+        "worker's SSH_MAX_TTL_SEC also caps it. Reaching it fails the task.",
+    )
+    network: Literal["none", "bridge"] = Field(
+        default="none",
+        description="none: no network at all. bridge: the worker's isolated "
+        "session network.",
+    )
+    env: dict[str, Any] | None = Field(
+        default=None, description="Extra environment variables for the code."
+    )
     emits: list[str] | None = Field(
         default=None,
         description="Metric names the code promises to report; the task fails "
         "if one is missing, so an experiment never records a silent zero.",
     )
-    pythonOutput: PythonOutputSpec | None = None
+    pythonOutput: PythonOutputSpec | None = Field(
+        default=None, description="Limits on the collected output directory."
+    )
 
     def redact_credentials(self) -> Self:
         spec = super().redact_credentials()
