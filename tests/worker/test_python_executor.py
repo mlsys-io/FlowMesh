@@ -518,6 +518,181 @@ class TestBootstrap:
         )
 
 
+def _stage(tmp_path: Path, name: str, envelope: object | None) -> str:
+    """A mounted upstream stage directory; ``None`` writes no results.json."""
+    path = tmp_path / "inputs" / name
+    (path / "artifacts").mkdir(parents=True)
+    if envelope is not None:
+        text = envelope if isinstance(envelope, str) else json.dumps(envelope)
+        (path / "results.json").write_text(text)
+    return str(path)
+
+
+def _python_envelope(value: object) -> dict[str, object]:
+    return {
+        "task_id": "t-1",
+        "result": {"ok": True, "task_type": "python", "exit_code": 0, "value": value},
+    }
+
+
+ECHO_ENVELOPE = {
+    "task_id": "t-2",
+    "result": {
+        "ok": True,
+        "task_type": "echo",
+        "items": [{"output": "hi"}],
+        "count": 1,
+        "_artifacts": {"base_dir": "/host/results/t-2"},
+    },
+}
+SKIPPED_ENVELOPE = {
+    "task_id": "t-3",
+    "result": {"ok": True},
+    "metadata": {"skipped": True},
+}
+
+
+@pytest.mark.skipif(os.getuid() == 0, reason="bootstrap would drop privileges")
+class TestInputBinding:
+    def _run(
+        self, tmp_path: Path, code: str, stages: dict[str, object | None]
+    ) -> tuple[int, Path]:
+        inputs = {name: _stage(tmp_path, name, env) for name, env in stages.items()}
+        return _bootstrap(tmp_path, code, FLOWMESH_PY_INPUTS=json.dumps(inputs))
+
+    def _error(self, out: Path) -> dict[str, str]:
+        return cast(dict[str, str], _load(out, "error.json"))
+
+    def test_python_stage_binds_its_return_value(self, tmp_path: Path) -> None:
+        rc, out = self._run(
+            tmp_path,
+            "def main(prep):\n    return prep['n'] * 2\n",
+            {"prep": _python_envelope({"n": 21})},
+        )
+        assert rc == 0
+        assert _load(out, "result.json") == 42
+
+    def test_other_stage_binds_its_result_without_host_paths(
+        self, tmp_path: Path
+    ) -> None:
+        rc, out = self._run(
+            tmp_path, "def main(raw):\n    return raw\n", {"raw": ECHO_ENVELOPE}
+        )
+        assert rc == 0
+        assert _load(out, "result.json") == {
+            "ok": True,
+            "task_type": "echo",
+            "items": [{"output": "hi"}],
+            "count": 1,
+        }
+
+    def test_skipped_stage_binds_none(self, tmp_path: Path) -> None:
+        code = (
+            "def main(maybe, inputs):\n" "    return [maybe, inputs['maybe'].skipped]\n"
+        )
+        rc, out = self._run(tmp_path, code, {"maybe": SKIPPED_ENVELOPE})
+        assert rc == 0
+        assert _load(out, "result.json") == [None, True]
+
+    def test_inputs_are_path_like_stage_inputs(self, tmp_path: Path) -> None:
+        code = (
+            "import os\n"
+            "def main(inputs):\n"
+            "    s = inputs['prep']\n"
+            "    return {\n"
+            "        'results': os.path.exists(os.path.join(s, 'results.json')),\n"
+            "        'task_type': s.task_type,\n"
+            "        'output': s.output,\n"
+            "        'artifact': str(s.artifact({'path': 'a/b.txt'})),\n"
+            "        'artifacts': str(s.artifacts),\n"
+            "    }\n"
+        )
+        rc, out = self._run(tmp_path, code, {"prep": _python_envelope([1, 2])})
+        assert rc == 0
+        result = cast(dict[str, object], _load(out, "result.json"))
+        artifacts = tmp_path / "inputs" / "prep" / "artifacts"
+        assert result == {
+            "results": True,
+            "task_type": "python",
+            "output": [1, 2],
+            "artifact": str((artifacts / "a/b.txt").resolve()),
+            "artifacts": str(artifacts),
+        }
+
+    def test_kwargs_collect_the_unbound_stages(self, tmp_path: Path) -> None:
+        rc, out = self._run(
+            tmp_path,
+            "def main(prep, **rest):\n    return sorted(rest)\n",
+            {"prep": _python_envelope(1), "prep-data": _python_envelope(2)},
+        )
+        assert rc == 0
+        assert _load(out, "result.json") == ["prep-data"]
+
+    def test_defaults_are_left_alone(self, tmp_path: Path) -> None:
+        rc, out = self._run(
+            tmp_path,
+            "def main(prep, seed=7):\n    return [prep, seed]\n",
+            {"prep": _python_envelope("x")},
+        )
+        assert rc == 0
+        assert _load(out, "result.json") == ["x", 7]
+
+    def test_inputs_parameter_wins_over_a_stage_named_inputs(
+        self, tmp_path: Path
+    ) -> None:
+        rc, out = self._run(
+            tmp_path,
+            "def main(inputs):\n    return inputs['inputs'].output\n",
+            {"inputs": _python_envelope("mapping")},
+        )
+        assert rc == 0
+        assert _load(out, "result.json") == "mapping"
+
+    @pytest.mark.parametrize(
+        ("signature", "message"),
+        [
+            ("unknown", "parameter 'unknown' matches no input stage (inputs: prep)"),
+            ("*args", "parameter 'args' cannot be bound by name"),
+            ("prep, /", "parameter 'prep' cannot be bound by name"),
+        ],
+    )
+    def test_unbindable_parameters_fail_before_the_call(
+        self, tmp_path: Path, signature: str, message: str
+    ) -> None:
+        code = f"def main({signature}):\n    raise AssertionError('called')\n"
+        rc, out = self._run(tmp_path, code, {"prep": _python_envelope(1)})
+        assert rc == 3
+        error = self._error(out)
+        assert error["type"] == "EntrypointError"
+        assert message in error["message"]
+
+    @pytest.mark.parametrize("envelope", [None, "{not json", '{"task_id": "t"}'])
+    def test_unreadable_bound_stage_fails(
+        self, tmp_path: Path, envelope: str | None
+    ) -> None:
+        rc, out = self._run(
+            tmp_path, "def main(prep):\n    return prep\n", {"prep": envelope}
+        )
+        assert rc == 3
+        error = self._error(out)
+        assert error["type"] == "InputError"
+        assert "stage 'prep'" in error["message"]
+
+    def test_unused_stages_are_never_read(self, tmp_path: Path) -> None:
+        rc, _ = self._run(
+            tmp_path,
+            "def main(inputs):\n    return sorted(inputs)\n",
+            {"broken": "{not json"},
+        )
+        assert rc == 0
+
+    def test_artifact_outside_its_stage_fails(self, tmp_path: Path) -> None:
+        code = "def main(inputs):\n    return str(inputs['prep'].artifact('../x'))\n"
+        rc, out = self._run(tmp_path, code, {"prep": _python_envelope(1)})
+        assert rc == 1
+        assert self._error(out)["type"] == "InputError"
+
+
 def test_inputs_default_to_the_resolved_upstream_stages(tmp_path: Path) -> None:
     executor = _executor(tmp_path)
     seen: dict[str, object] = {}

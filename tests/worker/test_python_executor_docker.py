@@ -147,3 +147,15 @@ def test_upstream_results_are_mounted_by_default(tmp_path: Path) -> None:
     )
     result = _run(tmp_path, code, upstream={"prep": "t-up"})
     assert result.value == "hi"
+
+
+def test_upstream_outputs_bind_by_parameter_name(tmp_path: Path) -> None:
+    upstream = tmp_path / "worker-results" / "t-py"
+    upstream.mkdir(parents=True)
+    (upstream / "results.json").write_text(
+        '{"task_id": "t-py", "result": {"ok": true, "task_type": "python", '
+        '"exit_code": 0, "value": {"rows": [1, 2, 3]}}}'
+    )
+    code = "def main(prep):\n    return sum(prep['rows'])\n"
+    result = _run(tmp_path, code, upstream={"prep": "t-py"})
+    assert result.value == 6

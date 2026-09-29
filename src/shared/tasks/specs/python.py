@@ -4,7 +4,8 @@ A ``python`` task runs one function from the caller's code in its own sibling
 container: the worker runs it through the SSH Docker session backend in
 non-interactive mode, so it inherits that backend's per-task image, cgroup
 limits, GPU slice, upstream-stage input mounts and output collection. What this
-spec adds on top is the contract: ``code`` defines ``entrypoint(inputs)``; its
+spec adds on top is the contract: ``code`` defines the entrypoint, which receives
+each input stage's output through the parameter of the same name; its
 JSON-serialisable return value becomes ``result.json``, and any ``metrics`` it
 reports become ``metrics.json`` — the file an experiment harvests.
 
@@ -96,9 +97,9 @@ class PythonSpecStrict(TaskSpecStrictBase):
     code: str = Field(description="Python source defining the entrypoint function.")
     entrypoint: str = Field(
         default="main",
-        description="Function called as entrypoint(inputs) — or with no "
-        "arguments if it takes none. inputs maps each input stage to its "
-        "mounted directory.",
+        description="Function to call. Each parameter named after an input "
+        "stage receives that stage's output; a parameter named inputs "
+        "receives every input stage.",
     )
     image: str | None = Field(
         default=None, description="Container image; must provide python3."
