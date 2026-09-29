@@ -161,18 +161,28 @@ def _read_result(artifacts: Path, emits: list[str]) -> PythonResult:
     The caller's code can end the process itself (``os._exit(0)``) before the
     bootstrap writes or checks anything, so a clean exit alone proves nothing.
     """
-    if not (artifacts / "result.json").is_file():
+    result_file = artifacts / "result.json"
+    if not result_file.is_file():
         raise ExecutionError("python task exited without writing a result")
-    metrics = _read_json(artifacts / "metrics.json") or {}
+    value = _load_json(result_file)
+    metrics_file = artifacts / "metrics.json"
+    metrics = _load_json(metrics_file) if metrics_file.is_file() else {}
     if not isinstance(metrics, dict) or not all(
         _is_finite_number(v) for v in metrics.values()
     ):
         raise ExecutionError("python task wrote metrics that are not finite numbers")
     if missing := [name for name in emits if name not in metrics]:
         raise ExecutionError(f"python task did not report declared emits {missing}")
-    return PythonResult(
-        exit_code=0, value=_read_json(artifacts / "result.json"), metrics=metrics
-    )
+    return PythonResult(exit_code=0, value=value, metrics=metrics)
+
+
+def _load_json(path: Path) -> Any:
+    try:
+        return json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ExecutionError(
+            f"python task wrote an unreadable {path.name}: {exc}"
+        ) from exc
 
 
 def _is_finite_number(value: Any) -> bool:

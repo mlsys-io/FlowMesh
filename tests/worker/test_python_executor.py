@@ -325,6 +325,11 @@ class TestEnding:
                 {"result.json": "1", "metrics.json": '{"score": NaN}'},
                 "not finite numbers",
             ),
+            ({"result.json": "{bad"}, "unreadable result.json"),
+            (
+                {"result.json": "1", "metrics.json": "{bad"},
+                "unreadable metrics.json",
+            ),
         ],
     )
     def test_clean_exit_is_held_to_the_contract(
