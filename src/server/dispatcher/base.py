@@ -1126,19 +1126,19 @@ class Dispatcher:
         for stage in stages:
             stage_name = stage.strip()
             if not stage_name:
-                raise ValueError("SSH input stage names must be non-empty")
+                raise ValueError("Input stage names must be non-empty")
             upstream = context.get(stage_name)
             if upstream is None:
                 raise ValueError(
-                    f"Unknown SSH input stage '{stage_name}' for task {record.task_id}"
+                    f"Unknown input stage '{stage_name}' for task {record.task_id}"
                 )
             if upstream.task_id == record.task_id:
                 raise ValueError(
-                    f"SSH input stage '{stage_name}' cannot reference the current task"
+                    f"Input stage '{stage_name}' cannot reference the current task"
                 )
             if upstream.status != TaskStatus.DONE:
                 raise StageReferenceNotReady(
-                    f"Stage '{stage_name}' has not completed for SSH input mount"
+                    f"Stage '{stage_name}' has not completed for input mount"
                 )
             resolved[stage_name] = upstream.task_id
         return resolved or None

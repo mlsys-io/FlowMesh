@@ -369,7 +369,7 @@ class SessionExecutor(Executor):
         )
         session.stop(1)
         raise ExecutionError(
-            f"SSH sshOutput exceeded maxBytes ({current_size} > {max_bytes})"
+            f"Session output exceeded maxBytes ({current_size} > {max_bytes})"
         )
 
     @staticmethod
