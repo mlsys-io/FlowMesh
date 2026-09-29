@@ -39,7 +39,9 @@ DEPS = "/tmp/flowmesh-deps"  # nosec B108 - inside the task container; /tmp is i
 def _write(name, payload, lenient=False):
     # Strict by default: a return value json cannot encode is the caller's bug
     # and must fail the task, not be stringified into a result that looks fine.
-    text = json.dumps(payload, indent=2, default=str if lenient else None)
+    text = json.dumps(
+        payload, indent=2, default=str if lenient else None, allow_nan=lenient
+    )
     with open(os.path.join(OUT, name), "w") as fh:
         fh.write(text)
 
@@ -57,6 +59,18 @@ def _fail(kind, message, exit_code=1, tb=None):
     if tb:
         print(tb, file=sys.stderr)
     sys.exit(exit_code)
+
+
+def _fail_from(exc, entrypoint):
+    # A task ends only by returning: sys.exit() in the caller's code, whatever
+    # its code, would otherwise skip the result and the promised metrics.
+    if isinstance(exc, SystemExit):
+        _fail(
+            "SystemExit",
+            f"the code called sys.exit({exc.code!r}); return from "
+            f"{entrypoint!r} instead",
+        )
+    _fail(type(exc).__name__, str(exc), 1, traceback.format_exc())
 
 
 def _install_requirements():
@@ -134,21 +148,22 @@ def main():
     try:
         with open(code_path) as fh:
             exec(compile(fh.read(), "task.py", "exec"), namespace)
-        fn = namespace.get(entrypoint)
-        if not callable(fn):
-            _fail("EntrypointError", f"task.py defines no function {entrypoint!r}", 3)
+    except BaseException as exc:
+        _fail_from(exc, entrypoint)
+    fn = namespace.get(entrypoint)
+    if not callable(fn):
+        _fail("EntrypointError", f"task.py defines no function {entrypoint!r}", 3)
+    try:
         takes_args = bool(inspect.signature(fn).parameters)
         value = fn(inputs) if takes_args else fn()
-    except SystemExit:
-        raise
     except BaseException as exc:
-        _fail(type(exc).__name__, str(exc), 1, traceback.format_exc())
+        _fail_from(exc, entrypoint)
 
+    metrics = _collect_metrics(value)
     try:
         _write("result.json", value)
     except Exception as exc:
         _fail("ResultError", f"return value is not JSON-serialisable: {exc}", 3)
-    metrics = _collect_metrics(value)
     if metrics:
         _write("metrics.json", metrics)
     missing = [m for m in emits if m not in metrics]

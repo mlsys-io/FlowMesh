@@ -8,6 +8,7 @@ privilege drop is skipped and everything else is exercised.
 import io
 import json
 import os
+import re
 import subprocess
 import sys
 import tarfile
@@ -315,6 +316,30 @@ class TestEnding:
         msg = self._run(tmp_path, _outcome(reason), {"result.json": "1"})
         assert msg.startswith("python task")
 
+    @pytest.mark.parametrize(
+        ("files", "error"),
+        [
+            ({}, "without writing a result"),
+            ({"result.json": "1"}, "declared emits ['score']"),
+            (
+                {"result.json": "1", "metrics.json": '{"score": NaN}'},
+                "not finite numbers",
+            ),
+        ],
+    )
+    def test_clean_exit_is_held_to_the_contract(
+        self, tmp_path: Path, files: dict[str, str], error: str
+    ) -> None:
+        executor = _executor(tmp_path)
+        executor._run_session = MagicMock(return_value=_outcome("exited", 0))  # type: ignore[method-assign]
+        out = tmp_path / "out"
+        (out / "artifacts").mkdir(parents=True)
+        for name, text in files.items():
+            (out / "artifacts" / name).write_text(text)
+        executor.require_spec = MagicMock(return_value=_spec(emits=["score"]))  # type: ignore[method-assign]
+        with pytest.raises(ExecutionError, match=re.escape(error)):
+            executor.run(MagicMock(upstream_task_ids=None), out)
+
     def test_success_reads_result_and_metrics(self, tmp_path: Path) -> None:
         executor = _executor(tmp_path)
         out = tmp_path / "out"
@@ -467,6 +492,24 @@ class TestBootstrap:
         assert rc == 3
         assert cast(dict[str, str], _load(out, "error.json"))["type"] == "MetricsError"
 
+    @pytest.mark.parametrize(
+        "code",
+        [
+            "import sys\ndef main():\n    sys.exit(0)\n",
+            "import sys\nsys.exit(0)\ndef main():\n    return 1\n",
+        ],
+    )
+    def test_sys_exit_is_a_failure(self, tmp_path: Path, code: str) -> None:
+        rc, out = _bootstrap(tmp_path, code, FLOWMESH_PY_EMITS='["score"]')
+        assert rc == 1
+        assert cast(dict[str, str], _load(out, "error.json"))["type"] == "SystemExit"
+        assert not (out / "result.json").exists()
+
+    def test_non_finite_return_value_fails(self, tmp_path: Path) -> None:
+        rc, out = _bootstrap(tmp_path, "def main():\n    return {'x': float('nan')}\n")
+        assert rc == 3
+        assert cast(dict[str, str], _load(out, "error.json"))["type"] == "ResultError"
+
     def test_missing_entrypoint_fails(self, tmp_path: Path) -> None:
         rc, out = _bootstrap(tmp_path, "x = 1\n")
         assert rc == 3
@@ -488,6 +531,7 @@ def test_inputs_default_to_the_resolved_upstream_stages(tmp_path: Path) -> None:
     executor.require_spec = MagicMock(return_value=_spec())  # type: ignore[method-assign]
     task = MagicMock(upstream_task_ids={"prep": "t-a", "raw": "t-b"})
     (tmp_path / "out" / "artifacts").mkdir(parents=True)
+    (tmp_path / "out" / "artifacts" / "result.json").write_text("null")
     executor.run(task, tmp_path / "out")
     assert seen["inputs"] == ["prep", "raw"]
     assert seen["env"] == {

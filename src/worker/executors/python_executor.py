@@ -20,6 +20,7 @@ task where it would run unisolated on the host.
 
 import json
 import logging
+import math
 from pathlib import Path
 from typing import Any
 
@@ -78,11 +79,7 @@ class PythonExecutor(SessionExecutor):
         outcome = self._run_session(task, out_dir, cfg)
         artifacts = out_dir / ARTIFACTS_DIR
         _raise_unless_succeeded(outcome, cfg.ttl_sec, artifacts)
-        return PythonResult(
-            exit_code=0,
-            value=_read_json(artifacts / "result.json"),
-            metrics=_read_json(artifacts / "metrics.json") or {},
-        )
+        return _read_result(artifacts, spec.emits or [])
 
     def _python_config(self, spec: PythonSpecStrict) -> SSHConfig:
         inputs = {
@@ -156,6 +153,35 @@ def _read_json(path: Path) -> Any:
     except (OSError, json.JSONDecodeError) as exc:
         logger.warning("Unreadable %s from python task: %s", path.name, exc)
         return None
+
+
+def _read_result(artifacts: Path, emits: list[str]) -> PythonResult:
+    """The result of a clean exit, held to the same contract the bootstrap checks.
+
+    The caller's code can end the process itself (``os._exit(0)``) before the
+    bootstrap writes or checks anything, so a clean exit alone proves nothing.
+    """
+    if not (artifacts / "result.json").is_file():
+        raise ExecutionError("python task exited without writing a result")
+    metrics = _read_json(artifacts / "metrics.json") or {}
+    if not isinstance(metrics, dict) or not all(
+        _is_finite_number(v) for v in metrics.values()
+    ):
+        raise ExecutionError("python task wrote metrics that are not finite numbers")
+    if missing := [name for name in emits if name not in metrics]:
+        raise ExecutionError(f"python task did not report declared emits {missing}")
+    return PythonResult(
+        exit_code=0, value=_read_json(artifacts / "result.json"), metrics=metrics
+    )
+
+
+def _is_finite_number(value: Any) -> bool:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        return False
 
 
 def _raise_unless_succeeded(

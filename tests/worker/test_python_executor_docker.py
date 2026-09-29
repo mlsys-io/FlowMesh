@@ -127,7 +127,12 @@ def test_no_gpus_unless_asked(tmp_path: Path) -> None:
 
 def test_exit_code_124_is_not_a_timeout(tmp_path: Path) -> None:
     with pytest.raises(ExecutionError, match="exited with code 124"):
-        _run(tmp_path, "import sys\ndef main():\n    sys.exit(124)\n")
+        _run(tmp_path, "import os\ndef main():\n    os._exit(124)\n")
+
+
+def test_sys_exit_is_a_failure(tmp_path: Path) -> None:
+    with pytest.raises(ExecutionError, match=r"called sys.exit\(0\)"):
+        _run(tmp_path, "import sys\ndef main():\n    sys.exit(0)\n")
 
 
 def test_upstream_results_are_mounted_by_default(tmp_path: Path) -> None:
