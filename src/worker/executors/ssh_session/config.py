@@ -92,12 +92,14 @@ class SSHConfig:
     memory_limit_bytes: int | None
     pids_limit: int | None
     gpu_device_ids: list[str]
-    # Hardening a caller can opt into; the SSH task leaves all three at their
-    # defaults. The python task (executors/python_executor.py) sets them: no
-    # network, a minimal capability set, and its bootstrap + code as files.
+    # Opt-in session policy: no network at all, a minimal capability set with a
+    # private tmpfs /tmp, files written into the container before it starts, and
+    # whether a finish request (in-session helper or graceful stop) ends the
+    # session as a success.
     network_disabled: bool = False
     hardened: bool = False
     extra_files: dict[str, bytes] = field(default_factory=dict)
+    honor_finish_request: bool = True
 
     @classmethod
     def from_spec(

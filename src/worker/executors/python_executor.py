@@ -1,15 +1,17 @@
 """Executor for ``python`` tasks: the caller's function in its own container.
 
 A python task is a hardened non-interactive session on the Docker session
-backend: the same per-task container, cgroup limits, GPU slice, upstream-input
-mounts and output collection the SSH executor uses (``_run_session``), with
-three differences set on the resolved config:
+backend: the same per-task container, cgroup limits, upstream-input mounts and
+output collection as an SSH task (``SessionExecutor``), with these differences
+set on the resolved config:
 
 * no network (``network: none``, the default) — or the isolated SSH bridge
   when the spec asks for ``bridge`` (needed to pip-install ``requirements``);
 * all capabilities dropped but the few the bootstrap needs before it switches
   to an unprivileged uid, and ``/tmp`` as the only writable scratch;
-* the caller's code and the bootstrap arrive as files, not environment.
+* the caller's code and the bootstrap arrive as files, not environment;
+* the task succeeds only when its process exits 0: a timeout, a finish request
+  or a lost container is a failure.
 
 There is deliberately no process-backend fallback: on a worker without Docker
 the executor reports itself unavailable, so the scheduler never places a python
@@ -39,7 +41,7 @@ from worker.executors.ssh_session import (
 from worker.executors.ssh_session.config import DEFAULT_INPUTS_ROOT
 
 from .base_executor import ExecutionError, ExecutorTask
-from .ssh_executor import SessionExitError, SSHExecutor
+from .session_executor import SessionExecutor, SessionOutcome
 
 logger = logging.getLogger(__name__)
 
@@ -51,22 +53,16 @@ UNPRIVILEGED_UID = 65534  # nobody
 _BOOTSTRAP_SOURCE = Path(__file__).resolve().parents[1] / "docker" / "python-run.py"
 
 
-class PythonExecutor(SSHExecutor):
+class PythonExecutor(SessionExecutor):
     name = "python"
     supported_task_types = frozenset({TaskType.PYTHON})
-    # A python task must end with a result. Running past timeoutSeconds is a
-    # failure (124, as timeout(1) reports it), and the finish helper — which the
-    # caller's code could reach by touching the sentinel in /tmp — is ignored,
-    # so a task can never "succeed" without result.json and its promised metrics.
-    ttl_exit_code = 124
-    honor_finish_request = False
 
     @classmethod
     def is_available(cls, config: WorkerConfig) -> bool:
         backend = select_backend_cls(config)
         return backend is not None and issubclass(backend, DockerSessionBackend)
 
-    def run(self, task: ExecutorTask, out_dir: Path) -> PythonResult:  # type: ignore[override]
+    def run(self, task: ExecutorTask, out_dir: Path) -> PythonResult:
         spec = self.require_spec(task, PythonSpecStrict)
         if spec.inputs is None and task.upstream_task_ids:
             # No explicit inputs: the dispatcher resolved every direct
@@ -79,22 +75,11 @@ class PythonExecutor(SSHExecutor):
                 }
             )
         cfg = self._python_config(spec)
+        outcome = self._run_session(task, out_dir, cfg)
         artifacts = out_dir / ARTIFACTS_DIR
-        try:
-            session = self._run_session(task, out_dir, cfg)
-        except SessionExitError as exc:
-            if exc.exit_code == self.ttl_exit_code:
-                raise ExecutionError(
-                    f"python task timed out after {cfg.ttl_sec:g}s"
-                ) from exc
-            if exc.exit_code == 137:
-                raise ExecutionError(
-                    "python task was killed (exit 137), most often by its "
-                    "memory limit"
-                ) from exc
-            raise ExecutionError(_failure_message(artifacts, exc)) from exc
+        _raise_unless_succeeded(outcome, cfg.ttl_sec, artifacts)
         return PythonResult(
-            exit_code=session.exit_code,
+            exit_code=0,
             value=_read_json(artifacts / "result.json"),
             metrics=_read_json(artifacts / "metrics.json") or {},
         )
@@ -147,6 +132,9 @@ class PythonExecutor(SSHExecutor):
         cfg = self._config_for(session_spec)
         cfg.network_disabled = spec.network == "none"
         cfg.hardened = True
+        # A python task ends only with its result: the finish helper, which the
+        # code could reach by touching the sentinel in /tmp, never ends it early.
+        cfg.honor_finish_request = False
         cfg.extra_files = {
             BOOTSTRAP_PATH: _BOOTSTRAP_SOURCE.read_bytes(),
             CODE_PATH: spec.code.encode(),
@@ -164,9 +152,31 @@ def _read_json(path: Path) -> Any:
         return None
 
 
-def _failure_message(artifacts: Path, exc: ExecutionError) -> str:
+def _raise_unless_succeeded(
+    outcome: SessionOutcome, timeout_sec: float, artifacts: Path
+) -> None:
+    """A python task succeeds only when its process exits 0 on its own."""
+    end = outcome.end
+    match end.reason:
+        case "exited" if end.exit_code == 0:
+            return
+        case "exited" if end.exit_code == 137:
+            raise ExecutionError(
+                "python task was killed (exit 137), most often by its memory limit"
+            )
+        case "exited":
+            raise ExecutionError(_failure_message(artifacts, end.exit_code))
+        case "ttl":
+            raise ExecutionError(f"python task timed out after {timeout_sec:g}s")
+        case "lost":
+            raise ExecutionError("python task's container was lost before it exited")
+        case _:
+            raise ExecutionError("python task was stopped before it finished")
+
+
+def _failure_message(artifacts: Path, exit_code: int) -> str:
     """The caller's own error (from error.json) beats the bare exit code."""
     error = _read_json(artifacts / "error.json")
     if isinstance(error, dict) and error.get("message") is not None:
         return f"python task failed: {error.get('type')}: {error['message']}"
-    return str(exc)
+    return f"python task exited with code {exit_code}"

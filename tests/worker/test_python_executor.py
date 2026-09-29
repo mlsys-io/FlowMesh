@@ -17,6 +17,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from shared.schemas.result import SSHResult
 from shared.tasks.specs import PythonSpecStrict, SSHSpecStrict
 from tests.worker.factories import DEFAULT_WORKER_CONFIG, make_live_worker_config
 from worker.executors.base_executor import ExecutionError
@@ -26,7 +27,12 @@ from worker.executors.python_executor import (
     OUTPUT_PATH,
     PythonExecutor,
 )
-from worker.executors.ssh_executor import SessionExitError, SSHExecutor
+from worker.executors.session_executor import (
+    SessionEnd,
+    SessionEndReason,
+    SessionOutcome,
+)
+from worker.executors.ssh_executor import SSHExecutor
 from worker.executors.ssh_session import SSHConfig, SSHSession
 from worker.executors.ssh_session.backends import docker as docker_backend_module
 from worker.executors.ssh_session.backends.docker import DockerSessionBackend
@@ -212,6 +218,10 @@ class _Session(SSHSession):
         return None
 
 
+def _outcome(reason: SessionEndReason, exit_code: int = 0) -> SessionOutcome:
+    return SessionOutcome("ssn-1", SessionEnd(reason, exit_code))
+
+
 class TestEnding:
     def _cfg(self, tmp_path: Path) -> SSHConfig:
         cfg = _executor(tmp_path)._python_config(_spec(timeoutSeconds=1))
@@ -219,45 +229,59 @@ class TestEnding:
         cfg.poll_interval_sec = 0.01
         return cfg
 
-    def test_ttl_is_a_failure_for_python(self, tmp_path: Path) -> None:
+    def test_ttl_stops_the_session(self, tmp_path: Path) -> None:
         session = _Session()
-        code = _executor(tmp_path)._wait_for_session(session, self._cfg(tmp_path))
-        assert code == PythonExecutor.ttl_exit_code == 124
+        end = _executor(tmp_path)._wait_for_session(session, self._cfg(tmp_path))
+        assert end == SessionEnd("ttl")
         assert session.stopped
-
-    def test_ttl_is_still_success_for_ssh(self, tmp_path: Path) -> None:
-        executor = SSHExecutor(make_live_worker_config(tmp_path))
-        assert executor._wait_for_session(_Session(), self._cfg(tmp_path)) == 0
 
     def test_finish_helper_is_ignored(self, tmp_path: Path) -> None:
         session = _Session(finish=True)
-        code = _executor(tmp_path)._wait_for_session(session, self._cfg(tmp_path))
-        assert code == 124  # ran to the deadline instead of "finishing"
+        end = _executor(tmp_path)._wait_for_session(session, self._cfg(tmp_path))
+        assert end == SessionEnd("ttl")  # ran to the deadline instead of "finishing"
 
-    def _run(self, tmp_path: Path, exc: Exception, files: dict[str, str]) -> str:
+    def test_finish_helper_still_ends_an_ssh_session(self, tmp_path: Path) -> None:
+        cfg = self._cfg(tmp_path)
+        cfg.honor_finish_request = True
+        executor = SSHExecutor(make_live_worker_config(tmp_path))
+        assert executor._wait_for_session(_Session(finish=True), cfg) == SessionEnd(
+            "finished"
+        )
+
+    def _run(
+        self, tmp_path: Path, outcome: SessionOutcome, files: dict[str, str]
+    ) -> str:
         executor = _executor(tmp_path)
-        executor._run_session = MagicMock(side_effect=exc)  # type: ignore[method-assign]
+        executor._run_session = MagicMock(return_value=outcome)  # type: ignore[method-assign]
         out = tmp_path / "out"
         (out / "artifacts").mkdir(parents=True)
         for name, text in files.items():
             (out / "artifacts" / name).write_text(text)
-        task = MagicMock()
-        task.task.spec = _spec(timeoutSeconds=5)
-        executor.require_spec = MagicMock(return_value=task.task.spec)  # type: ignore[method-assign]
+        executor.require_spec = MagicMock(return_value=_spec(timeoutSeconds=5))  # type: ignore[method-assign]
         with pytest.raises(ExecutionError) as info:
-            executor.run(task, out)
+            executor.run(MagicMock(upstream_task_ids=None), out)
         return str(info.value)
 
     def test_timeout_message(self, tmp_path: Path) -> None:
-        msg = self._run(tmp_path, SessionExitError("x", exit_code=124), {})
+        msg = self._run(tmp_path, _outcome("ttl"), {})
         assert msg == "python task timed out after 5s"
+
+    def test_exit_124_is_not_a_timeout(self, tmp_path: Path) -> None:
+        msg = self._run(tmp_path, _outcome("exited", 124), {})
+        assert msg == "python task exited with code 124"
 
     def test_callers_error_beats_exit_code(self, tmp_path: Path) -> None:
         error = json.dumps({"type": "ValueError", "message": "bad input"})
-        msg = self._run(
-            tmp_path, SessionExitError("x", exit_code=1), {"error.json": error}
-        )
+        msg = self._run(tmp_path, _outcome("exited", 1), {"error.json": error})
         assert msg == "python task failed: ValueError: bad input"
+
+    @pytest.mark.parametrize("reason", ["finished", "lost", "idle"])
+    def test_any_other_ending_is_a_failure(
+        self, tmp_path: Path, reason: SessionEndReason
+    ) -> None:
+        # Even with a result on disk: only the process exiting 0 is success.
+        msg = self._run(tmp_path, _outcome(reason), {"result.json": "1"})
+        assert msg.startswith("python task")
 
     def test_success_reads_result_and_metrics(self, tmp_path: Path) -> None:
         executor = _executor(tmp_path)
@@ -265,12 +289,36 @@ class TestEnding:
         (out / "artifacts").mkdir(parents=True)
         (out / "artifacts/result.json").write_text('{"answer": 42}')
         (out / "artifacts/metrics.json").write_text('{"score": 0.5}')
-        executor._run_session = MagicMock(return_value=MagicMock(exit_code=0))  # type: ignore[method-assign]
+        executor._run_session = MagicMock(return_value=_outcome("exited", 0))  # type: ignore[method-assign]
         executor.require_spec = MagicMock(return_value=_spec())  # type: ignore[method-assign]
-        result = executor.run(MagicMock(), out)
+        result = executor.run(MagicMock(upstream_task_ids=None), out)
         assert result.value == {"answer": 42}
         assert result.metrics == {"score": 0.5}
         assert result.task_type == "python"
+
+
+class TestSSHEnding:
+    def _run(self, tmp_path: Path, outcome: SessionOutcome) -> SSHResult:
+        executor = SSHExecutor(make_live_worker_config(tmp_path))
+        executor._run_session = MagicMock(return_value=outcome)  # type: ignore[method-assign]
+        executor.require_spec = MagicMock(  # type: ignore[method-assign]
+            return_value=SSHSpecStrict.model_validate(
+                {"taskType": "ssh", "interactive": False, "command": ["true"]}
+            )
+        )
+        return executor.run(MagicMock(), tmp_path / "out")
+
+    @pytest.mark.parametrize("reason", ["ttl", "finished", "lost"])
+    def test_non_exit_endings_are_success(
+        self, tmp_path: Path, reason: SessionEndReason
+    ) -> None:
+        assert self._run(tmp_path, _outcome(reason)).exit_code == 0
+
+    def test_nonzero_exit_fails(self, tmp_path: Path) -> None:
+        with pytest.raises(
+            ExecutionError, match="Non-interactive session exited with code 3"
+        ):
+            self._run(tmp_path, _outcome("exited", 3))
 
 
 # ------------------------------------------------------------------ #
@@ -367,10 +415,10 @@ def test_inputs_default_to_the_resolved_upstream_stages(tmp_path: Path) -> None:
     executor = _executor(tmp_path)
     seen: dict[str, object] = {}
 
-    def _capture(task: object, out_dir: Path, cfg: SSHConfig) -> MagicMock:
+    def _capture(task: object, out_dir: Path, cfg: SSHConfig) -> SessionOutcome:
         seen["inputs"] = [i.stage for i in cfg.inputs]
         seen["env"] = json.loads(str(cfg.extra_env["FLOWMESH_PY_INPUTS"]))
-        return MagicMock(exit_code=0)
+        return _outcome("exited", 0)
 
     executor._run_session = _capture  # type: ignore[method-assign]
     executor.require_spec = MagicMock(return_value=_spec())  # type: ignore[method-assign]
