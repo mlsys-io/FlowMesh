@@ -4,7 +4,7 @@ from pydantic import BaseModel, Field
 
 from ._base import StrictBaseModel, TemplateBaseModel
 from .components import TaskMetadata
-from .placeholders import PLACEHOLDER_PATTERN
+from .placeholders import PLACEHOLDER_PATTERN, placeholder_fields
 from .specs import (
     AgentSpecStrict,
     AgentSpecTemplate,
@@ -125,7 +125,7 @@ class TaskEnvelopeTemplate(TemplateBaseModel):
             if isinstance(value, (list, tuple, set)):
                 return any(walk(v) for v in value)
             if isinstance(value, BaseModel):
-                for _, sub in value:
+                for _, sub in placeholder_fields(value):
                     if walk(sub):
                         return True
                 return False

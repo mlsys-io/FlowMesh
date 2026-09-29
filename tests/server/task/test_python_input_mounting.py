@@ -10,6 +10,7 @@ from server.dispatcher.base import Dispatcher, StageReferenceNotReady
 from server.registries.worker import WorkerRegistry
 from server.task.models import TaskRecord, TaskStatus
 from server.task.runtime import TaskRuntime
+from shared.schemas.result import BaseExecutorResult, ResultEnvelope, write_result
 from shared.tasks import TaskType
 from shared.tasks.specs import PythonSpecStrict
 from tests.server.task.test_ssh_result_mounting import _DummyRuntime, _task_template
@@ -32,7 +33,9 @@ def _record(task_id: str, name: str, status: str, **spec: object) -> TaskRecord:
     )
 
 
-def _dispatcher(records: list[TaskRecord], deps: list[str]) -> Dispatcher:
+def _dispatcher(
+    records: list[TaskRecord], deps: list[str], results_dir: Path = Path("/tmp")
+) -> Dispatcher:
     current = records[-1]
     return Dispatcher(
         runtime=cast(
@@ -42,7 +45,7 @@ def _dispatcher(records: list[TaskRecord], deps: list[str]) -> Dispatcher:
             ),
         ),
         worker_registry=cast(WorkerRegistry, object()),
-        results_dir=Path("/tmp"),
+        results_dir=results_dir,
         logger=logging.getLogger("test-python-inputs"),
     )
 
@@ -80,3 +83,37 @@ def test_unfinished_dependency_requeues() -> None:
     py = _record("t-py", "score", TaskStatus.PENDING, entrypoint="main")
     with pytest.raises(StageReferenceNotReady):
         _dispatcher([a, py], ["t-a"])._resolve_upstream_task_ids(py, _spec(py))
+
+
+PRICE_CODE = 'def main(inputs):\n    total = 3.5\n    return f"${total:.2f}"\n'
+
+
+def test_code_is_not_a_placeholder_template(tmp_path: Path) -> None:
+    a = _record("t-a", "prep", TaskStatus.DONE)
+    write_result(tmp_path, ResultEnvelope(task_id="t-a", result=BaseExecutorResult()))
+    py = _record("t-py", "score", TaskStatus.PENDING, code=PRICE_CODE)
+    dispatcher = _dispatcher([a, py], ["t-a"], tmp_path)
+
+    assert not py.task.has_placeholder()
+    rendered = dispatcher._resolve_stage_references("t-py", py.task, py)
+    assert isinstance(rendered.spec, PythonSpecStrict)
+    assert rendered.spec.code == PRICE_CODE
+
+
+def test_placeholders_outside_code_still_resolve(tmp_path: Path) -> None:
+    a = _record("t-a", "prep", TaskStatus.DONE)
+    write_result(tmp_path, ResultEnvelope(task_id="t-a", result=BaseExecutorResult()))
+    py = _record(
+        "t-py",
+        "score",
+        TaskStatus.PENDING,
+        code=PRICE_CODE,
+        env={"UPSTREAM": "${prep.task_id}"},
+    )
+    dispatcher = _dispatcher([a, py], ["t-a"], tmp_path)
+
+    assert py.task.has_placeholder()
+    rendered = dispatcher._resolve_stage_references("t-py", py.task, py)
+    assert isinstance(rendered.spec, PythonSpecStrict)
+    assert rendered.spec.env == {"UPSTREAM": "t-a"}
+    assert rendered.spec.code == PRICE_CODE

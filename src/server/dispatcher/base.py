@@ -23,7 +23,7 @@ from shared.tasks import (
     TaskEnvelopeTemplate,
     TaskSpecStrict,
 )
-from shared.tasks.placeholders import PLACEHOLDER_PATTERN
+from shared.tasks.placeholders import PLACEHOLDER_PATTERN, placeholder_fields
 from shared.tasks.specs import (
     ConditionSpec,
     PythonSpecStrict,
@@ -865,7 +865,7 @@ class Dispatcher:
         self, value: Any, token: str, path: tuple[str, ...]
     ) -> bool:
         if isinstance(value, BaseModel):
-            for key, sub in value:
+            for key, sub in placeholder_fields(value):
                 next_path = path + (str(key).lower(),)
                 if self._search_weight_reference(sub, token, next_path):
                     return True
@@ -963,7 +963,7 @@ class Dispatcher:
             return tuple(self._resolve_placeholders(item, context) for item in value)
         if isinstance(value, BaseModel):
             updates: dict[str, Any] = {}
-            for key, current in value:
+            for key, current in placeholder_fields(value):
                 transformed = self._resolve_placeholders(current, context)
                 if transformed is not current:
                     updates[key] = transformed

@@ -15,7 +15,7 @@ except the few the bootstrap needs before it switches to an unprivileged uid.
 ``image``.
 """
 
-from typing import Any, Literal, Self
+from typing import Any, ClassVar, Literal, Self
 
 from pydantic import Field, model_validator
 
@@ -91,6 +91,8 @@ def _validate[T: "PythonSpecStrict | PythonSpecTemplate"](spec: T) -> T:
 class PythonSpecStrict(TaskSpecStrictBase):
     taskType: Literal[TaskType.PYTHON]
 
+    placeholder_exempt_fields: ClassVar[frozenset[str]] = frozenset({"code"})
+
     code: str = Field(description="Python source defining the entrypoint function.")
     entrypoint: str = Field(
         default="main",
@@ -143,6 +145,8 @@ class PythonSpecStrict(TaskSpecStrictBase):
 
 class PythonSpecTemplate(TaskSpecTemplateBase):
     taskType: Literal[TaskType.PYTHON]
+
+    placeholder_exempt_fields: ClassVar[frozenset[str]] = frozenset({"code"})
 
     code: str
     entrypoint: str = "main"
