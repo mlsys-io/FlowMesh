@@ -112,6 +112,38 @@ class TestPythonConfig:
         assert json.loads(str(cfg.extra_env["FLOWMESH_PY_EMITS"])) == ["score"]
 
 
+class TestGPUs:
+    def test_no_gpu_block_means_no_gpus(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("WORKER_HOST_GPU_ID", "0,1")
+        executor = PythonExecutor(
+            make_live_worker_config(tmp_path, enable_ssh_gpu_limit=False)
+        )
+        cfg = executor._python_config(_spec())
+        assert cfg.gpu_device_ids == []
+        assert cfg.extra_env["NVIDIA_VISIBLE_DEVICES"] == "void"
+
+    def test_user_env_cannot_unhide_gpus(self, tmp_path: Path) -> None:
+        cfg = _executor(tmp_path)._python_config(
+            _spec(env={"NVIDIA_VISIBLE_DEVICES": "all"})
+        )
+        assert cfg.extra_env["NVIDIA_VISIBLE_DEVICES"] == "void"
+
+    def test_declared_gpus_are_selected(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("WORKER_HOST_GPU_ID", "0,1")
+        executor = PythonExecutor(
+            make_live_worker_config(tmp_path, enable_ssh_gpu_limit=False)
+        )
+        cfg = executor._python_config(
+            _spec(resources={"hardware": {"gpu": {"count": 1}}})
+        )
+        assert cfg.gpu_device_ids == ["0", "1"]
+        assert "NVIDIA_VISIBLE_DEVICES" not in cfg.extra_env
+
+
 class TestAvailability:
     def test_available_with_docker(self) -> None:
         assert PythonExecutor.is_available(DEFAULT_WORKER_CONFIG)

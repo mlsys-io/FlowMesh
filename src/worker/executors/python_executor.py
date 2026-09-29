@@ -104,6 +104,9 @@ class PythonExecutor(SessionExecutor):
             "PYTHONDONTWRITEBYTECODE": "1",
             "PYTHONUNBUFFERED": "1",
         }
+        if not spec.uses_gpu():
+            # Also hides the cards on a host whose default runtime is nvidia.
+            env["NVIDIA_VISIBLE_DEVICES"] = "void"
         # Resolve through the SSH spec so resource caps, the worker's ssh_limits
         # and GPU selection apply exactly as they do to any other session.
         session_spec = SSHSpecStrict.model_validate(
@@ -130,6 +133,9 @@ class PythonExecutor(SessionExecutor):
             }
         )
         cfg = self._config_for(session_spec)
+        if not spec.uses_gpu():
+            # A session with no gpu block is otherwise handed every host GPU.
+            cfg.gpu_device_ids = []
         cfg.network_disabled = spec.network == "none"
         cfg.hardened = True
         # A python task ends only with its result: the finish helper, which the
