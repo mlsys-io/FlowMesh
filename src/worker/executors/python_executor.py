@@ -49,7 +49,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_IMAGE = "python:3.12-slim"
 BOOTSTRAP_PATH = "/opt/flowmesh/python-run.py"
-CODE_PATH = "/opt/flowmesh/task.py"
+CODE_PATH = "/opt/flowmesh/flowmesh_task.py"
 UNPRIVILEGED_UID = 65534  # nobody
 _BOOTSTRAP_SOURCE = Path(__file__).resolve().parents[1] / "docker" / "python-run.py"
 

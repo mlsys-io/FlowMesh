@@ -214,10 +214,10 @@ class TestDockerHardening:
 
     def test_archive_carries_extra_files(self) -> None:
         archive = DockerSessionBackend._build_ssh_run_archive(
-            {"/opt/flowmesh/task.py": b"print(1)\n"}
+            {CODE_PATH: b"print(1)\n"}
         )
         with tarfile.open(fileobj=io.BytesIO(archive)) as tar:
-            member = tar.getmember("opt/flowmesh/task.py")
+            member = tar.getmember(CODE_PATH.lstrip("/"))
             assert member.mode == 0o644
             assert tar.extractfile(member).read() == b"print(1)\n"  # type: ignore[union-attr]
 
@@ -447,6 +447,28 @@ class TestBootstrap:
         rc, out = _bootstrap(tmp_path, code, FLOWMESH_PY_ENTRYPOINT="go")
         assert rc == 0
         assert _load(out, "metrics.json") == {"a": 1.0, "b": 2.0}
+
+    @pytest.mark.parametrize("start_method", ["fork", "spawn"])
+    def test_code_definitions_pickle_across_processes(
+        self, tmp_path: Path, start_method: str
+    ) -> None:
+        code = (
+            "import dataclasses, multiprocessing, pickle\n"
+            "@dataclasses.dataclass\n"
+            "class Point:\n"
+            "    x: int\n"
+            "def square(n):\n"
+            "    return n * n\n"
+            "def main():\n"
+            f"    ctx = multiprocessing.get_context({start_method!r})\n"
+            "    with ctx.Pool(2) as pool:\n"
+            "        squares = pool.map(square, [1, 2, 3])\n"
+            "    point = pickle.loads(pickle.dumps(Point(4)))\n"
+            "    return {'squares': squares, 'x': point.x}\n"
+        )
+        rc, out = _bootstrap(tmp_path, code)
+        assert rc == 0, (out / "error.json").read_text()
+        assert _load(out, "result.json") == {"squares": [1, 4, 9], "x": 4}
 
     def test_exception_writes_error_and_fails(self, tmp_path: Path) -> None:
         rc, out = _bootstrap(tmp_path, "def main():\n    raise ValueError('boom')\n")

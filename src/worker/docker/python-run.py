@@ -37,6 +37,7 @@ import os
 import subprocess
 import sys
 import traceback
+import types
 from pathlib import Path
 
 OUT = os.environ.get("FLOWMESH_PY_OUTPUT", "/mnt/flowmesh/output")
@@ -273,15 +274,20 @@ def main():
     }
     emits = json.loads(os.environ.get("FLOWMESH_PY_EMITS") or "[]")
 
-    namespace = {"__name__": "__flowmesh_task__", "__file__": code_path}
+    # A registered, importable module, so what the code defines can be pickled
+    # (multiprocessing, concurrent.futures) and re-imported by spawned children.
+    module = types.ModuleType(Path(code_path).stem)
+    module.__file__ = code_path
+    sys.modules[module.__name__] = module
+    sys.path.insert(0, os.path.dirname(code_path))
     try:
         with open(code_path) as fh:
-            exec(compile(fh.read(), "task.py", "exec"), namespace)
+            exec(compile(fh.read(), code_path, "exec"), module.__dict__)
     except BaseException as exc:
         _fail_from(exc, entrypoint)
-    fn = namespace.get(entrypoint)
+    fn = getattr(module, entrypoint, None)
     if not callable(fn):
-        _fail("EntrypointError", f"task.py defines no function {entrypoint!r}", 3)
+        _fail("EntrypointError", f"the code defines no function {entrypoint!r}", 3)
     try:
         kwargs = _bind(fn, inputs)
     except InputError as exc:

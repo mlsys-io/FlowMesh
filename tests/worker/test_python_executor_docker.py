@@ -159,3 +159,18 @@ def test_upstream_outputs_bind_by_parameter_name(tmp_path: Path) -> None:
     code = "def main(prep):\n    return sum(prep['rows'])\n"
     result = _run(tmp_path, code, upstream={"prep": "t-py"})
     assert result.value == 6
+
+
+def test_multiprocessing_runs_the_codes_functions(tmp_path: Path) -> None:
+    code = (
+        "import concurrent.futures, multiprocessing\n"
+        "def square(n):\n"
+        "    return n * n\n"
+        "def main():\n"
+        "    with multiprocessing.get_context('spawn').Pool(2) as pool:\n"
+        "        spawned = pool.map(square, [1, 2, 3])\n"
+        "    with concurrent.futures.ProcessPoolExecutor(2) as ex:\n"
+        "        forked = list(ex.map(square, [4, 5]))\n"
+        "    return spawned + forked\n"
+    )
+    assert _run(tmp_path, code).value == [1, 4, 9, 16, 25]
