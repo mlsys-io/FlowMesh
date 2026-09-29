@@ -38,6 +38,8 @@ from .specs import (
     OmniText2SpeechSpecTemplate,
     PPOSpecStrict,
     PPOSpecTemplate,
+    PythonSpecStrict,
+    PythonSpecTemplate,
     RagSpecStrict,
     RagSpecTemplate,
     ServeSpecStrict,
@@ -64,6 +66,7 @@ type TaskSpecStrict = Annotated[
     | DataRetrievalSpecStrict
     | EmbeddingSpecStrict
     | SSHSpecStrict
+    | PythonSpecStrict
     | ServeSpecStrict
     | OmniText2ImageSpecStrict
     | OmniText2SpeechSpecStrict
@@ -88,6 +91,7 @@ type TaskSpecTemplate = Annotated[
     | DataRetrievalSpecTemplate
     | EmbeddingSpecTemplate
     | SSHSpecTemplate
+    | PythonSpecTemplate
     | ServeSpecTemplate
     | OmniText2ImageSpecTemplate
     | OmniText2SpeechSpecTemplate

@@ -7,7 +7,7 @@ ends up running the session.
 
 import logging
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 
 from shared.tasks.components.resources import GPURequirements
@@ -92,6 +92,12 @@ class SSHConfig:
     memory_limit_bytes: int | None
     pids_limit: int | None
     gpu_device_ids: list[str]
+    # Hardening a caller can opt into; the SSH task leaves all three at their
+    # defaults. The python task (executors/python_executor.py) sets them: no
+    # network, a minimal capability set, and its bootstrap + code as files.
+    network_disabled: bool = False
+    hardened: bool = False
+    extra_files: dict[str, bytes] = field(default_factory=dict)
 
     @classmethod
     def from_spec(

@@ -130,6 +130,7 @@ def initialize_executors(
         "diffusers",
         "api",
         "ssh",
+        "python",
     ]:
         inst = init_executor(key)
         if inst:
@@ -244,7 +245,7 @@ def main() -> None:
 
     capabilities = build_capabilities(executors)
     ssh_limits = cfg.ssh_limits
-    if TaskType.SSH in capabilities.supported_task_types:
+    if capabilities.supported_task_types & {TaskType.SSH, TaskType.PYTHON}:
         if ssh_limits is None:
             logger.warning(
                 "SSH resource cap not configured; SSH sessions will be able to access "

@@ -73,11 +73,25 @@ def _available_uuids(
     )
 
 
+class SessionExitError(ExecutionError):
+    """A non-interactive session ended with a non-zero exit code."""
+
+    def __init__(self, message: str, *, exit_code: int) -> None:
+        super().__init__(message)
+        self.exit_code = exit_code
+
+
 class SSHExecutor(Executor):
     """Executor for SSH tasks (interactive sessions and non-interactive jobs)."""
 
     name = "ssh"
     supported_task_types = frozenset({TaskType.SSH})
+    # How a session that outlives its TTL, or asks to finish via the in-session
+    # helper, is reported. For an SSH session both are a normal end. A subclass
+    # whose sessions must produce a result (python) reports a TTL as a failure
+    # and ignores the helper, which its own code could otherwise reach.
+    ttl_exit_code: int = 0
+    honor_finish_request: bool = True
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
@@ -123,9 +137,12 @@ class SSHExecutor(Executor):
 
     def run(self, task: ExecutorTask, out_dir: Path) -> SSHResult:
         spec = self.require_spec(task, SSHSpecStrict)
+        return self._run_session(task, out_dir, self._config_for(spec))
+
+    def _config_for(self, spec: SSHSpecStrict) -> SSHConfig:
         # A session holds its devices for as long as it lives, so it must not be
         # handed one another tenant is already on.
-        cfg = SSHConfig.from_spec(
+        return SSHConfig.from_spec(
             spec,
             self._config,
             self._hardware,
@@ -134,6 +151,15 @@ class SSHExecutor(Executor):
                 self._hardware.gpu.devices if self._hardware else [],
             ),
         )
+
+    def _run_session(
+        self, task: ExecutorTask, out_dir: Path, cfg: SSHConfig
+    ) -> SSHResult:
+        """Bring a session up, wait for it, collect its output, tear it down.
+
+        Shared with the python executor, which reaches here with a
+        non-interactive config of its own.
+        """
         access_mode = cfg.access_mode
         interactive = cfg.interactive
 
@@ -225,8 +251,9 @@ class SSHExecutor(Executor):
             session.cleanup()
 
         if not (interactive or exit_code == 0):
-            raise ExecutionError(
-                f"{session_kind.capitalize()} session exited with code {exit_code}"
+            raise SessionExitError(
+                f"{session_kind.capitalize()} session exited with code {exit_code}",
+                exit_code=exit_code,
             )
 
         return result
@@ -310,7 +337,9 @@ class SSHExecutor(Executor):
         while time.time() < deadline:
             if self._cancel_event.is_set():
                 raise TaskCancelledError("SSH session cancelled")
-            if self._finish_event.is_set() or session.finish_requested():
+            if self.honor_finish_request and (
+                self._finish_event.is_set() or session.finish_requested()
+            ):
                 logger.info("SSH session finish requested; stopping session")
                 session.stop(1)
                 return 0
@@ -345,7 +374,9 @@ class SSHExecutor(Executor):
             time.sleep(cfg.poll_interval_sec)
 
         logger.info("SSH session TTL reached; stopping session")
-        return 0
+        if self.ttl_exit_code:
+            session.stop(1)
+        return self.ttl_exit_code
 
     def _enforce_output_limit(
         self, session: SSHSession, output_cfg: SSHOutputConfig | None

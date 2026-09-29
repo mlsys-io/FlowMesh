@@ -195,7 +195,9 @@ class DockerSessionBackend(SSHSessionBackend):
             interactive,
         )
         try:
-            container, log_stream = self._start_container(client, kwargs, interactive)
+            container, log_stream = self._start_container(
+                client, kwargs, interactive, cfg.extra_files
+            )
         except Exception:
             self._cleanup_mount_plan(client, mount_plan)
             raise
@@ -303,8 +305,18 @@ class DockerSessionBackend(SSHSessionBackend):
                     kwargs["runtime"] = runtime
             except Exception:
                 pass
-        if self._ssh_network:
+        if cfg.network_disabled:
+            kwargs["network_mode"] = "none"
+        elif self._ssh_network:
             kwargs["network"] = self._ssh_network
+        if cfg.hardened:
+            # Everything the entrypoint wrapper and the python bootstrap need
+            # while still root (stage inputs, chown the output dir, switch to an
+            # unprivileged uid) and nothing else. Once the uid changes the
+            # effective set is empty anyway.
+            kwargs["cap_drop"] = ["ALL"]
+            kwargs["cap_add"] = ["CHOWN", "DAC_OVERRIDE", "FOWNER", "SETUID", "SETGID"]
+            kwargs["tmpfs"] = {"/tmp": "rw,nosuid,nodev,size=1g"}
         return kwargs
 
     def _resolve_noninteractive_command(
@@ -341,7 +353,11 @@ class DockerSessionBackend(SSHSessionBackend):
         return combined
 
     def _start_container(
-        self, client: DockerClient, kwargs: dict[str, Any], interactive: bool
+        self,
+        client: DockerClient,
+        kwargs: dict[str, Any],
+        interactive: bool,
+        extra_files: dict[str, bytes] | None = None,
     ) -> tuple[Container, DemuxLogStream | None]:
         image = kwargs.get("image")
         mode = "interactive" if interactive else "non-interactive"
@@ -351,7 +367,7 @@ class DockerSessionBackend(SSHSessionBackend):
                 container = client.containers.run(**kwargs)
             else:
                 container, log_stream = self._run_noninteractive_container(
-                    client, kwargs
+                    client, kwargs, extra_files
                 )
         except Exception as exc:
             if isinstance(image, str) and "No such image" in str(exc):
@@ -362,7 +378,7 @@ class DockerSessionBackend(SSHSessionBackend):
                         container = client.containers.run(**kwargs)
                     else:
                         container, log_stream = self._run_noninteractive_container(
-                            client, kwargs
+                            client, kwargs, extra_files
                         )
                 except Exception as pull_exc:
                     raise ExecutionError(
@@ -377,7 +393,10 @@ class DockerSessionBackend(SSHSessionBackend):
         return container, log_stream
 
     def _run_noninteractive_container(
-        self, client: DockerClient, kwargs: dict[str, Any]
+        self,
+        client: DockerClient,
+        kwargs: dict[str, Any],
+        extra_files: dict[str, bytes] | None = None,
     ) -> tuple[Container, DemuxLogStream]:
         try:
             container = client.containers.create(**kwargs)
@@ -387,7 +406,7 @@ class DockerSessionBackend(SSHSessionBackend):
             ) from exc
         assert isinstance(container, Container)
         try:
-            container.put_archive("/", self._build_ssh_run_archive())
+            container.put_archive("/", self._build_ssh_run_archive(extra_files))
             log_stream = cast(
                 DemuxLogStream,
                 container.attach(
@@ -409,14 +428,22 @@ class DockerSessionBackend(SSHSessionBackend):
         return container, log_stream
 
     @staticmethod
-    def _build_ssh_run_archive() -> bytes:
-        script_bytes = _SSH_RUN_SCRIPT_SOURCE.read_bytes()
+    def _build_ssh_run_archive(extra_files: dict[str, bytes] | None = None) -> bytes:
+        """The entrypoint wrapper, plus any caller files (read-only, 0644).
+
+        Written with ``put_archive`` before start, so a caller's files never
+        travel through the environment (which caps a single value at 128 KiB).
+        """
+        files = {_SSH_RUN_ENTRYPOINT_PATH: (_SSH_RUN_SCRIPT_SOURCE.read_bytes(), 0o755)}
+        for path, data in (extra_files or {}).items():
+            files[path] = (data, 0o644)
         stream = io.BytesIO()
         with tarfile.open(fileobj=stream, mode="w") as tar:
-            info = tarfile.TarInfo(name=_SSH_RUN_ENTRYPOINT_PATH.lstrip("/"))
-            info.size = len(script_bytes)
-            info.mode = 0o755
-            tar.addfile(info, io.BytesIO(script_bytes))
+            for path, (data, mode) in files.items():
+                info = tarfile.TarInfo(name=path.lstrip("/"))
+                info.size = len(data)
+                info.mode = mode
+                tar.addfile(info, io.BytesIO(data))
         return stream.getvalue()
 
     # ------------------------------------------------------------------ #
