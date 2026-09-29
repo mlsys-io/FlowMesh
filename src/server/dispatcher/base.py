@@ -369,6 +369,9 @@ class Dispatcher:
         # 6. Resolve stage references
         try:
             rendered_task = self._resolve_stage_references(task_id, task, record)
+            upstream_task_ids = self._resolve_upstream_task_ids(
+                record, rendered_task.spec
+            )
         except StageReferenceNotReady as exc:
             self._logger.debug("Task %s waiting on stage artifacts: %s", task_id, exc)
             self.requeue_task(
@@ -527,9 +530,7 @@ class Dispatcher:
             shard_index=record.shard_index,
             shard_total=record.shard_total,
             merged_children=rendered_children,
-            upstream_task_ids=self._resolve_upstream_task_ids(
-                record, rendered_task.spec
-            ),
+            upstream_task_ids=upstream_task_ids,
         )
 
         # 8. Publish task
