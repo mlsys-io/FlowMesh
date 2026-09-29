@@ -33,6 +33,7 @@ from .catalog import (
     ServeResult,
     SFTResult,
     SSHResult,
+    PythonResult,
 )
 from .payloads import (
     AgentBatchSummary,
@@ -83,6 +84,7 @@ _RESULT_MODELS: tuple[type[BaseModel], ...] = (
     EchoResult,
     APIResult,
     SSHResult,
+    PythonResult,
     ResultEnvelope,
 )
 for _model in _RESULT_MODELS:
@@ -134,5 +136,6 @@ __all__ = [
     "ResultEnvelope",
     "SFTResult",
     "SSHResult",
+    "PythonResult",
     "ServeResult",
 ]

@@ -316,7 +316,9 @@ class DockerSessionBackend(SSHSessionBackend):
             # effective set is empty anyway.
             kwargs["cap_drop"] = ["ALL"]
             kwargs["cap_add"] = ["CHOWN", "DAC_OVERRIDE", "FOWNER", "SETUID", "SETGID"]
-            kwargs["tmpfs"] = {"/tmp": "rw,nosuid,nodev,size=1g"}
+            kwargs["tmpfs"] = {
+                "/tmp": "rw,nosuid,nodev,size=1g"
+            }  # nosec B108 - a fresh per-container tmpfs, not the host /tmp
         return kwargs
 
     def _resolve_noninteractive_command(

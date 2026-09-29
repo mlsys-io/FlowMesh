@@ -30,7 +30,7 @@ import sys
 import traceback
 
 OUT = os.environ.get("FLOWMESH_PY_OUTPUT", "/mnt/flowmesh/output")
-DEPS = "/tmp/flowmesh-deps"
+DEPS = "/tmp/flowmesh-deps"  # nosec B108 - inside the task container; /tmp is its private tmpfs
 
 
 def _write(name, payload, lenient=False):
@@ -64,7 +64,9 @@ def _install_requirements():
         *(sys.executable, "-m", "pip", "install", "--no-cache-dir", "--quiet"),
         *("--root-user-action=ignore", "--disable-pip-version-check"),
     ]
-    proc = subprocess.run([*cmd, "--target", DEPS, *reqs])
+    proc = subprocess.run(
+        [*cmd, "--target", DEPS, *reqs]
+    )  # nosec B603 - argv list, no shell, the task owner's own requirements in their own container
     if proc.returncode != 0:
         _fail("RequirementsError", f"pip install {' '.join(reqs)} failed", 2)
     sys.path.insert(0, DEPS)
@@ -104,9 +106,9 @@ def main():
     os.makedirs(OUT, exist_ok=True)
     _install_requirements()
     _drop_privileges(uid)
-    os.environ["HOME"] = "/tmp"
+    os.environ["HOME"] = "/tmp"  # nosec B108 - the container's private tmpfs
     os.environ["FLOWMESH_OUTPUT"] = OUT
-    os.chdir("/tmp")
+    os.chdir("/tmp")  # nosec B108 - the container's private tmpfs
 
     code_path = os.environ["FLOWMESH_PY_CODE"]
     entrypoint = os.environ.get("FLOWMESH_PY_ENTRYPOINT", "main")
