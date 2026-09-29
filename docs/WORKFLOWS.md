@@ -71,7 +71,12 @@ contract.
 
 ## API task
 
-`taskType: api` performs a single HTTP request. By default it routes to the Nebula endpoint and authenticates with the worker's `NEBULA_API_TOKEN`.
+`taskType: api` sends one HTTP request per `spec.data` row, in parallel, and
+returns one `APIResult.items` entry per row, in order. `spec.data` is required
+and accepts `list`, `dataset`, `graph_template`, and `dataframe`; row metadata
+and `dataframe` table grouping are not applied.
+
+By default it routes to the Nebula endpoint and authenticates with the worker's `NEBULA_API_TOKEN`.
 
 `spec.api.url` overrides the endpoint; when absent, the executor uses `NEBULA_API_BASE_URL` (appending `/v1/chat/completions`). `spec.api.headers` may supply an `Authorization` header directly.
 
@@ -82,6 +87,10 @@ Credential handling: a caller-supplied `Authorization` header is always used as-
 ```yaml
 spec:
   taskType: api
+  data:
+    type: list
+    items:
+      - Hello
   api:
     method: POST
     headers:
@@ -90,8 +99,35 @@ spec:
       model: gpt-4o
       messages:
         - role: user
-          content: Hello
+          content: "{{prompt}}"
     retries: 3
+    response:
+      parse_json: true
+```
+
+### Per-row prompts
+
+Each row's prompt replaces `{{prompt}}` in the request body; a value that is
+exactly `{{prompt}}` takes the prompt as-is, so a message-list row fills
+`messages`. `spec.api.concurrency` (default and maximum 8) bounds in-flight
+requests. Any failed row fails the task. Cancelling the task skips rows that
+have not started and marks it cancelled once in-flight requests return.
+
+```yaml
+spec:
+  taskType: api
+  data:
+    type: list
+    items:
+      - Explain vector databases
+      - Explain attention
+  api:
+    method: POST
+    body:
+      model: gpt-4o
+      messages:
+        - role: user
+          content: "{{prompt}}"
     response:
       parse_json: true
 ```

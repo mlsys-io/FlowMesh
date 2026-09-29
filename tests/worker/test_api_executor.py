@@ -1,19 +1,25 @@
-"""Tests for the API executor url override and Nebula credential handling."""
+"""Tests for the API executor's url override, Nebula credential handling, and
+batch mode (one task, N row-aligned requests)."""
 
+import concurrent.futures
 import email.utils
+import json
 import logging
 import threading
 import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any, cast
 from unittest.mock import patch
 
 import httpx
 import pytest
+from pydantic import ValidationError
 
+from shared.tasks.specs.misc import _MAX_CONCURRENCY, _MAX_RETRIES
 from shared.tasks.worker_message import WorkerTaskMessage
+from worker.executors import api_executor as api_executor_module
 from worker.executors.api_executor import (
-    _MAX_RETRIES,
     _RETRY_BACKOFF_MAX_SEC,
     APIExecutor,
 )
@@ -33,9 +39,10 @@ def _task_message(**spec_updates: object) -> WorkerTaskMessage:
             "metadata": {"name": "wf:api"},
             "spec": {
                 "taskType": "api",
+                "data": {"type": "list", "items": ["hi"]},
                 "api": {
                     "method": "POST",
-                    "body": {"messages": [{"role": "user", "content": "hi"}]},
+                    "body": {"messages": [{"role": "user", "content": "{{prompt}}"}]},
                     **spec_updates,
                 },
             },
@@ -81,6 +88,28 @@ class _BlockingTransport(httpx.MockTransport):
         return self.responses.pop(0)
 
 
+class _EchoTransport(httpx.MockTransport):
+    """MockTransport that echoes each row's prompt back with row-specific
+    status, usage, and headers."""
+
+    def __init__(self) -> None:
+        self.requests: list[httpx.Request] = []
+        super().__init__(self._handler)
+
+    def _handler(self, request: httpx.Request) -> httpx.Response:
+        self.requests.append(request)
+        body = request.read()
+        prompt = json.loads(body)["messages"][0]["content"]
+        return httpx.Response(
+            200 + len(prompt) % 3,
+            headers={"X-Row": prompt},
+            json={
+                "choices": [{"message": {"content": f"echo:{prompt}"}}],
+                "usage": {"total_tokens": len(prompt)},
+            },
+        )
+
+
 class _NotifyTransport(httpx.MockTransport):
     """MockTransport that sets an event once it has served a request."""
 
@@ -97,16 +126,54 @@ class _NotifyTransport(httpx.MockTransport):
 
 
 def _run(
-    executor: APIExecutor, task: WorkerTaskMessage, transport: httpx.MockTransport
-) -> None:
-    executor._cancel_event = threading.Event()
-    executor._cancel_lock = threading.Lock()
-    executor._active_task_id = None
-    executor._pending_cancelled_ids = set()
+    executor: APIExecutor,
+    task: WorkerTaskMessage,
+    transport: httpx.MockTransport,
+    out_dir: Path = Path("/tmp/out"),
+):
     with patch.object(
         APIExecutor, "_get_client", return_value=httpx.Client(transport=transport)
     ):
-        executor.run(task, Path("/tmp/out"))
+        return executor.run(task, out_dir)
+
+
+def _executor() -> APIExecutor:
+    """Build an APIExecutor with cancellation state, without a WorkerConfig."""
+    executor = APIExecutor.__new__(APIExecutor)
+    executor._cancel_event = threading.Event()
+    executor._active_task_id = None
+    executor._pending_cancelled_ids = set()
+    executor._cancel_lock = threading.Lock()
+    return executor
+
+
+def _batch_task(items: list[Any], **api_updates: Any) -> WorkerTaskMessage:
+    payload = {
+        "task_id": "task-api-batch",
+        "workflow_id": "wf-1",
+        "owner_id": "owner",
+        "assigned_worker": "worker-1",
+        "dispatched_at": "2026-03-22T00:00:00Z",
+        "task": {
+            "apiVersion": "flowmesh/v1",
+            "kind": "Task",
+            "metadata": {"name": "wf:api"},
+            "spec": {
+                "taskType": "api",
+                "api": {
+                    "method": "POST",
+                    "body": {"messages": [{"role": "user", "content": "{{prompt}}"}]},
+                    "response": {
+                        "raise_for_status": False,
+                        "include_headers": True,
+                    },
+                    **api_updates,
+                },
+                "data": {"type": "list", "items": items},
+            },
+        },
+    }
+    return WorkerTaskMessage.model_validate(payload)
 
 
 class TestNebulaPath:
@@ -117,7 +184,7 @@ class TestNebulaPath:
         monkeypatch.setenv("NEBULA_API_TOKEN", "nebula-token")
         task = _task_message()
         transport = _RecordingTransport()
-        _run(APIExecutor.__new__(APIExecutor), task, transport)
+        _run(_executor(), task, transport)
         assert transport.request is not None
         assert transport.request.url == "https://nebula.example.com/v1/chat/completions"
         assert transport.request.headers["Authorization"] == "Bearer nebula-token"
@@ -129,7 +196,7 @@ class TestNebulaPath:
         monkeypatch.setenv("NEBULA_API_TOKEN", "nebula-token")
         task = _task_message(headers={"Authorization": "Bearer custom"})
         transport = _RecordingTransport()
-        _run(APIExecutor.__new__(APIExecutor), task, transport)
+        _run(_executor(), task, transport)
         assert transport.request is not None
         assert transport.request.url == "https://nebula.example.com/v1/chat/completions"
         assert transport.request.headers["Authorization"] == "Bearer custom"
@@ -140,7 +207,7 @@ class TestNebulaPath:
         monkeypatch.delenv("NEBULA_API_BASE_URL", raising=False)
         task = _task_message()
         with pytest.raises(ExecutionError, match="spec.api.url or NEBULA_API_BASE_URL"):
-            _run(APIExecutor.__new__(APIExecutor), task, _RecordingTransport())
+            _run(_executor(), task, _RecordingTransport())
 
 
 class TestCustomUrl:
@@ -157,7 +224,7 @@ class TestCustomUrl:
         monkeypatch.setenv("NEBULA_API_TOKEN", "nebula-token")
         task = _task_message(url="https://custom.example.com/v1/chat/completions")
         transport = _RecordingTransport()
-        _run(APIExecutor.__new__(APIExecutor), task, transport)
+        _run(_executor(), task, transport)
         assert transport.request is not None
         assert transport.request.url == "https://custom.example.com/v1/chat/completions"
         assert "Authorization" not in transport.request.headers
@@ -171,7 +238,7 @@ class TestCustomUrl:
             headers={"Authorization": "Bearer custom"},
         )
         transport = _RecordingTransport()
-        _run(APIExecutor.__new__(APIExecutor), task, transport)
+        _run(_executor(), task, transport)
         assert transport.request is not None
         assert transport.request.url == "https://custom.example.com/v1/chat/completions"
         assert transport.request.headers["Authorization"] == "Bearer custom"
@@ -186,7 +253,7 @@ class TestCustomUrl:
             headers={"X-API-Key": "custom-key"},
         )
         transport = _RecordingTransport()
-        _run(APIExecutor.__new__(APIExecutor), task, transport)
+        _run(_executor(), task, transport)
         assert transport.request is not None
         assert transport.request.url == "https://custom.example.com/v1/chat/completions"
         assert transport.request.headers["X-API-Key"] == "custom-key"
@@ -205,7 +272,7 @@ class TestCustomUrl:
             headers={"Content-Type": "application/json"},
         )
         transport = _RecordingTransport()
-        _run(APIExecutor.__new__(APIExecutor), task, transport)
+        _run(_executor(), task, transport)
         assert transport.request is not None
         assert transport.request.headers["Content-Type"] == "application/json"
         assert "Authorization" not in transport.request.headers
@@ -255,7 +322,7 @@ class TestRetries:
         transport = _SequenceTransport(
             [_error_response(504), _error_response(504), _ok_response()]
         )
-        _run(APIExecutor.__new__(APIExecutor), task, transport)
+        _run(_executor(), task, transport)
         assert transport.calls == 3
 
     def test_retries_exhausted_still_fails(
@@ -268,7 +335,7 @@ class TestRetries:
             [_error_response(504), _error_response(504), _error_response(504)]
         )
         with pytest.raises(ExecutionError, match="status 504"):
-            _run(APIExecutor.__new__(APIExecutor), task, transport)
+            _run(_executor(), task, transport)
         assert transport.calls == 3
 
     def test_no_retry_by_default(self) -> None:
@@ -276,7 +343,7 @@ class TestRetries:
         task = self._task()
         transport = _SequenceTransport([_error_response(504)])
         with pytest.raises(ExecutionError, match="status 504"):
-            _run(APIExecutor.__new__(APIExecutor), task, transport)
+            _run(_executor(), task, transport)
         assert transport.calls == 1
 
     def test_non_retryable_status_not_retried(self) -> None:
@@ -284,16 +351,12 @@ class TestRetries:
         task = self._task(retries=3)
         transport = _SequenceTransport([_error_response(400)])
         with pytest.raises(ExecutionError, match="status 400"):
-            _run(APIExecutor.__new__(APIExecutor), task, transport)
+            _run(_executor(), task, transport)
         assert transport.calls == 1
 
     def test_cancelled_task_stops_retrying(self) -> None:
         """A cancelled task does not keep retrying."""
-        executor = APIExecutor.__new__(APIExecutor)
-        executor._cancel_event = threading.Event()
-        executor._cancel_lock = threading.Lock()
-        executor._active_task_id = None
-        executor._pending_cancelled_ids = set()
+        executor = _executor()
         task = self._task(retries=3)
         executor.cancel(task.task_id)
         transport = _SequenceTransport([_error_response(504)])
@@ -305,11 +368,10 @@ class TestRetries:
         assert transport.calls == 0
 
     def test_invalid_retries_rejected(self) -> None:
-        """A negative or non-integer retries value is rejected."""
-        for bad in (-1, "2", 1.5, True):
-            task = self._task(retries=bad)
-            with pytest.raises(ExecutionError, match="spec.api.retries"):
-                _run(APIExecutor.__new__(APIExecutor), task, _RecordingTransport())
+        """A negative, non-integer, or out-of-range retries value is rejected."""
+        for bad in (-1, "2", 1.5, True, _MAX_RETRIES + 1):
+            with pytest.raises(ValidationError):
+                self._task(retries=bad)
 
     def test_cancel_previous_task_does_not_cancel_next(self) -> None:
         """A cancellation left over from a prior task does not cancel the next."""
@@ -464,7 +526,7 @@ class TestRetries:
         """Run a task, recording each backoff delay instead of waiting."""
         delays: list[float] = []
 
-        def _record(delay: float) -> None:
+        def _record(delay: float, failed: threading.Event) -> None:
             delays.append(delay)
 
         executor = APIExecutor.__new__(APIExecutor)
@@ -547,12 +609,6 @@ class TestRetries:
         delays = self._run_recording_delays(task, transport)
         assert delays == [_RETRY_BACKOFF_MAX_SEC]
 
-    def test_retries_above_maximum_rejected(self) -> None:
-        """A retries value above the maximum is rejected."""
-        task = self._task(retries=_MAX_RETRIES + 1)
-        with pytest.raises(ExecutionError, match=f"at most {_MAX_RETRIES}"):
-            _run(APIExecutor.__new__(APIExecutor), task, _RecordingTransport())
-
     def test_one_warning_per_retry(self, caplog: pytest.LogCaptureFixture) -> None:
         """Each retry logs one warning naming the attempt and the delay."""
         task = self._task(retries=2)
@@ -567,3 +623,732 @@ class TestRetries:
         assert len(warnings) == 2
         assert "attempt 1/2" in warnings[0].getMessage()
         assert "attempt 2/2" in warnings[1].getMessage()
+
+
+class TestBatch:
+    @pytest.fixture(autouse=True)
+    def _nebula_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("NEBULA_API_BASE_URL", "https://nebula.example.com")
+        monkeypatch.setenv("NEBULA_API_TOKEN", "nebula-token")
+
+    def test_issues_one_request_per_row_in_order(self, tmp_path: Path) -> None:
+        task = _batch_task(["first", "second", "third"])
+        transport = _EchoTransport()
+        result = _run(_executor(), task, transport, tmp_path)
+        assert len(transport.requests) == 3
+        issued = {
+            json.loads(req.read())["messages"][0]["content"]
+            for req in transport.requests
+        }
+        assert issued == {"first", "second", "third"}
+        for idx, prompt in enumerate(["first", "second", "third"]):
+            item = result.items[idx]
+            assert item.index == idx
+            assert item.prompt == prompt
+            assert item.text == f"echo:{prompt}"
+            assert item.response_json["choices"][0]["message"]["content"] == (
+                f"echo:{prompt}"
+            )
+            assert item.status_code == 200 + len(prompt) % 3
+            assert item.usage == {"total_tokens": len(prompt)}
+            assert item.headers["x-row"] == prompt
+
+    def test_rows_stay_aligned_when_requests_complete_out_of_order(
+        self, tmp_path: Path
+    ) -> None:
+        """Output row i corresponds to input row i even when requests finish
+        in reverse order."""
+
+        class _ReverseTransport(httpx.MockTransport):
+            def __init__(self) -> None:
+                self.requests: list[httpx.Request] = []
+                super().__init__(self._handler)
+
+            def _handler(self, request: httpx.Request) -> httpx.Response:
+                self.requests.append(request)
+                prompt = json.loads(request.read())["messages"][0]["content"]
+                delay = {"a": 0.3, "b": 0.2, "c": 0.1}[prompt]
+                time.sleep(delay)
+                return httpx.Response(
+                    200 + len(prompt) % 3,
+                    headers={"X-Row": prompt},
+                    json={
+                        "choices": [{"message": {"content": f"echo:{prompt}"}}],
+                        "usage": {"total_tokens": len(prompt)},
+                    },
+                )
+
+        task = _batch_task(["a", "b", "c"])
+        transport = _ReverseTransport()
+        result = _run(_executor(), task, transport, tmp_path)
+        for idx, prompt in enumerate(["a", "b", "c"]):
+            item = result.items[idx]
+            assert item.index == idx
+            assert item.prompt == prompt
+            assert item.text == f"echo:{prompt}"
+            assert item.response_json["choices"][0]["message"]["content"] == (
+                f"echo:{prompt}"
+            )
+            assert item.status_code == 200 + len(prompt) % 3
+            assert item.usage == {"total_tokens": len(prompt)}
+            assert item.headers["x-row"] == prompt
+
+    def test_single_row_batches_to_one_item(self, tmp_path: Path) -> None:
+        task = _batch_task(["only"])
+        transport = _EchoTransport()
+        result = _run(_executor(), task, transport, tmp_path)
+        assert len(transport.requests) == 1
+        assert len(result.items) == 1
+        assert result.items[0].index == 0
+        assert result.items[0].prompt == "only"
+
+    def test_row_failure_fails_whole_task_without_shifting(
+        self, tmp_path: Path
+    ) -> None:
+        class _FailRow(httpx.MockTransport):
+            def __init__(self, failing_prompt: str) -> None:
+                self.failing_prompt = failing_prompt
+                self.requests: list[httpx.Request] = []
+                super().__init__(self._handler)
+
+            def _handler(self, request: httpx.Request) -> httpx.Response:
+                self.requests.append(request)
+                prompt = json.loads(request.read())["messages"][0]["content"]
+                if prompt == self.failing_prompt:
+                    return httpx.Response(
+                        500,
+                        json={
+                            "choices": [{"message": {"content": "boom"}}],
+                            "usage": {"total_tokens": 1},
+                        },
+                    )
+                return httpx.Response(
+                    200,
+                    json={
+                        "choices": [{"message": {"content": "ok"}}],
+                        "usage": {"total_tokens": 1},
+                    },
+                )
+
+        task = _batch_task(
+            ["a", "b", "c"],
+            concurrency=1,
+            response={"raise_for_status": True},
+        )
+        transport = _FailRow("b")
+        with pytest.raises(ExecutionError, match="row 1"):
+            _run(_executor(), task, transport, tmp_path)
+        assert len(transport.requests) == 2
+
+    def test_row_failure_stops_later_rows_from_sending(self, tmp_path: Path) -> None:
+        """With concurrency 1, a failing first row stops later rows from sending."""
+
+        class _FailFirst(httpx.MockTransport):
+            def __init__(self) -> None:
+                self.requests: list[httpx.Request] = []
+                super().__init__(self._handler)
+
+            def _handler(self, request: httpx.Request) -> httpx.Response:
+                self.requests.append(request)
+                return httpx.Response(
+                    500,
+                    json={
+                        "choices": [{"message": {"content": "boom"}}],
+                        "usage": {"total_tokens": 1},
+                    },
+                )
+
+        task = _batch_task(
+            ["a", "b", "c"],
+            concurrency=1,
+            response={"raise_for_status": True},
+        )
+        transport = _FailFirst()
+        with pytest.raises(ExecutionError, match="row 0"):
+            _run(_executor(), task, transport, tmp_path)
+        assert len(transport.requests) == 1
+
+    def test_placeholder_not_required_for_scalar_body(self, tmp_path: Path) -> None:
+        """A batch task whose body has no placeholder still issues N requests."""
+        payload = {
+            "task_id": "task-api-batch",
+            "workflow_id": "wf-1",
+            "owner_id": "owner",
+            "assigned_worker": "worker-1",
+            "dispatched_at": "2026-03-22T00:00:00Z",
+            "task": {
+                "apiVersion": "flowmesh/v1",
+                "kind": "Task",
+                "metadata": {"name": "wf:api"},
+                "spec": {
+                    "taskType": "api",
+                    "api": {
+                        "method": "POST",
+                        "body": {"messages": [{"role": "user", "content": "static"}]},
+                    },
+                    "data": {"type": "list", "items": ["a", "b"]},
+                },
+            },
+        }
+        task = WorkerTaskMessage.model_validate(payload)
+        transport = _EchoTransport()
+        result = _run(_executor(), task, transport, tmp_path)
+        assert len(transport.requests) == 2
+        assert len(result.items) == 2
+
+    def test_message_list_row_sends_json_array(self, tmp_path: Path) -> None:
+        """A chat-message list row with ``messages: "{{prompt}}"`` is sent as a
+        JSON array of ``{role, content}`` dicts, not a JSON string."""
+        messages = [
+            {"role": "system", "content": "rules"},
+            {"role": "user", "content": "hi"},
+        ]
+        task = _batch_task(
+            [messages],
+            body={"messages": "{{prompt}}"},
+        )
+        transport = _RecordingTransport()
+        _run(_executor(), task, transport, tmp_path)
+        assert transport.request is not None
+        body = json.loads(transport.request.read())
+        assert body["messages"] == messages
+
+    def test_message_list_row_embedded_in_string_sends_json_text(
+        self, tmp_path: Path
+    ) -> None:
+        """A chat-message list row embedded in a longer string is rendered as
+        valid JSON text inside the surrounding body."""
+        messages = [
+            {"role": "system", "content": "rules"},
+            {"role": "user", "content": "hi"},
+        ]
+        task = _batch_task(
+            [messages],
+            body={"messages": [{"role": "user", "content": "context: {{prompt}}"}]},
+        )
+        transport = _RecordingTransport()
+        _run(_executor(), task, transport, tmp_path)
+        assert transport.request is not None
+        body = json.loads(transport.request.read())
+        embedded = body["messages"][0]["content"]
+        assert embedded == f"context: {json.dumps(messages)}"
+        assert json.loads(embedded.removeprefix("context: ")) == messages
+
+    def test_no_rows_raises(self, tmp_path: Path) -> None:
+        task = _batch_task([])
+        with pytest.raises(ExecutionError, match="no rows"):
+            _run(
+                _executor(),
+                task,
+                _EchoTransport(),
+                tmp_path,
+            )
+
+    def test_missing_data_raises(self, tmp_path: Path) -> None:
+        """spec.data is required; an api task without it fails closed."""
+        payload = {
+            "task_id": "task-api-batch",
+            "workflow_id": "wf-1",
+            "owner_id": "owner",
+            "assigned_worker": "worker-1",
+            "dispatched_at": "2026-03-22T00:00:00Z",
+            "task": {
+                "apiVersion": "flowmesh/v1",
+                "kind": "Task",
+                "metadata": {"name": "wf:api"},
+                "spec": {
+                    "taskType": "api",
+                    "api": {
+                        "method": "POST",
+                        "body": {"messages": [{"role": "user", "content": "hi"}]},
+                    },
+                },
+            },
+        }
+        task = WorkerTaskMessage.model_validate(payload)
+        with pytest.raises(ExecutionError, match="spec.data is required"):
+            _run(
+                _executor(),
+                task,
+                _EchoTransport(),
+                tmp_path,
+            )
+
+    def test_requests_issue_in_parallel(self, tmp_path: Path) -> None:
+        """N rows take ~one row's latency, not N x, on a network-bound path."""
+
+        class _SlowTransport(httpx.MockTransport):
+            def __init__(self) -> None:
+                self.requests: list[httpx.Request] = []
+                super().__init__(self._handler)
+
+            def _handler(self, request: httpx.Request) -> httpx.Response:
+                self.requests.append(request)
+                time.sleep(0.2)
+                return httpx.Response(
+                    200,
+                    json={
+                        "choices": [{"message": {"content": "hello"}}],
+                        "usage": {"total_tokens": 3},
+                    },
+                )
+
+        n_rows = 4
+        task = _batch_task([f"row-{i}" for i in range(n_rows)])
+        transport = _SlowTransport()
+        start = time.monotonic()
+        result = _run(_executor(), task, transport, tmp_path)
+        elapsed = time.monotonic() - start
+
+        assert len(transport.requests) == n_rows
+        assert elapsed < 0.2 * n_rows * 0.6
+        assert [item.index for item in result.items] == list(range(n_rows))
+
+    def test_concurrency_one_serializes_requests(self, tmp_path: Path) -> None:
+        """concurrency: 1 limits the worker pool so requests never overlap."""
+
+        class _OverlapTransport(httpx.MockTransport):
+            def __init__(self) -> None:
+                self.max_in_flight = 0
+                self._in_flight = 0
+                self._lock = threading.Lock()
+                super().__init__(self._handler)
+
+            def _handler(self, request: httpx.Request) -> httpx.Response:
+                with self._lock:
+                    self._in_flight += 1
+                    self.max_in_flight = max(self.max_in_flight, self._in_flight)
+                time.sleep(0.05)
+                with self._lock:
+                    self._in_flight -= 1
+                return httpx.Response(
+                    200,
+                    json={
+                        "choices": [{"message": {"content": "hello"}}],
+                        "usage": {"total_tokens": 3},
+                    },
+                )
+
+        task = _batch_task(["a", "b", "c", "d"], concurrency=1)
+        transport = _OverlapTransport()
+        _run(_executor(), task, transport, tmp_path)
+        assert transport.max_in_flight == 1
+
+    def test_request_skeleton_constructed_once(self, tmp_path: Path) -> None:
+        """The request template is built once, not once per row."""
+        task = _batch_task(["a", "b", "c"])
+        transport = _EchoTransport()
+        real_build = APIExecutor._build_request_kwargs
+
+        with (
+            patch.object(
+                APIExecutor,
+                "_get_client",
+                return_value=httpx.Client(transport=transport),
+            ),
+            patch.object(
+                APIExecutor, "_build_request_kwargs", autospec=True
+            ) as mock_build,
+        ):
+            mock_build.side_effect = lambda *a, **k: real_build(*a, **k)
+            _executor().run(task, tmp_path)
+
+        assert mock_build.call_count == 1
+        assert len(mock_build.call_args.args) == 2
+
+    @pytest.mark.parametrize("concurrency", [1, 4, 8])
+    def test_client_pool_sized_to_concurrency(self, concurrency: int) -> None:
+        """The connection pool matches the effective concurrency."""
+        APIExecutor.close_all_clients()
+        try:
+            client = APIExecutor._get_client(
+                "https://example.com",
+                httpx.Timeout(60),
+                True,
+                True,
+                concurrency,
+            )
+            pool = cast(Any, client._transport)._pool
+            assert pool._max_connections == concurrency
+            assert pool._max_keepalive_connections == concurrency
+        finally:
+            APIExecutor.close_all_clients()
+
+    def test_concurrency_above_max_rejected(self) -> None:
+        """A concurrency above the cap is rejected, not clamped."""
+        with pytest.raises(ValidationError):
+            _batch_task(["a", "b", "c"], concurrency=_MAX_CONCURRENCY + 1)
+
+    @pytest.mark.parametrize("concurrency", [1, 4])
+    def test_run_passes_effective_concurrency_to_client(
+        self, tmp_path: Path, concurrency: int
+    ) -> None:
+        """run() forwards the configured concurrency to the client."""
+        task = _batch_task(["a", "b", "c"], concurrency=concurrency)
+        captured: dict[str, Any] = {}
+
+        def _fake_get_client(*args: Any, **kwargs: Any) -> httpx.Client:
+            captured["concurrency"] = kwargs.get("concurrency", args[4])
+            return httpx.Client(transport=_EchoTransport())
+
+        with patch.object(APIExecutor, "_get_client", side_effect=_fake_get_client):
+            _executor().run(task, tmp_path)
+
+        assert captured["concurrency"] == concurrency
+
+    @pytest.mark.parametrize("concurrency", [0, -1, "2", 1.5, True])
+    def test_invalid_concurrency_rejected(self, concurrency: object) -> None:
+        """A concurrency below 1, or a non-int or bool, is rejected."""
+        with pytest.raises(ValidationError):
+            _batch_task(["a", "b", "c"], concurrency=concurrency)
+
+    def test_client_cache_key_includes_concurrency(self) -> None:
+        """Pools built for different concurrency values are not shared."""
+        APIExecutor.close_all_clients()
+        try:
+            c1 = APIExecutor._get_client(
+                "https://example.com", httpx.Timeout(60), True, True, 1
+            )
+            c4 = APIExecutor._get_client(
+                "https://example.com", httpx.Timeout(60), True, True, 4
+            )
+            assert c1 is not c4
+            assert len(APIExecutor._clients) == 2
+        finally:
+            APIExecutor.close_all_clients()
+
+    def test_no_usage_2xx_produces_aligned_item(self, tmp_path: Path) -> None:
+        """A 2xx response without usage still yields a row-aligned item."""
+
+        class _NoUsage(httpx.MockTransport):
+            def __init__(self) -> None:
+                super().__init__(self._handler)
+
+            def _handler(self, request: httpx.Request) -> httpx.Response:
+                return httpx.Response(
+                    200,
+                    json={"choices": [{"message": {"content": "ok"}}]},
+                )
+
+        task = _batch_task(["a", "b"])
+        result = _run(_executor(), task, _NoUsage(), tmp_path)
+        assert len(result.items) == 2
+        assert result.items[0].text == "ok"
+        assert result.items[0].usage is None
+
+    def test_5xx_with_raise_for_status_false_produces_aligned_item(
+        self, tmp_path: Path
+    ) -> None:
+        """A 5xx with raise_for_status false still yields a row-aligned item."""
+
+        class _ErrorBody(httpx.MockTransport):
+            def __init__(self) -> None:
+                super().__init__(self._handler)
+
+            def _handler(self, request: httpx.Request) -> httpx.Response:
+                return httpx.Response(
+                    503,
+                    json={"error": {"message": "overloaded"}},
+                )
+
+        task = _batch_task(["a", "b"], response={"raise_for_status": False})
+        result = _run(_executor(), task, _ErrorBody(), tmp_path)
+        assert len(result.items) == 2
+        assert result.items[0].status_code == 503
+        assert result.items[0].response_json == {"error": {"message": "overloaded"}}
+
+    def test_retryable_503_raises_retryable(self, tmp_path: Path) -> None:
+        """A 503 is classified retryable even without a success payload."""
+
+        class _ErrorBody(httpx.MockTransport):
+            def __init__(self) -> None:
+                super().__init__(self._handler)
+
+            def _handler(self, request: httpx.Request) -> httpx.Response:
+                return httpx.Response(
+                    503,
+                    json={"error": {"message": "overloaded"}},
+                )
+
+        task = _batch_task(["a", "b"], response={"raise_for_status": True})
+        with pytest.raises(ExecutionError, match="status 503") as excinfo:
+            _run(_executor(), task, _ErrorBody(), tmp_path)
+        assert excinfo.value.retryable is True
+
+    def test_parse_error_fails_with_mapping_error_not_keyerror(
+        self, tmp_path: Path
+    ) -> None:
+        """A 200 with a non-mapping body and parse_json true fails the task with
+        the parse error, not a KeyError from the collection loop."""
+
+        class _ArrayBody(httpx.MockTransport):
+            def __init__(self) -> None:
+                super().__init__(self._handler)
+
+            def _handler(self, request: httpx.Request) -> httpx.Response:
+                return httpx.Response(200, json=[1])
+
+        task = _batch_task(["a", "b"], response={"parse_json": True})
+        with pytest.raises(ExecutionError, match="not a valid JSON mapping"):
+            _run(_executor(), task, _ArrayBody(), tmp_path)
+
+    def test_retry_stops_when_another_row_fails(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A row already retrying stops as soon as another row fails, issuing no
+        further requests and returning well under the full backoff time."""
+        monkeypatch.setattr("worker.executors.api_executor._RETRY_BACKOFF_SEC", 60.0)
+
+        class _MixedTransport(httpx.MockTransport):
+            def __init__(self) -> None:
+                self.requests: list[httpx.Request] = []
+                self.b_issued = threading.Event()
+                super().__init__(self._handler)
+
+            def _handler(self, request: httpx.Request) -> httpx.Response:
+                self.requests.append(request)
+                prompt = json.loads(request.read())["messages"][0]["content"]
+                if prompt == "b":
+                    self.b_issued.set()
+                    return httpx.Response(503, json={"error": "overloaded"})
+                # Row a waits until row b has issued its first (retrying)
+                # request, so row b is mid-backoff when row a fails.
+                self.b_issued.wait(5.0)
+                return httpx.Response(400, json={"error": "boom"})
+
+        task = _batch_task(
+            ["a", "b"],
+            concurrency=2,
+            retries=3,
+            response={"raise_for_status": True},
+        )
+        transport = _MixedTransport()
+        start = time.monotonic()
+        with pytest.raises(ExecutionError, match="row 0"):
+            _run(_executor(), task, transport, tmp_path)
+        elapsed = time.monotonic() - start
+        assert elapsed < 1.0
+        assert len(transport.requests) == 2
+
+    def test_cancel_prevents_queued_rows_from_issuing(self, tmp_path: Path) -> None:
+        """After cancel, a row that has not started never issues its request."""
+
+        class _BlockingTransport(httpx.MockTransport):
+            def __init__(self) -> None:
+                self.requests: list[httpx.Request] = []
+                self.started = threading.Event()
+                self.release = threading.Event()
+                super().__init__(self._handler)
+
+            def _handler(self, request: httpx.Request) -> httpx.Response:
+                self.requests.append(request)
+                self.started.set()
+                self.release.wait(timeout=5)
+                return httpx.Response(
+                    200,
+                    json={
+                        "choices": [{"message": {"content": "ok"}}],
+                        "usage": {"total_tokens": 3},
+                    },
+                )
+
+        executor = _executor()
+        task = _batch_task(["a", "b", "c", "d"], concurrency=1)
+        transport = _BlockingTransport()
+        errors: list[BaseException] = []
+        submitted: list[Any] = []
+        all_submitted = threading.Event()
+        real_submit = concurrent.futures.ThreadPoolExecutor.submit
+
+        def _recording_submit(self: Any, fn: Any, *args: Any, **kwargs: Any) -> Any:
+            submitted.append(fn)
+            if len(submitted) == 4:
+                all_submitted.set()
+            return real_submit(self, fn, *args, **kwargs)
+
+        def _run_in_thread() -> None:
+            try:
+                with patch.object(
+                    concurrent.futures.ThreadPoolExecutor,
+                    "submit",
+                    _recording_submit,
+                ):
+                    _run(executor, task, transport, tmp_path)
+            except BaseException as exc:  # noqa: BLE001 - captured for assertion
+                errors.append(exc)
+
+        thread = threading.Thread(target=_run_in_thread)
+        thread.start()
+        assert transport.started.wait(timeout=5)
+        assert all_submitted.wait(timeout=5)
+        executor.cancel("task-api-batch")
+        transport.release.set()
+        thread.join(timeout=10)
+
+        assert len(transport.requests) == 1
+        assert len(errors) == 1
+        assert isinstance(errors[0], TaskCancelledError)
+
+    def test_cancel_before_submission_prevents_any_future(self, tmp_path: Path) -> None:
+        """Cancelling before futures are submitted surfaces TaskCancelledError
+        without submitting any future."""
+        executor = _executor()
+        task = _batch_task(["a", "b", "c", "d"])
+        transport = _EchoTransport()
+        errors: list[BaseException] = []
+        submitted: list[Any] = []
+        real_submit = concurrent.futures.ThreadPoolExecutor.submit
+        real_base_url = APIExecutor._base_url
+
+        def _recording_submit(self: Any, fn: Any, *args: Any, **kwargs: Any) -> Any:
+            submitted.append(fn)
+            return real_submit(self, fn, *args, **kwargs)
+
+        def _run_in_thread() -> None:
+            def _cancel_then_base_url(url: str) -> str:
+                executor.cancel("task-api-batch")
+                return real_base_url(url)
+
+            try:
+                with (
+                    patch.object(
+                        concurrent.futures.ThreadPoolExecutor,
+                        "submit",
+                        _recording_submit,
+                    ),
+                    patch.object(
+                        APIExecutor,
+                        "_base_url",
+                        side_effect=_cancel_then_base_url,
+                    ),
+                ):
+                    _run(executor, task, transport, tmp_path)
+            except BaseException as exc:  # noqa: BLE001 - captured for assertion
+                errors.append(exc)
+
+        thread = threading.Thread(target=_run_in_thread)
+        thread.start()
+        thread.join(timeout=10)
+
+        assert len(errors) == 1
+        assert isinstance(errors[0], TaskCancelledError)
+        assert submitted == []
+
+    def test_cancel_after_requests_complete_before_collection_not_done(
+        self, tmp_path: Path
+    ) -> None:
+        """A cancel arriving after every request has completed but before results
+        are collected fails the task rather than returning DONE."""
+
+        class _RecordingTransport(httpx.MockTransport):
+            def __init__(self) -> None:
+                self.requests: list[httpx.Request] = []
+                super().__init__(self._handler)
+
+            def _handler(self, request: httpx.Request) -> httpx.Response:
+                self.requests.append(request)
+                return httpx.Response(
+                    200,
+                    json={
+                        "choices": [{"message": {"content": "ok"}}],
+                        "usage": {"total_tokens": 3},
+                    },
+                )
+
+        executor = _executor()
+        task = _batch_task(["a", "b"], concurrency=2)
+        transport = _RecordingTransport()
+        errors: list[BaseException] = []
+        futures: list[Any] = []
+        collect_release = threading.Event()
+        real_submit = concurrent.futures.ThreadPoolExecutor.submit
+        real_as_completed = concurrent.futures.as_completed
+
+        def _recording_submit(self: Any, fn: Any, *args: Any, **kwargs: Any) -> Any:
+            future = real_submit(self, fn, *args, **kwargs)
+            futures.append(future)
+            return future
+
+        def _blocking_as_completed(fs: Any, timeout: float | None = None) -> Any:
+            collect_release.wait(timeout=5)
+            return real_as_completed(fs, timeout=timeout)
+
+        def _run_in_thread() -> None:
+            try:
+                with (
+                    patch.object(
+                        concurrent.futures.ThreadPoolExecutor,
+                        "submit",
+                        _recording_submit,
+                    ),
+                    patch.object(
+                        api_executor_module, "as_completed", _blocking_as_completed
+                    ),
+                ):
+                    _run(executor, task, transport, tmp_path)
+            except BaseException as exc:  # noqa: BLE001 - captured for assertion
+                errors.append(exc)
+
+        thread = threading.Thread(target=_run_in_thread)
+        thread.start()
+        deadline = time.monotonic() + 5
+        while len(futures) < 2:
+            if errors:
+                raise errors[0]
+            if time.monotonic() > deadline:
+                raise AssertionError("timed out waiting for both requests to submit")
+            time.sleep(0.01)
+        for future in futures:
+            assert future.done()
+        assert len(transport.requests) == 2
+        executor.cancel("task-api-batch")
+        collect_release.set()
+        thread.join(timeout=10)
+
+        assert len(errors) == 1
+        assert isinstance(errors[0], TaskCancelledError)
+
+    def test_cancel_before_run_cancels(self, tmp_path: Path) -> None:
+        """A cancel that lands before run() starts still cancels the run."""
+        executor = _executor()
+        task = _batch_task(["a", "b"])
+        transport = _EchoTransport()
+
+        executor.cancel("task-api-batch")
+
+        with pytest.raises(TaskCancelledError):
+            _run(executor, task, transport, tmp_path)
+        assert transport.requests == []
+
+    def test_cancel_during_run_setup_not_lost(self, tmp_path: Path) -> None:
+        """A cancel landing mid check-and-clear is not dropped."""
+        executor = _executor()
+        task = _batch_task(["a", "b"])
+        transport = _EchoTransport()
+        errors: list[BaseException] = []
+        in_clear = threading.Event()
+        release_clear = threading.Event()
+        real_clear = executor._cancel_event.clear
+
+        def _blocking_clear() -> None:
+            in_clear.set()
+            release_clear.wait(timeout=5)
+            real_clear()
+
+        executor._cancel_event.clear = _blocking_clear  # type: ignore[method-assign]
+
+        def _run_in_thread() -> None:
+            try:
+                _run(executor, task, transport, tmp_path)
+            except BaseException as exc:  # noqa: BLE001 - captured for assertion
+                errors.append(exc)
+
+        thread = threading.Thread(target=_run_in_thread)
+        thread.start()
+        assert in_clear.wait(timeout=5)
+        executor.cancel(task.task_id)
+        release_clear.set()
+        thread.join(timeout=10)
+
+        assert len(errors) == 1
+        assert isinstance(errors[0], TaskCancelledError)

@@ -1,12 +1,12 @@
-# api_two_stage.yaml
-#
 # Two-stage API executor demo.
-# Stage 1 calls a chat completion endpoint and returns raw text.
-# Stage 2 sends Stage 1's returned text as the next prompt.
+#
+# Stage 1 sends one request per spec.data row, filling {{prompt}} in the
+# request body. Stage 2 takes the first row's response
+# (${stage-1.items.0.text}) and sends it as its own one-row prompt.
 #
 # Stage 1 names a custom endpoint via spec.api.url and supplies its own
-# Authorization header. Stage 2 omits url and header, so it uses the Nebula
-# defaults (NEBULA_API_BASE_URL + NEBULA_API_TOKEN).
+# Authorization header. Stage 2 omits both, so it uses the Nebula defaults
+# (NEBULA_API_BASE_URL + NEBULA_API_TOKEN).
 
 apiVersion: flowmesh/v1
 kind: APITask
@@ -19,6 +19,12 @@ spec:
   stages:
     - name: stage-1
       spec:
+        data:
+          type: list
+          items:
+            - Explain vector databases in simple terms.
+            - Explain attention in simple terms.
+            - Explain backpropagation in simple terms.
         api:
           url: https://api.example.com/v1/chat/completions
           method: POST
@@ -29,15 +35,18 @@ spec:
             model: gpt-4o
             messages:
               - role: user
-                content: Please explain vector databases in simple terms.
+                content: "{{prompt}}"
           response:
-            parse_json: false
-            # return_body is a JSON backdoor: keep raw text when JSON isn't usable.
+            parse_json: true
             return_body: true
             raise_for_status: true
 
     - name: stage-2
       spec:
+        data:
+          type: list
+          items:
+            - "The previous stage's response is as follows. Please provide a simpler explanation: \n${stage-1.items.0.text}"
         api:
           method: POST
           headers:
@@ -46,10 +55,9 @@ spec:
             model: gpt-4o
             messages:
               - role: user
-                content: "The previous stage's response is as follows. Please provide a simpler explanation: \n${stage-1.text}"
+                content: "{{prompt}}"
           response:
             parse_json: true
-            # return_body is a JSON backdoor: keep raw text when JSON isn't usable.
             return_body: true
             raise_for_status: true
 
