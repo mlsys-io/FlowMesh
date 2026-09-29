@@ -138,9 +138,7 @@ spec:
 the Docker session backend; a worker without Docker does not accept python
 tasks. A supervisor-launched worker gets Docker access only when SSH is enabled
 for it (`enable_ssh`), and its SSH caps and TTL bound python tasks too (see
-[`ENV.md`](ENV.md)). The function is called as `entrypoint(inputs)`, or with no arguments if
-it takes none. `inputs` maps each input stage to the directory its result is
-mounted at.
+[`ENV.md`](ENV.md)).
 
 | Field | Meaning |
 |-------|---------|
@@ -166,10 +164,6 @@ metric is present. An exception, `sys.exit()`, a non-serialisable or
 non-finite value, a timeout or a memory kill fails it, and the code's own
 exception message becomes the task error.
 
-The code runs as uid 65534 with no effective capabilities, `/tmp` as its
-writable scratch space, and no network unless `network: bridge` is set. It
-sees GPUs only when `resources.hardware.gpu` asks for them.
-
 ```yaml
 spec:
   stages:
@@ -185,16 +179,47 @@ spec:
         taskType: python
         emits: [mean_words]
         code: |
-          import json, os
-
-          def main(inputs):
-              path = os.path.join(inputs["prepare"], "results.json")
-              items = json.load(open(path))["result"]["items"]
-              words = [len(str(i["output"]).split()) for i in items]
+          def main(prepare):
+              words = [len(str(i["output"]).split()) for i in prepare["items"]]
               return {"metrics": {"mean_words": sum(words) / len(words)}}
 ```
 
 See `examples/templates/python_two_stage.yaml` for a runnable workflow.
+
+### Reading upstream stages
+
+The entrypoint is called with keyword arguments, bound by parameter name:
+
+- A parameter named after an input stage receives that stage's output: a
+  python stage's return value, `None` for a stage skipped by its condition,
+  and for any other task type its result object as `flowmesh result fetch`
+  shows it (for an echo stage, `{"task_type": "echo", "items": [...], ...}`).
+- A parameter named `inputs` receives every input stage as a `StageInput`.
+- `**kwargs` collects the input stages no other parameter took, including
+  stage names that are not Python identifiers.
+- A parameter with a default that matches no stage keeps its default. Any
+  other parameter that matches no stage, `*args`, or a positional-only
+  parameter fails the task before the call, naming the available stages.
+
+```python
+def main(train, evaluate, inputs):
+    checkpoint = inputs["train"].artifacts / "model.pt"
+    return {"metrics": {"accuracy": evaluate["accuracy"]}}
+```
+
+A `StageInput` is path-like (`open`, `os.path.join` and `Path` accept it) and
+exposes `output`, `result` (the full result object), `metadata`, `skipped`,
+`task_type`, `artifacts` (the stage's artifacts directory) and
+`artifact(ref)`, which resolves an `{"path": ...}` reference or relative path
+under `artifacts`. A stage's `results.json` is read only when its output or
+result is first used, so a large result the code never touches is not parsed.
+A missing or unreadable `results.json` fails the task.
+
+### Isolation
+
+The code runs as uid 65534 with no effective capabilities, `/tmp` as its
+writable scratch space, and no network unless `network: bridge` is set. It
+sees GPUs only when `resources.hardware.gpu` asks for them.
 
 ## data_retrieval: type lumid
 

@@ -24,14 +24,8 @@ spec:
         emits: [mean_words]
         timeoutSeconds: 120
         code: |
-          import json
-          import os
-
-
-          def main(inputs):
-              path = os.path.join(inputs["prepare"], "results.json")
-              items = json.load(open(path))["result"]["items"]
-              words = [len(str(item["output"]).split()) for item in items]
+          def main(prepare):
+              words = [len(str(item["output"]).split()) for item in prepare["items"]]
               return {
                   "rows": len(words),
                   "metrics": {"mean_words": sum(words) / len(words)},
