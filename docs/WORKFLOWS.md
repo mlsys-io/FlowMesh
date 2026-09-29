@@ -136,7 +136,9 @@ spec:
 
 `taskType: python` runs one function from `spec.code` in its own container on
 the Docker session backend; a worker without Docker does not accept python
-tasks. The function is called as `entrypoint(inputs)`, or with no arguments if
+tasks. A supervisor-launched worker gets Docker access only when SSH is enabled
+for it (`enable_ssh`), and its SSH caps and TTL bound python tasks too (see
+[`ENV.md`](ENV.md)). The function is called as `entrypoint(inputs)`, or with no arguments if
 it takes none. `inputs` maps each input stage to the directory its result is
 mounted at.
 
@@ -148,7 +150,7 @@ mounted at.
 | `requirements` | pip specifiers installed before the call. Requires `network: bridge`. |
 | `network` | `none` (default) or `bridge`. |
 | `inputs` | Upstream stages to mount, as for SSH tasks. When omitted, every direct dependency is mounted at `/mnt/flowmesh/inputs/<stage>`. |
-| `timeoutSeconds` | Wall-clock limit (default 600, at most 3600). Reaching it fails the task. |
+| `timeoutSeconds` | Wall-clock limit (default 600, at most 3600 and at most the worker's `SSH_MAX_TTL_SEC`). Reaching it fails the task. |
 | `env` | Extra environment variables. |
 | `emits` | Metric names the code must report; a missing one fails the task. |
 | `pythonOutput.maxBytes` | Cap on the output directory. |
@@ -160,9 +162,9 @@ from a `"metrics"` mapping in the return value and from any `metrics.json` the
 code writes into `$FLOWMESH_OUTPUT`. Both are merged into
 `artifacts/metrics.json` and `PythonResult.metrics`, and must be finite
 numbers. The task succeeds only when the function returns and every promised
-metric is present. An exception, a non-serialisable value, a timeout or a
-memory kill fails it, and the code's own exception message becomes the task
-error.
+metric is present. An exception, `sys.exit()`, a non-serialisable or
+non-finite value, a timeout or a memory kill fails it, and the code's own
+exception message becomes the task error.
 
 The code runs as uid 65534 with no effective capabilities, `/tmp` as its
 writable scratch space, and no network unless `network: bridge` is set. It
