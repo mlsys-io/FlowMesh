@@ -132,6 +132,68 @@ spec:
       parse_json: true
 ```
 
+## Python task
+
+`taskType: python` runs one function from `spec.code` in its own container on
+the Docker session backend; a worker without Docker does not accept python
+tasks. The function is called as `entrypoint(inputs)`, or with no arguments if
+it takes none. `inputs` maps each input stage to the directory its result is
+mounted at.
+
+| Field | Meaning |
+|-------|---------|
+| `code` | Python source defining the entrypoint (at most 256 KiB). Passed verbatim: `${...}` in it is ordinary text, not a stage reference. |
+| `entrypoint` | Function to call (default `main`). |
+| `image` | Container image providing `python3` (default `python:3.12-slim`). |
+| `requirements` | pip specifiers installed before the call. Requires `network: bridge`. |
+| `network` | `none` (default) or `bridge`. |
+| `inputs` | Upstream stages to mount, as for SSH tasks. When omitted, every direct dependency is mounted at `/mnt/flowmesh/inputs/<stage>`. |
+| `timeoutSeconds` | Wall-clock limit (default 600, at most 3600). Reaching it fails the task. |
+| `env` | Extra environment variables. |
+| `emits` | Metric names the code must report; a missing one fails the task. |
+| `pythonOutput.maxBytes` | Cap on the output directory. |
+| `resources` | CPU, memory and GPU requests, capped by the worker's SSH limits. |
+
+The return value must be JSON-serialisable. It is written to
+`artifacts/result.json` and returned as `PythonResult.value`. Metrics come
+from a `"metrics"` mapping in the return value and from any `metrics.json` the
+code writes into `$FLOWMESH_OUTPUT`. Both are merged into
+`artifacts/metrics.json` and `PythonResult.metrics`, and must be finite
+numbers. The task succeeds only when the function returns and every promised
+metric is present. An exception, a non-serialisable value, a timeout or a
+memory kill fails it, and the code's own exception message becomes the task
+error.
+
+The code runs as uid 65534 with no effective capabilities, `/tmp` as its
+writable scratch space, and no network unless `network: bridge` is set. It
+sees GPUs only when `resources.hardware.gpu` asks for them.
+
+```yaml
+spec:
+  stages:
+    - name: prepare
+      spec:
+        taskType: echo
+        data:
+          type: list
+          items: [the quick brown fox]
+    - name: score
+      dependsOn: [prepare]
+      spec:
+        taskType: python
+        emits: [mean_words]
+        code: |
+          import json, os
+
+          def main(inputs):
+              path = os.path.join(inputs["prepare"], "results.json")
+              items = json.load(open(path))["result"]["items"]
+              words = [len(str(i["output"]).split()) for i in items]
+              return {"metrics": {"mean_words": sum(words) / len(words)}}
+```
+
+See `examples/templates/python_two_stage.yaml` for a runnable workflow.
+
 ## data_retrieval: type lumid
 
 `type: lumid` routes the retrieval through lumid-data-app (HTTP). Three
