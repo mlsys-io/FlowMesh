@@ -64,7 +64,9 @@ async def list_tasks(
     runtime: TaskRuntime = Depends(get_runtime),
     logger: logging.Logger = Depends(get_logger),
 ) -> list[TaskInfo]:
-    tasks = runtime.list_tasks()
+    tasks = await asyncio.to_thread(
+        runtime.list_tasks, request.query_params.get("workflow_id")
+    )
     allowed = await resolve_accessible_ids(
         principal, ResourceKind.TASK, ResourceAction.READ, logger
     )

@@ -1355,11 +1355,12 @@ class TaskRuntime:
                 return None
             return self._build_task_info_locked(task_id, record)
 
-    def list_tasks(self) -> list[TaskInfo]:
+    def list_tasks(self, workflow_id: str | None = None) -> list[TaskInfo]:
         with self._lock:
             return [
                 self._build_task_info_locked(task_id, record)
                 for task_id, record in self._tasks.items()
+                if workflow_id is None or record.workflow_id == workflow_id
             ]
 
     # ------------------------------------------------------------------ #
