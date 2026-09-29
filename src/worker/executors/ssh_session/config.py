@@ -92,13 +92,14 @@ class SSHConfig:
     memory_limit_bytes: int | None
     pids_limit: int | None
     gpu_device_ids: list[str]
-    # Opt-in session policy: no network at all, a minimal capability set with a
-    # private tmpfs /tmp, files written into the container before it starts, and
-    # whether a finish request (in-session helper or graceful stop) ends the
-    # session as a success.
+    # No network at all, not even the isolated SSH bridge.
     network_disabled: bool = False
+    # A minimal capability set, with a private tmpfs /tmp as the writable scratch.
     hardened: bool = False
+    # Files written into the container before it starts, keyed by absolute path.
     extra_files: dict[str, bytes] = field(default_factory=dict)
+    # Whether a finish request (in-session helper or graceful stop) ends the
+    # session as a success.
     honor_finish_request: bool = True
 
     @classmethod

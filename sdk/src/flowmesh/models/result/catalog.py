@@ -228,8 +228,6 @@ class SSHResult(StrictExecutorResult):
 
 
 class PythonResult(StrictExecutorResult):
-    """A user Python stage: the entrypoint's return value and its metrics."""
-
     task_type: Literal[TaskType.PYTHON] = TaskType.PYTHON
     exit_code: int
     value: Any = None

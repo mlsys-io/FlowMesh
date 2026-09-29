@@ -25,4 +25,6 @@ class TemplateBaseModel(BaseModel):
         extra="forbid", from_attributes=True, populate_by_name=True
     )
 
+    # Fields whose text is taken verbatim: ``${...}`` in them is never read as a
+    # stage reference (e.g. source code, where it is ordinary syntax).
     placeholder_exempt_fields: ClassVar[frozenset[str]] = frozenset()

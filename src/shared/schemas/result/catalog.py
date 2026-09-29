@@ -276,11 +276,7 @@ class SSHResult(StrictExecutorResult):
 
 
 class PythonResult(StrictExecutorResult):
-    """A user Python stage: the entrypoint's return value and its metrics.
-
-    The same values are also written as ``artifacts/result.json`` and
-    ``artifacts/metrics.json`` in the task's result bundle.
-    """
+    """Python task output: the entrypoint's return value and metrics."""
 
     task_type: Literal[TaskType.PYTHON] = TaskType.PYTHON
     exit_code: int

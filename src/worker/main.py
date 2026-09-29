@@ -248,11 +248,11 @@ def main() -> None:
     if capabilities.supported_task_types & {TaskType.SSH, TaskType.PYTHON}:
         if ssh_limits is None:
             logger.warning(
-                "SSH resource cap not configured; SSH sessions will be able to access "
-                "full host resources of this worker."
+                "Session resource cap not configured; SSH and python tasks will be "
+                "able to access full host resources of this worker."
             )
         else:
-            logger.info("SSH resource cap: %s", ssh_limits.model_dump())
+            logger.info("Session resource cap: %s", ssh_limits.model_dump())
     lifecycle.start(
         env={},
         hardware=hardware,

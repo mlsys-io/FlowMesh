@@ -1112,8 +1112,8 @@ class Dispatcher:
     ) -> dict[str, str] | None:
         if isinstance(spec, PythonSpecStrict):
             if spec.inputs is None:
-                # A python task with no explicit inputs reads every stage it
-                # depends on: the edges drawn in a workflow are its inputs.
+                # Without ``inputs``, a python task reads each of its direct
+                # dependencies; ``inputs: []`` reads none.
                 return self._direct_dependency_stages(record) or None
             stages = [entry.stage for entry in spec.inputs]
         elif isinstance(spec, SSHSpecStrict) and spec.inputs:
