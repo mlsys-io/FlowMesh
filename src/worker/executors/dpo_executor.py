@@ -32,7 +32,7 @@ from shared.tasks.task_type import TaskType
 from shared.utils.manifest import scratch_dir
 
 from ..utils.logging import configure_hf_library_logging
-from .base_executor import ExecutionError, Executor, ExecutorTask
+from .base_executor import ExecutionError, Executor, ExecutorTask, RunControl
 from .mixins.training import TrainingMixin
 from .utils.checkpoints import (
     archive_model_dir,
@@ -62,7 +62,7 @@ class DPOExecutor(TrainingMixin, Executor):
         self._current_trainer: DPOTrainer | None = None
         self._task_out_dir: Path | None = None
 
-    def run(self, task: ExecutorTask, out_dir: Path) -> DPOResult:
+    def run(self, task: ExecutorTask, out_dir: Path, control: RunControl) -> DPOResult:
         configure_hf_library_logging()
         logger.info("Starting DPO training task")
         spec = self.require_spec(task, DPOSpecStrict)

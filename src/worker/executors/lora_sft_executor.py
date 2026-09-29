@@ -24,7 +24,7 @@ from shared.tasks.specs import LoRASFTSpecStrict
 from shared.tasks.task_type import TaskType
 
 from ..utils.logging import configure_hf_library_logging
-from .base_executor import ExecutionError, Executor, ExecutorTask
+from .base_executor import ExecutionError, Executor, ExecutorTask, RunControl
 from .mixins.training import TrainingMixin
 from .sft_executor import SFTExecutor
 from .utils.checkpoints import (
@@ -65,7 +65,7 @@ class LoRASFTExecutor(TrainingMixin, Executor):
         self._current_model: Any | None = None
         self._current_trainer: Any | None = None
 
-    def run(self, task: ExecutorTask, out_dir: Path) -> LoRAResult:
+    def run(self, task: ExecutorTask, out_dir: Path, control: RunControl) -> LoRAResult:
         configure_hf_library_logging()
         spec = self.require_spec(task, LoRASFTSpecStrict)
         start_time = time.time()

@@ -44,6 +44,7 @@ from .base_executor import (
     ExecutionError,
     Executor,
     ExecutorTask,
+    RunControl,
     TaskCancelledError,
 )
 
@@ -83,9 +84,6 @@ class SSHExecutor(Executor):
         super().__init__(*args, **kwargs)
         config = self._config
         self._owner = config.container_name or config.alias
-        self._cancel_event = threading.Event()
-        self._finish_event = threading.Event()
-        self._current_session: SSHSession | None = None
         self._backend = self._make_backend(config)
 
     @classmethod
@@ -121,7 +119,7 @@ class SSHExecutor(Executor):
     # Main execution
     # ------------------------------------------------------------------ #
 
-    def run(self, task: ExecutorTask, out_dir: Path) -> SSHResult:
+    def run(self, task: ExecutorTask, out_dir: Path, control: RunControl) -> SSHResult:
         spec = self.require_spec(task, SSHSpecStrict)
         # A session holds its devices for as long as it lives, so it must not be
         # handed one another tenant is already on.
@@ -175,6 +173,13 @@ class SSHExecutor(Executor):
                 cfg.command,
             )
 
+        control.raise_if_cancelled(f"{session_kind} cancelled before start")
+        if control.stop_requested:
+            logger.info(
+                "%s for task %s stopped before start", session_kind, task.task_id
+            )
+            return SSHResult(session_id=session_id, exit_code=0)
+
         try:
             session = self._backend.start_session(request)
         except ExecutionError:
@@ -182,7 +187,12 @@ class SSHExecutor(Executor):
         except Exception as exc:
             raise ExecutionError(f"Failed to start {session_kind}: {exc}") from exc
 
-        self._current_session = session
+        unregister_cancel = control.on_cancel(
+            lambda: self._stop_session(session, "cancellation")
+        )
+        unregister_stop = control.on_stop(
+            lambda: self._stop_session(session, "graceful stop")
+        )
         log_thread: threading.Thread | None = None
         if not interactive:
             log_thread = threading.Thread(
@@ -193,12 +203,20 @@ class SSHExecutor(Executor):
             log_thread.start()
         exit_code = 0
         try:
-            session_info = (
-                self._wait_session_ready(session, session_id, task, cfg)
-                if interactive
-                else {}
-            )
-            exit_code = self._wait_for_session(session, cfg)
+            try:
+                session_info = (
+                    self._wait_session_ready(session, session_id, task, cfg)
+                    if interactive
+                    else {}
+                )
+            except Exception as exc:
+                # A signal stops the session, which fails the readiness wait.
+                if control.cancel_requested:
+                    raise TaskCancelledError(f"{session_kind} cancelled") from exc
+                if not control.stop_requested:
+                    raise
+                session_info = {}
+            exit_code = self._wait_for_session(session, cfg, control)
             result = SSHResult(session_id=session_id, exit_code=exit_code)
             if interactive:
                 for key, value in session_info.items():
@@ -213,14 +231,13 @@ class SSHExecutor(Executor):
             session.collect_output(out_dir / ARTIFACTS_DIR)
             maybe_upload_artifacts(task, out_dir, logger=logger, skip_errors=True)
         finally:
+            unregister_cancel()
+            unregister_stop()
             if log_thread is not None:
                 # Wait for the thread to drain remaining output before tearing down
                 # the session.
                 log_thread.join(timeout=30.0)
             self.withdraw_endpoint(session_id)
-            self._current_session = None
-            self._cancel_event.clear()
-            self._finish_event.clear()
             session.stop(cfg.stop_timeout_sec)
             session.cleanup()
 
@@ -231,18 +248,8 @@ class SSHExecutor(Executor):
 
         return result
 
-    def cancel(self, task_id: str) -> None:
-        self._cancel_event.set()
-        self._stop_current_session("cancellation")
-
-    def stop(self, task_id: str) -> None:
-        self._finish_event.set()
-        self._stop_current_session("graceful stop")
-
-    def _stop_current_session(self, reason: str) -> None:
-        session = self._current_session
-        if session is None:
-            return
+    @staticmethod
+    def _stop_session(session: SSHSession, reason: str) -> None:
         try:
             session.stop(1)
         except Exception:
@@ -297,7 +304,9 @@ class SSHExecutor(Executor):
             "port": host_port,
         }
 
-    def _wait_for_session(self, session: SSHSession, cfg: SSHConfig) -> int:
+    def _wait_for_session(
+        self, session: SSHSession, cfg: SSHConfig, control: RunControl
+    ) -> int:
         """Block until the session exits or TTL/idle timeout fires.
 
         Returns the session exit code. The idle clock starts when the session
@@ -308,9 +317,9 @@ class SSHExecutor(Executor):
         last_active = time.time()
         idle_unobservable_logged = False
         while time.time() < deadline:
-            if self._cancel_event.is_set():
+            if control.cancel_requested:
                 raise TaskCancelledError("SSH session cancelled")
-            if self._finish_event.is_set() or session.finish_requested():
+            if control.stop_requested or session.finish_requested():
                 logger.info("SSH session finish requested; stopping session")
                 session.stop(1)
                 return 0
@@ -319,7 +328,7 @@ class SSHExecutor(Executor):
                 exit_code = session.poll()
             except Exception as exc:
                 logger.debug("Session poll error (may have exited): %s", exc)
-                if self._finish_event.is_set():
+                if control.stop_requested:
                     return 0
                 break
             if exit_code is not None:

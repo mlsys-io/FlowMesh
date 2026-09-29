@@ -17,7 +17,7 @@ pytest.importorskip("vllm", reason="vllm not installed (needs --extra inference)
 from shared.tasks.components.model import ModelConfig, ModelSource
 from shared.tasks.specs.omni import OmniText2GeneralSpecStrict
 from shared.tasks.task_type import TaskType
-from worker.executors.base_executor import ExecutionError
+from worker.executors.base_executor import ExecutionError, RunControl
 from worker.executors.omni_text2general_executor import OmniText2GeneralExecutor
 
 from .factories import DEFAULT_WORKER_CONFIG, make_worker_task_message
@@ -67,7 +67,7 @@ def _run(
         "worker.executors.omni_text2general_executor.save_audio",
         lambda *a, **k: None,
     )
-    return executor.run(task, tmp_path)
+    return executor.run(task, tmp_path, RunControl(task.task_id))
 
 
 def test_items_follow_request_id_when_a_request_emits_multiple_chunks(

@@ -25,7 +25,7 @@ from shared.tasks.specs import TaskSpecStrictBase
 from shared.utils.parsing import to_bool, to_int
 from worker.config import WorkerConfig
 
-from .base_executor import ExecutionError, Executor, ExecutorTask
+from .base_executor import ExecutionError, Executor, ExecutorTask, RunControl
 from .mixins.inference import InferenceMixin
 from .utils.checkpoints import maybe_upload_artifacts, maybe_upload_traces
 
@@ -83,7 +83,7 @@ class OmniExecutorBase(InferenceMixin, Executor):
     def is_available(cls, config: WorkerConfig) -> bool:
         return _HAS_OMNI
 
-    def run(self, task: ExecutorTask, out_dir: Path) -> OmniResult:
+    def run(self, task: ExecutorTask, out_dir: Path, control: RunControl) -> OmniResult:
         spec = self.require_spec(task, self._TASK_SPEC_TYPE)
         spec_dict = spec.model_dump(by_alias=True)
         out_dir = Path(out_dir).resolve()

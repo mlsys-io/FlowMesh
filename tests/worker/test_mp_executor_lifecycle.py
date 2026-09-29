@@ -21,7 +21,7 @@ from tests.worker.factories import (
     make_worker_task_message,
 )
 from worker.executors import mp_executor as mp_executor_module
-from worker.executors.base_executor import ExecutionError, Executor
+from worker.executors.base_executor import ExecutionError, Executor, RunControl
 from worker.executors.mp_executor import MPExecutor
 
 
@@ -33,7 +33,7 @@ class _SimpleMPResult(BaseExecutorResult):
 class _SimpleMPExecutor(Executor):
     name = "simple_mp"
 
-    def run(self, task, out_dir: Path) -> _SimpleMPResult:
+    def run(self, task, out_dir: Path, control: RunControl) -> _SimpleMPResult:
         return _SimpleMPResult(task_id=task.task_id)
 
     def cleanup_after_run(self) -> None:
@@ -45,7 +45,7 @@ class _HardCrashExecutor(Executor):
 
     name = "hard_crash"
 
-    def run(self, task, out_dir: Path) -> _SimpleMPResult:
+    def run(self, task, out_dir: Path, control: RunControl) -> _SimpleMPResult:
         os._exit(137)
 
     def cleanup_after_run(self) -> None:
@@ -57,7 +57,7 @@ class _SoftCrashExecutor(Executor):
 
     name = "soft_crash"
 
-    def run(self, task, out_dir: Path) -> _SimpleMPResult:
+    def run(self, task, out_dir: Path, control: RunControl) -> _SimpleMPResult:
         raise RuntimeError("boom")
 
     def cleanup_after_run(self) -> None:
@@ -70,7 +70,7 @@ class _SoftCrashCleanupExecutor(Executor):
     name = "soft_crash_cleanup"
     _marker: Path | None = None
 
-    def run(self, task, out_dir: Path) -> _SimpleMPResult:
+    def run(self, task, out_dir: Path, control: RunControl) -> _SimpleMPResult:
         self._marker = Path(out_dir) / "cleanup_ran"
         raise RuntimeError("boom")
 
@@ -88,7 +88,7 @@ class _OrphanSpawningCrashExecutor(Executor):
 
     name = "orphan_spawn_crash"
 
-    def run(self, task, out_dir: Path) -> _SimpleMPResult:
+    def run(self, task, out_dir: Path, control: RunControl) -> _SimpleMPResult:
         pid_file = Path(out_dir) / "grandchild.pid"
         code = (
             "import os, sys, time\n"
@@ -109,7 +109,7 @@ class _ControlledErrorExecutor(Executor):
 
     name = "controlled_error"
 
-    def run(self, task, out_dir: Path) -> _SimpleMPResult:
+    def run(self, task, out_dir: Path, control: RunControl) -> _SimpleMPResult:
         raise ExecutionError("bad input")
 
     def cleanup_after_run(self) -> None:
@@ -121,7 +121,7 @@ class _RetryableErrorExecutor(Executor):
 
     name = "retryable_error"
 
-    def run(self, task, out_dir: Path) -> _SimpleMPResult:
+    def run(self, task, out_dir: Path, control: RunControl) -> _SimpleMPResult:
         raise ExecutionError("transient", retryable=True)
 
     def cleanup_after_run(self) -> None:
@@ -162,7 +162,7 @@ def test_mp_executor_does_not_start_subprocess_until_first_run(tmp_path: Path) -
     assert mp._res_q is None
 
     with tempfile.TemporaryDirectory() as out_dir:
-        result = mp.run(_simple_task_message(), Path(out_dir))
+        result = mp.run(_simple_task_message(), Path(out_dir), RunControl("tsk-test"))
 
     assert isinstance(result, _SimpleMPResult)
     assert result.ok is True
@@ -188,7 +188,7 @@ def test_mp_executor_reports_dead_subprocess(
 
     with tempfile.TemporaryDirectory() as out_dir:
         with pytest.raises(ExecutionError) as exc_info:
-            mp.run(_simple_task_message(), Path(out_dir))
+            mp.run(_simple_task_message(), Path(out_dir), RunControl("tsk-test"))
 
     assert exc_info.value.retryable is True
 
@@ -210,7 +210,7 @@ def test_mp_executor_restarts_subprocess_after_unexpected_failure(
 
     with tempfile.TemporaryDirectory() as out_dir:
         with pytest.raises(RuntimeError) as exc_info:
-            mp.run(_simple_task_message(), Path(out_dir))
+            mp.run(_simple_task_message(), Path(out_dir), RunControl("tsk-test"))
 
     assert not isinstance(exc_info.value, ExecutionError)
 
@@ -231,7 +231,7 @@ def test_mp_executor_runs_inner_cleanup_on_unexpected_failure(tmp_path: Path) ->
     with tempfile.TemporaryDirectory() as out_dir:
         marker = Path(out_dir) / "cleanup_ran"
         with pytest.raises(RuntimeError):
-            mp.run(_simple_task_message(), Path(out_dir))
+            mp.run(_simple_task_message(), Path(out_dir), RunControl("tsk-test"))
 
         # The still-responsive subprocess is shut down gracefully, so the inner
         # executor's cleanup runs (releasing e.g. the GPU) instead of being
@@ -255,7 +255,7 @@ def test_mp_executor_reaps_orphaned_descendants_on_teardown(
     with tempfile.TemporaryDirectory() as out_dir:
         pid_file = Path(out_dir) / "grandchild.pid"
         with pytest.raises(ExecutionError):
-            mp.run(_simple_task_message(), Path(out_dir))
+            mp.run(_simple_task_message(), Path(out_dir), RunControl("tsk-test"))
         grandchild_pid = int(pid_file.read_text())
 
     # Tearing down the dead subprocess signals its whole process group, so the
@@ -275,7 +275,7 @@ def test_mp_executor_keeps_subprocess_after_controlled_error(tmp_path: Path) -> 
 
     with tempfile.TemporaryDirectory() as out_dir:
         with pytest.raises(ExecutionError) as exc_info:
-            mp.run(_simple_task_message(), Path(out_dir))
+            mp.run(_simple_task_message(), Path(out_dir), RunControl("tsk-test"))
 
     assert exc_info.value.retryable is False
 
@@ -296,7 +296,7 @@ def test_mp_executor_propagates_retryable_flag(tmp_path: Path) -> None:
 
     with tempfile.TemporaryDirectory() as out_dir:
         with pytest.raises(ExecutionError) as exc_info:
-            mp.run(_simple_task_message(), Path(out_dir))
+            mp.run(_simple_task_message(), Path(out_dir), RunControl("tsk-test"))
 
     # The inner executor's retryable flag survives the subprocess boundary.
     assert exc_info.value.retryable is True

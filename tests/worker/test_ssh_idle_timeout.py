@@ -7,7 +7,11 @@ import pytest
 
 from shared.tasks.specs import SSHSpecStrict
 from tests.worker.factories import DEFAULT_WORKER_CONFIG, make_live_worker_config
-from worker.executors.base_executor import ExecutionError, TaskCancelledError
+from worker.executors.base_executor import (
+    ExecutionError,
+    RunControl,
+    TaskCancelledError,
+)
 from worker.executors.ssh_executor import SSHExecutor
 from worker.executors.ssh_session import SSHConfig, SSHSession
 from worker.executors.ssh_session.backends import docker as docker_backend_module
@@ -89,7 +93,7 @@ class TestIdleReaping:
         cfg = _fast_poll(_cfg(ttlSeconds=600), idle_sec=0.05)
         session = _FakeSession(connections=0)
 
-        assert executor._wait_for_session(session, cfg) == 0
+        assert executor._wait_for_session(session, cfg, RunControl("tsk-test")) == 0
         assert session.stopped_with == 1
 
     def test_connected_session_is_not_reaped(self, tmp_path: Path) -> None:
@@ -98,7 +102,7 @@ class TestIdleReaping:
         cfg.ttl_sec = 0.3
         session = _FakeSession(connections=1)
 
-        assert executor._wait_for_session(session, cfg) == 0
+        assert executor._wait_for_session(session, cfg, RunControl("tsk-test")) == 0
         assert session.stopped_with is None
 
     def test_unobservable_connections_never_reap(
@@ -111,7 +115,7 @@ class TestIdleReaping:
         session = _FakeSession(connections=None)
 
         with caplog.at_level("WARNING"):
-            assert executor._wait_for_session(session, cfg) == 0
+            assert executor._wait_for_session(session, cfg, RunControl("tsk-test")) == 0
 
         assert session.stopped_with is None
         assert any(
@@ -130,7 +134,7 @@ class TestIdleReaping:
         cfg.ttl_sec = 0.3
         session = _FakeSession(connections=0)
 
-        assert executor._wait_for_session(session, cfg) == 0
+        assert executor._wait_for_session(session, cfg, RunControl("tsk-test")) == 0
         assert session.stopped_with is None
 
     def test_zero_idle_timeout_disables_reaping(self, tmp_path: Path) -> None:
@@ -139,7 +143,7 @@ class TestIdleReaping:
         cfg.ttl_sec = 0.3
         session = _FakeSession(connections=0)
 
-        assert executor._wait_for_session(session, cfg) == 0
+        assert executor._wait_for_session(session, cfg, RunControl("tsk-test")) == 0
         assert session.stopped_with is None
 
 
@@ -149,15 +153,16 @@ class TestSessionLoop:
         cfg = _fast_poll(_cfg(ttlSeconds=600), idle_sec=600)
         session = _FakeSession(connections=1, exit_code=3)
 
-        assert executor._wait_for_session(session, cfg) == 3
+        assert executor._wait_for_session(session, cfg, RunControl("tsk-test")) == 3
 
     def test_cancellation_propagates(self, tmp_path: Path) -> None:
         executor = _executor(tmp_path)
         cfg = _fast_poll(_cfg(ttlSeconds=600), idle_sec=600)
-        executor._cancel_event.set()
+        control = RunControl("tsk-test")
+        control.request_cancel()
 
         with pytest.raises(TaskCancelledError):
-            executor._wait_for_session(_FakeSession(), cfg)
+            executor._wait_for_session(_FakeSession(), cfg, control)
 
     def test_output_limit_breach_fails_the_task(self, tmp_path: Path) -> None:
         """A maxBytes breach must surface, not be swallowed into a clean exit."""
@@ -166,7 +171,7 @@ class TestSessionLoop:
         session = _FakeSession(connections=1, output_size=11)
 
         with pytest.raises(ExecutionError, match="exceeded maxBytes"):
-            executor._wait_for_session(session, cfg)
+            executor._wait_for_session(session, cfg, RunControl("tsk-test"))
         assert session.stopped_with == 1
 
 

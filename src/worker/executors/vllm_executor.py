@@ -77,7 +77,7 @@ from shared.tasks.specs import InferenceSpecStrict
 from shared.tasks.specs.common import ModelSpecStrict
 from shared.tasks.task_type import TaskType
 
-from .base_executor import ExecutionError, Executor, ExecutorTask
+from .base_executor import ExecutionError, Executor, ExecutorTask, RunControl
 from .mixins.data import InferenceEntry
 from .mixins.inference import InferenceMixin, PreparedInferenceEntry
 from .utils.checkpoints import (
@@ -1033,7 +1033,9 @@ Summary:"""
     # --------------------------------------------------------------------- #
     # Execution
     # --------------------------------------------------------------------- #
-    def run(self, task: ExecutorTask, out_dir: Path) -> BaseExecutorResult:
+    def run(
+        self, task: ExecutorTask, out_dir: Path, control: RunControl
+    ) -> BaseExecutorResult:
         task_id = task.task_id.strip()
         if not task_id:
             raise ExecutionError("task_id is required for vLLM execution")

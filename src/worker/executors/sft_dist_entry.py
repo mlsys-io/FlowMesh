@@ -16,6 +16,7 @@ from shared.tasks.worker_message import WorkerTaskMessage
 from shared.utils.manifest import scratch_dir
 from worker.config import WorkerConfig
 
+from .base_executor import RunControl
 from .sft_executor import SFTExecutor
 
 
@@ -41,7 +42,7 @@ def main(argv: list[str]) -> int:
         task = WorkerTaskMessage.model_validate(json.load(fh))
     ex = SFTExecutor(WorkerConfig.from_env())
     try:
-        result = ex.run(task, out_dir)
+        result = ex.run(task, out_dir, RunControl(task.task_id))
         # Hand the subprocess's result to the parent via a scratch IPC file.
         try:
             (scratch_dir(out_dir) / "distributed_result.json").write_text(

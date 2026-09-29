@@ -28,7 +28,7 @@ from shared.utils.json import validate_keys
 
 from ..connectors import LumidDataConnector, PostgreSQLConnector, S3Connector
 from ..utils.serialization import serialize_dataframe
-from .base_executor import ExecutionError, Executor, ExecutorTask
+from .base_executor import ExecutionError, Executor, ExecutorTask, RunControl
 from .mixins.data import DataMixin
 from .utils.checkpoints import maybe_upload_artifacts, maybe_upload_traces
 from .utils.graph_templates import _render_template, _resolve_columns
@@ -40,7 +40,9 @@ class DataRetrievalExecutor(DataMixin, Executor):
     name = "data_retrieval"
     supported_task_types = frozenset({TaskType.DATA_RETRIEVAL})
 
-    def run(self, task: ExecutorTask, out_dir: Path) -> DataRetrievalResult:
+    def run(
+        self, task: ExecutorTask, out_dir: Path, control: RunControl
+    ) -> DataRetrievalResult:
         spec = self.require_spec(task, DataRetrievalSpecStrict)
         task_id = task.task_id
         with self._task_span(
