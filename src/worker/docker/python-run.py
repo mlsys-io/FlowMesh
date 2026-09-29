@@ -16,13 +16,16 @@ Environment (set by worker/executors/python_executor.py):
 Contract with the caller's code: ``entrypoint(inputs)`` (or ``entrypoint()``)
 returns a JSON-serialisable value, written to ``result.json``. Metrics come from
 a ``"metrics"`` mapping in that value and/or a ``metrics.json`` the code writes
-into ``$FLOWMESH_OUTPUT`` itself; both are merged into ``metrics.json``. Any
+into ``$FLOWMESH_OUTPUT`` itself; both are merged into ``metrics.json`` and must
+be finite numbers. ``requirements`` are installed after the switch to the
+unprivileged uid, into a directory under ``/tmp`` put on ``sys.path``. Any
 failure — an exception, a non-serialisable value, a promised metric that never
 arrived — writes ``error.json`` and exits non-zero, so the task fails loudly.
 """
 
 import inspect
 import json
+import math
 import numbers
 import os
 import subprocess
@@ -62,7 +65,7 @@ def _install_requirements():
         return
     cmd = [
         *(sys.executable, "-m", "pip", "install", "--no-cache-dir", "--quiet"),
-        *("--root-user-action=ignore", "--disable-pip-version-check"),
+        "--disable-pip-version-check",
     ]
     proc = subprocess.run(
         [*cmd, "--target", DEPS, *reqs]
@@ -88,8 +91,11 @@ def _collect_metrics(value):
     metrics = {}
     written = os.path.join(OUT, "metrics.json")
     if os.path.exists(written):
-        with open(written) as fh:
-            loaded = json.load(fh)
+        try:
+            with open(written) as fh:
+                loaded = json.load(fh)
+        except (OSError, ValueError) as exc:
+            _fail("MetricsError", f"metrics.json is not valid JSON: {exc}", 3)
         if not isinstance(loaded, dict):
             _fail("MetricsError", "metrics.json must hold a JSON object", 3)
         metrics.update(loaded)
@@ -98,17 +104,26 @@ def _collect_metrics(value):
     for name, v in metrics.items():
         if isinstance(v, bool) or not isinstance(v, numbers.Real):
             _fail("MetricsError", f"metric {name!r} is not a number: {v!r}", 3)
+        if not _finite(v):
+            _fail("MetricsError", f"metric {name!r} is not finite: {v!r}", 3)
     return {k: float(v) for k, v in metrics.items()}
+
+
+def _finite(value):
+    try:
+        return math.isfinite(float(value))
+    except OverflowError:
+        return False
 
 
 def main():
     uid = int(os.environ.get("FLOWMESH_PY_UID", "65534"))
     os.makedirs(OUT, exist_ok=True)
-    _install_requirements()
     _drop_privileges(uid)
     os.environ["HOME"] = "/tmp"  # nosec B108 - the container's private tmpfs
     os.environ["FLOWMESH_OUTPUT"] = OUT
     os.chdir("/tmp")  # nosec B108 - the container's private tmpfs
+    _install_requirements()
 
     code_path = os.environ["FLOWMESH_PY_CODE"]
     entrypoint = os.environ.get("FLOWMESH_PY_ENTRYPOINT", "main")

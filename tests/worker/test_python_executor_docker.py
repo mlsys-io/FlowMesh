@@ -104,6 +104,32 @@ def test_requirements_install_over_bridge(tmp_path: Path) -> None:
     assert result.value == ["1.16.0", 65534]
 
 
+def test_binary_requirements_install_and_load(tmp_path: Path) -> None:
+    # A compiled extension: loading it needs an executable /tmp.
+    code = (
+        "import orjson, os\n"
+        "def main():\n"
+        "    return [orjson.dumps(1).decode(), os.getuid()]\n"
+    )
+    result = _run(tmp_path, code, requirements=["orjson==3.10.18"], network="bridge")
+    assert result.value == ["1", 65534]
+
+
+def test_no_gpus_unless_asked(tmp_path: Path) -> None:
+    code = (
+        "import os\n"
+        "def main():\n"
+        "    return [os.environ.get('NVIDIA_VISIBLE_DEVICES'),\n"
+        "            os.environ.get('CUDA_VISIBLE_DEVICES')]\n"
+    )
+    assert _run(tmp_path, code).value == ["void", None]
+
+
+def test_exit_code_124_is_not_a_timeout(tmp_path: Path) -> None:
+    with pytest.raises(ExecutionError, match="exited with code 124"):
+        _run(tmp_path, "import sys\ndef main():\n    sys.exit(124)\n")
+
+
 def test_upstream_results_are_mounted_by_default(tmp_path: Path) -> None:
     results = tmp_path / "worker-results" / "t-up"
     results.mkdir(parents=True)

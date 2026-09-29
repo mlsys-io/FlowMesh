@@ -435,6 +435,38 @@ class TestBootstrap:
         )
         assert rc == 3
 
+    @pytest.mark.parametrize(
+        "value", ["float('nan')", "float('inf')", "-float('inf')", "10 ** 400"]
+    )
+    def test_non_finite_metric_fails(self, tmp_path: Path, value: str) -> None:
+        rc, out = _bootstrap(
+            tmp_path, f"def main():\n    return {{'metrics': {{'s': {value}}}}}\n"
+        )
+        assert rc == 3
+        assert cast(dict[str, str], _load(out, "error.json"))["type"] == "MetricsError"
+
+    def test_non_finite_written_metric_fails(self, tmp_path: Path) -> None:
+        code = (
+            "import os\n"
+            "def main():\n"
+            "    p = os.path.join(os.environ['FLOWMESH_OUTPUT'], 'metrics.json')\n"
+            "    open(p, 'w').write('{\"loss\": NaN}')\n"
+        )
+        rc, out = _bootstrap(tmp_path, code)
+        assert rc == 3
+        assert "not finite" in cast(dict[str, str], _load(out, "error.json"))["message"]
+
+    def test_malformed_written_metrics_fail(self, tmp_path: Path) -> None:
+        code = (
+            "import os\n"
+            "def main():\n"
+            "    p = os.path.join(os.environ['FLOWMESH_OUTPUT'], 'metrics.json')\n"
+            "    open(p, 'w').write('{not json')\n"
+        )
+        rc, out = _bootstrap(tmp_path, code)
+        assert rc == 3
+        assert cast(dict[str, str], _load(out, "error.json"))["type"] == "MetricsError"
+
     def test_missing_entrypoint_fails(self, tmp_path: Path) -> None:
         rc, out = _bootstrap(tmp_path, "x = 1\n")
         assert rc == 3
