@@ -316,8 +316,13 @@ class DockerSessionBackend(SSHSessionBackend):
             # effective set is empty anyway.
             kwargs["cap_drop"] = ["ALL"]
             kwargs["cap_add"] = ["CHOWN", "DAC_OVERRIDE", "FOWNER", "SETUID", "SETGID"]
+            # tmpfs pages are charged to the container's memory, so the memory
+            # limit is the scratch space's only bound.
+            tmp_opts = "rw,exec,nosuid,nodev"
+            if cfg.memory_limit_bytes is not None:
+                tmp_opts += f",size={cfg.memory_limit_bytes}"
             kwargs["tmpfs"] = {
-                "/tmp": "rw,exec,nosuid,nodev,size=1g"
+                "/tmp": tmp_opts
             }  # nosec B108 - a fresh per-container tmpfs, not the host /tmp
         return kwargs
 

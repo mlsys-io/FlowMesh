@@ -196,7 +196,8 @@ A `StageInput` is path-like and exposes the stage's `output`, `result`,
 ### Isolation
 
 The code runs as an unprivileged user with `/tmp` as its writable scratch
-space. It has no network unless `network: bridge` is set, which `requirements`
+space; `/tmp` is held in memory and counts against the task's memory limit. It
+has no network unless `network: bridge` is set, which `requirements`
 need to install, and sees GPUs only when `resources.hardware.gpu` asks for them.
 
 ## data_retrieval: type lumid

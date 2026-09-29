@@ -203,6 +203,14 @@ class TestDockerHardening:
         assert "network" not in kwargs
         assert kwargs["cap_drop"] == ["ALL"]
         assert "NET_RAW" not in cast(list[str], kwargs["cap_add"])
+        assert kwargs["tmpfs"] == {"/tmp": "rw,exec,nosuid,nodev"}
+
+    def test_scratch_space_is_bounded_by_the_memory_limit(self, tmp_path: Path) -> None:
+        cfg = _base_cfg()
+        cfg.hardened = True
+        cfg.memory_limit_bytes = 2 * 1024**3
+        kwargs = self._kwargs(tmp_path, cfg)
+        assert kwargs["tmpfs"] == {"/tmp": f"rw,exec,nosuid,nodev,size={2 * 1024**3}"}
 
     def test_archive_carries_extra_files(self) -> None:
         archive = DockerSessionBackend._build_ssh_run_archive(
