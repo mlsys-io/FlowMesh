@@ -27,6 +27,7 @@ from typing import Any
 from shared.schemas.result import PythonResult
 from shared.tasks.specs.python import (
     DEFAULT_TIMEOUT_SECONDS,
+    OUTPUT_MOUNT_PATH,
     PythonSpecStrict,
 )
 from shared.tasks.specs.ssh import SSHInputSpec, SSHSpecStrict
@@ -47,7 +48,6 @@ from .session_executor import SessionExecutor, SessionOutcome
 logger = logging.getLogger(__name__)
 
 DEFAULT_IMAGE = "python:3.12-slim"
-OUTPUT_PATH = "/mnt/flowmesh/output"
 BOOTSTRAP_PATH = "/opt/flowmesh/python-run.py"
 CODE_PATH = "/opt/flowmesh/task.py"
 UNPRIVILEGED_UID = 65534  # nobody
@@ -94,7 +94,7 @@ class PythonExecutor(SessionExecutor):
             "FLOWMESH_PY_CODE": CODE_PATH,
             "FLOWMESH_PY_ENTRYPOINT": spec.entrypoint,
             "FLOWMESH_PY_INPUTS": json.dumps(inputs),
-            "FLOWMESH_PY_OUTPUT": OUTPUT_PATH,
+            "FLOWMESH_PY_OUTPUT": OUTPUT_MOUNT_PATH,
             "FLOWMESH_PY_REQUIREMENTS": json.dumps(spec.requirements or []),
             "FLOWMESH_PY_EMITS": json.dumps(spec.emits or []),
             "FLOWMESH_PY_UID": str(UNPRIVILEGED_UID),
@@ -115,7 +115,7 @@ class PythonExecutor(SessionExecutor):
                 "ttlSeconds": spec.timeoutSeconds or DEFAULT_TIMEOUT_SECONDS,
                 "inputs": [i.model_dump() for i in spec.inputs or []],
                 "sshOutput": {
-                    "mountPath": OUTPUT_PATH,
+                    "mountPath": OUTPUT_MOUNT_PATH,
                     "maxBytes": (
                         spec.pythonOutput.maxBytes if spec.pythonOutput else None
                     ),

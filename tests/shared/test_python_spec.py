@@ -48,6 +48,14 @@ def test_envelope_discriminates_python() -> None:
         ({"network": "host"}, "network"),
         ({"inputs": [{"stage": "a"}, {"stage": "a"}]}, "unique"),
         ({"inputs": [{"stage": "a"}], "dependsOn": ["b"]}, "dependsOn"),
+        (
+            {"inputs": [{"stage": "a", "mountPath": "/mnt/flowmesh/output"}]},
+            "output directory",
+        ),
+        (
+            {"inputs": [{"stage": "a", "mountPath": "/mnt/flowmesh/output/a/"}]},
+            "output directory",
+        ),
     ],
 )
 def test_rejects(updates: dict[str, object], needle: str) -> None:

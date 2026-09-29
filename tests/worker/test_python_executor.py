@@ -25,7 +25,7 @@ from worker.executors.base_executor import ExecutionError
 from worker.executors.python_executor import (
     BOOTSTRAP_PATH,
     CODE_PATH,
-    OUTPUT_PATH,
+    OUTPUT_MOUNT_PATH,
     PythonExecutor,
 )
 from worker.executors.session_executor import (
@@ -71,7 +71,7 @@ class TestPythonConfig:
         assert cfg.network_disabled is True
         assert cfg.hardened is True
         assert cfg.command == ["python3", BOOTSTRAP_PATH]
-        assert cfg.output is not None and cfg.output.mount_path == OUTPUT_PATH
+        assert cfg.output is not None and cfg.output.mount_path == OUTPUT_MOUNT_PATH
 
     def test_code_and_bootstrap_travel_as_files_not_env(self, tmp_path: Path) -> None:
         code = "def main():\n    return 'x' * 3\n"

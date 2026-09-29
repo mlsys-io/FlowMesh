@@ -1,6 +1,7 @@
 """Spec for ``python`` tasks: a function from ``code``, run in an isolated
 container, whose return value and metrics become the task's result."""
 
+from pathlib import PurePosixPath
 from typing import Any, ClassVar, Literal, Self
 
 from pydantic import Field, model_validator
@@ -18,6 +19,7 @@ from .ssh import SSHInputSpec
 MAX_CODE_BYTES = 256 * 1024
 DEFAULT_TIMEOUT_SECONDS = 600.0
 MAX_TIMEOUT_SECONDS = 3600.0
+OUTPUT_MOUNT_PATH = "/mnt/flowmesh/output"
 
 
 class PythonOutputSpec(StrictBaseModel):
@@ -63,6 +65,14 @@ def _validate[T: "PythonSpecStrict | PythonSpecTemplate"](spec: T) -> T:
     mounts = [e.mountPath.strip() for e in inputs if e.mountPath is not None]
     if any(not m for m in mounts) or len(set(mounts)) != len(mounts):
         raise ValueError("python inputs[].mountPath must be non-empty and unique")
+    output = PurePosixPath(OUTPUT_MOUNT_PATH)
+    for mount in mounts:
+        path = PurePosixPath(mount)
+        if path == output or output in path.parents:
+            raise ValueError(
+                f"python inputs[].mountPath {mount!r} would mount over the "
+                f"task's output directory {OUTPUT_MOUNT_PATH}"
+            )
     if spec.dependsOn:
         declared = {d.strip() for d in spec.dependsOn if d.strip()}
         missing = sorted(s for s in stages if s not in declared)
