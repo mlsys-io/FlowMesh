@@ -1,5 +1,3 @@
-import asyncio
-import queue
 import threading
 
 import docker
@@ -14,19 +12,6 @@ def get_docker_client() -> docker.DockerClient:
 
     _docker_client = docker.from_env()
     return _docker_client
-
-
-class TSQueue[T]:
-    def __init__(self) -> None:
-        self._q: queue.Queue[T] = queue.Queue()
-
-    async def put(self, item: T) -> None:
-        loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, self._q.put, item)
-
-    async def get(self) -> T:
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(None, self._q.get)
 
 
 class ResourcePool[T]:

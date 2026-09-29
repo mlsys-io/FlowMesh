@@ -536,7 +536,7 @@ class TestRetries:
         """Run a task, recording each backoff delay instead of waiting."""
         delays: list[float] = []
 
-        def _record(delay: float) -> None:
+        def _record(delay: float, failed: threading.Event) -> None:
             delays.append(delay)
 
         executor = APIExecutor.__new__(APIExecutor)
@@ -1084,6 +1084,61 @@ class TestBatch:
         with pytest.raises(ExecutionError, match="status 503") as excinfo:
             _run(_executor(), task, _ErrorBody(), tmp_path)
         assert excinfo.value.retryable is True
+
+    def test_parse_error_fails_with_mapping_error_not_keyerror(
+        self, tmp_path: Path
+    ) -> None:
+        """A 200 with a non-mapping body and parse_json true fails the task with
+        the parse error, not a KeyError from the collection loop."""
+
+        class _ArrayBody(httpx.MockTransport):
+            def __init__(self) -> None:
+                super().__init__(self._handler)
+
+            def _handler(self, request: httpx.Request) -> httpx.Response:
+                return httpx.Response(200, json=[1])
+
+        task = _batch_task(["a", "b"], response={"parse_json": True})
+        with pytest.raises(ExecutionError, match="not a valid JSON mapping"):
+            _run(_executor(), task, _ArrayBody(), tmp_path)
+
+    def test_retry_stops_when_another_row_fails(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A row already retrying stops as soon as another row fails, issuing no
+        further requests and returning well under the full backoff time."""
+        monkeypatch.setattr("worker.executors.api_executor._RETRY_BACKOFF_SEC", 60.0)
+
+        class _MixedTransport(httpx.MockTransport):
+            def __init__(self) -> None:
+                self.requests: list[httpx.Request] = []
+                self.b_issued = threading.Event()
+                super().__init__(self._handler)
+
+            def _handler(self, request: httpx.Request) -> httpx.Response:
+                self.requests.append(request)
+                prompt = json.loads(request.read())["messages"][0]["content"]
+                if prompt == "b":
+                    self.b_issued.set()
+                    return httpx.Response(503, json={"error": "overloaded"})
+                # Row a waits until row b has issued its first (retrying)
+                # request, so row b is mid-backoff when row a fails.
+                self.b_issued.wait(5.0)
+                return httpx.Response(400, json={"error": "boom"})
+
+        task = _batch_task(
+            ["a", "b"],
+            concurrency=2,
+            retries=3,
+            response={"raise_for_status": True},
+        )
+        transport = _MixedTransport()
+        start = time.monotonic()
+        with pytest.raises(ExecutionError, match="row 0"):
+            _run(_executor(), task, transport, tmp_path)
+        elapsed = time.monotonic() - start
+        assert elapsed < 1.0
+        assert len(transport.requests) == 2
 
     def test_cancel_prevents_queued_rows_from_issuing(self, tmp_path: Path) -> None:
         """After cancel, a row that has not started never issues its request."""

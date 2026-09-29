@@ -219,6 +219,14 @@ class TaskInfo(TaskRecord):
     completed: bool = Field(description="Whether the task completed successfully.")
     failed: bool = Field(description="Whether the task failed.")
 
+    # TODO(deprecate): `raw_yaml` is for clients before flowmesh-sdk 0.1.10, whose
+    # TaskInfo still requires it; remove in the next minor release.
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def raw_yaml(self) -> str:
+        """Deprecated alias of the redacted ``source`` for SDK clients before 0.1.10."""
+        return self._redact_source()
+
 
 class TaskParsingResult(BaseModel):
     task_id: str = Field(description="Task identifier.")
