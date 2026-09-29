@@ -26,6 +26,8 @@ from shared.tasks import (
 from shared.tasks.placeholders import PLACEHOLDER_PATTERN
 from shared.tasks.specs import (
     ConditionSpec,
+    PythonSpecStrict,
+    PythonSpecTemplate,
     SSHSpecStrict,
     SSHSpecTemplate,
 )
@@ -997,6 +999,8 @@ class Dispatcher:
         if record.task.has_placeholder():
             return True
         spec = record.task.spec
+        if isinstance(spec, (PythonSpecStrict, PythonSpecTemplate)):
+            return True
         return isinstance(spec, (SSHSpecStrict, SSHSpecTemplate)) and bool(spec.inputs)
 
     def _dependency_task_ids(self, task_id: str) -> set[str]:
@@ -1106,13 +1110,21 @@ class Dispatcher:
     def _resolve_upstream_task_ids(
         self, record: TaskRecord, spec: TaskSpecStrict
     ) -> dict[str, str] | None:
-        if not isinstance(spec, SSHSpecStrict) or not spec.inputs:
+        if isinstance(spec, PythonSpecStrict):
+            if spec.inputs is None:
+                # A python task with no explicit inputs reads every stage it
+                # depends on: the edges drawn in a workflow are its inputs.
+                return self._direct_dependency_stages(record) or None
+            stages = [entry.stage for entry in spec.inputs]
+        elif isinstance(spec, SSHSpecStrict) and spec.inputs:
+            stages = [entry.stage for entry in spec.inputs]
+        else:
             return None
 
         context = self._build_stage_context(record)
         resolved: dict[str, str] = {}
-        for entry in spec.inputs:
-            stage_name = entry.stage.strip()
+        for stage in stages:
+            stage_name = stage.strip()
             if not stage_name:
                 raise ValueError("SSH input stage names must be non-empty")
             upstream = context.get(stage_name)
@@ -1130,6 +1142,21 @@ class Dispatcher:
                 )
             resolved[stage_name] = upstream.task_id
         return resolved or None
+
+    def _direct_dependency_stages(self, record: TaskRecord) -> dict[str, str]:
+        """{stage name: task id} for each completed direct dependency."""
+        resolved: dict[str, str] = {}
+        for dep_id in self._task_dependencies(record.task_id):
+            other = self._runtime.get_record(dep_id)
+            if other is None:
+                continue
+            if other.status != TaskStatus.DONE:
+                raise StageReferenceNotReady(
+                    f"Dependency {dep_id} has not completed for python input mount"
+                )
+            keys = self._stage_context_keys(other)
+            resolved[keys[0] if keys else dep_id] = other.task_id
+        return resolved
 
     def _load_stage_result(self, stage_task_id: str) -> ResultEnvelope:
         path = result_file_path(self._results_dir, stage_task_id)

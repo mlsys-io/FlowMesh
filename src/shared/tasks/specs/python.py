@@ -104,7 +104,11 @@ class PythonSpecStrict(TaskSpecStrictBase):
     requirements: list[str] | None = Field(
         default=None, description="pip requirement specifiers (needs network)."
     )
-    inputs: list[SSHInputSpec] | None = None
+    inputs: list[SSHInputSpec] | None = Field(
+        default=None,
+        description="Upstream stages to mount. Omitted: every stage this task "
+        "depends on, each at /mnt/flowmesh/inputs/<stage>.",
+    )
     timeoutSeconds: float | None = None
     network: Literal["none", "bridge"] = "none"
     env: dict[str, Any] | None = None

@@ -26,7 +26,7 @@ from shared.tasks.specs.python import (
     DEFAULT_TIMEOUT_SECONDS,
     PythonSpecStrict,
 )
-from shared.tasks.specs.ssh import SSHSpecStrict
+from shared.tasks.specs.ssh import SSHInputSpec, SSHSpecStrict
 from shared.tasks.task_type import TaskType
 from shared.utils.manifest import ARTIFACTS_DIR
 from worker.config import WorkerConfig
@@ -68,6 +68,16 @@ class PythonExecutor(SSHExecutor):
 
     def run(self, task: ExecutorTask, out_dir: Path) -> PythonResult:  # type: ignore[override]
         spec = self.require_spec(task, PythonSpecStrict)
+        if spec.inputs is None and task.upstream_task_ids:
+            # No explicit inputs: the dispatcher resolved every direct
+            # dependency, and each one is mounted under its stage name.
+            spec = spec.model_copy(
+                update={
+                    "inputs": [
+                        SSHInputSpec(stage=stage) for stage in task.upstream_task_ids
+                    ]
+                }
+            )
         cfg = self._python_config(spec)
         artifacts = out_dir / ARTIFACTS_DIR
         try:

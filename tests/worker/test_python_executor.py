@@ -361,3 +361,24 @@ class TestBootstrap:
         assert (
             cast(dict[str, str], _load(out, "error.json"))["type"] == "EntrypointError"
         )
+
+
+def test_inputs_default_to_the_resolved_upstream_stages(tmp_path: Path) -> None:
+    executor = _executor(tmp_path)
+    seen: dict[str, object] = {}
+
+    def _capture(task: object, out_dir: Path, cfg: SSHConfig) -> MagicMock:
+        seen["inputs"] = [i.stage for i in cfg.inputs]
+        seen["env"] = json.loads(str(cfg.extra_env["FLOWMESH_PY_INPUTS"]))
+        return MagicMock(exit_code=0)
+
+    executor._run_session = _capture  # type: ignore[method-assign]
+    executor.require_spec = MagicMock(return_value=_spec())  # type: ignore[method-assign]
+    task = MagicMock(upstream_task_ids={"prep": "t-a", "raw": "t-b"})
+    (tmp_path / "out" / "artifacts").mkdir(parents=True)
+    executor.run(task, tmp_path / "out")
+    assert seen["inputs"] == ["prep", "raw"]
+    assert seen["env"] == {
+        "prep": "/mnt/flowmesh/inputs/prep",
+        "raw": "/mnt/flowmesh/inputs/raw",
+    }

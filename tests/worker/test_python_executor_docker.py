@@ -26,7 +26,9 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def _run(tmp_path: Path, code: str, **spec: object):  # type: ignore[no-untyped-def]
+def _run(  # type: ignore[no-untyped-def]
+    tmp_path: Path, code: str, upstream: dict[str, str] | None = None, **spec: object
+):
     task_spec = cast(
         PythonSpecStrict,
         PythonSpecStrict.model_validate({"taskType": "python", "code": code, **spec}),
@@ -34,7 +36,9 @@ def _run(tmp_path: Path, code: str, **spec: object):  # type: ignore[no-untyped-
     executor = PythonExecutor(
         make_live_worker_config(tmp_path, ssh_network_name="flowmesh_py_test")
     )
-    task = make_worker_task_message(task_spec, task_type=TaskType.PYTHON)
+    task = make_worker_task_message(
+        task_spec, task_type=TaskType.PYTHON, upstream_task_ids=upstream
+    )
     out = tmp_path / "out"
     out.mkdir()
     try:
@@ -98,3 +102,17 @@ def test_requirements_install_over_bridge(tmp_path: Path) -> None:
     code = "import six, os\ndef main():\n    return [six.__version__, os.getuid()]\n"
     result = _run(tmp_path, code, requirements=["six==1.16.0"], network="bridge")
     assert result.value == ["1.16.0", 65534]
+
+
+def test_upstream_results_are_mounted_by_default(tmp_path: Path) -> None:
+    results = tmp_path / "worker-results" / "t-up"
+    results.mkdir(parents=True)
+    (results / "results.json").write_text('{"result": {"items": [{"output": "hi"}]}}')
+    code = (
+        "import json, os\n"
+        "def main(inputs):\n"
+        "    path = os.path.join(inputs['prep'], 'results.json')\n"
+        "    return json.load(open(path))['result']['items'][0]['output']\n"
+    )
+    result = _run(tmp_path, code, upstream={"prep": "t-up"})
+    assert result.value == "hi"
