@@ -692,7 +692,7 @@ class TestLingeringSessionProcesses:
         identity_module._kill_all_as(61001)
         [(argv, kwargs)] = calls
         script, uid, gid = argv[-3:]
-        assert "os.setuid(int(sys.argv[1]))" in script
+        assert "os.setuid(uid)" in script
         assert "os.kill(-1, signal.SIGKILL)" in script
         assert (uid, gid) == ("61001", "65534")
         assert "user" not in kwargs

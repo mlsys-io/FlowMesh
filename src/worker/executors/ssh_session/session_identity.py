@@ -8,7 +8,6 @@ authenticate the account it already runs as, so the session shares the
 worker's identity; that path stays available but isolates nothing.
 """
 
-import ctypes
 import logging
 import os
 import pwd
@@ -43,17 +42,41 @@ _UID_ATTEMPTS = 16
 _KILL_GRACE_SEC = 5.0
 _KILL_ROUNDS = 10
 _KILL_ROUND_SEC = 0.5
-_KILL_ALL_SCRIPT = (
-    "import os, signal, sys\n"
-    "os.setgroups([])\n"
-    "os.setgid(int(sys.argv[2]))\n"
-    "os.setuid(int(sys.argv[1]))\n"
+# Prologue of every helper run as a session uid: argv is (uid, gid, *args).
+_AS_UID_PROLOGUE = (
+    "import os, sys\n"
+    "uid = int(sys.argv[1])\n"
+    "if os.getuid() != uid:\n"
+    "    os.setgroups([])\n"
+    "    os.setgid(int(sys.argv[2]))\n"
+    "    os.setuid(uid)\n"
+)
+_KILL_ALL_SCRIPT = _AS_UID_PROLOGUE + (
+    "import signal\n"
     "try:\n"
     "    os.kill(-1, signal.SIGKILL)\n"
     "except ProcessLookupError:\n"
     "    pass\n"
 )
-_KILL_ALL_TIMEOUT_SEC = 10.0
+# argv[3:] are "<kind>:<id>" pairs; IPC_RMID is 0.
+_REMOVE_IPC_SCRIPT = _AS_UID_PROLOGUE + (
+    "import ctypes\n"
+    "libc = ctypes.CDLL(None, use_errno=True)\n"
+    "failed = 0\n"
+    "for spec in sys.argv[3:]:\n"
+    "    kind, ipc_id = spec.split(':')\n"
+    "    if kind == 'shm':\n"
+    "        rc = libc.shmctl(int(ipc_id), 0, None)\n"
+    "    elif kind == 'msg':\n"
+    "        rc = libc.msgctl(int(ipc_id), 0, None)\n"
+    "    else:\n"
+    "        rc = libc.semctl(int(ipc_id), 0, 0)\n"
+    "    if rc != 0:\n"
+    "        print(spec, os.strerror(ctypes.get_errno()), file=sys.stderr)\n"
+    "        failed = 1\n"
+    "sys.exit(failed)\n"
+)
+_AS_UID_TIMEOUT_SEC = 10.0
 _NOGROUP_GID = 65534
 _USERADD_TIMEOUT_SEC = 30.0
 _WORLD_WRITABLE_DIRS = (
@@ -64,7 +87,6 @@ _WORLD_WRITABLE_DIRS = (
 _SYSV_IPC_DIR = Path("/", "proc", "sysvipc")
 # Each /proc/sysvipc table and the column holding its object ids.
 _SYSV_IPC_ID_COLUMNS = {"shm": "shmid", "msg": "msqid", "sem": "semid"}
-_IPC_RMID = 0
 
 
 def account_name_for(session_id: str) -> str:
@@ -382,23 +404,25 @@ def purge_uid_ipc(uid: int) -> None:
     """Remove the System V IPC objects ``uid`` owns or created.
 
     Sessions share the worker's IPC namespace, and these objects persist after
-    their creator exits.
+    their creator exits. Only an owner, a creator or a holder of
+    ``CAP_SYS_ADMIN`` may remove one, and a container's root lacks that
+    capability, so the removal runs as ``uid``.
     """
-    try:
-        libc = ctypes.CDLL(None, use_errno=True)
-    except OSError:
-        logger.warning("Cannot load libc to remove System V IPC objects of %d", uid)
+    if uid == 0:
         return
-    for kind, id_column in _SYSV_IPC_ID_COLUMNS.items():
-        for ipc_id in owned_ipc_ids(_read_ipc_table(kind), id_column, uid):
-            if _remove_ipc(libc, kind, ipc_id) != 0:
-                logger.warning(
-                    "Failed to remove System V %s %d of uid %d: %s",
-                    kind,
-                    ipc_id,
-                    uid,
-                    os.strerror(ctypes.get_errno()),
-                )
+    specs = [
+        f"{kind}:{ipc_id}"
+        for kind, id_column in _SYSV_IPC_ID_COLUMNS.items()
+        for ipc_id in owned_ipc_ids(_read_ipc_table(kind), id_column, uid)
+    ]
+    if not specs:
+        return
+    result = _run_as(uid, _REMOVE_IPC_SCRIPT, specs)
+    if result is None or result.returncode != 0:
+        detail = "" if result is None else _stderr_of(result)
+        logger.warning(
+            "Failed to remove System V IPC objects of uid %d: %s", uid, detail
+        )
 
 
 def owned_ipc_ids(table: str, id_column: str, uid: int) -> list[int]:
@@ -432,14 +456,6 @@ def _read_ipc_table(kind: str) -> str:
         return (_SYSV_IPC_DIR / kind).read_text(encoding="utf-8")
     except OSError:
         return ""
-
-
-def _remove_ipc(libc: ctypes.CDLL, kind: str, ipc_id: int) -> int:
-    if kind == "shm":
-        return int(libc.shmctl(ipc_id, _IPC_RMID, None))
-    if kind == "msg":
-        return int(libc.msgctl(ipc_id, _IPC_RMID, None))
-    return int(libc.semctl(ipc_id, 0, _IPC_RMID))
 
 
 def _revoke_orphaned_denies() -> None:
@@ -551,41 +567,54 @@ def _kill_all_as(uid: int) -> None:
     taken, so a fork loop outruns one. ``kill(-1)`` sent as ``uid`` reaches all
     of that uid's processes at once, and a process that cannot be started as
     ``uid`` leaves the snapshot rounds to do what they can.
-
-    The helper drops to ``uid`` itself rather than through ``subprocess``'s
-    ``user=``, which forces a plain ``fork()`` whose atfork handlers crash the
-    child of a process running gRPC threads.
     """
     if os.geteuid() != 0 or uid in (0, os.getuid()):
         return
+    result = _run_as(uid, _KILL_ALL_SCRIPT, [])
+    if result is not None and result.returncode != 0:
+        logger.debug(
+            "Signalling every process of uid %d exited %d: %s",
+            uid,
+            result.returncode,
+            _stderr_of(result),
+        )
+
+
+def _run_as(
+    uid: int, script: str, args: list[str]
+) -> "subprocess.CompletedProcess[bytes] | None":
+    """Run ``script`` in a helper interpreter that drops to ``uid`` first.
+
+    The helper drops privileges itself rather than through ``subprocess``'s
+    ``user=``, which forces a plain ``fork()`` whose atfork handlers crash the
+    child of a process running gRPC threads.
+    """
     try:
-        result = subprocess.run(  # nosec B603 - argv list, no shell=True, the worker's own interpreter
+        return subprocess.run(  # nosec B603 - argv list, no shell=True, the worker's own interpreter
             [
                 sys.executable,
                 "-I",
                 "-S",
                 "-c",
-                _KILL_ALL_SCRIPT,
+                script,
                 str(uid),
                 str(_NOGROUP_GID),
+                *args,
             ],
             env={},
             cwd="/",
             stdin=subprocess.DEVNULL,
             capture_output=True,
-            timeout=_KILL_ALL_TIMEOUT_SEC,
+            timeout=_AS_UID_TIMEOUT_SEC,
             check=False,
         )
     except (OSError, subprocess.SubprocessError):
-        logger.debug("Failed to signal every process of uid %d", uid, exc_info=True)
-        return
-    if result.returncode != 0:
-        logger.debug(
-            "Signalling every process of uid %d exited %d: %s",
-            uid,
-            result.returncode,
-            result.stderr.decode("utf-8", errors="replace").strip(),
-        )
+        logger.debug("Failed to run a helper as uid %d", uid, exc_info=True)
+        return None
+
+
+def _stderr_of(result: "subprocess.CompletedProcess[bytes]") -> str:
+    return result.stderr.decode("utf-8", errors="replace").strip()
 
 
 def _processes_of(uid: int) -> list[psutil.Process]:
