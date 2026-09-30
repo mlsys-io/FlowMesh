@@ -271,6 +271,7 @@ def _render_inline_text(
 def _aggregate_structural_messages(
     columns: dict[str, Sequence[str | MaterializedMessageOrTable]],
     msg_options: Sequence[dict[str, str]],
+    grouped_labels: set[str],
 ) -> Sequence[MaterializedMessage]:
     def _is_expandable_group_value(value: Any) -> bool:
         return isinstance(value, list) and not all(
@@ -292,36 +293,41 @@ def _aggregate_structural_messages(
     group_row_counts: list[int] = []
     for group_idx in range(num_groups):
         row_count = 1
-        for values in grouped_columns.values():
+        for key, values in grouped_columns.items():
+            if key in grouped_labels:
+                continue
             group_value = values[group_idx]
             if _is_expandable_group_value(group_value):
                 row_count = max(row_count, len(group_value))
+        for key, values in grouped_columns.items():
+            if key in grouped_labels:
+                continue
+            group_value = values[group_idx]
+            if _is_expandable_group_value(group_value) and len(group_value) not in (
+                1,
+                row_count,
+            ):
+                raise ExecutionError(
+                    "Grouped graph-template values must resolve to the same "
+                    "number of rows per group."
+                )
         group_row_counts.append(row_count)
 
-    columns = {key: [] for key in grouped_columns}
-    for group_idx, row_count in enumerate(group_row_counts):
-        for key, values in grouped_columns.items():
-            group_value = values[group_idx]
-            if _is_expandable_group_value(group_value):
-                value_list = list(group_value)
-                if len(value_list) == 1 and row_count > 1:
-                    value_list = [value_list[0] for _ in range(row_count)]
-                elif len(value_list) != row_count:
-                    raise ExecutionError(
-                        "Grouped graph-template values must resolve to the same "
-                        "number of rows per group."
-                    )
-            else:
-                value_list = [group_value for _ in range(row_count)]
-            columns[key].extend(value_list)  # type: ignore
-
-    num_rows = sum(group_row_counts)
-
-    batch_messages: list[Message] = [[] for _ in range(num_rows)]
+    batch_messages: list[Message] = [[] for _ in range(num_groups)]
 
     class _SafeDict(dict):
         def __missing__(self, key):  # type: ignore[override]
             return "{" + key + "}"
+
+    def _group_value(label: str, group_idx: int, row_idx: int) -> Any:
+        """The value a column contributes to one rendered row of a group."""
+        values = grouped_columns[label]
+        group_value = values[group_idx]
+        if label in grouped_labels:
+            return group_value
+        if _is_expandable_group_value(group_value):
+            return list(group_value)[row_idx]
+        return group_value
 
     for message_metadata in msg_options:
         if "content" not in message_metadata:
@@ -329,10 +335,10 @@ def _aggregate_structural_messages(
                 f"Each message must have 'content' field. {message_metadata}"
             )
         raw_content: str = message_metadata["content"]
-        if raw_content in columns:
-            content = columns[raw_content]  # Materialize Message
+        if raw_content in grouped_columns:
+            content = grouped_columns[raw_content]  # Materialize Message
         else:
-            rendered_rows: list[str] = []
+            rendered_groups: list[str] = []
             # Disable pandas width caps so wide DataFrame cells render in full.
             with pd.option_context(
                 "display.max_columns",
@@ -342,27 +348,32 @@ def _aggregate_structural_messages(
                 "display.max_colwidth",
                 None,
             ):
-                for row_idx in range(num_rows):
-                    row_mapping: dict[str, str] = {}
-                    for label, values in columns.items():
-                        row_value = values[row_idx]
-                        if isinstance(row_value, pd.DataFrame):
-                            row_mapping[label] = row_value.to_markdown(index=False)
-                        else:
-                            row_mapping[label] = _coerce_to_string(row_value)
-                    rendered_rows.append(raw_content.format_map(_SafeDict(row_mapping)))
-            content = rendered_rows
+                for group_idx in range(num_groups):
+                    rendered_rows: list[str] = []
+                    for row_idx in range(group_row_counts[group_idx]):
+                        row_mapping: dict[str, str] = {}
+                        for label in grouped_columns:
+                            row_value = _group_value(label, group_idx, row_idx)
+                            if isinstance(row_value, pd.DataFrame):
+                                row_mapping[label] = row_value.to_markdown(index=False)
+                            else:
+                                row_mapping[label] = _coerce_to_string(row_value)
+                        rendered_rows.append(
+                            raw_content.format_map(_SafeDict(row_mapping))
+                        )
+                    rendered_groups.append("\n".join(rendered_rows))
+            content = rendered_groups
         if role := message_metadata.get("role"):
             assert all(isinstance(prompt, str) for prompt in content), (
                 content,
-                columns,
+                grouped_columns,
             )
             for messages, prompt in zip(batch_messages, content):
                 messages.append({"role": role, "content": prompt})  # type: ignore
         else:
             assert all(isinstance(msg, dict) for prompt in content for msg in prompt), (
                 content,
-                columns,
+                grouped_columns,
             )
             for messages, prompt in zip(batch_messages, content):
                 messages.extend(prompt)  # type: ignore
@@ -441,7 +452,9 @@ def _render_lambda_func(
     materialized_args: list[Sequence[MaterializedMessage | str]] = []
     for arg in fn_args:
         if not isinstance(arg, str):
-            materialized_args.append(_aggregate_structural_messages(columns, arg))
+            materialized_args.append(
+                _aggregate_structural_messages(columns, arg, set())
+            )
             continue
 
         if arg in columns:
@@ -504,6 +517,7 @@ def _render_structural_messages(
         )
         for column in columns
     }
+    grouped_labels = {column["label"] for column in columns if column.get("grouped")}
     for step_option in format_options.get("steps", []):
         if "template" in step_option:
             format_kwargs = {
@@ -524,7 +538,7 @@ def _render_structural_messages(
             )
 
     batch_messages = _aggregate_structural_messages(
-        formatted_prompts, format_options["messages"]
+        formatted_prompts, format_options["messages"], grouped_labels
     )
 
     return batch_messages
