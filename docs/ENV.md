@@ -132,12 +132,14 @@ world-writable directory without being a root-owned directory only root can
 write. Session accounts take uids from 61000–64999. Files an agent tool writes
 straight into the temp dir are not covered.
 
-A `process` session's inputs and output live in its own directory, and each
-`mountPath` is a link to them under `/mnt/flowmesh`, which is emptied before
-and after every session and so must not have a filesystem mounted below it. A
-`mountPath` must name a path below `/mnt/flowmesh`, must not contain `..`, and
-must not be nested inside another one. Output is collected as the regular files
-the session owns; links and special files are dropped.
+A `process` session's inputs and output live in its own directory in the
+worker's temp dir (`TMPDIR`, `/tmp` by default), so that filesystem must have
+room for them. Each `mountPath` is a link to them under `/mnt/flowmesh`, which
+is emptied before and after every session and so must not have a filesystem
+mounted below it. A `mountPath` must name a path below `/mnt/flowmesh`, must not
+contain `..`, and must not be nested inside another one. Output is collected as
+the regular files the session owns; links and special files are dropped, and
+output nested more than 64 directories deep fails the task.
 
 ## SSH session resource caps
 
