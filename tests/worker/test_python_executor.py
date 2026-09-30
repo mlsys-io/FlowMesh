@@ -407,6 +407,17 @@ class TestEnding:
         with pytest.raises(ExecutionError, match="not a regular file"):
             self._run_clean_exit(tmp_path, out)
 
+    def test_directory_result_fails_without_leaking_a_descriptor(
+        self, tmp_path: Path
+    ) -> None:
+        out = tmp_path / "out"
+        (out / "artifacts/result.json").mkdir(parents=True)
+        before = len(os.listdir("/proc/self/fd"))
+        for _ in range(5):
+            with pytest.raises(ExecutionError, match="not a regular file"):
+                self._run_clean_exit(tmp_path, out)
+        assert len(os.listdir("/proc/self/fd")) == before
+
     def test_symlinked_error_is_not_followed(self, tmp_path: Path) -> None:
         secret = tmp_path / "worker-secret.json"
         secret.write_text('{"type": "Leak", "message": "hunter2"}')

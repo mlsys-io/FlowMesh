@@ -154,9 +154,10 @@ def _read_task_file(path: Path) -> str:
     task's behalf, and ``O_NONBLOCK`` keeps a FIFO from blocking the open.
     """
     fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    if not stat.S_ISREG(os.fstat(fd).st_mode):
+        os.close(fd)
+        raise OSError(f"{path.name} is not a regular file")
     with os.fdopen(fd, encoding="utf-8") as fh:
-        if not stat.S_ISREG(os.fstat(fh.fileno()).st_mode):
-            raise OSError(f"{path.name} is not a regular file")
         return fh.read()
 
 
