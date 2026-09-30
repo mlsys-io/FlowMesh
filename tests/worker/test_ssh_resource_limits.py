@@ -18,7 +18,8 @@ from shared.tasks.worker_message import (
 from tests.worker.factories import make_worker_config, make_worker_hardware
 from worker.config import WorkerConfig
 from worker.executors.base_executor import ExecutionError
-from worker.executors.ssh_executor import SSHConfig, _available_uuids
+from worker.executors.session_executor import _available_uuids
+from worker.executors.ssh_executor import SSHConfig
 from worker.gpu_availability import DeviceAvailability
 
 
