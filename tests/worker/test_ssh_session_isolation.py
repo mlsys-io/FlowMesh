@@ -277,12 +277,32 @@ class TestAccountDenies:
         assert revoked == []
         assert forgotten == [(61001, "/nonexistent/a")]
 
-    def test_getfacl_output_parses_to_denied_uids(self) -> None:
+    def test_getfacl_output_parses_to_uids(self) -> None:
         output = (
             "user::rwx\nuser:61001:---\nuser:1000:r-x\ngroup::r-x\nmask::r-x\n"
             "other::r-x\ndefault:user:61002:---\n"
         )
         assert acl.parse_denied_uids(output) == {61001}
+        assert acl.parse_named_uids(output) == {61001, 1000, 61002}
+
+    def test_a_uid_any_entry_names_is_not_drawn(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        avoided: list[frozenset[int]] = []
+
+        def create(
+            name: str, home: Path, avoid_uids: frozenset[int] = frozenset()
+        ) -> DedicatedAccount:
+            avoided.append(frozenset(avoid_uids))
+            return _own_account(home, uid=61003)
+
+        monkeypatch.setattr(os, "getuid", lambda: 0)
+        monkeypatch.setattr(identity_module, "_ensure_privsep_dir", lambda: None)
+        monkeypatch.setattr(acl, "named_uids", lambda path: {61001, 61002})
+        monkeypatch.setattr(DedicatedAccount, "create", create)
+        monkeypatch.setattr(DedicatedAccount, "deny", lambda self, paths: None)
+        identity_module.resolve_identity("ssn-abcd1234", tmp_path, [tmp_path])
+        assert avoided == [frozenset({61001, 61002})]
 
 
 class TestUidFilePurge:

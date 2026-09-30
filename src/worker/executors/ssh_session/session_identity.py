@@ -272,7 +272,7 @@ def resolve_identity(
     _ensure_privsep_dir()
     taken: set[int] = set()
     for root in denied_roots:
-        taken |= acl.denied_uids(root)
+        taken |= acl.named_uids(root)
     account = DedicatedAccount.create(
         account_name_for(session_id), session_dir / "home", avoid_uids=taken
     )
