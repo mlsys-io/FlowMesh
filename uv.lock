@@ -1879,7 +1879,7 @@ wheels = [
 
 [[package]]
 name = "flowmesh"
-version = "0.1.10rc2"
+version = "0.1.10"
 source = { editable = "." }
 
 [package.optional-dependencies]
@@ -2509,7 +2509,7 @@ runtime-worker-gpu = [
 
 [[package]]
 name = "flowmesh-cli"
-version = "0.1.10rc2"
+version = "0.1.10"
 source = { editable = "cli" }
 dependencies = [
     { name = "flowmesh-sdk" },
@@ -2537,7 +2537,7 @@ provides-extras = ["stack"]
 
 [[package]]
 name = "flowmesh-cli-stack"
-version = "0.1.10rc2"
+version = "0.1.10"
 source = { editable = "cli/stack" }
 dependencies = [
     { name = "docker" },
@@ -2550,15 +2550,15 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "docker", specifier = ">=7.1.0" },
-    { name = "flowmesh-cli", specifier = "==0.1.10rc2" },
-    { name = "flowmesh-sdk-stack", specifier = "==0.1.10rc2" },
+    { name = "flowmesh-cli", specifier = "==0.1.10" },
+    { name = "flowmesh-sdk-stack", specifier = "==0.1.10" },
     { name = "packaging", specifier = ">=24" },
     { name = "pyyaml", specifier = ">=6.0.2" },
 ]
 
 [[package]]
 name = "flowmesh-hook"
-version = "0.1.10rc2"
+version = "0.1.10"
 source = { editable = "hook" }
 dependencies = [
     { name = "lumid-hooks" },
@@ -2569,7 +2569,7 @@ requires-dist = [{ name = "lumid-hooks", specifier = ">=0.2.0" }]
 
 [[package]]
 name = "flowmesh-sdk"
-version = "0.1.10rc2"
+version = "0.1.10"
 source = { editable = "sdk" }
 dependencies = [
     { name = "httpx" },
@@ -2588,7 +2588,7 @@ requires-dist = [
 
 [[package]]
 name = "flowmesh-sdk-stack"
-version = "0.1.10rc2"
+version = "0.1.10"
 source = { editable = "sdk/stack" }
 dependencies = [
     { name = "docker" },
@@ -2600,7 +2600,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "docker", specifier = ">=7.1.0" },
-    { name = "flowmesh-sdk", specifier = "==0.1.10rc2" },
+    { name = "flowmesh-sdk", specifier = "==0.1.10" },
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "pyyaml", specifier = ">=6.0.0" },
 ]
