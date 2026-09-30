@@ -16,7 +16,7 @@ import httpx
 import pytest
 from pydantic import ValidationError
 
-from shared.schemas.result import APIGroupItem, APIItem, APIResult
+from shared.schemas.result import APIGroupItem, APIItem, APIResult, PythonResult
 from shared.tasks.specs.misc import _MAX_CONCURRENCY, _MAX_RETRIES
 from shared.tasks.worker_message import WorkerTaskMessage
 from worker.executors import api_executor as api_executor_module
@@ -1929,6 +1929,288 @@ class TestGroupedResult:
         assert result.items[0].rows == []
         assert len(result.items[1].rows) == 1
         assert result.status_code == 200
+
+
+def _python_upstream(value: Any) -> PythonResult:
+    """A python stage whose return value is the Lumilake shape
+    ``{"items": [{"output": ...}, ...]}``."""
+    return PythonResult(exit_code=0, value=value)
+
+
+class TestPythonStage:
+    def test_rows_from_python_value_items_output(self, tmp_path: Path) -> None:
+        """A dataframe API task reads a python stage's rows at
+        ``value.items.output``, one row per output record."""
+        upstream = _python_upstream(
+            {
+                "items": [
+                    {"output": {"claim": "c0", "src": "s0"}},
+                    {"output": {"claim": "c1", "src": "s1"}},
+                    {"output": {"claim": "c2", "src": "s2"}},
+                ]
+            }
+        )
+        payload = {
+            "task_id": "task-api-py",
+            "workflow_id": "wf-1",
+            "owner_id": "owner",
+            "assigned_worker": "worker-1",
+            "dispatched_at": "2026-03-22T00:00:00Z",
+            "task": {
+                "apiVersion": "flowmesh/v1",
+                "kind": "Task",
+                "metadata": {"name": "wf:api"},
+                "spec": {
+                    "taskType": "api",
+                    "_upstreamResults": {"Py": upstream},
+                    "api": {
+                        "method": "POST",
+                        "url": "https://custom.example.com/v1/chat/completions",
+                        "json": {"messages": "{{prompt}}"},
+                    },
+                    "data": {
+                        "type": "dataframe",
+                        "columns": [
+                            {
+                                "label": "claim",
+                                "node": "Py",
+                                "path": "value.items.output.claim",
+                            },
+                            {
+                                "label": "src",
+                                "node": "Py",
+                                "path": "value.items.output.src",
+                            },
+                        ],
+                        "messages": [
+                            {"role": "user", "content": "row {claim} {src}"},
+                        ],
+                    },
+                },
+            },
+        }
+        task = WorkerTaskMessage.model_validate(payload)
+        transport = _EchoTransport()
+        result = _run(_executor(), task, transport, tmp_path)
+        assert len(transport.requests) == 3
+        # A single-column dataframe is one table, so one group item holds all rows.
+        assert len(result.items) == 1
+        prompts = [json.loads(r.prompt)[0]["content"] for r in result.items[0].rows]
+        assert prompts == ["row c0 s0", "row c1 s1", "row c2 s2"]
+
+    def test_ragged_groups_from_python_value_items_output(self, tmp_path: Path) -> None:
+        """A python stage whose per-item ``output`` is a list of records gives
+        one group per item, with uneven group sizes (3 and 2)."""
+        upstream = _python_upstream(
+            {
+                "items": [
+                    {
+                        "output": [
+                            {"claim": "c0", "src": "s0"},
+                            {"claim": "c0", "src": "s1"},
+                            {"claim": "c0", "src": "s2"},
+                        ]
+                    },
+                    {
+                        "output": [
+                            {"claim": "c1", "src": "s3"},
+                            {"claim": "c1", "src": "s4"},
+                        ]
+                    },
+                ]
+            }
+        )
+        payload = {
+            "task_id": "task-api-py-grp",
+            "workflow_id": "wf-1",
+            "owner_id": "owner",
+            "assigned_worker": "worker-1",
+            "dispatched_at": "2026-03-22T00:00:00Z",
+            "task": {
+                "apiVersion": "flowmesh/v1",
+                "kind": "Task",
+                "metadata": {"name": "wf:api"},
+                "spec": {
+                    "taskType": "api",
+                    "_upstreamResults": {"Py": upstream},
+                    "api": {
+                        "method": "POST",
+                        "url": "https://custom.example.com/v1/chat/completions",
+                        "json": {"messages": "{{prompt}}"},
+                    },
+                    "data": {
+                        "type": "dataframe",
+                        "columns": [
+                            {
+                                "label": "claim",
+                                "node": "Py",
+                                "path": "value.items.output.claim",
+                            },
+                            {
+                                "label": "src",
+                                "node": "Py",
+                                "path": "value.items.output.src",
+                            },
+                        ],
+                        "messages": [
+                            {"role": "user", "content": "row {claim} {src}"},
+                        ],
+                    },
+                },
+            },
+        }
+        task = WorkerTaskMessage.model_validate(payload)
+        transport = _EchoTransport()
+        result = _run(_executor(), task, transport, tmp_path)
+        assert len(transport.requests) == 5
+        assert len(result.items) == 2
+        assert [len(item.rows) for item in result.items] == [3, 2]
+        group0 = {json.loads(r.prompt)[0]["content"] for r in result.items[0].rows}
+        assert group0 == {"row c0 s0", "row c0 s1", "row c0 s2"}
+        group1 = {json.loads(r.prompt)[0]["content"] for r in result.items[1].rows}
+        assert group1 == {"row c1 s3", "row c1 s4"}
+
+    def test_graph_template_aggregate_over_python_groups(self, tmp_path: Path) -> None:
+        """A graph_template aggregate over a python stage's ragged groups
+        issues one request per group, each prompt holding all its rows."""
+        upstream = _python_upstream(
+            {
+                "items": [
+                    {
+                        "output": [
+                            {"claim": "c0", "src": "s0"},
+                            {"claim": "c0", "src": "s1"},
+                        ]
+                    },
+                    {
+                        "output": [
+                            {"claim": "c1", "src": "s2"},
+                            {"claim": "c1", "src": "s3"},
+                            {"claim": "c1", "src": "s4"},
+                        ]
+                    },
+                ]
+            }
+        )
+        payload = {
+            "task_id": "task-api-py-gt",
+            "workflow_id": "wf-1",
+            "owner_id": "owner",
+            "assigned_worker": "worker-1",
+            "dispatched_at": "2026-03-22T00:00:00Z",
+            "task": {
+                "apiVersion": "flowmesh/v1",
+                "kind": "Task",
+                "metadata": {"name": "wf:api"},
+                "spec": {
+                    "taskType": "api",
+                    "_upstreamResults": {"Py": upstream},
+                    "api": {
+                        "method": "POST",
+                        "url": "https://custom.example.com/v1/chat/completions",
+                        "json": {"messages": "{{prompt}}"},
+                    },
+                    "data": {
+                        "type": "graph_template",
+                        "template": {
+                            "name": "format",
+                            "columns": [
+                                {
+                                    "label": "df",
+                                    "data": {
+                                        "type": "dataframe",
+                                        "columns": [
+                                            {
+                                                "label": "claim",
+                                                "node": "Py",
+                                                "path": ("value.items.output.claim"),
+                                            }
+                                        ],
+                                    },
+                                }
+                            ],
+                            "options": {
+                                "format": {
+                                    "steps": [],
+                                    "messages": [
+                                        {"role": "user", "content": "all: {df}"}
+                                    ],
+                                }
+                            },
+                        },
+                    },
+                },
+            },
+        }
+        task = WorkerTaskMessage.model_validate(payload)
+        transport = _EchoTransport()
+        result = _run(_executor(), task, transport, tmp_path)
+        assert len(transport.requests) == 2
+        assert len(result.items) == 2
+        # Aggregate results are plain items, one per group.
+        group0 = result.items[0].response_json["choices"][0]["message"]["content"]
+        group1 = result.items[1].response_json["choices"][0]["message"]["content"]
+        assert "c0" in group0 and "c1" not in group0
+        assert "c1" in group1 and "c0" not in group1
+
+    def test_empty_group_from_python_value_items_output(self, tmp_path: Path) -> None:
+        """A python stage with an empty per-item output list yields an empty
+        group: zero requests for it, an APIGroupItem with no rows."""
+        upstream = _python_upstream(
+            {
+                "items": [
+                    {"output": [{"claim": "c0", "src": "s0"}]},
+                    {"output": []},
+                ]
+            }
+        )
+        payload = {
+            "task_id": "task-api-py-empty",
+            "workflow_id": "wf-1",
+            "owner_id": "owner",
+            "assigned_worker": "worker-1",
+            "dispatched_at": "2026-03-22T00:00:00Z",
+            "task": {
+                "apiVersion": "flowmesh/v1",
+                "kind": "Task",
+                "metadata": {"name": "wf:api"},
+                "spec": {
+                    "taskType": "api",
+                    "_upstreamResults": {"Py": upstream},
+                    "api": {
+                        "method": "POST",
+                        "url": "https://custom.example.com/v1/chat/completions",
+                        "json": {"messages": "{{prompt}}"},
+                    },
+                    "data": {
+                        "type": "dataframe",
+                        "columns": [
+                            {
+                                "label": "claim",
+                                "node": "Py",
+                                "path": "value.items.output.claim",
+                            },
+                            {
+                                "label": "src",
+                                "node": "Py",
+                                "path": "value.items.output.src",
+                            },
+                        ],
+                        "messages": [
+                            {"role": "user", "content": "row {claim} {src}"},
+                        ],
+                    },
+                },
+            },
+        }
+        task = WorkerTaskMessage.model_validate(payload)
+        transport = _EchoTransport()
+        result = _run(_executor(), task, transport, tmp_path)
+        assert len(transport.requests) == 1
+        assert len(result.items) == 2
+        assert len(result.items[0].rows) == 1
+        assert result.items[1].rows == []
+        assert json.loads(result.items[0].rows[0].prompt)[0]["content"] == ("row c0 s0")
 
 
 class TestCallLogging:
