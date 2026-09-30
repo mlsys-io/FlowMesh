@@ -117,6 +117,26 @@ environment and credentials. `SSH_MAX_CPU` / `SSH_MAX_MEMORY` / `SSH_MAX_PIDS`,
 the `ENABLE_SSH_GPU_LIMIT` subset, and `ssh -L` forwarding have no effect in
 `process` mode.
 
+On a root worker, a `process` session's account is denied the worker's state
+through a POSIX ACL entry on each of: `RESULTS_DIR`, `WORKER_HB_FILE`, the
+worker's home, any of `HF_HOME`, `HF_HUB_CACHE`, `HUGGINGFACE_HUB_CACHE`,
+`HF_DATASETS_CACHE`, `TRANSFORMERS_CACHE`, `TORCH_HOME`, `XDG_CACHE_HOME`,
+`VLLM_CACHE_ROOT` and `FASTEMBED_CACHE_PATH` that is set, and the `utu` and
+`fastembed_cache` directories in the temp dir. The worker therefore needs the
+`acl` package (`setfacl` / `getfacl`) and ACL support on the filesystems behind
+those paths; without either, `process` is not offered. It is also not offered
+when another worker on the same host already serves `process` sessions, or when
+one of those paths contains a directory every session needs (such as the temp
+dir or `/mnt/flowmesh`). Session accounts take uids from 61000–64999. Files an
+agent tool writes straight into the temp dir are not covered.
+
+A `process` session's inputs and output live in its own directory, and each
+`mountPath` is a link to them under `/mnt/flowmesh`, which is emptied before
+and after every session. A `mountPath` must name a path below `/mnt/flowmesh`,
+must not contain `..`, and must not be nested inside another one. Output is
+collected as the regular files the session owns; links and special files are
+dropped.
+
 ## SSH session resource caps
 
 When `enable_ssh` is true on a Docker worker, these configured

@@ -140,7 +140,8 @@ scripts/dev/            compile_protos, sync_requirements, check_env_examples
   of task types it can service, and the dispatcher routes a task only to workers
   that advertise its type. A worker advertises a type only when its executor came
   up — e.g. SSH requires a session backend (a reachable Docker daemon, or an
-  `sshd` binary on a root worker, which gives each session its own OS account),
+  `sshd` binary and working POSIX ACLs on a root worker, which gives each
+  session its own OS account and denies it the worker's state),
   and training or omni types require their (often GPU-only) dependencies — so a
   worker missing that executor isn't a candidate, rather than being handed a
   task it would fail.
