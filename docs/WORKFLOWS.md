@@ -128,25 +128,23 @@ JSON.
 
 ### Grouped results
 
-When `spec.data` is a `dataframe` whose columns resolve to grouped upstream
-values, the result is grouped: `APIResult.items` holds one `APIGroupItem` per
-group, each with an `index` and a `rows` list of the group's row responses in
-order. A dataframe spec decides grouping from the upstream structure — a list
-of `APIGroupItem.rows`, or nested lists — never from the shape of the cell
-values; a per-row list is a cell value, not a group. Ungrouped data returns
-plain `APIItem`s directly in `items`.
+When `spec.data` is a `dataframe`, the result is grouped: `APIResult.items`
+holds one `APIGroupItem` per table, each with an `index` and a `rows` list of
+the table's row responses in order. A dataframe spec decides grouping from the
+upstream structure — a list of `APIGroupItem.rows`, or nested lists — never
+from the shape of the cell values; a per-row list is a cell value, not a group.
+Ungrouped data is a single table, so it still returns one `APIGroupItem`
+holding all rows.
 
 An empty group or a column that resolves to zero rows yields zero requests for
 that group; the group still appears as an `APIGroupItem` with an empty `rows`
 list so downstream paths resolve. The result's `status_code` is taken from the
 first row across all groups, so a leading empty group does not zero it.
 
-Downstream stages read grouped responses through the group shape:
-`items.rows.json...` addresses a field of each row within a group, while
-`items.json...` addresses a field of a plain (ungrouped) item. For example, a
-dataframe column that reads a grouped upstream's message content uses
-`path: items.rows.json.choices[0].message.content`; an ungrouped upstream uses
-`path: items.json.choices[0].message.content`.
+Downstream stages read dataframe responses through the group shape:
+`items.rows.json...` addresses a field of each row within a group. For example,
+a dataframe column that reads an upstream's message content uses
+`path: items.rows.json.choices[0].message.content`.
 
 A dataframe column reads a python stage with `node: <stage>` and a path that
 starts at the result as `flowmesh result fetch` shows it — for a python stage

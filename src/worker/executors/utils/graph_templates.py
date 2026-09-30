@@ -271,6 +271,7 @@ def _render_inline_text(
 def _aggregate_structural_messages(
     columns: dict[str, Sequence[str | MaterializedMessageOrTable]],
     msg_options: Sequence[dict[str, str]],
+    grouped_labels: set[str],
 ) -> Sequence[MaterializedMessage]:
     def _is_expandable_group_value(value: Any) -> bool:
         return isinstance(value, list) and not all(
@@ -292,7 +293,9 @@ def _aggregate_structural_messages(
     group_row_counts: list[int] = []
     for group_idx in range(num_groups):
         row_count = 1
-        for values in grouped_columns.values():
+        for key, values in grouped_columns.items():
+            if key in grouped_labels:
+                continue
             group_value = values[group_idx]
             if _is_expandable_group_value(group_value):
                 row_count = max(row_count, len(group_value))
@@ -302,7 +305,10 @@ def _aggregate_structural_messages(
     for group_idx, row_count in enumerate(group_row_counts):
         for key, values in grouped_columns.items():
             group_value = values[group_idx]
-            if _is_expandable_group_value(group_value):
+            if key in grouped_labels:
+                # A grouped column is kept whole per group, repeated across its rows.
+                columns[key].extend([group_value] * row_count)  # type: ignore
+            elif _is_expandable_group_value(group_value):
                 value_list = list(group_value)
                 if len(value_list) == 1 and row_count > 1:
                     value_list = [value_list[0] for _ in range(row_count)]
@@ -311,9 +317,9 @@ def _aggregate_structural_messages(
                         "Grouped graph-template values must resolve to the same "
                         "number of rows per group."
                     )
+                columns[key].extend(value_list)  # type: ignore
             else:
-                value_list = [group_value for _ in range(row_count)]
-            columns[key].extend(value_list)  # type: ignore
+                columns[key].extend([group_value for _ in range(row_count)])  # type: ignore
 
     num_rows = sum(group_row_counts)
 
@@ -441,7 +447,9 @@ def _render_lambda_func(
     materialized_args: list[Sequence[MaterializedMessage | str]] = []
     for arg in fn_args:
         if not isinstance(arg, str):
-            materialized_args.append(_aggregate_structural_messages(columns, arg))
+            materialized_args.append(
+                _aggregate_structural_messages(columns, arg, set())
+            )
             continue
 
         if arg in columns:
@@ -504,6 +512,7 @@ def _render_structural_messages(
         )
         for column in columns
     }
+    grouped_labels = {column["label"] for column in columns if column.get("grouped")}
     for step_option in format_options.get("steps", []):
         if "template" in step_option:
             format_kwargs = {
@@ -524,7 +533,7 @@ def _render_structural_messages(
             )
 
     batch_messages = _aggregate_structural_messages(
-        formatted_prompts, format_options["messages"]
+        formatted_prompts, format_options["messages"], grouped_labels
     )
 
     return batch_messages
