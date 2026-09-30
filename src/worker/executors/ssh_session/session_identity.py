@@ -8,6 +8,7 @@ authenticate the account it already runs as, so the session shares the
 worker's identity; that path stays available but isolates nothing.
 """
 
+import grp
 import logging
 import os
 import pwd
@@ -180,9 +181,9 @@ class DedicatedAccount(SessionIdentity):
     def create(
         cls, name: str, home: Path, avoid_uids: Iterable[int] = ()
     ) -> "DedicatedAccount":
-        """Create the account under a fresh uid outside ``avoid_uids``."""
-        useradd = _require_binary("useradd")
-        _add_account(useradd, name, home, frozenset(avoid_uids))
+        """Create the account, with a group of its own, under a fresh uid outside
+        ``avoid_uids``."""
+        _add_account(name, home, frozenset(avoid_uids))
         try:
             entry = pwd.getpwnam(name)
         except KeyError as exc:
@@ -341,8 +342,9 @@ def live_session_accounts() -> list[str]:
 
 def reap_stale_accounts(keep: str | None = None) -> None:
     """Delete every session account except ``keep``, with its processes,
-    leftover files and IPC objects, and session directory, then revoke recorded
-    ACL entries whose uid no longer exists.
+    leftover files and IPC objects, and session directory, then delete session
+    groups left without an account and revoke recorded ACL entries whose uid no
+    longer exists.
 
     An account whose processes survive SIGKILL is kept for the next sweep.
     """
@@ -364,6 +366,11 @@ def reap_stale_accounts(keep: str | None = None) -> None:
         logger.info("Reaped stale SSH session account %s", name)
         purge_uid(entry.pw_uid)
         _remove_session_dir(Path(entry.pw_dir))
+    for group in grp.getgrall():
+        if group.gr_name.startswith(ACCOUNT_PREFIX) and not _account_exists(
+            group.gr_name
+        ):
+            _delete_group(group.gr_name)
     _revoke_orphaned_denies()
 
 
@@ -488,22 +495,38 @@ def _remove_session_dir(home: Path) -> None:
         shutil.rmtree(session_dir, ignore_errors=True)
 
 
-def _add_account(
-    useradd: str, name: str, home: Path, avoid_uids: frozenset[int]
-) -> None:
-    """Create ``name`` under a uid drawn at random from the session range."""
+def _add_account(name: str, home: Path, avoid_uids: frozenset[int]) -> None:
+    """Create ``name`` and a group of the same name, under an id drawn at random
+    from the session range that serves as both its uid and its gid.
+
+    The group is the account's alone, so no directory grants the session
+    access through its group.
+    """
+    groupadd = _require_binary("groupadd")
+    useradd = _require_binary("useradd")
     detail = ""
     for _ in range(_UID_ATTEMPTS):
         uid = SESSION_UID_MIN + secrets.randbelow(SESSION_UID_MAX - SESSION_UID_MIN + 1)
-        if uid in avoid_uids or _uid_exists(uid):
+        if uid in avoid_uids or _uid_exists(uid) or _gid_exists(uid):
+            continue
+        try:
+            _run(
+                [groupadd, "--gid", str(uid), name],
+                f"create the group of SSH session account {name}",
+            )
+        except ExecutionError as exc:
+            detail = str(exc)
+            if _group_exists(name):
+                raise
             continue
         try:
             _run(
                 [
                     useradd,
                     "--no-create-home",
-                    "--no-user-group",
                     "--uid",
+                    str(uid),
+                    "--gid",
                     str(uid),
                     "--home-dir",
                     home.as_posix(),
@@ -518,12 +541,14 @@ def _add_account(
             detail = str(exc)
             if _account_exists(name):
                 raise
+            _delete_group(name)
     raise ExecutionError(
         f"Could not find a free uid for SSH session account {name}. {detail}".strip()
     )
 
 
 def _delete_account(name: str) -> bool:
+    """Delete account ``name`` and its group; whether the account is gone."""
     userdel = shutil.which("userdel")
     if userdel is None:
         logger.warning("userdel is missing; leaving account %s behind", name)
@@ -533,7 +558,22 @@ def _delete_account(name: str) -> bool:
     except ExecutionError:
         logger.warning("Failed to delete SSH session account %s", name)
         return False
+    _delete_group(name)
     return True
+
+
+def _delete_group(name: str) -> None:
+    """Delete group ``name`` if it exists; ``userdel`` may already have."""
+    if not _group_exists(name):
+        return
+    groupdel = shutil.which("groupdel")
+    if groupdel is None:
+        logger.warning("groupdel is missing; leaving group %s behind", name)
+        return
+    try:
+        _run([groupdel, name], f"delete SSH session group {name}")
+    except ExecutionError:
+        logger.warning("Failed to delete SSH session group %s", name)
 
 
 def _terminate_uid(uid: int) -> bool:
@@ -631,6 +671,22 @@ def _uid_exists(uid: int) -> bool:
 def _account_exists(name: str) -> bool:
     try:
         pwd.getpwnam(name)
+    except KeyError:
+        return False
+    return True
+
+
+def _gid_exists(gid: int) -> bool:
+    try:
+        grp.getgrgid(gid)
+    except KeyError:
+        return False
+    return True
+
+
+def _group_exists(name: str) -> bool:
+    try:
+        grp.getgrnam(name)
     except KeyError:
         return False
     return True

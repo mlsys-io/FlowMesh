@@ -87,8 +87,9 @@ when:
   included, is world-writable, unless it is sticky and holds the next component
   as a directory the worker owns rather than a link.
 
-Session accounts take uids from 61000–64999. The deny entries do not cover
-files an agent tool writes directly into the temp dir.
+Each session account has a group of its own, and takes its uid and gid from
+61000–64999. The deny entries do not cover files an agent tool writes directly
+into the temp dir.
 
 A session's inputs and output live in its own directory in the worker's temp
 dir (`TMPDIR`, `/tmp` by default), so that filesystem must have room for them.

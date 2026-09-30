@@ -6,6 +6,7 @@ uid, and ACL and account tooling is stubbed where a real call would need root.
 
 import ctypes
 import dataclasses
+import grp
 import os
 import pwd
 import stat
@@ -320,6 +321,107 @@ class TestAccountDenies:
         monkeypatch.setattr(DedicatedAccount, "deny", lambda self, paths: None)
         identity_module.resolve_identity("ssn-abcd1234", tmp_path, [tmp_path])
         assert avoided == [frozenset({61001, 61002})]
+
+
+class TestSessionGroups:
+    def _record_runs(self, monkeypatch: pytest.MonkeyPatch) -> list[list[str]]:
+        calls: list[list[str]] = []
+
+        def run(argv: list[str], what: str) -> "subprocess.CompletedProcess[bytes]":
+            calls.append(argv)
+            return subprocess.CompletedProcess(argv, 0, b"", b"")
+
+        monkeypatch.setattr(identity_module, "_run", run)
+        return calls
+
+    def test_the_account_gets_a_group_of_its_own(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls = self._record_runs(monkeypatch)
+        monkeypatch.setattr(identity_module, "_require_binary", lambda name: name)
+        monkeypatch.setattr(identity_module, "_uid_exists", lambda uid: False)
+        monkeypatch.setattr(identity_module, "_gid_exists", lambda gid: False)
+        identity_module._add_account("fmssn-test", tmp_path / "home", frozenset())
+        [groupadd, useradd] = calls
+        assert groupadd[0] == "groupadd" and groupadd[-1] == "fmssn-test"
+        gid = groupadd[groupadd.index("--gid") + 1]
+        assert useradd[0] == "useradd"
+        assert useradd[useradd.index("--gid") + 1] == gid
+        assert useradd[useradd.index("--uid") + 1] == gid
+
+    def test_a_failed_draw_is_retried_and_leaves_no_group(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls: list[list[str]] = []
+        outcomes = iter([False, True, False, True, True, True])
+
+        def run(argv: list[str], what: str) -> "subprocess.CompletedProcess[bytes]":
+            calls.append(argv)
+            if not next(outcomes):
+                raise ExecutionError(f"{argv[0]} failed")
+            return subprocess.CompletedProcess(argv, 0, b"", b"")
+
+        monkeypatch.setattr(identity_module, "_run", run)
+        monkeypatch.setattr(identity_module, "_require_binary", lambda name: name)
+        monkeypatch.setattr(identity_module.shutil, "which", lambda name: name)
+        monkeypatch.setattr(identity_module, "_uid_exists", lambda uid: False)
+        monkeypatch.setattr(identity_module, "_gid_exists", lambda gid: False)
+        monkeypatch.setattr(identity_module, "_account_exists", lambda name: False)
+        monkeypatch.setattr(
+            identity_module, "_group_exists", lambda name: calls[-1][0] == "useradd"
+        )
+        identity_module._add_account("fmssn-test", tmp_path / "home", frozenset())
+        assert [argv[0] for argv in calls] == [
+            "groupadd",  # a gid taken in between
+            "groupadd",
+            "useradd",  # a uid taken in between
+            "groupdel",
+            "groupadd",
+            "useradd",
+        ]
+
+    def test_an_existing_group_of_that_name_is_not_retried(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def run(argv: list[str], what: str) -> "subprocess.CompletedProcess[bytes]":
+            raise ExecutionError("group exists")
+
+        monkeypatch.setattr(identity_module, "_run", run)
+        monkeypatch.setattr(identity_module, "_require_binary", lambda name: name)
+        monkeypatch.setattr(identity_module, "_uid_exists", lambda uid: False)
+        monkeypatch.setattr(identity_module, "_gid_exists", lambda gid: False)
+        monkeypatch.setattr(identity_module, "_group_exists", lambda name: True)
+        with pytest.raises(ExecutionError, match="group exists"):
+            identity_module._add_account("fmssn-test", tmp_path / "home", frozenset())
+
+    def test_deleting_the_account_deletes_its_group(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls = self._record_runs(monkeypatch)
+        monkeypatch.setattr(identity_module.shutil, "which", lambda name: name)
+        monkeypatch.setattr(identity_module, "_group_exists", lambda name: True)
+        assert identity_module._delete_account("fmssn-test")
+        assert calls == [["userdel", "fmssn-test"], ["groupdel", "fmssn-test"]]
+
+    def test_the_sweep_deletes_a_group_left_without_its_account(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        deleted: list[str] = []
+        groups = [
+            grp.struct_group(("fmssnold", "x", 61001, [])),
+            grp.struct_group(("fmssnlive", "x", 61002, [])),
+            grp.struct_group(("users", "x", 100, [])),
+        ]
+        monkeypatch.setattr(os, "getuid", lambda: 0)
+        monkeypatch.setattr(identity_module.pwd, "getpwall", lambda: [])
+        monkeypatch.setattr(identity_module.grp, "getgrall", lambda: groups)
+        monkeypatch.setattr(
+            identity_module, "_account_exists", lambda name: name == "fmssnlive"
+        )
+        monkeypatch.setattr(identity_module, "_delete_group", deleted.append)
+        monkeypatch.setattr(identity_module, "_revoke_orphaned_denies", lambda: None)
+        identity_module.reap_stale_accounts()
+        assert deleted == ["fmssnold"]
 
 
 @pytest.fixture
