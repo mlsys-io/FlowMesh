@@ -1,0 +1,32 @@
+apiVersion: flowmesh/v1
+kind: Workflow
+metadata:
+  name: python-two-stage
+  annotations:
+    description: "An echo stage feeds a python stage that reads its result and reports a metric"
+
+spec:
+  stages:
+    - name: prepare
+      spec:
+        taskType: echo
+        data:
+          type: list
+          items:
+            - the quick brown fox
+            - jumps over the lazy dog
+
+    - name: score
+      dependsOn: [prepare]
+      spec:
+        taskType: python
+        entrypoint: main
+        emits: [mean_words]
+        timeoutSeconds: 120
+        code: |
+          def main(prepare):
+              words = [len(str(item["output"]).split()) for item in prepare["items"]]
+              return {
+                  "rows": len(words),
+                  "metrics": {"mean_words": sum(words) / len(words)},
+              }

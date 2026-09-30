@@ -253,7 +253,6 @@ def _build_api_node_spec(
         },
     }
     if api_key := credential_data.get("api_key"):
-        api_spec["key"] = api_key
         headers["Authorization"] = f"Bearer {api_key}"
     if api_url := credential_data.get("url"):
         api_spec["url"] = api_url

@@ -102,6 +102,7 @@ Spark), set `DOCKER_GPU_RUNTIME=` in the stack env.
 |----------|---------|-------------|
 | `SSH_SESSION_BACKEND` | `auto` | Sandbox a session runs in: `docker` (sibling container), `process` (sshd inside the worker), or `auto` — `docker`, falling back to `process`. |
 | `ENABLE_UNISOLATED_SSH_SESSION` | `false` | Whether a worker that cannot give a session its own OS account may still serve one. |
+| `SSH_NETWORK_NAME` | set by the supervisor | Isolated Docker network sessions join for network access. A python task with `network: bridge` runs only on a worker that has one. |
 | `SSH_DIRECT_HOST` | – | Address a `direct` session is advertised at. Unset, the worker uses its tailnet address, else its FQDN. Only `direct` uses it: a relayed session is reached over a stream the worker opens. |
 
 A `proxy` or `forward` session is reached over a relay the worker opens to its
@@ -119,14 +120,15 @@ the `ENABLE_SSH_GPU_LIMIT` subset, and `ssh -L` forwarding have no effect in
 ## SSH session resource caps
 
 When `enable_ssh` is true on a Docker worker, these configured
-ceilings bound every SSH session container spawned by that worker.
+ceilings bound every session container spawned by that worker: SSH
+sessions and python tasks alike.
 Unset values mean unbounded (host-wide access).
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `SSH_MAX_CPU` | – | Max CPU cores per SSH container (float, e.g. `4` or `2.5`). Sets Docker `nano_cpus`. |
-| `SSH_MAX_MEMORY` | – | Max memory per SSH container (e.g. `8Gi`, `512Mi`, or a byte count). Sets Docker `mem_limit`. |
-| `SSH_MAX_PIDS` | – | Max PIDs per SSH container. Sets Docker `pids_limit`. Admin-only — not user-overridable. |
+| `SSH_MAX_CPU` | – | Max CPU cores per session container (float, e.g. `4` or `2.5`). Sets Docker `nano_cpus`. |
+| `SSH_MAX_MEMORY` | – | Max memory per session container (e.g. `8Gi`, `512Mi`, or a byte count). Sets Docker `mem_limit`. |
+| `SSH_MAX_PIDS` | – | Max PIDs per session container. Sets Docker `pids_limit`. Admin-only — not user-overridable. |
 | `ENABLE_SSH_GPU_LIMIT` | `true` | When `true`, expose only the GPU subset matching the spec (`count` / `type` / `memory`); otherwise expose all worker GPUs. |
 
 The effective CPU/memory limit is `min(spec.resources.hardware, worker
@@ -140,7 +142,7 @@ warning if SSH is enabled with no cap configured.
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `SSH_DEFAULT_TTL_SEC` | `3600` | Session TTL when `spec.ttlSeconds` is unset |
-| `SSH_MAX_TTL_SEC` | `28800` | Upper bound on session TTL |
+| `SSH_MAX_TTL_SEC` | `28800` | Upper bound on session TTL, including a python task's `timeoutSeconds` |
 | `SSH_DEFAULT_IDLE_SEC` | `900` | Idle timeout when `spec.idleTimeoutSeconds` is unset |
 
 An interactive session is stopped once it has had no established SSH

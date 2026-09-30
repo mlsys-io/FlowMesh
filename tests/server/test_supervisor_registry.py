@@ -1,6 +1,7 @@
 """WorkerRegistry behaviour and thread-safety under concurrent access."""
 
 import threading
+from collections.abc import Callable
 from typing import cast
 
 import pytest
@@ -89,3 +90,114 @@ def test_concurrent_mutation_and_snapshot_do_not_crash() -> None:
 
     assert errors == []
     assert registry.all_workers() == []
+
+
+def _tok(token: str) -> WorkerTokenType:
+    return cast(WorkerTokenType, token)
+
+
+def _registry_with_release_log() -> tuple[WorkerRegistry, list[str]]:
+    released: list[str] = []
+    return WorkerRegistry(on_worker_id_released=released.append), released
+
+
+def test_release_fires_when_binding_is_replaced() -> None:
+    registry, released = _registry_with_release_log()
+
+    registry.set_worker_id(_tok("tok-1"), "wkr-1")
+    registry.set_worker_id(_tok("tok-1"), "wkr-1")
+    assert released == []
+
+    registry.set_worker_id(_tok("tok-1"), "wkr-2")
+    assert released == ["wkr-1"]
+    assert registry.get_worker_id(_tok("tok-1")) == "wkr-2"
+
+
+@pytest.mark.parametrize(
+    "pop",
+    [
+        lambda r: r.pop(_tok("tok-1")),
+        lambda r: r.try_pop(_tok("tok-1")),
+        lambda r: r.pop_by_alias("worker-1"),
+        lambda r: r.try_pop_by_alias("worker-1"),
+    ],
+    ids=["pop", "try_pop", "pop_by_alias", "try_pop_by_alias"],
+)
+def test_release_fires_for_each_pop_of_a_bound_token(
+    pop: Callable[[WorkerRegistry], object],
+) -> None:
+    registry, released = _registry_with_release_log()
+    registry.add(_adapter("tok-1", "worker-1"))
+    registry.set_worker_id(_tok("tok-1"), "wkr-1")
+
+    pop(registry)
+
+    assert released == ["wkr-1"]
+
+
+@pytest.mark.parametrize(
+    "pop",
+    [
+        lambda r: r.pop(_tok("tok-1")),
+        lambda r: r.try_pop(_tok("tok-1")),
+        lambda r: r.pop_by_alias("worker-1"),
+        lambda r: r.try_pop_by_alias("worker-1"),
+    ],
+    ids=["pop", "try_pop", "pop_by_alias", "try_pop_by_alias"],
+)
+def test_release_skips_pop_of_an_unbound_token(
+    pop: Callable[[WorkerRegistry], object],
+) -> None:
+    registry, released = _registry_with_release_log()
+    registry.add(_adapter("tok-1", "worker-1"))
+
+    pop(registry)
+
+    assert released == []
+
+
+def test_release_skips_missing_tokens() -> None:
+    registry, released = _registry_with_release_log()
+
+    assert registry.try_pop(_tok("tok-missing")) is None
+    assert registry.try_pop_by_alias("worker-missing") is None
+    with pytest.raises(KeyError):
+        registry.pop(_tok("tok-missing"))
+
+    assert released == []
+
+
+def test_release_fires_once_per_bound_id_on_clear() -> None:
+    registry, released = _registry_with_release_log()
+    for i in range(3):
+        registry.add(_adapter(f"tok-{i}", f"worker-{i}"))
+    registry.set_worker_id(_tok("tok-0"), "wkr-0")
+    registry.set_worker_id(_tok("tok-1"), "wkr-1")
+
+    registry.clear()
+
+    assert sorted(released) == ["wkr-0", "wkr-1"]
+    assert registry.get_worker_id(_tok("tok-0")) is None
+
+
+def test_release_callback_runs_outside_the_lock() -> None:
+    """A callback that re-enters the registry must not deadlock."""
+    seen: list[str | None] = []
+    registry = WorkerRegistry(
+        on_worker_id_released=lambda _: seen.append(
+            registry.get_worker_id(_tok("tok-1"))
+        )
+    )
+    registry.add(_adapter("tok-1", "worker-1"))
+    registry.set_worker_id(_tok("tok-1"), "wkr-1")
+
+    def mutate() -> None:
+        registry.set_worker_id(_tok("tok-1"), "wkr-2")
+        registry.try_pop(_tok("tok-1"))
+
+    thread = threading.Thread(target=mutate, daemon=True)
+    thread.start()
+    thread.join(timeout=2)
+
+    assert not thread.is_alive()
+    assert seen == ["wkr-2", None]

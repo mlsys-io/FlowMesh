@@ -83,7 +83,7 @@ By default it routes to the Nebula endpoint and authenticates with the worker's 
 
 Credential handling: a caller-supplied `Authorization` header is always used as-is and never overwritten. With no header, `NEBULA_API_TOKEN` is injected only when the call is on the Nebula url (no custom `spec.api.url`) — the Nebula token is never sent to a custom endpoint. A Nebula-path call with no token available fails closed.
 
-`spec.api.retries` (default `0`, an integer from 0 to 10; any other value is rejected when the workflow is submitted) sets how many times a transient failure is retried before the task fails. A transient failure is a connection error or an HTTP status of 5xx, 408, or 429; other 4xx statuses are never retried. Retries back off exponentially: the first waits 1s and each later one doubles, capped at 60s. When a retryable response carries a `Retry-After` header (seconds or an HTTP date), that wait is used instead, also capped at 60s. Each retry logs a warning with the attempt count and the wait. A cancelled task stops retrying immediately.
+`spec.api.retries` (default `0`, at most `10`) sets how many times a transient failure is retried before the task fails. A transient failure is a connection error or an HTTP status of 5xx, 408, or 429; other 4xx statuses are never retried. Retries back off exponentially: the first waits 1s and each later one doubles, capped at 60s. When a retryable response carries a `Retry-After` header (seconds or an HTTP date), that wait is used instead, also capped at 60s. Each retry logs a warning with the attempt count and the wait. A cancelled task stops retrying immediately.
 
 ```yaml
 spec:
@@ -148,6 +148,40 @@ dataframe column that reads a grouped upstream's message content uses
 `path: items.rows.json.choices[0].message.content`; an ungrouped upstream uses
 `path: items.json.choices[0].message.content`.
 
+A dataframe column reads a python stage with `node: <stage>` and a path that
+starts at the result as `flowmesh result fetch` shows it — for a python stage
+that returns `{"items": [{"output": [...]}, ...]}`, `path: value.items.output.q`
+reads the `q` field of each record. When each item's `output` is a list of
+records, each item is one group and group sizes may differ (3 and 2); a per-row
+list of scalars stays one cell value. For example, a python stage T0 that
+returns two such items feeds a dataframe API task T1 that reads them as two
+groups:
+
+```yaml
+spec:
+  stages:
+    - name: T0
+      spec:
+        taskType: python
+        code: |
+          def main():
+              return {"items": [{"output": [{"q": "..."}, {"q": "..."}, {"q": "..."}]},
+                               {"output": [{"q": "..."}, {"q": "..."}]}]}
+    - name: T1
+      dependsOn: [T0]
+      spec:
+        taskType: api
+        data:
+          type: dataframe
+          columns:
+            - label: Q
+              node: T0
+              path: value.items.output.q
+          messages:
+            - role: user
+              content: "Answer in one word: {Q}"
+```
+
 ```yaml
 spec:
   taskType: api
@@ -166,6 +200,76 @@ spec:
     response:
       parse_json: true
 ```
+
+## Python task
+
+`taskType: python` runs a function from `spec.code` in its own container, and
+its return value and metrics become the task's result. It runs on workers with
+Docker session support; a supervisor-launched worker has it when SSH is enabled
+for it (`enable_ssh`), and the worker's SSH caps and TTL apply (see
+[`ENV.md`](ENV.md)). `${...}` in `code` is ordinary Python, not a stage
+reference.
+
+The entrypoint (default `main`) returns a JSON-serialisable value, returned as
+`PythonResult.value`. Metrics, reported under a `"metrics"` key of the return
+value or written to `$FLOWMESH_OUTPUT/metrics.json`, are returned as
+`PythonResult.metrics` and must be finite numbers. The task fails, with the
+error as its message, when the code raises, calls `sys.exit()`, runs past
+`timeoutSeconds`, or does not report a metric named in `emits`.
+
+```yaml
+spec:
+  stages:
+    - name: prepare
+      spec:
+        taskType: echo
+        data:
+          type: list
+          items: [the quick brown fox]
+    - name: score
+      dependsOn: [prepare]
+      spec:
+        taskType: python
+        emits: [mean_words]
+        code: |
+          def main(prepare):
+              words = [len(str(i["output"]).split()) for i in prepare["items"]]
+              return {"metrics": {"mean_words": sum(words) / len(words)}}
+```
+
+See `examples/templates/python_two_stage.yaml` for a runnable workflow.
+
+### Reading upstream stages
+
+A python task's inputs are the stages in `inputs`, or each of its direct
+dependencies when `inputs` is omitted. The entrypoint receives them as keyword
+arguments, bound by parameter name:
+
+- A parameter named after an input stage receives that stage's output: a
+  python stage's return value, `None` for a stage skipped by its condition,
+  and for any other task type its result as `flowmesh result fetch` shows it.
+- A parameter named `inputs` receives every input stage as a `StageInput`.
+- `**kwargs` collects the input stages no other parameter took.
+- Any other parameter without a default fails the task before the call.
+
+```python
+def main(train, evaluate, inputs):
+    checkpoint = inputs["train"].artifacts / "model.pt"
+    return {"metrics": {"accuracy": evaluate["accuracy"]}}
+```
+
+A `StageInput` is path-like and exposes the stage's `output`, `result`,
+`metadata`, `skipped`, `task_type` and `artifacts` directory, plus
+`artifact(ref)` to resolve an artifact reference under `artifacts`.
+
+### Isolation
+
+The code runs as an unprivileged user with `/tmp` as its writable scratch
+space; `/tmp` is held in memory and counts against the task's memory limit. It
+has no network unless `network: bridge` is set, which `requirements`
+need to install; `bridge` is the worker's isolated session network, and a worker
+without one does not run the task. The code sees GPUs only when
+`resources.hardware.gpu` asks for them.
 
 ## data_retrieval: type lumid
 

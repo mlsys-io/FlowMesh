@@ -1,11 +1,13 @@
 """Tests for n8n workflow translation."""
 
 import base64
+import json
 
 import pytest
 
 from server.task.n8n_parser import _decode_secret_part, translate_n8n_workflow
 from server.task.parser import parse_workflow
+from shared.tasks.specs import ApiSpecTemplate
 
 
 class TestTranslateN8nWorkflow:
@@ -83,6 +85,40 @@ class TestTranslateN8nWorkflow:
             "The previous stage's response is as follows. Simplify this\n"
             "${Upstream.items.0.text}"
         ]
+
+    def test_openai_credential_parses_with_header_and_no_key(self) -> None:
+        """An OpenAI credential yields an Authorization header and no ``key``
+        field, so the workflow validates through the submitted path."""
+        nodes = [
+            {
+                "name": "Chat",
+                "type": "@n8n/n8n-nodes-langchain.openAi",
+                "parameters": {
+                    "modelId": {"value": "gpt-4"},
+                    "responses": {
+                        "values": [{"content": "Hello, world!"}],
+                    },
+                },
+                "credentials": {
+                    "openAiApi": {
+                        "data": {"apiKey": "sk-secret"},
+                    }
+                },
+            }
+        ]
+        result = translate_n8n_workflow({"nodes": nodes, "connections": {}})
+        api = result["spec"]["api"]
+        assert api["headers"]["Authorization"] == "Bearer sk-secret"
+        assert "key" not in api
+
+        parsed = parse_workflow(
+            json.dumps({"nodes": nodes, "connections": {}}), format="n8n"
+        )
+        spec = parsed.tasks[0].task.spec
+        assert isinstance(spec, ApiSpecTemplate)
+        assert spec.api is not None
+        assert spec.api.headers is not None
+        assert spec.api.headers["Authorization"] == "Bearer sk-secret"
 
 
 class TestDecodeSecretPart:

@@ -11,9 +11,8 @@ import logging
 import shlex
 import shutil
 import tarfile
-import tempfile
 import time
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any, cast
@@ -80,6 +79,11 @@ except Exception:
 logger = logging.getLogger(__name__)
 
 _SESSION_SSH_PORT = 22
+_EXEC_ENVIRONMENT = {
+    "PATH": "/usr/sbin:/usr/bin:/sbin:/bin",
+    "LD_PRELOAD": "",
+    "LD_LIBRARY_PATH": "",
+}
 _CONTAINER_RESULTS_SOURCE_ROOT = "/root/.flowmesh/results-source"
 _SSH_RUN_ENTRYPOINT_PATH = "/flowmesh-ssh-run.sh"
 _SSH_RUN_SCRIPT_SOURCE = (
@@ -150,6 +154,12 @@ class DockerSessionBackend(SSHSessionBackend):
         cfg = request.cfg
         client = self._get_docker_client()
         interactive = cfg.interactive
+        if cfg.hardened and not cfg.network_disabled and not self._ssh_network:
+            raise ExecutionError(
+                "This worker has no isolated session network (SSH_NETWORK_NAME), "
+                "which a hardened session needs for network access",
+                retryable=True,
+            )
 
         if interactive:
             ports: dict[str, Any] = {f"{_SESSION_SSH_PORT}/tcp": None}
@@ -195,7 +205,9 @@ class DockerSessionBackend(SSHSessionBackend):
             interactive,
         )
         try:
-            container, log_stream = self._start_container(client, kwargs, interactive)
+            container, log_stream = self._start_container(
+                client, kwargs, interactive, cfg.extra_files
+            )
         except Exception:
             self._cleanup_mount_plan(client, mount_plan)
             raise
@@ -303,8 +315,25 @@ class DockerSessionBackend(SSHSessionBackend):
                     kwargs["runtime"] = runtime
             except Exception:
                 pass
-        if self._ssh_network:
+        if cfg.network_disabled:
+            kwargs["network_mode"] = "none"
+        elif self._ssh_network:
             kwargs["network"] = self._ssh_network
+        if cfg.hardened:
+            # Everything the entrypoint wrapper and the python bootstrap need
+            # while still root (stage inputs, chown the output dir, switch to an
+            # unprivileged uid) and nothing else. Once the uid changes the
+            # effective set is empty anyway.
+            kwargs["cap_drop"] = ["ALL"]
+            kwargs["cap_add"] = ["CHOWN", "DAC_OVERRIDE", "FOWNER", "SETUID", "SETGID"]
+            # tmpfs pages are charged to the container's memory, so the memory
+            # limit is the scratch space's only bound.
+            tmp_opts = "rw,exec,nosuid,nodev"
+            if cfg.memory_limit_bytes is not None:
+                tmp_opts += f",size={cfg.memory_limit_bytes}"
+            kwargs["tmpfs"] = {
+                "/tmp": tmp_opts
+            }  # nosec B108 - a fresh per-container tmpfs, not the host /tmp
         return kwargs
 
     def _resolve_noninteractive_command(
@@ -341,7 +370,11 @@ class DockerSessionBackend(SSHSessionBackend):
         return combined
 
     def _start_container(
-        self, client: DockerClient, kwargs: dict[str, Any], interactive: bool
+        self,
+        client: DockerClient,
+        kwargs: dict[str, Any],
+        interactive: bool,
+        extra_files: dict[str, bytes] | None = None,
     ) -> tuple[Container, DemuxLogStream | None]:
         image = kwargs.get("image")
         mode = "interactive" if interactive else "non-interactive"
@@ -351,7 +384,7 @@ class DockerSessionBackend(SSHSessionBackend):
                 container = client.containers.run(**kwargs)
             else:
                 container, log_stream = self._run_noninteractive_container(
-                    client, kwargs
+                    client, kwargs, extra_files
                 )
         except Exception as exc:
             if isinstance(image, str) and "No such image" in str(exc):
@@ -362,7 +395,7 @@ class DockerSessionBackend(SSHSessionBackend):
                         container = client.containers.run(**kwargs)
                     else:
                         container, log_stream = self._run_noninteractive_container(
-                            client, kwargs
+                            client, kwargs, extra_files
                         )
                 except Exception as pull_exc:
                     raise ExecutionError(
@@ -377,7 +410,10 @@ class DockerSessionBackend(SSHSessionBackend):
         return container, log_stream
 
     def _run_noninteractive_container(
-        self, client: DockerClient, kwargs: dict[str, Any]
+        self,
+        client: DockerClient,
+        kwargs: dict[str, Any],
+        extra_files: dict[str, bytes] | None = None,
     ) -> tuple[Container, DemuxLogStream]:
         try:
             container = client.containers.create(**kwargs)
@@ -387,7 +423,7 @@ class DockerSessionBackend(SSHSessionBackend):
             ) from exc
         assert isinstance(container, Container)
         try:
-            container.put_archive("/", self._build_ssh_run_archive())
+            container.put_archive("/", self._build_ssh_run_archive(extra_files))
             log_stream = cast(
                 DemuxLogStream,
                 container.attach(
@@ -409,14 +445,22 @@ class DockerSessionBackend(SSHSessionBackend):
         return container, log_stream
 
     @staticmethod
-    def _build_ssh_run_archive() -> bytes:
-        script_bytes = _SSH_RUN_SCRIPT_SOURCE.read_bytes()
+    def _build_ssh_run_archive(extra_files: dict[str, bytes] | None = None) -> bytes:
+        """The entrypoint wrapper, plus any caller files (read-only, 0644).
+
+        Written with ``put_archive`` before start, so a caller's files never
+        travel through the environment (which caps a single value at 128 KiB).
+        """
+        files = {_SSH_RUN_ENTRYPOINT_PATH: (_SSH_RUN_SCRIPT_SOURCE.read_bytes(), 0o755)}
+        for path, data in (extra_files or {}).items():
+            files[path] = (data, 0o644)
         stream = io.BytesIO()
         with tarfile.open(fileobj=stream, mode="w") as tar:
-            info = tarfile.TarInfo(name=_SSH_RUN_ENTRYPOINT_PATH.lstrip("/"))
-            info.size = len(script_bytes)
-            info.mode = 0o755
-            tar.addfile(info, io.BytesIO(script_bytes))
+            for path, (data, mode) in files.items():
+                info = tarfile.TarInfo(name=path.lstrip("/"))
+                info.size = len(data)
+                info.mode = mode
+                tar.addfile(info, io.BytesIO(data))
         return stream.getvalue()
 
     # ------------------------------------------------------------------ #
@@ -472,7 +516,10 @@ class DockerSessionBackend(SSHSessionBackend):
             )
             reserve_mount_path(used_mount_paths, output_mount_path)
             artifacts_dir = out_dir / ARTIFACTS_DIR
-            if results_source:
+            # A hardened session's output is copied out of the container, which
+            # keeps regular files only: a writable bind mount would let the code
+            # plant symlinks the worker then follows on its own filesystem.
+            if results_source or cfg.hardened:
                 create_dirs.append(output_mount_path)
                 copy_output_path = output_mount_path
             else:
@@ -640,18 +687,14 @@ class DockerSession(SSHSession):
 
     def finish_requested(self) -> bool:
         try:
-            result = self._container.exec_run(
-                ["sh", "-lc", f"test -f {shlex.quote(FINISH_SENTINEL_PATH)}"]
-            )
+            result = self._exec(["test", "-f", FINISH_SENTINEL_PATH])
         except Exception:
             return False
         return result.exit_code == 0
 
     def established_connections(self) -> int | None:
         try:
-            result = self._container.exec_run(
-                ["sh", "-lc", "cat /proc/net/tcp /proc/net/tcp6 2>/dev/null"]
-            )
+            result = self._exec(["cat", "/proc/net/tcp", "/proc/net/tcp6"])
         except Exception:
             return None
         if result.exit_code != 0:
@@ -681,32 +724,34 @@ class DockerSession(SSHSession):
                 f"Failed to collect SSH output from {source_path}: {exc}"
             ) from exc
 
-        with tempfile.NamedTemporaryFile(suffix=".tar", delete=False) as tmp:
-            tmp_path = Path(tmp.name)
-            for chunk in stream:
-                tmp.write(chunk)
-
+        output_cfg = self._cfg.output
+        max_bytes = output_cfg.max_bytes if output_cfg is not None else None
         source_name = PurePosixPath(source_path).name
-        try:
-            with tarfile.open(tmp_path) as archive:
-                for member in archive.getmembers():
-                    relative = _relative_archive_path(member.name, source_name)
-                    if relative is None:
-                        continue
-                    target = destination / relative
-                    if member.isdir():
-                        target.mkdir(parents=True, exist_ok=True)
-                        continue
-                    if not member.isfile():
-                        continue
-                    target.parent.mkdir(parents=True, exist_ok=True)
-                    extracted = archive.extractfile(member)
-                    if extracted is None:
-                        continue
-                    with target.open("wb") as fh:
-                        shutil.copyfileobj(extracted, fh)
-        finally:
-            tmp_path.unlink(missing_ok=True)
+        collected = 0
+        # Streamed rather than spooled to disk, so output past maxBytes -- which
+        # the polling check can miss -- is refused before it is written.
+        with tarfile.open(fileobj=_ChunkReader(stream), mode="r|") as archive:
+            for member in archive:
+                relative = _relative_archive_path(member.name, source_name)
+                if relative is None:
+                    continue
+                target = destination / relative
+                if member.isdir():
+                    target.mkdir(parents=True, exist_ok=True)
+                    continue
+                if not member.isfile():
+                    continue
+                collected += member.size
+                if max_bytes is not None and 0 <= max_bytes < collected:
+                    raise ExecutionError(
+                        f"Session output exceeded maxBytes ({collected} > {max_bytes})"
+                    )
+                target.parent.mkdir(parents=True, exist_ok=True)
+                extracted = archive.extractfile(member)
+                if extracted is None:
+                    continue
+                with target.open("wb") as fh:
+                    shutil.copyfileobj(extracted, fh)
 
     def stop(self, timeout_sec: float) -> None:
         try:
@@ -738,18 +783,25 @@ class DockerSession(SSHSession):
         except Exception as exc:
             logger.debug("Failed to capture container logs: %s", exc)
 
+    def _exec(self, argv: list[str]) -> Any:
+        """Run ``argv`` in the container as root, without a shell.
+
+        The session's own environment could otherwise pick what runs: its
+        ``PATH`` or ``LD_PRELOAD``, or a login shell's profile under ``HOME``.
+        """
+        return self._container.exec_run(argv, environment=_EXEC_ENVIRONMENT)
+
     def _container_path_size(self, path: str) -> int | None:
-        quoted = shlex.quote(path)
         try:
-            result = self._container.exec_run(
-                ["sh", "-lc", f"du -sb {quoted} 2>/dev/null | cut -f1 || echo 0"]
-            )
+            result = self._exec(["du", "-sb", "--", path])
         except Exception:
             return None
-        try:
-            return int(_decode_exec_output(result.output) or "0")
-        except ValueError:
-            return 0
+        # stderr is interleaved; du still reports a total when it warns.
+        for line in _decode_exec_output(result.output).splitlines():
+            size, _, _ = line.partition("\t")
+            if size.isdigit():
+                return int(size)
+        return 0
 
     @staticmethod
     def _stream_container_logs(log_stream: DemuxLogStream) -> None:
@@ -791,6 +843,28 @@ class DockerSession(SSHSession):
         for stream_name, leftover in buffers.items():
             if leftover:
                 _emit(leftover, stream_name)
+
+
+class _ChunkReader(io.RawIOBase):
+    """A readable stream over an iterator of byte chunks."""
+
+    def __init__(self, chunks: Iterable[bytes]) -> None:
+        self._chunks = iter(chunks)
+        self._pending = memoryview(b"")
+
+    def readable(self) -> bool:
+        return True
+
+    def readinto(self, buffer: Any) -> int:
+        while not self._pending:
+            chunk = next(self._chunks, None)
+            if chunk is None:
+                return 0
+            self._pending = memoryview(chunk)
+        size = min(len(buffer), len(self._pending))
+        buffer[:size] = self._pending[:size]
+        self._pending = self._pending[size:]
+        return size
 
 
 def _decode_exec_output(raw: Any) -> str:

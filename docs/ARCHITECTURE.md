@@ -197,7 +197,17 @@ scripts/dev/            compile_protos, sync_requirements, check_env_examples
   worker down <alias>`), re-registers with other GPUs, or the supervisor stops;
   a worker that exits or crashes keeps it for its restart. A card two workers
   hold returns to the pool once both release it. Worker listings show each
-  worker's host GPUs as `held_gpus`.
+  worker's host GPUs as `held_gpus`. Destroying an external worker whose
+  process is still running ends its task stream, and it re-enrolls under a new
+  id within seconds; stop the process to remove it for good.
+- **Dispatch queues.** The supervisor keeps one dispatch queue per registered
+  worker id and frees it when the worker's token is re-registered under a new
+  id or removed, which drops the frames still queued on it and ends any task
+  stream still reading it. A new
+  `StreamTasks` on an id takes over the frames still queued, in order, and ends
+  every older stream on that id, so a half-open stream receives no further
+  dispatches once the worker's new stream attaches. A stream that ends makes
+  the worker reconnect and resolve its current id.
 - **A worker's GPUs are the ones CUDA lets it use.** A worker reports, probes,
   and samples power for only the GPUs `CUDA_VISIBLE_DEVICES` leaves visible,
   each under its CUDA ordinal. Integer entries are read in PCI bus order, so

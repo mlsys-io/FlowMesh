@@ -4,7 +4,7 @@ from pydantic import BaseModel, Field
 
 from ._base import StrictBaseModel, TemplateBaseModel
 from .components import TaskMetadata
-from .placeholders import PLACEHOLDER_PATTERN
+from .placeholders import PLACEHOLDER_PATTERN, placeholder_fields
 from .specs import (
     AgentSpecStrict,
     AgentSpecTemplate,
@@ -38,6 +38,8 @@ from .specs import (
     OmniText2SpeechSpecTemplate,
     PPOSpecStrict,
     PPOSpecTemplate,
+    PythonSpecStrict,
+    PythonSpecTemplate,
     RagSpecStrict,
     RagSpecTemplate,
     ServeSpecStrict,
@@ -64,6 +66,7 @@ type TaskSpecStrict = Annotated[
     | DataRetrievalSpecStrict
     | EmbeddingSpecStrict
     | SSHSpecStrict
+    | PythonSpecStrict
     | ServeSpecStrict
     | OmniText2ImageSpecStrict
     | OmniText2SpeechSpecStrict
@@ -88,6 +91,7 @@ type TaskSpecTemplate = Annotated[
     | DataRetrievalSpecTemplate
     | EmbeddingSpecTemplate
     | SSHSpecTemplate
+    | PythonSpecTemplate
     | ServeSpecTemplate
     | OmniText2ImageSpecTemplate
     | OmniText2SpeechSpecTemplate
@@ -121,7 +125,7 @@ class TaskEnvelopeTemplate(TemplateBaseModel):
             if isinstance(value, (list, tuple, set)):
                 return any(walk(v) for v in value)
             if isinstance(value, BaseModel):
-                for _, sub in value:
+                for _, sub in placeholder_fields(value):
                     if walk(sub):
                         return True
                 return False

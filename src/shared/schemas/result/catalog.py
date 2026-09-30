@@ -295,6 +295,15 @@ class SSHResult(StrictExecutorResult):
     port: int | None = None
 
 
+class PythonResult(StrictExecutorResult):
+    """Python task output: the entrypoint's return value and metrics."""
+
+    task_type: Literal[TaskType.PYTHON] = TaskType.PYTHON
+    exit_code: int
+    value: Any = None
+    metrics: dict[str, float] = Field(default_factory=dict)
+
+
 _BASE_TAG = "__base__"
 
 _RESULT_TAGS: frozenset[str] = frozenset(
@@ -319,6 +328,7 @@ _RESULT_TAGS: frozenset[str] = frozenset(
         TaskType.ECHO.value,
         TaskType.API.value,
         TaskType.SSH.value,
+        TaskType.PYTHON.value,
     }
 )
 
@@ -365,6 +375,7 @@ AnyExecutorResult = Annotated[
         | Annotated[EchoResult, Tag(TaskType.ECHO.value)]
         | Annotated[APIResult, Tag(TaskType.API.value)]
         | Annotated[SSHResult, Tag(TaskType.SSH.value)]
+        | Annotated[PythonResult, Tag(TaskType.PYTHON.value)]
         | Annotated[BaseExecutorResult, Tag(_BASE_TAG)]
     ),
     Discriminator(_result_discriminator),
