@@ -168,6 +168,7 @@ class TestInitializeExecutorsAvailability:
     ) -> None:
         """The operator accepting the trade is what unlocks it."""
         monkeypatch.setattr(os, "getuid", lambda: 1000)
+        monkeypatch.setattr(process_backend_mod, "_acquire_host_lock", lambda: True)
         monkeypatch.setattr(docker_backend_mod, "docker_available", lambda: False)
         monkeypatch.setattr(process_backend_mod, "find_sshd", lambda: "/usr/sbin/sshd")
         monkeypatch.setattr(
@@ -184,6 +185,7 @@ class TestInitializeExecutorsAvailability:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setattr(os, "getuid", lambda: 1000)
+        monkeypatch.setattr(process_backend_mod, "_acquire_host_lock", lambda: True)
         monkeypatch.setattr(docker_backend_mod, "docker_available", lambda: False)
         monkeypatch.setattr(process_backend_mod, "find_sshd", lambda: "/usr/sbin/sshd")
         monkeypatch.setattr(

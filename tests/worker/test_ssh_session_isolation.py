@@ -31,10 +31,11 @@ from worker.executors.ssh_session.backends.process import (
     ProcessSession,
     ProcessSessionBackend,
     ProcessSessionPaths,
-    _claim_root,
     _link_mount_path,
     _required_path_under,
     _reset_mount_root,
+    _root_problem,
+    denied_roots,
 )
 from worker.executors.ssh_session.base import iter_tree, path_size_bytes
 from worker.executors.ssh_session.config import SSHConfig, normalize_mount_path
@@ -123,7 +124,7 @@ class TestDeniedStateRoots:
         cfg = make_live_worker_config(tmp_path, session_state_dirs=(cache,))
         denied = cfg.session_denied_paths()
         assert cfg.results_dir in denied
-        assert cfg.hb_file in denied
+        assert cfg.hb_file.parent in denied
         assert cache in denied
 
     def test_state_dirs_come_from_home_caches_and_temp_tools(
@@ -315,6 +316,27 @@ class TestMountRoot:
         assert (outside / "precious").read_text() == "keep"
         assert stat.S_IMODE(root.stat().st_mode) == 0o755
 
+    def test_reset_refuses_to_empty_a_nested_mount(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        root = tmp_path / "mnt"
+        (root / "data").mkdir(parents=True)
+        (root / "data" / "kept").write_text("operator data")
+        real_lstat = os.lstat
+
+        def lstat(path: Any, *args: Any, **kwargs: Any) -> os.stat_result:
+            info = real_lstat(path, *args, **kwargs)
+            if Path(path) == root / "data":
+                fields = list(info)
+                fields[stat.ST_DEV] += 1
+                return os.stat_result(fields)
+            return info
+
+        monkeypatch.setattr(process_module.os, "lstat", lstat)
+        with pytest.raises(OSError, match="mounted"):
+            _reset_mount_root(root, create=True)
+        assert (root / "data" / "kept").read_text() == "operator data"
+
     def test_reset_replaces_a_linked_root(self, tmp_path: Path) -> None:
         outside = tmp_path / "outside"
         outside.mkdir()
@@ -356,31 +378,54 @@ class TestMountRoot:
             _link_mount_path(tmp_path, tmp_path.as_posix(), tmp_path)
 
 
-class TestClaimingStateRoots:
-    def test_a_missing_directory_root_is_created_private(self, tmp_path: Path) -> None:
-        root = tmp_path / "cache" / "hf"
-        assert _claim_root(root, is_dir=True) is True
-        assert stat.S_IMODE(root.stat().st_mode) == 0o700
+class TestResolvingStateRoots:
+    def test_an_operator_link_is_resolved_to_its_target(self, tmp_path: Path) -> None:
+        data = tmp_path / "data" / "results"
+        data.mkdir(parents=True)
+        (tmp_path / "results").symlink_to(data)
+        cfg = dataclasses.replace(
+            make_live_worker_config(tmp_path, session_state_dirs=()),
+            results_dir=tmp_path / "results",
+        )
+        roots = denied_roots(cfg)
+        assert data in roots
+        assert _root_problem(data) is None
 
-    def test_a_missing_file_root_needs_no_deny(self, tmp_path: Path) -> None:
-        assert _claim_root(tmp_path / "worker.hb", is_dir=False) is False
+    def test_the_heartbeat_directory_is_denied_not_just_the_file(
+        self, tmp_path: Path
+    ) -> None:
+        cfg = make_live_worker_config(tmp_path, session_state_dirs=())
+        assert cfg.hb_file.parent in cfg.session_denied_paths()
+        assert cfg.hb_file not in cfg.session_denied_paths()
 
-    def test_a_linked_root_is_refused(self, tmp_path: Path) -> None:
-        (tmp_path / "real").mkdir()
-        (tmp_path / "linked").symlink_to(tmp_path / "real")
-        with pytest.raises(ExecutionError, match="link"):
-            _claim_root(tmp_path / "linked", is_dir=True)
-
-    def test_a_planted_root_in_a_shared_dir_is_recreated(self, tmp_path: Path) -> None:
+    def test_a_link_in_a_shared_dir_is_refused_not_followed(
+        self, tmp_path: Path
+    ) -> None:
         shared = tmp_path / "shared"
         shared.mkdir()
         shared.chmod(0o1777)
         victim = tmp_path / "victim"
-        victim.mkdir()
+        (victim / "data").mkdir(parents=True)
         (shared / "utu").symlink_to(victim)
-        assert _claim_root(shared / "utu", is_dir=True) is True
-        assert (shared / "utu").is_dir() and not (shared / "utu").is_symlink()
-        assert victim.is_dir()
+        cfg = make_live_worker_config(tmp_path, session_state_dirs=(shared / "utu",))
+        assert shared / "utu" in denied_roots(cfg)
+        assert "link" in (_root_problem(shared / "utu") or "")
+        assert (victim / "data").is_dir()
+
+    def test_a_root_others_can_write_in_a_shared_dir_is_refused(
+        self, tmp_path: Path
+    ) -> None:
+        shared = tmp_path / "shared"
+        shared.mkdir()
+        shared.chmod(0o1777)
+        (shared / "cache").mkdir()
+        (shared / "cache").chmod(0o777)
+        (shared / "cache" / "kept").write_text("data")
+        assert _root_problem(shared / "cache") is not None
+        assert (shared / "cache" / "kept").read_text() == "data"
+
+    def test_a_missing_root_has_no_problem(self, tmp_path: Path) -> None:
+        assert _root_problem(tmp_path / "missing") is None
 
 
 class TestProcessBackendIsolation:

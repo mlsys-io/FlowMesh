@@ -159,6 +159,8 @@ class ProcessSessionBackend(SSHSessionBackend):
     @classmethod
     def _isolation_ready(cls, config: WorkerConfig) -> bool:
         """Whether this worker can keep a session away from what it must not reach."""
+        if os.getuid() == 0 and not _acl_ready(config):
+            return False
         if not _acquire_host_lock():
             logger.info(
                 "Process SSH backend unavailable: another worker on this host already "
@@ -166,36 +168,6 @@ class ProcessSessionBackend(SSHSessionBackend):
                 SAFE_MOUNT_ROOT.as_posix(),
             )
             return False
-        if os.getuid() != 0:
-            return True
-        if not acl.tools_available():
-            logger.info(
-                "Process SSH backend unavailable: setfacl/getfacl are missing, so a "
-                "session could not be denied this worker's state (install the acl "
-                "package in the worker image)"
-            )
-            return False
-        roots = config.session_denied_paths()
-        for root in roots:
-            if blocked := _required_path_under(root):
-                logger.info(
-                    "Process SSH backend unavailable: denying sessions %s would also "
-                    "deny them %s",
-                    root,
-                    blocked,
-                )
-                return False
-        for root in roots:
-            try:
-                acl.probe(_probe_dir(root))
-            except (OSError, ExecutionError) as exc:
-                logger.info(
-                    "Process SSH backend unavailable: cannot deny sessions %s with an "
-                    "ACL: %s",
-                    root,
-                    exc,
-                )
-                return False
         return True
 
     def prepare(self) -> None:
@@ -364,23 +336,34 @@ class ProcessSessionBackend(SSHSessionBackend):
         )
 
     def _claim_denied_roots(self, session_dir: Path) -> list[Path]:
-        """The worker-state roots to deny this session, each ready for an ACL."""
+        """The worker-state roots to deny this session, each ready for an ACL.
+
+        A missing root is created, so that one appearing mid-session is covered
+        too.
+        """
         if os.getuid() != 0:
             return []
-        roots: list[Path] = []
-        for root in self._config.session_denied_paths():
-            if blocked := _required_path_under(root):
-                raise ExecutionError(
-                    f"Refusing the SSH session: denying it {root} would also deny it "
-                    f"{blocked}"
-                )
+        roots = denied_roots(self._config)
+        for root in roots:
+            if problem := _root_problem(root):
+                raise ExecutionError(f"Refusing the SSH session: {problem}")
             if session_dir.is_relative_to(root):
                 raise ExecutionError(
                     f"Refusing the SSH session: its directory {session_dir} is inside "
                     f"the worker state {root} it must be denied"
                 )
-            if _claim_root(root, is_dir=root != self._config.hb_file):
-                roots.append(root)
+            if not root.exists():
+                root.parent.mkdir(parents=True, exist_ok=True)
+                try:
+                    os.mkdir(root, 0o700)
+                except FileExistsError:
+                    pass
+                except OSError as exc:
+                    raise ExecutionError(
+                        f"Cannot create worker state {root}: {exc}"
+                    ) from exc
+                if problem := _root_problem(root):
+                    raise ExecutionError(f"Refusing the SSH session: {problem}")
         return roots
 
     def _build_paths(
@@ -483,6 +466,7 @@ def _reset_mount_root(root: Path, create: bool) -> None:
         if not create:
             return
         os.mkdir(root, 0o755)
+    _refuse_nested_mounts(root)
     fd = os.open(root, _DIR_FLAGS)
     try:
         with os.scandir(fd) as scanner:
@@ -494,11 +478,25 @@ def _reset_mount_root(root: Path, create: bool) -> None:
                 os.unlink(entry.name, dir_fd=fd)
         if os.geteuid() == 0:
             os.fchown(fd, 0, 0)
-        os.fchmod(
-            fd, 0o755
-        )  # nosec B103 - a directory the session must traverse; only root writes it
+        os.fchmod(fd, 0o755)  # nosec B103 - the session must traverse it
     finally:
         os.close(fd)
+
+
+def _refuse_nested_mounts(root: Path) -> None:
+    """Refuse to empty ``root`` when a filesystem is mounted anywhere below it.
+
+    Everything under the mount root is the backend's own, so a mount there is
+    an operator's, and emptying the root would delete what it holds.
+    """
+    device = os.lstat(root).st_dev
+    for parent, dirs, _ in os.walk(root, followlinks=False):
+        for name in dirs:
+            path = os.path.join(parent, name)
+            if os.lstat(path).st_dev != device:
+                raise OSError(
+                    errno.EBUSY, "a filesystem is mounted below the mount root", path
+                )
 
 
 def _link_mount_path(root: Path, mount_path: str, target: Path) -> None:
@@ -528,9 +526,7 @@ def _link_mount_path(root: Path, mount_path: str, target: Path) -> None:
                 ) from exc
             os.close(fd)
             fd = child
-            os.fchmod(
-                fd, 0o755
-            )  # nosec B103 - a directory the session must traverse; only root writes it
+            os.fchmod(fd, 0o755)  # nosec B103 - the session must traverse it
         try:
             os.symlink(target, parts[-1], dir_fd=fd)
         except FileExistsError as exc:
@@ -541,54 +537,72 @@ def _link_mount_path(root: Path, mount_path: str, target: Path) -> None:
         os.close(fd)
 
 
-def _claim_root(root: Path, is_dir: bool) -> bool:
-    """Make ``root`` safe to put an ACL on; whether there is anything to deny.
+def denied_roots(config: WorkerConfig) -> list[Path]:
+    """The worker's state roots, as the paths an ACL entry will actually land on.
 
-    ``setfacl`` follows a link, so a root must not be one. A missing directory
-    root is created, so that one appearing mid-session is covered too. Under a
-    world-writable parent anyone could have planted the root, so there it must
-    be a root-owned directory nobody else can write, and is recreated when not.
+    ``setfacl`` follows a link, so links an operator configured are resolved
+    here. Under a world-writable parent only the parent is resolved: a link
+    there is something anyone could have planted, and :func:`_root_problem`
+    refuses it rather than following it.
     """
+    roots: dict[Path, None] = {}
+    for path in config.session_denied_paths():
+        parent = Path(os.path.realpath(path.parent))
+        if _is_shared_dir(parent):
+            roots[parent / path.name] = None
+        else:
+            roots[Path(os.path.realpath(path))] = None
+    return list(roots)
+
+
+def _root_problem(root: Path) -> str | None:
+    """Why ``root`` cannot be denied to a session safely, if it cannot."""
+    if blocked := _required_path_under(root):
+        return f"denying {root} would also deny {blocked}"
     try:
         info = os.lstat(root)
     except FileNotFoundError:
-        if not is_dir:
-            return False
-        root.parent.mkdir(parents=True, exist_ok=True)
-        _mkdir_private(root)
-        return True
+        return None
     except OSError as exc:
-        raise ExecutionError(f"Cannot inspect worker state {root}: {exc}") from exc
-    if _is_shared_parent(root.parent):
-        planted = (
-            not stat.S_ISDIR(info.st_mode)
-            or info.st_uid != 0
-            or info.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
-        )
-        if planted:
-            logger.warning("Recreating %s, which was not the worker's own", root)
-            if stat.S_ISDIR(info.st_mode):
-                shutil.rmtree(root)
-            else:
-                os.unlink(root)
-            _mkdir_private(root)
-        return True
+        return f"cannot inspect worker state {root}: {exc}"
     if stat.S_ISLNK(info.st_mode):
-        raise ExecutionError(
-            f"Refusing the SSH session: worker state {root} is a link, so it cannot "
-            "be denied to the session"
+        return f"worker state {root} is a link"
+    if _is_shared_dir(root.parent) and (
+        info.st_uid != 0 or info.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
+    ):
+        return (
+            f"worker state {root} sits in a shared directory but is not a root-owned "
+            "path only root can write"
         )
+    return None
+
+
+def _acl_ready(config: WorkerConfig) -> bool:
+    if not acl.tools_available():
+        logger.info(
+            "Process SSH backend unavailable: setfacl/getfacl are missing, so a "
+            "session could not be denied this worker's state (install the acl "
+            "package in the worker image)"
+        )
+        return False
+    for root in denied_roots(config):
+        if problem := _root_problem(root):
+            logger.info("Process SSH backend unavailable: %s", problem)
+            return False
+        try:
+            acl.probe(_probe_dir(root))
+        except (OSError, ExecutionError) as exc:
+            logger.info(
+                "Process SSH backend unavailable: cannot deny sessions %s with an "
+                "ACL: %s",
+                root,
+                exc,
+            )
+            return False
     return True
 
 
-def _mkdir_private(path: Path) -> None:
-    try:
-        os.mkdir(path, 0o700)
-    except OSError as exc:
-        raise ExecutionError(f"Cannot create worker state {path}: {exc}") from exc
-
-
-def _is_shared_parent(path: Path) -> bool:
+def _is_shared_dir(path: Path) -> bool:
     try:
         mode = os.stat(path).st_mode
     except OSError:
@@ -607,7 +621,7 @@ def _required_path_under(root: Path) -> Path | None:
 def _probe_dir(root: Path) -> Path:
     """The existing directory whose filesystem will hold ``root``."""
     candidate = root
-    while not candidate.is_dir() or candidate.is_symlink():
+    while not candidate.is_dir():
         if candidate.parent == candidate:
             break
         candidate = candidate.parent

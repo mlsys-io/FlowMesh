@@ -79,13 +79,17 @@ class WorkerConfig:
     session_state_dirs: tuple[Path, ...] = ()
 
     def session_denied_paths(self) -> tuple[Path, ...]:
-        """Worker state a process-mode SSH session account must not reach."""
+        """Worker state directories a process-mode SSH session must not reach."""
         paths: dict[Path, None] = {}
         for field_name in SESSION_DENIED_PATH_FIELDS:
             value = getattr(self, field_name)
             for path in value if isinstance(value, tuple) else (value,):
-                if path is not None:
-                    paths[Path(os.path.abspath(path))] = None
+                if path is None:
+                    continue
+                path = Path(os.path.abspath(path))
+                # The heartbeat file is named after the worker token, so the
+                # directory listing it is what must be denied.
+                paths[path.parent if field_name == "hb_file" else path] = None
         return tuple(paths)
 
     @staticmethod
