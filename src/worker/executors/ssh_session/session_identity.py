@@ -17,6 +17,7 @@ import shutil
 import signal
 import stat
 import subprocess
+import sys
 import tempfile
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Sequence
@@ -41,6 +42,9 @@ _UID_ATTEMPTS = 16
 _KILL_GRACE_SEC = 5.0
 _KILL_ROUNDS = 10
 _KILL_ROUND_SEC = 0.5
+_KILL_ALL_SCRIPT = "import os, signal; os.kill(-1, signal.SIGKILL)"
+_KILL_ALL_TIMEOUT_SEC = 10.0
+_NOGROUP_GID = 65534
 _USERADD_TIMEOUT_SEC = 30.0
 _WORLD_WRITABLE_DIRS = (Path("/", "var", "tmp"), Path("/", "dev", "shm"))
 
@@ -299,9 +303,10 @@ def live_session_accounts() -> list[str]:
 def reap_stale_accounts(keep: str | None = None) -> None:
     """Remove what sessions left behind on an unclean worker exit.
 
-    Deletes their accounts, their files and session directories, and the ACL
-    entries recorded for them. An account that still has processes is left
-    alone, as is every entry recorded for an account that still exists.
+    Kills their processes, then deletes their accounts, their files and session
+    directories, and the ACL entries recorded for them. An account whose
+    processes survive is left for the next sweep, as is every entry recorded
+    for an account that still exists.
     """
     if os.getuid() != 0:
         return
@@ -309,7 +314,12 @@ def reap_stale_accounts(keep: str | None = None) -> None:
         name = entry.pw_name
         if not name.startswith(ACCOUNT_PREFIX) or name == keep:
             continue
-        if any(_owned_by(p, entry.pw_uid) for p in psutil.process_iter(["uids"])):
+        if not _terminate_uid(entry.pw_uid):
+            logger.warning(
+                "Processes of stale SSH session account %s survived SIGKILL; the "
+                "next sweep retries",
+                name,
+            )
             continue
         if not _delete_account(name):
             continue
@@ -430,11 +440,11 @@ def _terminate_uid(uid: int) -> bool:
             continue
     if victims:
         psutil.wait_procs(victims, timeout=_KILL_GRACE_SEC)
-    # One round cannot catch a process forked after its snapshot.
     for _ in range(_KILL_ROUNDS):
         survivors = _processes_of(uid)
         if not survivors:
             return True
+        _kill_all_as(uid)
         for proc in survivors:
             try:
                 proc.send_signal(signal.SIGKILL)
@@ -442,6 +452,33 @@ def _terminate_uid(uid: int) -> bool:
                 continue
         psutil.wait_procs(survivors, timeout=_KILL_ROUND_SEC)
     return not _processes_of(uid)
+
+
+def _kill_all_as(uid: int) -> None:
+    """Have the kernel SIGKILL every process of ``uid`` in a single pass.
+
+    A snapshot of the process table cannot catch a process forked after it was
+    taken, so a fork loop outruns one. ``kill(-1)`` sent as ``uid`` reaches all
+    of that uid's processes at once, and a process that cannot be started as
+    ``uid`` leaves the snapshot rounds to do what they can.
+    """
+    if os.geteuid() != 0 or uid in (0, os.getuid()):
+        return
+    try:
+        subprocess.run(  # nosec B603 - argv list, no shell=True, the worker's own interpreter
+            [sys.executable, "-I", "-S", "-c", _KILL_ALL_SCRIPT],
+            user=uid,
+            group=_NOGROUP_GID,
+            extra_groups=[],
+            env={},
+            cwd="/",
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            timeout=_KILL_ALL_TIMEOUT_SEC,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        logger.debug("Failed to signal every process of uid %d", uid, exc_info=True)
 
 
 def _processes_of(uid: int) -> list[psutil.Process]:

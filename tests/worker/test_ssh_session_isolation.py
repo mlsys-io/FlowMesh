@@ -6,6 +6,7 @@ uid, and ACL and account tooling is stubbed where a real call would need root.
 
 import dataclasses
 import os
+import pwd
 import stat
 import tempfile
 import types
@@ -484,8 +485,92 @@ class TestProcessBackendIsolation:
         )
         backend = ProcessSessionBackend(make_live_worker_config(tmp_path))
         request = types.SimpleNamespace(cfg=_cfg())
-        with pytest.raises(ExecutionError, match="earlier SSH session"):
+        with pytest.raises(ExecutionError, match="earlier SSH session") as excinfo:
             backend.start_session(cast(Any, request))
+        assert excinfo.value.retryable
+
+
+class TestLingeringSessionProcesses:
+    def _stale_account(self, monkeypatch: pytest.MonkeyPatch) -> list[str]:
+        entry = pwd.struct_passwd(
+            ("fmssnold", "x", 61001, 100, "", "/nonexistent/home", "/bin/sh")
+        )
+        deleted: list[str] = []
+
+        def delete_account(name: str) -> bool:
+            deleted.append(name)
+            return True
+
+        monkeypatch.setattr(os, "getuid", lambda: 0)
+        monkeypatch.setattr(identity_module.pwd, "getpwall", lambda: [entry])
+        monkeypatch.setattr(identity_module, "_delete_account", delete_account)
+        monkeypatch.setattr(identity_module, "purge_uid_files", lambda uid: None)
+        monkeypatch.setattr(identity_module, "_revoke_orphaned_denies", lambda: None)
+        return deleted
+
+    def test_the_sweep_kills_a_stale_account_before_deleting_it(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        deleted = self._stale_account(monkeypatch)
+        terminated: list[int] = []
+
+        def terminate(uid: int) -> bool:
+            terminated.append(uid)
+            return True
+
+        monkeypatch.setattr(identity_module, "_terminate_uid", terminate)
+        identity_module.reap_stale_accounts()
+        assert terminated == [61001]
+        assert deleted == ["fmssnold"]
+
+    def test_the_sweep_keeps_an_account_whose_processes_survive(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        deleted = self._stale_account(monkeypatch)
+        monkeypatch.setattr(identity_module, "_terminate_uid", lambda uid: False)
+        identity_module.reap_stale_accounts()
+        assert deleted == []
+
+    def test_every_process_of_the_uid_is_signalled_as_that_uid(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls: list[tuple[list[str], dict[str, Any]]] = []
+        monkeypatch.setattr(os, "geteuid", lambda: 0)
+        monkeypatch.setattr(os, "getuid", lambda: 0)
+        monkeypatch.setattr(
+            identity_module.subprocess,
+            "run",
+            lambda argv, **kwargs: calls.append((argv, kwargs)),
+        )
+        identity_module._kill_all_as(61001)
+        [(argv, kwargs)] = calls
+        assert "os.kill(-1, signal.SIGKILL)" in argv[-1]
+        assert kwargs["user"] == 61001
+        assert kwargs["extra_groups"] == []
+
+    @pytest.mark.parametrize("euid,uid,target", [(0, 0, 0), (0, 61001, 61001)])
+    def test_the_worker_never_signals_as_itself(
+        self, monkeypatch: pytest.MonkeyPatch, euid: int, uid: int, target: int
+    ) -> None:
+        calls: list[Any] = []
+        monkeypatch.setattr(os, "geteuid", lambda: euid)
+        monkeypatch.setattr(os, "getuid", lambda: uid)
+        monkeypatch.setattr(
+            identity_module.subprocess, "run", lambda *a, **k: calls.append(a)
+        )
+        identity_module._kill_all_as(target)
+        assert calls == []
+
+    def test_a_non_root_worker_signals_nothing_at_once(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls: list[Any] = []
+        monkeypatch.setattr(os, "geteuid", lambda: 1000)
+        monkeypatch.setattr(
+            identity_module.subprocess, "run", lambda *a, **k: calls.append(a)
+        )
+        identity_module._kill_all_as(61001)
+        assert calls == []
 
 
 class TestOutputCollection:

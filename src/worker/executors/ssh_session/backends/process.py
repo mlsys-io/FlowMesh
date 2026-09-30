@@ -224,7 +224,8 @@ class ProcessSessionBackend(SSHSessionBackend):
                 )
                 raise ExecutionError(
                     "This worker still has processes of an earlier SSH session "
-                    "running; refusing a new session until they are gone."
+                    "running; refusing a new session until they are gone.",
+                    retryable=True,
                 )
             session = self._create_session(request)
             self._active = session
@@ -348,11 +349,14 @@ class ProcessSessionBackend(SSHSessionBackend):
         roots = denied_roots(self._config)
         for root in roots:
             if problem := _root_problem(root):
-                raise ExecutionError(f"Refusing the SSH session: {problem}")
+                raise ExecutionError(
+                    f"Refusing the SSH session: {problem}", retryable=True
+                )
             if session_dir.is_relative_to(root):
                 raise ExecutionError(
                     f"Refusing the SSH session: its directory {session_dir} is inside "
-                    f"the worker state {root} it must be denied"
+                    f"the worker state {root} it must be denied",
+                    retryable=True,
                 )
             if not root.exists():
                 root.parent.mkdir(parents=True, exist_ok=True)
@@ -362,10 +366,12 @@ class ProcessSessionBackend(SSHSessionBackend):
                     pass
                 except OSError as exc:
                     raise ExecutionError(
-                        f"Cannot create worker state {root}: {exc}"
+                        f"Cannot create worker state {root}: {exc}", retryable=True
                     ) from exc
                 if problem := _root_problem(root):
-                    raise ExecutionError(f"Refusing the SSH session: {problem}")
+                    raise ExecutionError(
+                        f"Refusing the SSH session: {problem}", retryable=True
+                    )
         return roots
 
     def _build_paths(
@@ -416,7 +422,8 @@ class ProcessSessionBackend(SSHSessionBackend):
                 raise ExecutionError(
                     f"Cannot prepare {mount_root.as_posix()} on this worker: {exc}. "
                     "Process-mode SSH sessions have no mount namespace, so the "
-                    "mount root has to be writable by the worker itself."
+                    "mount root has to be writable by the worker itself.",
+                    retryable=True,
                 ) from exc
             for mount_path, target in links:
                 _link_mount_path(mount_root, mount_path, target)
