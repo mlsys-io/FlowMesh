@@ -85,7 +85,6 @@ _WORLD_WRITABLE_DIRS = (
     Path("/", "dev", "mqueue"),
 )
 _SYSV_IPC_DIR = Path("/", "proc", "sysvipc")
-# Each /proc/sysvipc table and the column holding its object ids.
 _SYSV_IPC_ID_COLUMNS = {"shm": "shmid", "msg": "msqid", "sem": "semid"}
 
 
@@ -297,8 +296,8 @@ def resolve_identity(
     """Pick the strongest identity this worker can give a session.
 
     A dedicated account is denied ``denied_roots`` before it is returned, and
-    gets a uid no entry on those roots names, so lifting its entries later can
-    never lift another worker's.
+    gets a uid no entry on those roots names, so its deny and revoke never
+    replace or remove an entry someone else set.
     """
     if os.getuid() != 0:
         logger.warning(
@@ -341,12 +340,11 @@ def live_session_accounts() -> list[str]:
 
 
 def reap_stale_accounts(keep: str | None = None) -> None:
-    """Remove what sessions left behind on an unclean worker exit.
+    """Delete every session account except ``keep``, with its processes,
+    leftover files and IPC objects, and session directory, then revoke recorded
+    ACL entries whose uid no longer exists.
 
-    Kills their processes, then deletes their accounts, their files and session
-    directories, and the ACL entries recorded for them. An account whose
-    processes survive is left for the next sweep, as is every entry recorded
-    for an account that still exists.
+    An account whose processes survive SIGKILL is kept for the next sweep.
     """
     if os.getuid() != 0:
         return
@@ -370,17 +368,21 @@ def reap_stale_accounts(keep: str | None = None) -> None:
 
 
 def purge_uid(uid: int) -> None:
-    """Delete what ``uid`` left behind that outlives its processes.
+    """Delete the files and System V IPC objects ``uid`` left where every
+    session can reach them.
 
-    Session uids are drawn at random and may come round again, so a later
-    session must not inherit what an earlier one owned.
+    Session uids are reused, so a later session with the same uid must not find
+    them.
     """
     purge_uid_files(uid)
     purge_uid_ipc(uid)
 
 
 def purge_uid_files(uid: int) -> None:
-    """Delete what ``uid`` left in the shared scratch directories."""
+    """Delete everything ``uid`` owns in the shared scratch directories.
+
+    Links are removed, never followed.
+    """
     for base in (Path(tempfile.gettempdir()), *_WORLD_WRITABLE_DIRS):
         for parent, dirs, files in os.walk(base, followlinks=False):
             for name in (*dirs, *files):
@@ -401,12 +403,11 @@ def purge_uid_files(uid: int) -> None:
 
 
 def purge_uid_ipc(uid: int) -> None:
-    """Remove the System V IPC objects ``uid`` owns or created.
+    """Remove the System V IPC objects that ``uid`` owns or created.
 
-    Sessions share the worker's IPC namespace, and these objects persist after
-    their creator exits. Only an owner, a creator or a holder of
-    ``CAP_SYS_ADMIN`` may remove one, and a container's root lacks that
-    capability, so the removal runs as ``uid``.
+    Removal runs as ``uid``, since removing another user's object needs
+    ``CAP_SYS_ADMIN``, which a container's root lacks. Failures are logged, not
+    raised.
     """
     if uid == 0:
         return
@@ -426,9 +427,9 @@ def purge_uid_ipc(uid: int) -> None:
 
 
 def owned_ipc_ids(table: str, id_column: str, uid: int) -> list[int]:
-    """Ids in a ``/proc/sysvipc`` table whose owner or creator is ``uid``.
+    """Return the ids in a ``/proc/sysvipc`` table owned or created by ``uid``.
 
-    The creator is matched too because the owner can hand an object to any uid.
+    The creator is matched because an owner can give an object to another uid.
     """
     lines = table.splitlines()
     if not lines:
@@ -544,8 +545,8 @@ def _terminate_uid(uid: int) -> bool:
             continue
     if victims:
         psutil.wait_procs(victims, timeout=_KILL_GRACE_SEC)
-    # A snapshot can miss a process that forks and exits in a loop, so it is
-    # only trusted once kill(-1) has left the uid unable to start another.
+    # A snapshot can miss a fork loop's children; kill(-1) as the uid reaches
+    # all of them in one pass, so only a snapshot taken after it is trusted.
     for _ in range(_KILL_ROUNDS):
         _kill_all_as(uid)
         survivors = _processes_of(uid)
@@ -561,12 +562,9 @@ def _terminate_uid(uid: int) -> bool:
 
 
 def _kill_all_as(uid: int) -> None:
-    """Have the kernel SIGKILL every process of ``uid`` in a single pass.
+    """SIGKILL every process of ``uid`` with one ``kill(-1)`` sent as ``uid``.
 
-    A snapshot of the process table cannot catch a process forked after it was
-    taken, so a fork loop outruns one. ``kill(-1)`` sent as ``uid`` reaches all
-    of that uid's processes at once, and a process that cannot be started as
-    ``uid`` leaves the snapshot rounds to do what they can.
+    Does nothing unless the worker is root and ``uid`` is another user.
     """
     if os.geteuid() != 0 or uid in (0, os.getuid()):
         return
@@ -650,11 +648,11 @@ def _owned_by(proc: psutil.Process, uid: int) -> bool:
 
 
 def _live_uid(proc: psutil.Process) -> int | None:
-    """The real uid of ``proc``, or ``None`` once it has exited.
+    """Return the real uid of ``proc``, or ``None`` if it has exited or cannot be
+    read.
 
-    A zombie is only an exit status waiting for its parent to reap it, and a
-    PID 1 that never reaps would otherwise keep a session account alive
-    forever.
+    A zombie counts as exited, so an init that never reaps cannot keep a
+    session account alive.
     """
     try:
         if proc.status() == psutil.STATUS_ZOMBIE:

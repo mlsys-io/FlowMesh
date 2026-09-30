@@ -753,6 +753,7 @@ class ProcessSession(SSHSession):
         return self._process.poll()
 
     def finish_requested(self) -> bool:
+        # Root must not follow a link the session placed here.
         return os.path.lexists(self._plan.finish_sentinel)
 
     def established_connections(self) -> int | None:

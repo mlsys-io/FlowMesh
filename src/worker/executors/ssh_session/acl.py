@@ -67,12 +67,12 @@ def revoke(uid: int, path: Path) -> None:
 
 
 def denied_uids(path: Path) -> set[int]:
-    """Uids that ``path``'s access ACL denies everything."""
+    """Return the uids that ``path``'s access ACL denies all permissions."""
     return parse_denied_uids(_read_acl(path))
 
 
 def named_uids(path: Path) -> set[int]:
-    """Uids that an access or default entry of ``path``'s ACL names."""
+    """Return the uids named by a user entry in ``path``'s access or default ACL."""
     return parse_named_uids(_read_acl(path))
 
 

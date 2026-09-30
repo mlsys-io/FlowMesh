@@ -17,11 +17,9 @@ from shared.utils.time import now_iso
 
 
 class PrivateRotatingFileHandler(RotatingFileHandler):
-    """A rotating log file, and its backups, only the owner can read.
-
-    The worker log records every task's details, and a process-mode SSH
-    session runs beside the worker under another account.
-    """
+    """A ``RotatingFileHandler`` that keeps its file and backups at mode 0600,
+    including ones left by an earlier run, since the worker log records every
+    task's details."""
 
     def __init__(self, filename: str, *args: Any, **kwargs: Any) -> None:
         super().__init__(filename, *args, **kwargs)

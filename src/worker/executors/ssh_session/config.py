@@ -49,8 +49,8 @@ DEFAULT_INPUTS_ROOT = "/mnt/flowmesh/inputs"
 DEFAULT_OUTPUT_PATH = "/mnt/flowmesh/output"
 SAFE_MOUNT_ROOT = PurePosixPath("/mnt/flowmesh")
 FINISH_SENTINEL_PATH = PurePosixPath("/", "tmp", ".flowmesh_finish").as_posix()
-# Far below PATH_MAX: the mount root is walked and emptied by path, so a deeper
-# mount path would leave it impossible to clear.
+# The mount root is walked and emptied by path, so every path under it must
+# stay well within PATH_MAX.
 MAX_MOUNT_PATH_CHARS = 1024
 MAX_MOUNT_PATH_COMPONENTS = 32
 
