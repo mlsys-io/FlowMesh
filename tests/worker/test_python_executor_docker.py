@@ -189,3 +189,16 @@ def test_planted_symlinks_never_reach_the_worker(tmp_path: Path) -> None:
     artifacts = tmp_path / "out" / "artifacts"
     assert (artifacts / "kept.txt").read_text() == "ok"
     assert not os.path.lexists(artifacts / "leak")
+
+
+def test_output_past_max_bytes_is_refused_at_collection(tmp_path: Path) -> None:
+    code = (
+        "import os\n"
+        "def main():\n"
+        "    path = os.path.join(os.environ['FLOWMESH_OUTPUT'], 'big.bin')\n"
+        "    open(path, 'wb').write(b'x' * 2_000_000)\n"
+        "    return 1\n"
+    )
+    with pytest.raises(ExecutionError, match="exceeded maxBytes"):
+        _run(tmp_path, code, pythonOutput={"maxBytes": 1_000_000})
+    assert not (tmp_path / "out" / "artifacts" / "big.bin").exists()

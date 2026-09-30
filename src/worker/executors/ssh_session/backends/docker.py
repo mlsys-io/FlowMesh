@@ -11,9 +11,8 @@ import logging
 import shlex
 import shutil
 import tarfile
-import tempfile
 import time
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any, cast
@@ -725,32 +724,34 @@ class DockerSession(SSHSession):
                 f"Failed to collect SSH output from {source_path}: {exc}"
             ) from exc
 
-        with tempfile.NamedTemporaryFile(suffix=".tar", delete=False) as tmp:
-            tmp_path = Path(tmp.name)
-            for chunk in stream:
-                tmp.write(chunk)
-
+        output_cfg = self._cfg.output
+        max_bytes = output_cfg.max_bytes if output_cfg is not None else None
         source_name = PurePosixPath(source_path).name
-        try:
-            with tarfile.open(tmp_path) as archive:
-                for member in archive.getmembers():
-                    relative = _relative_archive_path(member.name, source_name)
-                    if relative is None:
-                        continue
-                    target = destination / relative
-                    if member.isdir():
-                        target.mkdir(parents=True, exist_ok=True)
-                        continue
-                    if not member.isfile():
-                        continue
-                    target.parent.mkdir(parents=True, exist_ok=True)
-                    extracted = archive.extractfile(member)
-                    if extracted is None:
-                        continue
-                    with target.open("wb") as fh:
-                        shutil.copyfileobj(extracted, fh)
-        finally:
-            tmp_path.unlink(missing_ok=True)
+        collected = 0
+        # Streamed rather than spooled to disk, so output past maxBytes -- which
+        # the polling check can miss -- is refused before it is written.
+        with tarfile.open(fileobj=_ChunkReader(stream), mode="r|") as archive:
+            for member in archive:
+                relative = _relative_archive_path(member.name, source_name)
+                if relative is None:
+                    continue
+                target = destination / relative
+                if member.isdir():
+                    target.mkdir(parents=True, exist_ok=True)
+                    continue
+                if not member.isfile():
+                    continue
+                collected += member.size
+                if max_bytes is not None and 0 <= max_bytes < collected:
+                    raise ExecutionError(
+                        f"Session output exceeded maxBytes ({collected} > {max_bytes})"
+                    )
+                target.parent.mkdir(parents=True, exist_ok=True)
+                extracted = archive.extractfile(member)
+                if extracted is None:
+                    continue
+                with target.open("wb") as fh:
+                    shutil.copyfileobj(extracted, fh)
 
     def stop(self, timeout_sec: float) -> None:
         try:
@@ -842,6 +843,28 @@ class DockerSession(SSHSession):
         for stream_name, leftover in buffers.items():
             if leftover:
                 _emit(leftover, stream_name)
+
+
+class _ChunkReader(io.RawIOBase):
+    """A readable stream over an iterator of byte chunks."""
+
+    def __init__(self, chunks: Iterable[bytes]) -> None:
+        self._chunks = iter(chunks)
+        self._pending = b""
+
+    def readable(self) -> bool:
+        return True
+
+    def readinto(self, buffer: Any) -> int:
+        while not self._pending:
+            chunk = next(self._chunks, None)
+            if chunk is None:
+                return 0
+            self._pending = chunk
+        size = min(len(buffer), len(self._pending))
+        buffer[:size] = self._pending[:size]
+        self._pending = self._pending[size:]
+        return size
 
 
 def _decode_exec_output(raw: Any) -> str:
