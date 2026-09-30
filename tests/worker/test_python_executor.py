@@ -21,6 +21,7 @@ import pytest
 from shared.schemas.result import SSHResult
 from shared.tasks.specs import PythonSpecStrict, SSHSpecStrict
 from tests.worker.factories import DEFAULT_WORKER_CONFIG, make_live_worker_config
+from worker.executors import python_executor as python_executor_module
 from worker.executors.base_executor import ExecutionError
 from worker.executors.python_executor import (
     BOOTSTRAP_PATH,
@@ -34,7 +35,11 @@ from worker.executors.session_executor import (
     SessionOutcome,
 )
 from worker.executors.ssh_executor import SSHExecutor
-from worker.executors.ssh_session import SSHConfig, SSHSession
+from worker.executors.ssh_session import (
+    ProcessSessionBackend,
+    SSHConfig,
+    SSHSession,
+)
 from worker.executors.ssh_session.backends import docker as docker_backend_module
 from worker.executors.ssh_session.backends.docker import DockerSessionBackend
 
@@ -152,20 +157,19 @@ class TestAvailability:
     def test_never_falls_back_to_the_process_backend(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        import worker.executors.python_executor as mod
-        from worker.executors.ssh_session import ProcessSessionBackend
-
         monkeypatch.setattr(
-            mod, "select_backend_cls", lambda cfg: ProcessSessionBackend
+            python_executor_module,
+            "select_backend_cls",
+            lambda cfg: ProcessSessionBackend,
         )
         assert not PythonExecutor.is_available(DEFAULT_WORKER_CONFIG)
 
     def test_unavailable_without_any_backend(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        import worker.executors.python_executor as mod
-
-        monkeypatch.setattr(mod, "select_backend_cls", lambda cfg: None)
+        monkeypatch.setattr(
+            python_executor_module, "select_backend_cls", lambda cfg: None
+        )
         assert not PythonExecutor.is_available(DEFAULT_WORKER_CONFIG)
 
 
