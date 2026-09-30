@@ -80,6 +80,11 @@ except Exception:
 logger = logging.getLogger(__name__)
 
 _SESSION_SSH_PORT = 22
+_EXEC_ENVIRONMENT = {
+    "PATH": "/usr/sbin:/usr/bin:/sbin:/bin",
+    "LD_PRELOAD": "",
+    "LD_LIBRARY_PATH": "",
+}
 _CONTAINER_RESULTS_SOURCE_ROOT = "/root/.flowmesh/results-source"
 _SSH_RUN_ENTRYPOINT_PATH = "/flowmesh-ssh-run.sh"
 _SSH_RUN_SCRIPT_SOURCE = (
@@ -683,18 +688,14 @@ class DockerSession(SSHSession):
 
     def finish_requested(self) -> bool:
         try:
-            result = self._container.exec_run(
-                ["sh", "-lc", f"test -f {shlex.quote(FINISH_SENTINEL_PATH)}"]
-            )
+            result = self._exec(["test", "-f", FINISH_SENTINEL_PATH])
         except Exception:
             return False
         return result.exit_code == 0
 
     def established_connections(self) -> int | None:
         try:
-            result = self._container.exec_run(
-                ["sh", "-lc", "cat /proc/net/tcp /proc/net/tcp6 2>/dev/null"]
-            )
+            result = self._exec(["cat", "/proc/net/tcp", "/proc/net/tcp6"])
         except Exception:
             return None
         if result.exit_code != 0:
@@ -781,18 +782,25 @@ class DockerSession(SSHSession):
         except Exception as exc:
             logger.debug("Failed to capture container logs: %s", exc)
 
+    def _exec(self, argv: list[str]) -> Any:
+        """Run ``argv`` in the container as root, without a shell.
+
+        The session's own environment could otherwise pick what runs: its
+        ``PATH`` or ``LD_PRELOAD``, or a login shell's profile under ``HOME``.
+        """
+        return self._container.exec_run(argv, environment=_EXEC_ENVIRONMENT)
+
     def _container_path_size(self, path: str) -> int | None:
-        quoted = shlex.quote(path)
         try:
-            result = self._container.exec_run(
-                ["sh", "-lc", f"du -sb {quoted} 2>/dev/null | cut -f1 || echo 0"]
-            )
+            result = self._exec(["du", "-sb", "--", path])
         except Exception:
             return None
-        try:
-            return int(_decode_exec_output(result.output) or "0")
-        except ValueError:
-            return 0
+        # stderr is interleaved; du still reports a total when it warns.
+        for line in _decode_exec_output(result.output).splitlines():
+            size, _, _ = line.partition("\t")
+            if size.isdigit():
+                return int(size)
+        return 0
 
     @staticmethod
     def _stream_container_logs(log_stream: DemuxLogStream) -> None:
