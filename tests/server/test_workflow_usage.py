@@ -31,6 +31,7 @@ from shared.schemas.result import (
     EchoResult,
     GenerationUsage,
     InferenceResult,
+    PythonResult,
     ResultEnvelope,
 )
 
@@ -239,6 +240,30 @@ async def test_workflow_usage_echo_task_contributes_nothing() -> None:
     assert usage is not None
     assert usage.prompt_tokens == 5
     assert usage.calls == 1
+
+
+@pytest.mark.anyio
+async def test_workflow_usage_python_task_contributes_nothing() -> None:
+    """A python task (no model calls) contributes nothing and is not a failure."""
+    registry = _registry()
+    await registry.save_task_usage_async(
+        "tsk-api", _api_usage(prompt_tokens=5, calls=1)
+    )
+    await registry.save_task_usage_async("tsk-python", None)
+
+    usage = await _sum(registry, ["tsk-api", "tsk-python"])
+    assert usage is not None
+    assert usage.prompt_tokens == 5
+    assert usage.calls == 1
+
+
+def test_task_usage_from_envelope_none_for_python_result() -> None:
+    """A python result maps to None (no usage), not UNKNOWN_USAGE."""
+    envelope = ResultEnvelope(
+        task_id="tsk-python",
+        result=PythonResult(ok=True, exit_code=0, value={"items": []}),
+    )
+    assert results_router._task_usage_from_envelope(envelope) is None
 
 
 @pytest.mark.anyio
