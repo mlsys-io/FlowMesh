@@ -226,6 +226,17 @@ class TestDockerHardening:
         assert plan.copy_output_path == OUTPUT_MOUNT_PATH
         assert not any(v.endswith(":rw") for v in plan.volumes)
 
+    def test_network_access_needs_the_isolated_network(self, tmp_path: Path) -> None:
+        cfg = _executor(tmp_path)._python_config(_spec(network="bridge"))
+        backend = DockerSessionBackend(make_live_worker_config(tmp_path))
+        backend._docker = MagicMock()
+        backend._ssh_network = None
+        backend._build_mount_plan = MagicMock()  # type: ignore[method-assign]
+        with pytest.raises(ExecutionError, match="isolated session network") as exc:
+            backend.start_session(MagicMock(cfg=cfg))
+        assert exc.value.retryable
+        backend._build_mount_plan.assert_not_called()
+
     def test_archive_carries_extra_files(self) -> None:
         archive = DockerSessionBackend._build_ssh_run_archive(
             {CODE_PATH: b"print(1)\n"}

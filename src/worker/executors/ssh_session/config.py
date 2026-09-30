@@ -94,7 +94,9 @@ class SSHConfig:
     gpu_device_ids: list[str]
     # No network at all, not even the isolated SSH bridge.
     network_disabled: bool = False
-    # A minimal capability set, with a private tmpfs /tmp as the writable scratch.
+    # A minimal capability set with a private tmpfs /tmp as the writable scratch,
+    # output copied out of the container, and network access only through the
+    # isolated session network.
     hardened: bool = False
     # Files written into the container before it starts, keyed by absolute path.
     extra_files: dict[str, bytes] = field(default_factory=dict)

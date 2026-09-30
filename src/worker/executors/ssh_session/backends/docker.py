@@ -150,6 +150,12 @@ class DockerSessionBackend(SSHSessionBackend):
         cfg = request.cfg
         client = self._get_docker_client()
         interactive = cfg.interactive
+        if cfg.hardened and not cfg.network_disabled and not self._ssh_network:
+            raise ExecutionError(
+                "This worker has no isolated session network (SSH_NETWORK_NAME), "
+                "which a hardened session needs for network access",
+                retryable=True,
+            )
 
         if interactive:
             ports: dict[str, Any] = {f"{_SESSION_SSH_PORT}/tcp": None}
