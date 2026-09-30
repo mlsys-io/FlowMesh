@@ -172,7 +172,7 @@ def _finite_float(text: str) -> float:
     return value
 
 
-def _load_json(path: Path, finite: bool = False) -> Any:
+def _load_task_json(path: Path, finite: bool = False) -> Any:
     """Parse a regular file the task wrote; ``finite`` rejects NaN and infinities."""
     strict: dict[str, Any] = (
         {"parse_constant": _reject_constant, "parse_float": _finite_float}
@@ -187,16 +187,6 @@ def _load_json(path: Path, finite: bool = False) -> Any:
         ) from exc
 
 
-def _read_json(path: Path) -> Any:
-    try:
-        return json.loads(_read_task_file(path))
-    except FileNotFoundError:
-        return None
-    except (OSError, ValueError) as exc:
-        logger.warning("Unreadable %s from python task: %s", path.name, exc)
-        return None
-
-
 def _read_result(artifacts: Path, emits: list[str]) -> PythonResult:
     """The result of a clean exit, held to the same contract the bootstrap checks.
 
@@ -206,10 +196,12 @@ def _read_result(artifacts: Path, emits: list[str]) -> PythonResult:
     result_file = artifacts / "result.json"
     if not os.path.lexists(result_file):
         raise ExecutionError("python task exited without writing a result")
-    value = _load_json(result_file)
+    value = _load_task_json(result_file)
     metrics_file = artifacts / "metrics.json"
     metrics = (
-        _load_json(metrics_file, finite=True) if os.path.lexists(metrics_file) else {}
+        _load_task_json(metrics_file, finite=True)
+        if os.path.lexists(metrics_file)
+        else {}
     )
     if not isinstance(metrics, dict) or not all(
         _is_finite_number(v) for v in metrics.values()
@@ -253,7 +245,13 @@ def _raise_unless_succeeded(
 
 def _failure_message(artifacts: Path, exit_code: int) -> str:
     """The caller's own error (from error.json) beats the bare exit code."""
-    error = _read_json(artifacts / "error.json")
+    error_file = artifacts / "error.json"
+    error = None
+    if os.path.lexists(error_file):
+        try:
+            error = _load_task_json(error_file)
+        except ExecutionError as exc:
+            logger.warning("%s", exc)
     if isinstance(error, dict) and error.get("message") is not None:
         return f"python task failed: {error.get('type')}: {error['message']}"
     return f"python task exited with code {exit_code}"
