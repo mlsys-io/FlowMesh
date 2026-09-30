@@ -362,8 +362,7 @@ class TestEnding:
                 {"result.json": "1", "metrics.json": '{"score": "high"}'},
                 "not finite numbers",
             ),
-            ({"result.json": '{"x": NaN}'}, "unreadable result.json"),
-            ({"result.json": '{"x": 1e999}'}, "unreadable result.json"),
+            ({"result.json": "1", "metrics.json": '{"s": 1e999}'}, "unreadable"),
             ({"result.json": "{bad"}, "unreadable result.json"),
             (
                 {"result.json": "1", "metrics.json": "{bad"},
@@ -429,6 +428,15 @@ class TestEnding:
         executor.require_spec = MagicMock(return_value=_spec())  # type: ignore[method-assign]
         with pytest.raises(ExecutionError, match="^python task exited with code 1$"):
             executor.run(MagicMock(upstream_task_ids=None), out)
+
+    def test_non_finite_result_values_are_recorded_as_null(
+        self, tmp_path: Path
+    ) -> None:
+        out = tmp_path / "out"
+        (out / "artifacts").mkdir(parents=True)
+        (out / "artifacts/result.json").write_text('{"x": NaN, "y": [Infinity, 1e999]}')
+        result = self._run_clean_exit(tmp_path, out)
+        assert result.model_dump(mode="json")["value"] == {"x": None, "y": [None, None]}
 
     def test_success_reads_result_and_metrics(self, tmp_path: Path) -> None:
         executor = _executor(tmp_path)

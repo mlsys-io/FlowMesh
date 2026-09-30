@@ -172,14 +172,15 @@ def _finite_float(text: str) -> float:
     return value
 
 
-def _load_json(path: Path) -> Any:
-    """Parse a file the task wrote: a regular file holding strict, finite JSON."""
+def _load_json(path: Path, finite: bool = False) -> Any:
+    """Parse a regular file the task wrote; ``finite`` rejects NaN and infinities."""
+    strict: dict[str, Any] = (
+        {"parse_constant": _reject_constant, "parse_float": _finite_float}
+        if finite
+        else {}
+    )
     try:
-        return json.loads(
-            _read_task_file(path),
-            parse_constant=_reject_constant,
-            parse_float=_finite_float,
-        )
+        return json.loads(_read_task_file(path), **strict)
     except (OSError, ValueError) as exc:
         raise ExecutionError(
             f"python task wrote an unreadable {path.name}: {exc}"
@@ -207,7 +208,9 @@ def _read_result(artifacts: Path, emits: list[str]) -> PythonResult:
         raise ExecutionError("python task exited without writing a result")
     value = _load_json(result_file)
     metrics_file = artifacts / "metrics.json"
-    metrics = _load_json(metrics_file) if os.path.lexists(metrics_file) else {}
+    metrics = (
+        _load_json(metrics_file, finite=True) if os.path.lexists(metrics_file) else {}
+    )
     if not isinstance(metrics, dict) or not all(
         _is_finite_number(v) for v in metrics.values()
     ):
