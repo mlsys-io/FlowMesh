@@ -24,7 +24,7 @@ OUTPUT_MOUNT_PATH = "/mnt/flowmesh/output"
 
 class PythonOutputSpec(StrictBaseModel):
     maxBytes: int | None = Field(
-        default=None, description="Cap on the collected output directory size."
+        default=None, ge=0, description="Cap on the collected output directory size."
     )
 
 

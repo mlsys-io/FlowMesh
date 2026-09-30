@@ -46,6 +46,7 @@ def test_envelope_discriminates_python() -> None:
         ({"requirements": ["numpy"]}, "network: bridge"),
         ({"emits": [" "]}, "emits"),
         ({"network": "host"}, "network"),
+        ({"pythonOutput": {"maxBytes": -1}}, "maxBytes"),
         ({"inputs": [{"stage": "a"}, {"stage": "a"}]}, "unique"),
         ({"inputs": [{"stage": "a"}], "dependsOn": ["b"]}, "dependsOn"),
         (
