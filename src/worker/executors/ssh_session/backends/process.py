@@ -72,6 +72,7 @@ from ..session_identity import (
     SessionIdentity,
     live_session_accounts,
     reap_stale_accounts,
+    remove_tree,
     resolve_identity,
 )
 
@@ -330,7 +331,7 @@ class ProcessSessionBackend(SSHSessionBackend):
                 _discard_paths(plan)
             if identity is not None:
                 identity.release()
-            shutil.rmtree(session_dir, ignore_errors=True)
+            remove_tree(session_dir)
             raise
         return ProcessSession(
             backend=self,
@@ -867,7 +868,7 @@ class ProcessSession(SSHSession):
             self.stop(_TERMINATE_GRACE_SEC)
             _discard_paths(self._plan)
             self.identity.release()
-            shutil.rmtree(self._session_dir, ignore_errors=True)
+            remove_tree(self._session_dir)
         finally:
             # A failure above must not strand the worker refusing every later
             # session; the stale-account sweep in prepare() is the backstop.

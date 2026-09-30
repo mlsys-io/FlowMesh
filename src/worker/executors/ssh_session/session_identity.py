@@ -79,6 +79,7 @@ _REMOVE_IPC_SCRIPT = (
 )
 _AS_UID_TIMEOUT_SEC = 10.0
 _NOGROUP_GID = 65534
+_REMOVE_TREE_TIMEOUT_SEC = 300.0
 _USERADD_TIMEOUT_SEC = 30.0
 _WORLD_WRITABLE_DIRS = (
     Path("/", "var", "tmp"),
@@ -401,7 +402,7 @@ def purge_uid_files(uid: int) -> None:
                 if info.st_uid != uid:
                     continue
                 if stat.S_ISDIR(info.st_mode):
-                    shutil.rmtree(target, ignore_errors=True)
+                    remove_tree(Path(target))
                 else:
                     _unlink_quietly(target)
             dirs[:] = [
@@ -431,6 +432,32 @@ def purge_uid_ipc(uid: int) -> None:
         logger.warning(
             "Failed to remove System V IPC objects of uid %d: %s", uid, detail
         )
+
+
+def remove_tree(path: Path) -> None:
+    """Delete the tree at ``path`` without following links or leaving its
+    filesystem, logging a failure.
+
+    ``rm`` removes a tree of any depth, where ``shutil.rmtree`` holds a
+    descriptor per level and gives up on a deep one.
+    """
+    detail = ""
+    rm = shutil.which("rm")
+    if rm is None:
+        shutil.rmtree(path, ignore_errors=True)
+    else:
+        try:
+            result = subprocess.run(  # nosec B603 - argv list, no shell=True, absolute path via shutil.which()
+                [rm, "-rf", "--one-file-system", "--", path.as_posix()],
+                capture_output=True,
+                timeout=_REMOVE_TREE_TIMEOUT_SEC,
+                check=False,
+            )
+            detail = _stderr_of(result)
+        except (OSError, subprocess.SubprocessError) as exc:
+            detail = str(exc)
+    if os.path.lexists(path):
+        logger.warning("Failed to remove %s: %s", path, detail or "unknown error")
 
 
 def owned_ipc_ids(table: str, id_column: str, uid: int) -> list[int]:
@@ -492,7 +519,7 @@ def _remove_session_dir(home: Path) -> None:
         and not session_dir.is_symlink()
         and session_dir.is_dir()
     ):
-        shutil.rmtree(session_dir, ignore_errors=True)
+        remove_tree(session_dir)
 
 
 def _add_account(name: str, home: Path, avoid_uids: frozenset[int]) -> None:

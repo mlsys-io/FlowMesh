@@ -47,6 +47,7 @@ from worker.executors.ssh_session.session_identity import (
     CurrentUser,
     DedicatedAccount,
     purge_uid_files,
+    remove_tree,
 )
 
 
@@ -585,6 +586,34 @@ class TestUidFilePurge:
         purge_uid_files(os.getuid())
         assert list(scratch.iterdir()) == []
         assert (keep / "file").read_text() == "not in scratch"
+
+
+class TestRemoveTree:
+    def test_a_tree_deeper_than_rmtree_can_walk_is_removed(
+        self, tmp_path: Path
+    ) -> None:
+        top = tmp_path / "deep"
+        top.mkdir()
+        fd = os.open(top, os.O_RDONLY | os.O_DIRECTORY)
+        for _ in range(3000):
+            os.mkdir("d", dir_fd=fd)
+            child = os.open("d", os.O_RDONLY | os.O_DIRECTORY, dir_fd=fd)
+            os.close(fd)
+            fd = child
+        os.close(fd)
+        remove_tree(top)
+        assert not os.path.lexists(top)
+
+    def test_links_in_the_tree_are_not_followed(self, tmp_path: Path) -> None:
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (outside / "kept").write_text("keep")
+        tree = tmp_path / "tree"
+        tree.mkdir()
+        (tree / "link").symlink_to(outside)
+        remove_tree(tree)
+        assert not tree.exists()
+        assert (outside / "kept").read_text() == "keep"
 
 
 class TestMountRoot:
