@@ -311,17 +311,20 @@ def resolve_identity(
         )
         return CurrentUser()
     _ensure_privsep_dir()
-    taken: set[int] = set()
-    for root in denied_roots:
-        taken |= acl.named_uids(root)
-    account = DedicatedAccount.create(
-        account_name_for(session_id), session_dir / "home", avoid_uids=taken
-    )
-    try:
-        account.deny(denied_roots)
-    except Exception:
-        account.release()
-        raise
+    # Held from the draw through the deny, so a worker sharing a root cannot
+    # draw the same uid before this one's entry is there to avoid.
+    with acl.locked(denied_roots):
+        taken: set[int] = set()
+        for root in denied_roots:
+            taken |= acl.named_uids(root)
+        account = DedicatedAccount.create(
+            account_name_for(session_id), session_dir / "home", avoid_uids=taken
+        )
+        try:
+            account.deny(denied_roots)
+        except Exception:
+            account.release()
+            raise
     return account
 
 

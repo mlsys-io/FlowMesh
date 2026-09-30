@@ -4,8 +4,10 @@ Everything here runs unprivileged: accounts are stood in for by the test's own
 uid, and ACL and account tooling is stubbed where a real call would need root.
 """
 
+import contextlib
 import ctypes
 import dataclasses
+import fcntl
 import grp
 import os
 import pwd
@@ -472,6 +474,79 @@ class TestAclMask:
             for line in acl._read_acl(acl_dir).splitlines()
         )
         assert stat.S_IMODE(acl_dir.stat().st_mode) == 0o775
+
+
+class TestDenyLock:
+    def test_the_lock_excludes_another_holder(self, tmp_path: Path) -> None:
+        (tmp_path / "sub").mkdir()
+        # The same directory twice must not wait on itself.
+        with acl.locked([tmp_path, tmp_path / "sub" / ".."]):
+            fd = os.open(tmp_path, os.O_RDONLY)
+            try:
+                with pytest.raises(BlockingIOError):
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            finally:
+                os.close(fd)
+        fd = os.open(tmp_path, os.O_RDONLY)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        finally:
+            os.close(fd)
+
+    def test_a_lock_held_past_the_timeout_is_a_retryable_refusal(
+        self, tmp_path: Path
+    ) -> None:
+        fd = os.open(tmp_path, os.O_RDONLY)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            with pytest.raises(ExecutionError, match="Cannot lock") as excinfo:
+                with acl.locked([tmp_path], timeout_sec=0.2):
+                    pass
+            assert excinfo.value.retryable
+        finally:
+            os.close(fd)
+
+    def test_a_filesystem_that_cannot_lock_directories_fails_the_probe(
+        self, acl_dir: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def flock(fd: int, operation: int) -> None:
+            raise OSError(9, "Bad file descriptor")
+
+        monkeypatch.setattr(acl.fcntl, "flock", flock)
+        with pytest.raises(ExecutionError, match="cannot be locked"):
+            acl.probe(acl_dir)
+
+    def test_the_uid_is_drawn_and_denied_under_the_lock(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        events: list[str] = []
+
+        @contextlib.contextmanager
+        def locked(paths: list[Path]) -> Iterator[None]:
+            events.append("lock")
+            yield
+            events.append("unlock")
+
+        def named_uids(path: Path) -> set[int]:
+            events.append("read")
+            return set()
+
+        def create(
+            name: str, home: Path, avoid_uids: frozenset[int] = frozenset()
+        ) -> DedicatedAccount:
+            events.append("create")
+            return _own_account(home, uid=61003)
+
+        monkeypatch.setattr(os, "getuid", lambda: 0)
+        monkeypatch.setattr(identity_module, "_ensure_privsep_dir", lambda: None)
+        monkeypatch.setattr(acl, "locked", locked)
+        monkeypatch.setattr(acl, "named_uids", named_uids)
+        monkeypatch.setattr(DedicatedAccount, "create", create)
+        monkeypatch.setattr(
+            DedicatedAccount, "deny", lambda self, paths: events.append("deny")
+        )
+        identity_module.resolve_identity("ssn-abcd1234", tmp_path, [tmp_path])
+        assert events == ["lock", "read", "create", "deny", "unlock"]
 
 
 @pytest.fixture

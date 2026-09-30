@@ -10,6 +10,8 @@ file, so a worker that crashed mid-session can revoke exactly its own entries
 and never one a peer worker applied to a shared volume.
 """
 
+import contextlib
+import fcntl
 import logging
 import os
 import re
@@ -17,6 +19,8 @@ import shutil
 import subprocess
 import tempfile
 import threading
+import time
+from collections.abc import Iterable, Iterator
 from pathlib import Path
 
 from ..base_executor import ExecutionError
@@ -31,6 +35,9 @@ _DENIED_USER_RE = re.compile(r"^user:(\d+):---$")
 _NAMED_USER_RE = re.compile(r"^(?:default:)?user:(\d+):")
 _NAMED_ACCESS_ENTRY_RE = re.compile(r"^(?:user|group):[^:]+:")
 _PERMS = "rwx"
+_LOCK_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+_LOCK_TIMEOUT_SEC = 30.0
+_LOCK_RETRY_SEC = 0.1
 _record_lock = threading.Lock()
 
 
@@ -81,6 +88,51 @@ def mask_is_redundant(getfacl_output: str) -> bool:
     return all(perm in mask for perm in group if perm in _PERMS)
 
 
+@contextlib.contextmanager
+def locked(
+    paths: Iterable[Path], timeout_sec: float = _LOCK_TIMEOUT_SEC
+) -> Iterator[None]:
+    """Hold an exclusive ``flock`` on each directory in ``paths``, waiting at
+    most ``timeout_sec`` for all of them.
+
+    Workers sharing a directory, in other containers on the same kernel too,
+    serialize on it. Each inode is locked once, in inode order, so two holders
+    cannot deadlock.
+    """
+    fds: list[int] = []
+    try:
+        try:
+            by_inode: dict[tuple[int, int], int] = {}
+            for path in paths:
+                fd = os.open(path, _LOCK_FLAGS)
+                fds.append(fd)
+                info = os.fstat(fd)
+                by_inode.setdefault((info.st_dev, info.st_ino), fd)
+            deadline = time.monotonic() + timeout_sec
+            for _, fd in sorted(by_inode.items()):
+                _flock_until(fd, deadline)
+        except OSError as exc:
+            raise ExecutionError(
+                f"Cannot lock worker state to add an ACL entry: {exc}",
+                retryable=True,
+            ) from exc
+        yield
+    finally:
+        for fd in fds:
+            os.close(fd)
+
+
+def _flock_until(fd: int, deadline: float) -> None:
+    while True:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return
+        except BlockingIOError:
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(_LOCK_RETRY_SEC)
+
+
 def denied_uids(path: Path) -> set[int]:
     """Return the uids that ``path``'s access ACL denies all permissions."""
     return parse_denied_uids(_read_acl(path))
@@ -123,7 +175,8 @@ def _read_acl(path: Path) -> str:
 
 
 def probe(directory: Path) -> None:
-    """Check that the filesystem backing ``directory`` stores a deny entry."""
+    """Check that the filesystem backing ``directory`` stores a deny entry and
+    takes the lock :func:`locked` holds."""
     fd, name = tempfile.mkstemp(prefix=".flowmesh-acl-probe-", dir=directory)
     os.close(fd)
     target = Path(name)
@@ -135,6 +188,17 @@ def probe(directory: Path) -> None:
             )
     finally:
         target.unlink(missing_ok=True)
+    dir_fd = os.open(directory, _LOCK_FLAGS)
+    try:
+        fcntl.flock(dir_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        pass
+    except OSError as exc:
+        raise ExecutionError(
+            f"Directories on the filesystem of {directory} cannot be locked: {exc}"
+        ) from exc
+    finally:
+        os.close(dir_fd)
 
 
 def record(uid: int, path: Path) -> None:
