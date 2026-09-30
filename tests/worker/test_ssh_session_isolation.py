@@ -337,6 +337,23 @@ class TestMountRoot:
             _reset_mount_root(root, create=True)
         assert (root / "data" / "kept").read_text() == "operator data"
 
+    def test_reset_refuses_to_empty_a_bind_mount_below_it(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        root = tmp_path / "mnt root"
+        (root / "data").mkdir(parents=True)
+        (root / "data" / "kept").write_text("operator data")
+        escaped = (root / "data").as_posix().replace(" ", "\\040")
+        mountinfo = tmp_path / "mountinfo"
+        mountinfo.write_text(
+            "23 28 0:22 / /proc rw,relatime - proc proc rw\n"
+            f"90 28 8:1 /srv/data {escaped} rw,relatime - ext4 /dev/sda1 rw\n"
+        )
+        monkeypatch.setattr(process_module, "_MOUNTINFO", mountinfo)
+        with pytest.raises(OSError, match="mounted"):
+            _reset_mount_root(root, create=True)
+        assert (root / "data" / "kept").read_text() == "operator data"
+
     def test_reset_replaces_a_linked_root(self, tmp_path: Path) -> None:
         outside = tmp_path / "outside"
         outside.mkdir()

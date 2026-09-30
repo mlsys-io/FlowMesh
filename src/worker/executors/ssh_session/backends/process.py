@@ -104,6 +104,8 @@ _SESSION_REQUIRED_PATHS = (
     Path("/etc"),
     Path("/lib"),
 )
+_MOUNTINFO = Path("/proc/self/mountinfo")
+_OCTAL_ESCAPE_RE = re.compile(r"\\([0-7]{3})")
 _host_lock_fd: int | None = None
 _host_lock_mutex = threading.Lock()
 
@@ -487,8 +489,16 @@ def _refuse_nested_mounts(root: Path) -> None:
     """Refuse to empty ``root`` when a filesystem is mounted anywhere below it.
 
     Everything under the mount root is the backend's own, so a mount there is
-    an operator's, and emptying the root would delete what it holds.
+    an operator's, and emptying the root would delete what it holds. A bind
+    mount from the same filesystem keeps the device number, so the kernel's
+    mount table is what finds it; the device check covers a worker that cannot
+    read that table.
     """
+    for mount_point in _mount_points():
+        if mount_point != root and mount_point.is_relative_to(root):
+            raise OSError(
+                errno.EBUSY, "a filesystem is mounted below the mount root", mount_point
+            )
     device = os.lstat(root).st_dev
     for parent, dirs, _ in os.walk(root, followlinks=False):
         for name in dirs:
@@ -497,6 +507,24 @@ def _refuse_nested_mounts(root: Path) -> None:
                 raise OSError(
                     errno.EBUSY, "a filesystem is mounted below the mount root", path
                 )
+
+
+def _mount_points() -> list[Path]:
+    """Mount points in this process's mount namespace, or none when unreadable."""
+    try:
+        text = _MOUNTINFO.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    points: list[Path] = []
+    for line in text.splitlines():
+        fields = line.split(" ")
+        if len(fields) > 4:
+            points.append(Path(_OCTAL_ESCAPE_RE.sub(_unescape_octal, fields[4])))
+    return points
+
+
+def _unescape_octal(match: re.Match[str]) -> str:
+    return chr(int(match.group(1), 8))
 
 
 def _link_mount_path(root: Path, mount_path: str, target: Path) -> None:
