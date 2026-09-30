@@ -30,6 +30,7 @@ from .omni import (
     OmniText2SpeechSpecStrict,
     OmniText2SpeechSpecTemplate,
 )
+from .python import PythonSpecStrict, PythonSpecTemplate
 from .rag import RagSpecStrict, RagSpecTemplate
 from .serve import ServeSpecStrict, ServeSpecTemplate
 from .ssh import SSHSpecStrict, SSHSpecTemplate
@@ -84,6 +85,8 @@ __all__ = [
     "ServeSpecTemplate",
     "SSHSpecStrict",
     "SSHSpecTemplate",
+    "PythonSpecStrict",
+    "PythonSpecTemplate",
     "OmniText2ImageSpecStrict",
     "OmniText2ImageSpecTemplate",
     "OmniText2SpeechSpecStrict",

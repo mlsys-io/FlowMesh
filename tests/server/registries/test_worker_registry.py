@@ -197,6 +197,26 @@ def _ssh_task(cpu: int | None = None, memory: str | None = None) -> TaskEnvelope
     )
 
 
+def _python_task(
+    cpu: int | None = None, memory: str | None = None
+) -> TaskEnvelopeStrict:
+    hw_req = None
+    if cpu is not None or memory is not None:
+        hw_req = HardwareRequirements(cpu=cpu, memory=memory)
+    resources = ResourcesSpec(hardware=hw_req) if hw_req else None
+    return TaskEnvelopeStrict.model_validate(
+        {
+            "apiVersion": "flowmesh/v1",
+            "kind": "Task",
+            "spec": {
+                "taskType": "python",
+                "code": "def main():\n    return 1\n",
+                "resources": resources.model_dump() if resources else None,
+            },
+        }
+    )
+
+
 class TestHwSatisfiesSSHLimits:
     def test_ssh_cap_below_request_filters_worker(self) -> None:
         w = _worker(
@@ -234,6 +254,16 @@ class TestHwSatisfiesSSHLimits:
         )
         t = _task(cpu=8)
         assert hw_satisfies(w, t) is True
+
+    def test_ssh_caps_apply_to_python_tasks(self) -> None:
+        w = _worker(
+            cpu_cores=32,
+            sys_mem=64 * 1024**3,
+            ssh_limits=SSHLimits(max_cpu_cores=2.0, max_memory_bytes=2 * 1024**3),
+        )
+        assert hw_satisfies(w, _python_task(cpu=8)) is False
+        assert hw_satisfies(w, _python_task(memory="4Gi")) is False
+        assert hw_satisfies(w, _python_task(cpu=2, memory="1Gi")) is True
 
     def test_no_ssh_cap_behaves_as_before(self) -> None:
         w = _worker(cpu_cores=32, sys_mem=64 * 1024**3)

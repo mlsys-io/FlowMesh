@@ -254,3 +254,17 @@ def test_extract_result_bundle_rejects_path_traversal(tmp_path: Path) -> None:
 
     with pytest.raises(Exception, match="Unsafe path"):
         inputs_module.extract_result_bundle(bundle, tmp_path / "dest")
+
+
+def test_local_input_staging_keeps_links_as_links(tmp_path: Path) -> None:
+    secret = tmp_path / "worker-secret"
+    secret.write_text("hunter2")
+    source = tmp_path / "results" / "t-up"
+    (source / "artifacts").mkdir(parents=True)
+    (source / "artifacts" / "leak").symlink_to(secret)
+    staged = inputs_module.stage_inputs_locally(
+        [ResolvedSSHInput("up", "t-up", source, "/mnt/flowmesh/inputs/up")], "ssn-1"
+    )
+    link = staged / "t-up" / "artifacts" / "leak"
+    assert link.is_symlink()
+    assert link.readlink() == secret

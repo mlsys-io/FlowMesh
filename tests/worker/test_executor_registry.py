@@ -36,6 +36,7 @@ class TestExecutorRegistry:
             "diffusers",
             "api",
             "ssh",
+            "python",
             "omni_text2image",
             "omni_text2speech",
             "omni_text2audio",

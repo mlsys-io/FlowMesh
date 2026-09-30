@@ -41,6 +41,7 @@ EXECUTOR_MODULES: dict[str, tuple[str, str]] = {
     "diffusers": ("DiffusersExecutor", ".diffusers_executor"),
     "api": ("APIExecutor", ".api_executor"),
     "ssh": ("SSHExecutor", ".ssh_executor"),
+    "python": ("PythonExecutor", ".python_executor"),
     "omni_text2image": ("OmniText2ImageExecutor", ".omni_text2image_executor"),
     "omni_text2speech": ("OmniText2SpeechExecutor", ".omni_text2speech_executor"),
     "omni_text2audio": ("OmniText2AudioExecutor", ".omni_text2audio_executor"),

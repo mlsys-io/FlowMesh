@@ -7,7 +7,7 @@ ends up running the session.
 
 import logging
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 
 from shared.tasks.components.resources import GPURequirements
@@ -92,6 +92,17 @@ class SSHConfig:
     memory_limit_bytes: int | None
     pids_limit: int | None
     gpu_device_ids: list[str]
+    # No network at all, not even the isolated SSH bridge.
+    network_disabled: bool = False
+    # A minimal capability set with a private tmpfs /tmp as the writable scratch,
+    # output copied out of the container, and network access only through the
+    # isolated session network.
+    hardened: bool = False
+    # Files written into the container before it starts, keyed by absolute path.
+    extra_files: dict[str, bytes] = field(default_factory=dict)
+    # Whether a finish request (in-session helper or graceful stop) ends the
+    # session as a success.
+    honor_finish_request: bool = True
 
     @classmethod
     def from_spec(

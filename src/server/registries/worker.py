@@ -12,7 +12,12 @@ from shared.schemas.command import (
 from shared.schemas.worker import SSHLimits, WorkerCapabilities
 from shared.tasks import TaskEnvelope
 from shared.tasks.components.resources import GPURequirements
-from shared.tasks.specs import SSHSpecStrict, SSHSpecTemplate
+from shared.tasks.specs import (
+    PythonSpecStrict,
+    PythonSpecTemplate,
+    SSHSpecStrict,
+    SSHSpecTemplate,
+)
 from shared.tasks.worker_message import (
     WorkerHardware,
     WorkerStatus,
@@ -693,6 +698,9 @@ def _merge_unique(existing: list[str], additions: Iterable[str]) -> list[str]:
     return merged
 
 
+_SESSION_SPECS = (SSHSpecStrict, SSHSpecTemplate, PythonSpecStrict, PythonSpecTemplate)
+
+
 def hw_satisfies(worker: Worker, task: TaskEnvelope) -> bool:
     resources = task.spec.resources
     if resources is None:
@@ -706,11 +714,10 @@ def hw_satisfies(worker: Worker, task: TaskEnvelope) -> bool:
     mem_needed = requirements.memory
     gpu_req = requirements.gpu
 
-    # Consider SSH hardware limits for SSH tasks.
+    # A worker's SSH limits cap every session container it runs.
     ssh_caps = (
         worker.ssh_limits
-        if isinstance(task.spec, (SSHSpecStrict, SSHSpecTemplate))
-        and worker.ssh_limits is not None
+        if isinstance(task.spec, _SESSION_SPECS) and worker.ssh_limits is not None
         else None
     )
 
