@@ -138,7 +138,7 @@ class TestInitializeExecutorsAvailability:
         monkeypatch.setattr(
             process_backend_mod, "find_ssh_keygen", lambda: "/usr/bin/ssh-keygen"
         )
-        monkeypatch.setattr(process_backend_mod, "_acquire_host_lock", lambda: True)
+        monkeypatch.setattr(process_backend_mod, "_acquire_backend_lock", lambda: True)
         monkeypatch.setattr(process_backend_mod.acl, "tools_available", lambda: False)
         assert SSHExecutor.is_available(make_live_worker_config(tmp_path)) is False
 
@@ -168,7 +168,7 @@ class TestInitializeExecutorsAvailability:
     ) -> None:
         """The operator accepting the trade is what unlocks it."""
         monkeypatch.setattr(os, "getuid", lambda: 1000)
-        monkeypatch.setattr(process_backend_mod, "_acquire_host_lock", lambda: True)
+        monkeypatch.setattr(process_backend_mod, "_acquire_backend_lock", lambda: True)
         monkeypatch.setattr(docker_backend_mod, "docker_available", lambda: False)
         monkeypatch.setattr(process_backend_mod, "find_sshd", lambda: "/usr/sbin/sshd")
         monkeypatch.setattr(
@@ -185,7 +185,7 @@ class TestInitializeExecutorsAvailability:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setattr(os, "getuid", lambda: 1000)
-        monkeypatch.setattr(process_backend_mod, "_acquire_host_lock", lambda: True)
+        monkeypatch.setattr(process_backend_mod, "_acquire_backend_lock", lambda: True)
         monkeypatch.setattr(docker_backend_mod, "docker_available", lambda: False)
         monkeypatch.setattr(process_backend_mod, "find_sshd", lambda: "/usr/sbin/sshd")
         monkeypatch.setattr(

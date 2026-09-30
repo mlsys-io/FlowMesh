@@ -587,7 +587,7 @@ class TestProcessBackendIsolation:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setattr(os, "getuid", lambda: 0)
-        monkeypatch.setattr(process_module, "_acquire_host_lock", lambda: True)
+        monkeypatch.setattr(process_module, "_acquire_backend_lock", lambda: True)
         monkeypatch.setattr(acl, "tools_available", lambda: True)
 
         def unsupported(directory: Path) -> None:
@@ -601,15 +601,15 @@ class TestProcessBackendIsolation:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setattr(os, "getuid", lambda: 0)
-        monkeypatch.setattr(process_module, "_acquire_host_lock", lambda: True)
+        monkeypatch.setattr(process_module, "_acquire_backend_lock", lambda: True)
         monkeypatch.setattr(acl, "tools_available", lambda: True)
         cfg = make_live_worker_config(tmp_path, session_state_dirs=(Path("/"),))
         assert ProcessSessionBackend._isolation_ready(cfg) is False
 
-    def test_another_worker_holding_the_host_lock_offers_no_process_backend(
+    def test_another_worker_holding_the_backend_lock_offers_no_process_backend(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr(process_module, "_acquire_host_lock", lambda: False)
+        monkeypatch.setattr(process_module, "_acquire_backend_lock", lambda: False)
         cfg = make_live_worker_config(tmp_path)
         assert ProcessSessionBackend._isolation_ready(cfg) is False
 

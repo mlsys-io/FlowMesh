@@ -94,7 +94,7 @@ _DIR_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
 _FILE_FLAGS = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
 _WRITE_FLAGS = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW | os.O_CLOEXEC
 _COPY_CHUNK = 1024 * 1024
-_HOST_LOCK_NAME = "flowmesh-ssh-process.lock"
+_BACKEND_LOCK_NAME = "flowmesh-ssh-process.lock"
 # Paths every session needs; a denied root covering one would break it.
 _SESSION_REQUIRED_PATHS = (
     Path(SAFE_MOUNT_ROOT),
@@ -106,8 +106,8 @@ _SESSION_REQUIRED_PATHS = (
 )
 _MOUNTINFO = Path("/proc/self/mountinfo")
 _OCTAL_ESCAPE_RE = re.compile(r"\\([0-7]{3})")
-_host_lock_fd: int | None = None
-_host_lock_mutex = threading.Lock()
+_backend_lock_fd: int | None = None
+_backend_lock_mutex = threading.Lock()
 
 
 def find_sshd() -> str | None:
@@ -163,10 +163,11 @@ class ProcessSessionBackend(SSHSessionBackend):
         """Whether this worker can keep a session away from what it must not reach."""
         if os.getuid() == 0 and not _acl_ready(config):
             return False
-        if not _acquire_host_lock():
+        if not _acquire_backend_lock():
             logger.info(
-                "Process SSH backend unavailable: another worker on this host already "
-                "serves process-mode sessions, and they would share %s",
+                "Process SSH backend unavailable: another worker sharing this root "
+                "filesystem already serves process-mode sessions, and they would "
+                "share %s",
                 SAFE_MOUNT_ROOT.as_posix(),
             )
             return False
@@ -663,34 +664,35 @@ def _probe_dir(root: Path) -> Path:
     return candidate
 
 
-def _acquire_host_lock() -> bool:
-    """Hold this host's process-backend lock for the life of the worker.
+def _acquire_backend_lock() -> bool:
+    """Take the process-backend lock file, in ``/run`` for root or the temp dir
+    otherwise, for the life of the worker; return whether this worker holds it.
 
-    Process-mode sessions of every worker on a host share its mount root and
-    accounts, so only one worker per host may serve them.
+    Workers that see the same lock file share the mount root and session
+    accounts, so only one of them serves sessions.
     """
-    global _host_lock_fd
-    with _host_lock_mutex:
-        if _host_lock_fd is not None:
+    global _backend_lock_fd
+    with _backend_lock_mutex:
+        if _backend_lock_fd is not None:
             return True
         base = Path("/run") if os.geteuid() == 0 else Path(tempfile.gettempdir())
         try:
             fd = os.open(
-                base / _HOST_LOCK_NAME,
+                base / _BACKEND_LOCK_NAME,
                 os.O_RDWR | os.O_CREAT | os.O_CLOEXEC | os.O_NOFOLLOW,
                 0o600,
             )
         except OSError:
-            logger.debug("Cannot open the process-backend host lock", exc_info=True)
+            logger.debug("Cannot open the process-backend lock", exc_info=True)
             return False
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError as exc:
             os.close(fd)
             if exc.errno not in (errno.EAGAIN, errno.EACCES):
-                logger.debug("Cannot take the process-backend host lock", exc_info=True)
+                logger.debug("Cannot take the process-backend lock", exc_info=True)
             return False
-        _host_lock_fd = fd
+        _backend_lock_fd = fd
         return True
 
 
