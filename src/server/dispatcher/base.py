@@ -23,6 +23,7 @@ from shared.tasks import (
     TaskEnvelopeTemplate,
     TaskSpecStrict,
 )
+from shared.tasks.components.output import OutputDestinationHTTP, OutputSpec
 from shared.tasks.placeholders import PLACEHOLDER_PATTERN, placeholder_fields
 from shared.tasks.specs import (
     ConditionSpec,
@@ -58,6 +59,10 @@ class StageReferenceNotReady(Exception):
     """Raised when a task references a stage whose artifacts are not yet available."""
 
 
+class StageResultMissing(Exception):
+    """Raised when a finished stage's result has not reached the server in time."""
+
+
 class Dispatcher:
     """Handles FCFS task dispatching via Redis pub/sub."""
 
@@ -76,6 +81,7 @@ class Dispatcher:
         selection_jitter_epsilon: float = 1e-3,
         enable_stage_weight_stickiness: bool = False,
         no_worker_grace_sec: int = 60,
+        stage_result_grace_sec: int = 120,
         metrics_recorder: MetricsRecorder | None = None,
     ) -> None:
         self._runtime = runtime
@@ -91,6 +97,7 @@ class Dispatcher:
         self._selection_jitter = max(0.0, selection_jitter_epsilon)
         self._stage_weight_stickiness_enabled = enable_stage_weight_stickiness
         self._no_worker_grace_sec = max(0, no_worker_grace_sec)
+        self._stage_result_grace_sec = max(0, stage_result_grace_sec)
         self._metrics = metrics_recorder
         self._weight_reference_hints: tuple[str, ...] = (
             "checkpoint",
@@ -477,7 +484,9 @@ class Dispatcher:
                             task_id=child_id,
                             owner_id=child_record.owner_id,
                             workflow_id=child_record.workflow_id,
-                            spec=resolved_child_task.spec,
+                            spec=self._with_result_upload(
+                                child_id, resolved_child_task
+                            ).spec,
                             metadata=resolved_child_task.metadata,
                         )
                     )
@@ -522,7 +531,7 @@ class Dispatcher:
             task_id=task_id,
             workflow_id=record.workflow_id,
             owner_id=record.owner_id,
-            task=rendered_task,
+            task=self._with_result_upload(task_id, rendered_task),
             task_type=record.task_type,
             assigned_worker=worker.id,
             dispatched_at=now_iso(),
@@ -1095,8 +1104,8 @@ class Dispatcher:
                 continue
             try:
                 envelope = self._load_stage_result(record.task_id)
-            except StageReferenceNotReady as exc:
-                raise exc
+            except (StageReferenceNotReady, StageResultMissing):
+                raise
             except Exception as exc:
                 self._logger.debug(
                     "Failed to load upstream result for %s (%s): %s",
@@ -1162,11 +1171,64 @@ class Dispatcher:
     def _load_stage_result(self, stage_task_id: str) -> ResultEnvelope:
         path = result_file_path(self._results_dir, stage_task_id)
         if not path.exists():
+            self._raise_if_result_missing(stage_task_id, path)
             raise StageReferenceNotReady(
                 f"Result for task {stage_task_id} not found at {path}"
             )
         content = json.loads(path.read_text(encoding="utf-8"))
         return ResultEnvelope.model_validate(content)
+
+    def _raise_if_result_missing(self, stage_task_id: str, path: Path) -> None:
+        """Stop waiting for a finished stage whose result has not arrived.
+
+        A worker on another host delivers a result only by uploading it, so a
+        result still absent ``stage_result_grace_sec`` after the stage finished
+        is not coming.
+        """
+        record = self._runtime.get_record(stage_task_id)
+        finished = record.finished_ts if record is not None else None
+        if finished is None:
+            return
+        waited = time.time() - finished
+        if waited < self._stage_result_grace_sec:
+            return
+        raise StageResultMissing(
+            f"Result of task {stage_task_id} has not reached the server "
+            f"{waited:.0f}s after it finished (expected at {path}). Its worker "
+            "does not share the server's results directory and did not upload "
+            "the result; set WORKER_UPLOAD_RESULTS=1 on the worker or give the "
+            "stage an http output destination"
+        )
+
+    def _with_result_upload(
+        self, task_id: str, task: TaskEnvelopeStrict
+    ) -> TaskEnvelopeStrict:
+        """Ask the worker to upload the result when a dependent reads it here.
+
+        Stage references, ``upstreamResults`` and python/SSH input mounts are
+        resolved from the server's results directory, which a worker on another
+        host writes only by uploading. A task that names its own output
+        destination is left as it is.
+        """
+        output = task.spec.output
+        if output is not None and output.destination is not None:
+            return task
+        if not self._has_result_reading_dependent(task_id):
+            return task
+        output = (output or OutputSpec()).model_copy(
+            update={"destination": OutputDestinationHTTP()}
+        )
+        return task.model_copy(
+            update={"spec": task.spec.model_copy(update={"output": output})}
+        )
+
+    def _has_result_reading_dependent(self, task_id: str) -> bool:
+        info = self._runtime.describe_task(task_id)
+        for dependent_id in [] if info is None else info.dependents:
+            dependent = self._runtime.get_record(dependent_id)
+            if dependent is not None and self._needs_stage_context(dependent):
+                return True
+        return False
 
     def _dig_result_path(self, result: BaseExecutorResult, parts: list[str]) -> Any:
         current: Any = result

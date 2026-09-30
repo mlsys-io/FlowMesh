@@ -73,6 +73,14 @@ reached; the terminal error is the executor's own message. Controlled
 executor errors are not retried. A task that no worker can satisfy fails
 after `TASK_NO_WORKER_GRACE_SEC`.
 
+A dependent reads its upstream stages' results from the server's results
+directory (stage references, `upstreamResults`, python and SSH input
+mounts). When a dispatched task has such a dependent and names no output
+destination, the server asks its worker to upload the result, so it arrives
+even when the worker runs on another host. A dependent whose upstream
+finished but whose result is still missing after
+`TASK_STAGE_RESULT_GRACE_SEC` fails instead of waiting.
+
 ## Directory map
 
 ```
