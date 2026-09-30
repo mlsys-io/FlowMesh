@@ -850,7 +850,7 @@ class _ChunkReader(io.RawIOBase):
 
     def __init__(self, chunks: Iterable[bytes]) -> None:
         self._chunks = iter(chunks)
-        self._pending = b""
+        self._pending = memoryview(b"")
 
     def readable(self) -> bool:
         return True
@@ -860,7 +860,7 @@ class _ChunkReader(io.RawIOBase):
             chunk = next(self._chunks, None)
             if chunk is None:
                 return 0
-            self._pending = chunk
+            self._pending = memoryview(chunk)
         size = min(len(buffer), len(self._pending))
         buffer[:size] = self._pending[:size]
         self._pending = self._pending[size:]
