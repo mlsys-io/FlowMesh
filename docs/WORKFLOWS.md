@@ -148,6 +148,40 @@ dataframe column that reads a grouped upstream's message content uses
 `path: items.rows.json.choices[0].message.content`; an ungrouped upstream uses
 `path: items.json.choices[0].message.content`.
 
+A dataframe column reads a python stage with `node: <stage>` and a path that
+starts at the result as `flowmesh result fetch` shows it — for a python stage
+that returns `{"items": [{"output": [...]}, ...]}`, `path: value.items.output.q`
+reads the `q` field of each record. When each item's `output` is a list of
+records, each item is one group and group sizes may differ (3 and 2); a per-row
+list of scalars stays one cell value. For example, a python stage T0 that
+returns two such items feeds a dataframe API task T1 that reads them as two
+groups:
+
+```yaml
+spec:
+  stages:
+    - name: T0
+      spec:
+        taskType: python
+        code: |
+          def main():
+              return {"items": [{"output": [{"q": "..."}, {"q": "..."}, {"q": "..."}]},
+                               {"output": [{"q": "..."}, {"q": "..."}]}]}
+    - name: T1
+      dependsOn: [T0]
+      spec:
+        taskType: api
+        data:
+          type: dataframe
+          columns:
+            - label: Q
+              node: T0
+              path: value.items.output.q
+          messages:
+            - role: user
+              content: "Answer in one word: {Q}"
+```
+
 ```yaml
 spec:
   taskType: api
