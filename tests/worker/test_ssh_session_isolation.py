@@ -10,11 +10,14 @@ import pwd
 import stat
 import subprocess
 import tempfile
+import time
 import types
 import typing
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, cast
 
+import psutil
 import pytest
 
 from shared.tasks.specs import SSHSpecStrict
@@ -319,6 +322,60 @@ class TestAccountDenies:
         monkeypatch.setattr(DedicatedAccount, "deny", lambda self, paths: None)
         identity_module.resolve_identity("ssn-abcd1234", tmp_path, [tmp_path])
         assert avoided == [frozenset({61001, 61002})]
+
+
+@pytest.fixture
+def zombie() -> Iterator[psutil.Process]:
+    pid = os.fork()
+    if pid == 0:
+        os._exit(0)
+    proc = psutil.Process(pid)
+    try:
+        for _ in range(100):
+            if proc.status() == psutil.STATUS_ZOMBIE:
+                break
+            time.sleep(0.01)
+        assert proc.status() == psutil.STATUS_ZOMBIE
+        yield proc
+    finally:
+        os.waitpid(pid, 0)
+
+
+class TestZombies:
+    def test_a_zombie_is_not_a_live_process_of_its_uid(
+        self, zombie: psutil.Process, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(psutil, "process_iter", lambda attrs=None: [zombie])
+        assert identity_module._processes_of(os.getuid()) == []
+
+    def test_a_zombie_does_not_keep_the_account(
+        self,
+        zombie: psutil.Process,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        deleted: list[str] = []
+
+        def delete_account(name: str) -> bool:
+            deleted.append(name)
+            return True
+
+        monkeypatch.setattr(psutil, "process_iter", lambda attrs=None: [zombie])
+        monkeypatch.setattr(identity_module, "_delete_account", delete_account)
+        monkeypatch.setattr(identity_module, "purge_uid_files", lambda uid: None)
+        _own_account(tmp_path).release()
+        assert deleted == ["fmssn-test"]
+
+    def test_a_zombie_does_not_refuse_the_next_session(
+        self, zombie: psutil.Process, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        entry = pwd.struct_passwd(
+            ("fmssnold", "x", os.getuid(), 100, "", "/nonexistent", "/bin/sh")
+        )
+        monkeypatch.setattr(psutil, "process_iter", lambda attrs=None: [zombie])
+        monkeypatch.setattr(identity_module.pwd, "getpwall", lambda: [entry])
+        monkeypatch.setattr(os, "getuid", lambda: 0)
+        assert identity_module.live_session_accounts() == []
 
 
 class TestUidFilePurge:

@@ -299,8 +299,8 @@ def live_session_accounts() -> list[str]:
         return []
     running = {
         uid
-        for proc in psutil.process_iter(["uids"])
-        if (uid := _real_uid(proc)) is not None
+        for proc in psutil.process_iter(["uids", "status"])
+        if (uid := _live_uid(proc)) is not None
     }
     return [
         entry.pw_name
@@ -510,7 +510,7 @@ def _kill_all_as(uid: int) -> None:
 
 
 def _processes_of(uid: int) -> list[psutil.Process]:
-    return [p for p in psutil.process_iter(["uids"]) if _owned_by(p, uid)]
+    return [p for p in psutil.process_iter(["uids", "status"]) if _owned_by(p, uid)]
 
 
 def _uid_exists(uid: int) -> bool:
@@ -537,11 +537,19 @@ def _unlink_quietly(path: str) -> None:
 
 
 def _owned_by(proc: psutil.Process, uid: int) -> bool:
-    return _real_uid(proc) == uid
+    return _live_uid(proc) == uid
 
 
-def _real_uid(proc: psutil.Process) -> int | None:
+def _live_uid(proc: psutil.Process) -> int | None:
+    """The real uid of ``proc``, or ``None`` once it has exited.
+
+    A zombie is only an exit status waiting for its parent to reap it, and a
+    PID 1 that never reaps would otherwise keep a session account alive
+    forever.
+    """
     try:
+        if proc.status() == psutil.STATUS_ZOMBIE:
+            return None
         return int(proc.uids().real)
     except (psutil.Error, AttributeError):
         return None
