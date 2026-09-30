@@ -121,7 +121,26 @@ class TestInitializeExecutorsAvailability:
         monkeypatch.setattr(
             process_backend_mod, "find_ssh_keygen", lambda: "/usr/bin/ssh-keygen"
         )
+        monkeypatch.setattr(
+            process_backend_mod.ProcessSessionBackend,
+            "_isolation_ready",
+            classmethod(lambda cls, config: True),
+        )
         assert SSHExecutor.is_available(make_live_worker_config(tmp_path)) is True
+
+    def test_auto_refuses_process_on_a_root_worker_without_acl_tools(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A session that cannot be denied the worker's state is not offered."""
+        monkeypatch.setattr(os, "getuid", lambda: 0)
+        monkeypatch.setattr(docker_backend_mod, "docker_available", lambda: False)
+        monkeypatch.setattr(process_backend_mod, "find_sshd", lambda: "/usr/sbin/sshd")
+        monkeypatch.setattr(
+            process_backend_mod, "find_ssh_keygen", lambda: "/usr/bin/ssh-keygen"
+        )
+        monkeypatch.setattr(process_backend_mod, "_acquire_host_lock", lambda: True)
+        monkeypatch.setattr(process_backend_mod.acl, "tools_available", lambda: False)
+        assert SSHExecutor.is_available(make_live_worker_config(tmp_path)) is False
 
     def test_auto_needs_sshd_even_as_root(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

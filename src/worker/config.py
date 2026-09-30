@@ -7,6 +7,7 @@ the worker code can depend on a structured config object.
 
 import json
 import os
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -22,6 +23,25 @@ from shared.utils.worker_token import external_token_alias
 
 from .gpu_availability import GpuGateConfig
 from .utils.health import get_hb_config
+
+# Every path-typed ``WorkerConfig`` field is one or the other: a denied path is
+# kept from process-mode SSH session accounts.
+SESSION_DENIED_PATH_FIELDS = ("results_dir", "hb_file", "session_state_dirs")
+SESSION_ALLOWED_PATH_FIELDS: tuple[str, ...] = ()
+# Caches that can hold credentials or other tasks' data.
+_SESSION_STATE_DIR_ENV_VARS = (
+    "HF_HOME",
+    "HF_HUB_CACHE",
+    "HUGGINGFACE_HUB_CACHE",
+    "HF_DATASETS_CACHE",
+    "TRANSFORMERS_CACHE",
+    "TORCH_HOME",
+    "XDG_CACHE_HOME",
+    "VLLM_CACHE_ROOT",
+    "FASTEMBED_CACHE_PATH",
+)
+# Defaults of worker-side tools that keep other tasks' data in the temp dir.
+_SESSION_STATE_TEMP_DIRS = ("utu", "fastembed_cache")
 
 
 @dataclass(frozen=True)
@@ -56,6 +76,17 @@ class WorkerConfig:
     ssh_direct_host: str | None = None
     enable_unisolated_ssh_session: bool = False
     foreign_gpu_gate: GpuGateConfig = GpuGateConfig()
+    session_state_dirs: tuple[Path, ...] = ()
+
+    def session_denied_paths(self) -> tuple[Path, ...]:
+        """Worker state a process-mode SSH session account must not reach."""
+        paths: dict[Path, None] = {}
+        for field_name in SESSION_DENIED_PATH_FIELDS:
+            value = getattr(self, field_name)
+            for path in value if isinstance(value, tuple) else (value,):
+                if path is not None:
+                    paths[Path(os.path.abspath(path))] = None
+        return tuple(paths)
 
     @staticmethod
     def from_env() -> "WorkerConfig":
@@ -169,6 +200,7 @@ class WorkerConfig:
         enable_unisolated_ssh_session = parse_bool_env(
             "ENABLE_UNISOLATED_SSH_SESSION", False
         )
+        session_state_dirs = _session_state_dirs_from_env()
         foreign_gpu_gate = GpuGateConfig(
             enabled=parse_bool_env("WORKER_FOREIGN_GPU_GATE", True),
             threshold_mib=max(1, parse_int_env("WORKER_FOREIGN_GPU_MEM_MIB", 1024)),
@@ -207,4 +239,16 @@ class WorkerConfig:
             ssh_direct_host=ssh_direct_host,
             enable_unisolated_ssh_session=enable_unisolated_ssh_session,
             foreign_gpu_gate=foreign_gpu_gate,
+            session_state_dirs=session_state_dirs,
         )
+
+
+def _session_state_dirs_from_env() -> tuple[Path, ...]:
+    dirs = [Path.home()]
+    dirs.extend(
+        Path(value)
+        for name in _SESSION_STATE_DIR_ENV_VARS
+        if (value := os.getenv(name, "").strip())
+    )
+    dirs.extend(Path(tempfile.gettempdir()) / name for name in _SESSION_STATE_TEMP_DIRS)
+    return tuple(Path(os.path.abspath(path)) for path in dirs)

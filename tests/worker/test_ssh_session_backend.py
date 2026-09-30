@@ -322,7 +322,7 @@ class TestAccountRelease:
         account = DedicatedAccount(
             "fmssn-none", uid=4294967, gid=4294967, home=Path("/nonexistent")
         )
-        account._kill_processes()
+        assert account.terminate_processes() is True
 
     def test_current_user_release_never_deletes_the_worker_account(self) -> None:
         before = CurrentUser().name

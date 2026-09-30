@@ -329,9 +329,18 @@ def _resolve_gpu_devices(
 
 
 def normalize_mount_path(path: str, field_name: str) -> str:
-    normalized = PurePosixPath(path.strip())
-    if not normalized.is_absolute():
+    """Return ``path`` in canonical form, refusing anything outside the mount root.
+
+    The check is lexical, so a ``..`` component is refused outright rather than
+    resolved: nothing about the filesystem is trusted to decide containment.
+    """
+    raw = path.strip()
+    if not raw.startswith("/"):
         raise ExecutionError(f"{field_name} must be an absolute path")
+    parts = [part for part in raw.split("/") if part not in ("", ".")]
+    if ".." in parts:
+        raise ExecutionError(f"{field_name} must not contain '..'")
+    normalized = PurePosixPath("/", *parts)
     if normalized == PurePosixPath("/"):
         raise ExecutionError(f"{field_name} cannot be '/'")
     if normalized != SAFE_MOUNT_ROOT and SAFE_MOUNT_ROOT not in normalized.parents:
