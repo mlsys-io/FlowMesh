@@ -625,10 +625,17 @@ class TestBootstrap:
         assert cast(dict[str, str], _load(out, "error.json"))["type"] == "SystemExit"
         assert not (out / "result.json").exists()
 
-    def test_non_finite_return_value_fails(self, tmp_path: Path) -> None:
-        rc, out = _bootstrap(tmp_path, "def main():\n    return {'x': float('nan')}\n")
-        assert rc == 3
-        assert cast(dict[str, str], _load(out, "error.json"))["type"] == "ResultError"
+    def test_non_finite_return_value_is_kept(self, tmp_path: Path) -> None:
+        rc, out = _bootstrap(
+            tmp_path,
+            "def main():\n    return {'x': float('nan'), 'y': [float('-inf')]}\n",
+        )
+        assert rc == 0
+        written = (out / "result.json").read_text()
+        assert json.loads(written, parse_constant=str) == {
+            "x": "NaN",
+            "y": ["-Infinity"],
+        }
 
     def test_missing_entrypoint_fails(self, tmp_path: Path) -> None:
         rc, out = _bootstrap(tmp_path, "x = 1\n")

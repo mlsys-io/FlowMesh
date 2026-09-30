@@ -44,11 +44,11 @@ OUT = os.environ.get("FLOWMESH_PY_OUTPUT", "/mnt/flowmesh/output")
 DEPS = "/tmp/flowmesh-deps"  # nosec B108 - inside the task container; /tmp is its private tmpfs
 
 
-def _write(name, payload, lenient=False):
+def _write(name, payload, stringify=False, allow_nan=False):
     # Strict by default: a return value json cannot encode is the caller's bug
     # and must fail the task, not be stringified into a result that looks fine.
     text = json.dumps(
-        payload, indent=2, default=str if lenient else None, allow_nan=lenient
+        payload, indent=2, default=str if stringify else None, allow_nan=allow_nan
     )
     with open(os.path.join(OUT, name), "w") as fh:
         fh.write(text)
@@ -59,7 +59,8 @@ def _fail(kind, message, exit_code=1, tb=None):
         _write(
             "error.json",
             {"type": kind, "message": message, "traceback": tb},
-            lenient=True,
+            stringify=True,
+            allow_nan=True,
         )
     except Exception:
         pass
@@ -299,7 +300,7 @@ def main():
 
     metrics = _collect_metrics(value)
     try:
-        _write("result.json", value)
+        _write("result.json", value, allow_nan=True)
     except Exception as exc:
         _fail("ResultError", f"return value is not JSON-serialisable: {exc}", 3)
     if metrics:
