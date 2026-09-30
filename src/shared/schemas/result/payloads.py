@@ -233,12 +233,8 @@ class APIItem(StrictModel):
 
 
 class APIGroupItem(StrictModel):
-    """One group's row responses in a batched API task over grouped data.
-
-    ``rows`` holds the group's row responses in order. A group is one
-    dataframe table (one claim), so a downstream column reads ``rows`` as a
-    per-group list.
-    """
+    """One group's row responses in a batched API task over grouped data; ``rows``
+    holds the group's row responses in order."""
 
     index: int
     rows: list[APIItem]
