@@ -741,7 +741,7 @@ class ProcessSession(SSHSession):
         return self._process.poll()
 
     def finish_requested(self) -> bool:
-        return self._plan.finish_sentinel.exists()
+        return os.path.lexists(self._plan.finish_sentinel)
 
     def established_connections(self) -> int | None:
         proc_net_tcp = read_local_proc_net_tcp()

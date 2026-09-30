@@ -489,6 +489,16 @@ class TestProcessBackendIsolation:
             backend.start_session(cast(Any, request))
         assert excinfo.value.retryable
 
+    def test_the_finish_sentinel_is_not_followed(self, tmp_path: Path) -> None:
+        sentinel = tmp_path / ".finish"
+        session = ProcessSession.__new__(ProcessSession)
+        session._plan = ProcessSessionPaths(
+            finish_sentinel=sentinel, output_path=None, mount_root=None
+        )
+        assert not session.finish_requested()
+        sentinel.symlink_to(tmp_path / "missing")
+        assert session.finish_requested()
+
 
 class TestLingeringSessionProcesses:
     def _stale_account(self, monkeypatch: pytest.MonkeyPatch) -> list[str]:
