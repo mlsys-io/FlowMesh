@@ -84,8 +84,9 @@ when:
 - one of those paths contains a directory every session needs, such as the
   temp dir or `/mnt/flowmesh`;
 - a directory that resolving one of those paths passes through, links
-  included, is world-writable, unless it is sticky and holds the next component
-  as a directory the worker owns rather than a link.
+  included, is world-writable, unless it is one of those paths or inside one,
+  or it is sticky and holds the next component as a directory the worker owns
+  rather than a link.
 
 Each session account has a group of its own, and takes its uid and gid from
 61000–64999. The deny entries do not cover files an agent tool writes directly

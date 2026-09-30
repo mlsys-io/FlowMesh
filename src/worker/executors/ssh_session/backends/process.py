@@ -36,6 +36,7 @@ import subprocess
 import tempfile
 import threading
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
@@ -613,23 +614,25 @@ def _create_state_root(root: Path) -> None:
 
 def _state_problem(config: WorkerConfig) -> str | None:
     """Why this worker's state cannot be denied to a session safely, if it cannot."""
+    roots = denied_roots(config)
     for path in _state_paths(config):
-        if problem := _path_problem(path):
+        if problem := _path_problem(path, roots):
             return problem
-    for root in denied_roots(config):
+    for root in roots:
         if blocked := _required_path_under(root):
             return f"denying {root} would also deny {blocked}"
     return None
 
 
-def _path_problem(path: Path) -> str | None:
+def _path_problem(path: Path, denied: Sequence[Path] = ()) -> str | None:
     """Why a session could replace ``path`` or a directory on the way to it, if
     it could.
 
     Every directory that resolving ``path`` looks a name up in is checked,
-    those a link leads through included. A session can rename any entry of a
-    directory it can write; in a sticky one only its own, so there the entry
-    must be a directory the worker owns, not a link.
+    those a link leads through included, except one at or below a root in
+    ``denied``, which the session cannot search. A session can rename any entry
+    of a directory it can write; in a sticky one only its own, so there the
+    entry must be a directory the worker owns, not a link.
     """
     directory = Path("/")
     pending = list(path.parts[1:])
@@ -647,7 +650,9 @@ def _path_problem(path: Path) -> str | None:
             info = None
         except OSError as exc:
             return f"cannot inspect {entry} on the way to worker state {path}: {exc}"
-        if dir_mode & stat.S_IWOTH:
+        if dir_mode & stat.S_IWOTH and not any(
+            directory.is_relative_to(root) for root in denied
+        ):
             if not dir_mode & stat.S_ISVTX:
                 return (
                     f"{directory}, on the way to worker state {path}, is "

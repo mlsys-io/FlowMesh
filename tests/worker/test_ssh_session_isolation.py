@@ -864,6 +864,32 @@ class TestResolvingStateRoots:
             _path_problem(tmp_path / "safe" / "link" / ".." / "results") or ""
         )
 
+    def test_a_world_writable_denied_root_holds_denied_paths(
+        self, tmp_path: Path
+    ) -> None:
+        hf = tmp_path / "hf"
+        (hf / "hub").mkdir(parents=True)
+        hf.chmod(0o777)
+        cfg = dataclasses.replace(
+            make_live_worker_config(tmp_path),
+            hb_file=tmp_path / "hb" / "worker.hb",
+            state_dirs=(hf / "hub",),
+        )
+        assert "world-writable" in (process_module._state_problem(cfg) or "")
+        cfg = dataclasses.replace(cfg, state_dirs=(hf, hf / "hub"))
+        assert process_module._state_problem(cfg) is None
+        assert "world-writable" in (_path_problem(hf / "hub") or "")
+
+    def test_a_link_out_of_a_denied_root_is_checked_again(self, tmp_path: Path) -> None:
+        hf = tmp_path / "hf"
+        hf.mkdir()
+        shared = tmp_path / "shared"
+        (shared / "hub").mkdir(parents=True)
+        shared.chmod(0o777)
+        (hf / "hub").symlink_to(shared / "hub")
+        hf.chmod(0o777)
+        assert "world-writable" in (_path_problem(hf / "hub", [hf]) or "")
+
     def test_a_link_loop_is_refused(self, tmp_path: Path) -> None:
         (tmp_path / "a").symlink_to(tmp_path / "b")
         (tmp_path / "b").symlink_to(tmp_path / "a")
@@ -892,7 +918,11 @@ class TestResolvingStateRoots:
         monkeypatch.setattr(acl, "probe", lambda directory: None)
         shared = tmp_path / "data"
         (shared / "hf").mkdir(parents=True)
-        cfg = make_live_worker_config(tmp_path, state_dirs=(shared / "hf",))
+        cfg = dataclasses.replace(
+            make_live_worker_config(tmp_path),
+            hb_file=tmp_path / "hb" / "worker.hb",
+            state_dirs=(shared / "hf",),
+        )
         assert ProcessSessionBackend._isolation_ready(cfg) is True
         shared.chmod(0o777)
         assert ProcessSessionBackend._isolation_ready(cfg) is False
