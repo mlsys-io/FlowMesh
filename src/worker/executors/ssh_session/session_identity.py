@@ -8,6 +8,7 @@ authenticate the account it already runs as, so the session shares the
 worker's identity; that path stays available but isolates nothing.
 """
 
+import ctypes
 import logging
 import os
 import pwd
@@ -55,7 +56,15 @@ _KILL_ALL_SCRIPT = (
 _KILL_ALL_TIMEOUT_SEC = 10.0
 _NOGROUP_GID = 65534
 _USERADD_TIMEOUT_SEC = 30.0
-_WORLD_WRITABLE_DIRS = (Path("/", "var", "tmp"), Path("/", "dev", "shm"))
+_WORLD_WRITABLE_DIRS = (
+    Path("/", "var", "tmp"),
+    Path("/", "dev", "shm"),
+    Path("/", "dev", "mqueue"),
+)
+_SYSV_IPC_DIR = Path("/", "proc", "sysvipc")
+# Each /proc/sysvipc table and the column holding its object ids.
+_SYSV_IPC_ID_COLUMNS = {"shm": "shmid", "msg": "msqid", "sem": "semid"}
+_IPC_RMID = 0
 
 
 def account_name_for(session_id: str) -> str:
@@ -242,7 +251,7 @@ class DedicatedAccount(SessionIdentity):
         if not _delete_account(self.name):
             return
         self._revoke_denies()
-        purge_uid_files(self.uid)
+        purge_uid(self.uid)
 
     def _revoke_denies(self) -> None:
         remaining: list[Path] = []
@@ -333,17 +342,23 @@ def reap_stale_accounts(keep: str | None = None) -> None:
         if not _delete_account(name):
             continue
         logger.info("Reaped stale SSH session account %s", name)
-        purge_uid_files(entry.pw_uid)
+        purge_uid(entry.pw_uid)
         _remove_session_dir(Path(entry.pw_dir))
     _revoke_orphaned_denies()
 
 
-def purge_uid_files(uid: int) -> None:
-    """Delete what ``uid`` left in the shared scratch directories.
+def purge_uid(uid: int) -> None:
+    """Delete what ``uid`` left behind that outlives its processes.
 
     Session uids are drawn at random and may come round again, so a later
-    session must not inherit files an earlier one owned there.
+    session must not inherit what an earlier one owned.
     """
+    purge_uid_files(uid)
+    purge_uid_ipc(uid)
+
+
+def purge_uid_files(uid: int) -> None:
+    """Delete what ``uid`` left in the shared scratch directories."""
     for base in (Path(tempfile.gettempdir()), *_WORLD_WRITABLE_DIRS):
         for parent, dirs, files in os.walk(base, followlinks=False):
             for name in (*dirs, *files):
@@ -361,6 +376,70 @@ def purge_uid_files(uid: int) -> None:
             dirs[:] = [
                 name for name in dirs if os.path.lexists(os.path.join(parent, name))
             ]
+
+
+def purge_uid_ipc(uid: int) -> None:
+    """Remove the System V IPC objects ``uid`` owns or created.
+
+    Sessions share the worker's IPC namespace, and these objects persist after
+    their creator exits.
+    """
+    try:
+        libc = ctypes.CDLL(None, use_errno=True)
+    except OSError:
+        logger.warning("Cannot load libc to remove System V IPC objects of %d", uid)
+        return
+    for kind, id_column in _SYSV_IPC_ID_COLUMNS.items():
+        for ipc_id in owned_ipc_ids(_read_ipc_table(kind), id_column, uid):
+            if _remove_ipc(libc, kind, ipc_id) != 0:
+                logger.warning(
+                    "Failed to remove System V %s %d of uid %d: %s",
+                    kind,
+                    ipc_id,
+                    uid,
+                    os.strerror(ctypes.get_errno()),
+                )
+
+
+def owned_ipc_ids(table: str, id_column: str, uid: int) -> list[int]:
+    """Ids in a ``/proc/sysvipc`` table whose owner or creator is ``uid``.
+
+    The creator is matched too because the owner can hand an object to any uid.
+    """
+    lines = table.splitlines()
+    if not lines:
+        return []
+    header = lines[0].split()
+    try:
+        id_at = header.index(id_column)
+        uid_at = header.index("uid")
+        cuid_at = header.index("cuid")
+    except ValueError:
+        return []
+    ids: list[int] = []
+    for line in lines[1:]:
+        fields = line.split()
+        try:
+            if uid in (int(fields[uid_at]), int(fields[cuid_at])):
+                ids.append(int(fields[id_at]))
+        except (IndexError, ValueError):
+            continue
+    return ids
+
+
+def _read_ipc_table(kind: str) -> str:
+    try:
+        return (_SYSV_IPC_DIR / kind).read_text(encoding="utf-8")
+    except OSError:
+        return ""
+
+
+def _remove_ipc(libc: ctypes.CDLL, kind: str, ipc_id: int) -> int:
+    if kind == "shm":
+        return int(libc.shmctl(ipc_id, _IPC_RMID, None))
+    if kind == "msg":
+        return int(libc.msgctl(ipc_id, _IPC_RMID, None))
+    return int(libc.semctl(ipc_id, 0, _IPC_RMID))
 
 
 def _revoke_orphaned_denies() -> None:

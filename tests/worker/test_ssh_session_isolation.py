@@ -4,6 +4,7 @@ Everything here runs unprivileged: accounts are stood in for by the test's own
 uid, and ACL and account tooling is stubbed where a real call would need root.
 """
 
+import ctypes
 import dataclasses
 import os
 import pwd
@@ -362,7 +363,7 @@ class TestZombies:
 
         monkeypatch.setattr(psutil, "process_iter", lambda attrs=None: [zombie])
         monkeypatch.setattr(identity_module, "_delete_account", delete_account)
-        monkeypatch.setattr(identity_module, "purge_uid_files", lambda uid: None)
+        monkeypatch.setattr(identity_module, "purge_uid", lambda uid: None)
         _own_account(tmp_path).release()
         assert deleted == ["fmssn-test"]
 
@@ -376,6 +377,48 @@ class TestZombies:
         monkeypatch.setattr(identity_module.pwd, "getpwall", lambda: [entry])
         monkeypatch.setattr(os, "getuid", lambda: 0)
         assert identity_module.live_session_accounts() == []
+
+
+class TestUidIpcPurge:
+    TABLE = (
+        "   key  shmid perms  size cpid lpid nattch   uid gid  cuid cgid\n"
+        "     0     11   600  4096  100  100      0 61001 100 61001  100\n"
+        "     0     12   600  4096  100  100      0  1000 100 61001  100\n"
+        "     0     13   666  4096  100  100      0  1000 100  1000  100\n"
+    )
+
+    def test_objects_the_uid_owns_or_created_are_selected(self) -> None:
+        assert identity_module.owned_ipc_ids(self.TABLE, "shmid", 61001) == [11, 12]
+        assert identity_module.owned_ipc_ids("", "shmid", 61001) == []
+
+    def test_a_segment_the_uid_left_is_removed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        libc = ctypes.CDLL(None, use_errno=True)
+        ipc_private, ipc_creat = 0, 0o1000
+        shmid = libc.shmget(ipc_private, 4096, ipc_creat | 0o600)
+        if shmid < 0:
+            pytest.skip("System V shared memory is unavailable")
+        try:
+            real = Path("/proc/sysvipc/shm").read_text(encoding="utf-8").splitlines()
+            ours = [real[0]] + [
+                line for line in real[1:] if line.split()[1] == str(shmid)
+            ]
+            assert len(ours) == 2
+            # Only this test's segment is visible, so no other object of this uid
+            # is touched.
+            monkeypatch.setattr(
+                identity_module,
+                "_read_ipc_table",
+                lambda kind: "\n".join(ours) if kind == "shm" else "",
+            )
+            identity_module.purge_uid_ipc(os.getuid())
+            listed = Path("/proc/sysvipc/shm").read_text(encoding="utf-8")
+            assert str(shmid) not in [
+                line.split()[1] for line in listed.splitlines()[1:]
+            ]
+        finally:
+            libc.shmctl(shmid, 0, None)
 
 
 class TestUidFilePurge:
@@ -607,7 +650,7 @@ class TestLingeringSessionProcesses:
         monkeypatch.setattr(os, "getuid", lambda: 0)
         monkeypatch.setattr(identity_module.pwd, "getpwall", lambda: [entry])
         monkeypatch.setattr(identity_module, "_delete_account", delete_account)
-        monkeypatch.setattr(identity_module, "purge_uid_files", lambda uid: None)
+        monkeypatch.setattr(identity_module, "purge_uid", lambda uid: None)
         monkeypatch.setattr(identity_module, "_revoke_orphaned_denies", lambda: None)
         return deleted
 
