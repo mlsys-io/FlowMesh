@@ -49,6 +49,10 @@ DEFAULT_INPUTS_ROOT = "/mnt/flowmesh/inputs"
 DEFAULT_OUTPUT_PATH = "/mnt/flowmesh/output"
 SAFE_MOUNT_ROOT = PurePosixPath("/mnt/flowmesh")
 FINISH_SENTINEL_PATH = PurePosixPath("/", "tmp", ".flowmesh_finish").as_posix()
+# Far below PATH_MAX: the mount root is walked and emptied by path, so a deeper
+# mount path would leave it impossible to clear.
+MAX_MOUNT_PATH_CHARS = 1024
+MAX_MOUNT_PATH_COMPONENTS = 32
 
 
 @dataclass(slots=True)
@@ -340,7 +344,15 @@ def normalize_mount_path(path: str, field_name: str) -> str:
     parts = [part for part in raw.split("/") if part not in ("", ".")]
     if ".." in parts:
         raise ExecutionError(f"{field_name} must not contain '..'")
+    if len(parts) > MAX_MOUNT_PATH_COMPONENTS:
+        raise ExecutionError(
+            f"{field_name} must have at most {MAX_MOUNT_PATH_COMPONENTS} components"
+        )
     normalized = PurePosixPath("/", *parts)
+    if len(normalized.as_posix()) > MAX_MOUNT_PATH_CHARS:
+        raise ExecutionError(
+            f"{field_name} must be at most {MAX_MOUNT_PATH_CHARS} characters long"
+        )
     if normalized == PurePosixPath("/"):
         raise ExecutionError(f"{field_name} cannot be '/'")
     if normalized != SAFE_MOUNT_ROOT and SAFE_MOUNT_ROOT not in normalized.parents:

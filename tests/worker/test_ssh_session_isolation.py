@@ -95,6 +95,21 @@ class TestMountPathNormalization:
             == "/mnt/flowmesh/out/data"
         )
 
+    def test_a_path_too_deep_to_clear_is_refused(self) -> None:
+        deep = "/mnt/flowmesh/" + "/".join(["a"] * 2100)
+        with pytest.raises(ExecutionError, match="components"):
+            normalize_mount_path(deep, field_name="inputs[x].mountPath")
+
+    def test_a_path_too_long_to_clear_is_refused(self) -> None:
+        long = "/mnt/flowmesh/" + "a" * 1011
+        with pytest.raises(ExecutionError, match="characters"):
+            normalize_mount_path(long, field_name="f")
+        assert normalize_mount_path(long[:-1], field_name="f") == long[:-1]
+
+    def test_the_component_cap_is_inclusive(self) -> None:
+        path = "/mnt/flowmesh/" + "/".join(["a"] * 30)
+        assert normalize_mount_path(path, field_name="f") == path
+
     @pytest.mark.parametrize("raw", ["mnt/flowmesh/out", "/mnt/other", "/", "/mnt"])
     def test_paths_outside_the_mount_root_are_refused(self, raw: str) -> None:
         with pytest.raises(ExecutionError):
