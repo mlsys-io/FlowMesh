@@ -33,10 +33,11 @@ from worker.executors.ssh_session.backends.process import (
     ProcessSession,
     ProcessSessionBackend,
     ProcessSessionPaths,
+    _create_state_root,
     _link_mount_path,
+    _path_problem,
     _required_path_under,
     _reset_mount_root,
-    _root_problem,
     denied_roots,
 )
 from worker.executors.ssh_session.base import iter_tree, path_size_bytes
@@ -536,9 +537,8 @@ class TestResolvingStateRoots:
         cfg = dataclasses.replace(
             make_live_worker_config(tmp_path), results_dir=tmp_path / "results"
         )
-        roots = denied_roots(cfg)
-        assert data in roots
-        assert _root_problem(data) is None
+        assert data in denied_roots(cfg)
+        assert _path_problem(tmp_path / "results") is None
 
     def test_the_heartbeat_directory_is_denied_not_just_the_file(
         self, tmp_path: Path
@@ -557,25 +557,90 @@ class TestResolvingStateRoots:
         victim = tmp_path / "victim"
         (victim / "data").mkdir(parents=True)
         (shared / "utu").symlink_to(victim)
-        cfg = make_live_worker_config(tmp_path, state_dirs=(shared / "utu",))
-        assert shared / "utu" in denied_roots(cfg)
-        assert "link" in (_root_problem(shared / "utu") or "")
+        assert "shared directory" in (_path_problem(shared / "utu") or "")
         assert (victim / "data").is_dir()
 
-    def test_a_root_others_can_write_in_a_shared_dir_is_refused(
+    def test_an_owned_root_in_a_sticky_dir_is_accepted(self, tmp_path: Path) -> None:
+        shared = tmp_path / "shared"
+        (shared / "cache").mkdir(parents=True)
+        shared.chmod(0o1777)
+        assert _path_problem(shared / "cache") is None
+        assert _path_problem(shared / "missing") is None
+
+    @pytest.mark.parametrize("depth", [1, 2])
+    def test_a_root_below_a_world_writable_dir_is_refused(
+        self, tmp_path: Path, depth: int
+    ) -> None:
+        shared = tmp_path / "shared"
+        root = shared.joinpath(*["sub"] * (depth - 1), "results")
+        root.mkdir(parents=True)
+        shared.chmod(0o777)
+        assert "world-writable" in (_path_problem(root) or "")
+
+    def test_a_world_writable_dir_a_link_leads_through_is_refused(
         self, tmp_path: Path
     ) -> None:
         shared = tmp_path / "shared"
-        shared.mkdir()
-        shared.chmod(0o1777)
-        (shared / "cache").mkdir()
-        (shared / "cache").chmod(0o777)
-        (shared / "cache" / "kept").write_text("data")
-        assert _root_problem(shared / "cache") is not None
-        assert (shared / "cache" / "kept").read_text() == "data"
+        (shared / "results").mkdir(parents=True)
+        shared.chmod(0o777)
+        (tmp_path / "hop").symlink_to("shared/results")
+        (tmp_path / "results").symlink_to(tmp_path / "hop")
+        assert "world-writable" in (_path_problem(tmp_path / "results") or "")
 
-    def test_a_missing_root_has_no_problem(self, tmp_path: Path) -> None:
-        assert _root_problem(tmp_path / "missing") is None
+    def test_a_link_in_a_world_writable_dir_is_refused(self, tmp_path: Path) -> None:
+        (tmp_path / "real").mkdir()
+        shared = tmp_path / "shared"
+        shared.mkdir()
+        (shared / "link").symlink_to(tmp_path / "real")
+        shared.chmod(0o777)
+        (tmp_path / "results").symlink_to(shared / "link")
+        assert "world-writable" in (_path_problem(tmp_path / "results") or "")
+
+    def test_parent_components_after_a_link_are_resolved_physically(
+        self, tmp_path: Path
+    ) -> None:
+        shared = tmp_path / "shared"
+        (shared / "inner").mkdir(parents=True)
+        (shared / "results").mkdir()
+        shared.chmod(0o777)
+        (tmp_path / "safe").mkdir()
+        (tmp_path / "safe" / "link").symlink_to(shared / "inner")
+        assert "world-writable" in (
+            _path_problem(tmp_path / "safe" / "link" / ".." / "results") or ""
+        )
+
+    def test_a_link_loop_is_refused(self, tmp_path: Path) -> None:
+        (tmp_path / "a").symlink_to(tmp_path / "b")
+        (tmp_path / "b").symlink_to(tmp_path / "a")
+        assert "too many links" in (_path_problem(tmp_path / "a") or "")
+
+    def test_a_missing_root_is_created_owner_only(self, tmp_path: Path) -> None:
+        root = tmp_path / "new" / "state"
+        _create_state_root(root)
+        assert stat.S_IMODE(root.stat().st_mode) == 0o700
+        assert stat.S_IMODE(root.parent.stat().st_mode) == 0o755
+
+    def test_a_link_planted_on_the_way_is_not_followed(self, tmp_path: Path) -> None:
+        elsewhere = tmp_path / "elsewhere"
+        elsewhere.mkdir()
+        (tmp_path / "new").symlink_to(elsewhere)
+        with pytest.raises(OSError):
+            _create_state_root(tmp_path / "new" / "state")
+        assert list(elsewhere.iterdir()) == []
+
+    def test_a_world_writable_dir_on_the_way_offers_no_process_backend(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(os, "getuid", lambda: 0)
+        monkeypatch.setattr(process_module, "_acquire_backend_lock", lambda: True)
+        monkeypatch.setattr(acl, "tools_available", lambda: True)
+        monkeypatch.setattr(acl, "probe", lambda directory: None)
+        shared = tmp_path / "data"
+        (shared / "hf").mkdir(parents=True)
+        cfg = make_live_worker_config(tmp_path, state_dirs=(shared / "hf",))
+        assert ProcessSessionBackend._isolation_ready(cfg) is True
+        shared.chmod(0o777)
+        assert ProcessSessionBackend._isolation_ready(cfg) is False
 
 
 class TestProcessBackendIsolation:

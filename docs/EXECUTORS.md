@@ -83,8 +83,9 @@ when:
   containers, already serves `process` sessions;
 - one of those paths contains a directory every session needs, such as the
   temp dir or `/mnt/flowmesh`;
-- one of those paths sits in a world-writable directory without being a
-  root-owned directory only root can write.
+- a directory that resolving one of those paths passes through, links
+  included, is world-writable, unless it is sticky and holds the next component
+  as a directory the worker owns rather than a link.
 
 Session accounts take uids from 61000–64999. The deny entries do not cover
 files an agent tool writes directly into the temp dir.

@@ -107,6 +107,7 @@ _SESSION_REQUIRED_PATHS = (
 # Every path-typed ``WorkerConfig`` field belongs to exactly one of these.
 DENIED_CONFIG_FIELDS = ("results_dir", "hb_file", "state_dirs")
 ALLOWED_CONFIG_FIELDS: tuple[str, ...] = ()
+_MAX_LINK_HOPS = 40
 _MOUNTINFO = Path("/proc/self/mountinfo")
 _OCTAL_ESCAPE_RE = re.compile(r"\\([0-7]{3})")
 _backend_lock_fd: int | None = None
@@ -350,33 +351,26 @@ class ProcessSessionBackend(SSHSessionBackend):
         """
         if os.getuid() != 0:
             return []
+        if problem := _state_problem(self._config):
+            raise ExecutionError(f"Refusing the SSH session: {problem}", retryable=True)
         roots = denied_roots(self._config)
         for root in roots:
-            if problem := _root_problem(root):
-                raise ExecutionError(
-                    f"Refusing the SSH session: {problem}", retryable=True
-                )
             if session_dir.is_relative_to(root):
                 raise ExecutionError(
                     f"Refusing the SSH session: its directory {session_dir} is inside "
                     f"the worker state {root} it must be denied",
                     retryable=True,
                 )
-            if not root.exists():
-                root.parent.mkdir(parents=True, exist_ok=True)
+            if not os.path.lexists(root):
                 try:
-                    os.mkdir(root, 0o700)
-                except FileExistsError:
-                    pass
+                    _create_state_root(root)
                 except OSError as exc:
                     raise ExecutionError(
                         f"Cannot create worker state {root}: {exc}", retryable=True
                     ) from exc
-                if problem := _root_problem(root):
-                    raise ExecutionError(
-                        f"Refusing the SSH session: {problem}", retryable=True
-                    )
-        return roots
+        if problem := _state_problem(self._config):
+            raise ExecutionError(f"Refusing the SSH session: {problem}", retryable=True)
+        return denied_roots(self._config)
 
     def _build_paths(
         self, request: SessionRequest, session_dir: Path, identity: SessionIdentity
@@ -577,49 +571,108 @@ def _link_mount_path(root: Path, mount_path: str, target: Path) -> None:
 
 
 def denied_roots(config: WorkerConfig) -> list[Path]:
-    """Return the worker state a session is denied, as the paths ``setfacl`` acts on.
+    """Return the worker state a session is denied, resolved to the paths
+    ``setfacl`` acts on."""
+    return list(
+        dict.fromkeys(Path(os.path.realpath(path)) for path in _state_paths(config))
+    )
 
-    Each path in ``DENIED_CONFIG_FIELDS`` is made absolute, with the heartbeat
-    file replaced by its directory, and links an operator configured are
-    resolved. A path in a world-writable directory is left unresolved, so that
-    :func:`_root_problem` refuses a link planted there instead of following it.
-    """
-    roots: dict[Path, None] = {}
+
+def _state_paths(config: WorkerConfig) -> list[Path]:
+    """Return each path in ``DENIED_CONFIG_FIELDS`` as the worker uses it, made
+    absolute, with the heartbeat file replaced by its directory."""
+    paths: list[Path] = []
     for field_name in DENIED_CONFIG_FIELDS:
         value = getattr(config, field_name)
         for configured in value if isinstance(value, tuple) else (value,):
-            path = Path(os.path.abspath(configured))
-            if field_name == "hb_file":
-                # Denying only the file would still let a session list its
-                # name, which contains the worker token.
-                path = path.parent
-            parent = Path(os.path.realpath(path.parent))
-            if _is_shared_dir(parent):
-                roots[parent / path.name] = None
-            else:
-                roots[Path(os.path.realpath(path))] = None
-    return list(roots)
+            path = Path(configured).absolute()
+            # Denying only the file would still let a session list its name,
+            # which contains the worker token.
+            paths.append(path.parent if field_name == "hb_file" else path)
+    return paths
 
 
-def _root_problem(root: Path) -> str | None:
-    """Why ``root`` cannot be denied to a session safely, if it cannot."""
-    if blocked := _required_path_under(root):
-        return f"denying {root} would also deny {blocked}"
+def _create_state_root(root: Path) -> None:
+    """Create ``root`` as ``0700`` and each missing parent as ``0755``, never
+    following a link."""
+    parts = root.parts[1:]
+    fd = os.open("/", _DIR_FLAGS)
     try:
-        info = os.lstat(root)
-    except FileNotFoundError:
-        return None
-    except OSError as exc:
-        return f"cannot inspect worker state {root}: {exc}"
-    if stat.S_ISLNK(info.st_mode):
-        return f"worker state {root} is a link"
-    if _is_shared_dir(root.parent) and (
-        info.st_uid != 0 or info.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
-    ):
-        return (
-            f"worker state {root} sits in a shared directory but is not a root-owned "
-            "path only root can write"
-        )
+        for index, part in enumerate(parts):
+            try:
+                os.mkdir(part, 0o700 if index == len(parts) - 1 else 0o755, dir_fd=fd)
+            except FileExistsError:
+                pass
+            child = os.open(part, _DIR_FLAGS, dir_fd=fd)
+            os.close(fd)
+            fd = child
+    finally:
+        os.close(fd)
+
+
+def _state_problem(config: WorkerConfig) -> str | None:
+    """Why this worker's state cannot be denied to a session safely, if it cannot."""
+    for path in _state_paths(config):
+        if problem := _path_problem(path):
+            return problem
+    for root in denied_roots(config):
+        if blocked := _required_path_under(root):
+            return f"denying {root} would also deny {blocked}"
+    return None
+
+
+def _path_problem(path: Path) -> str | None:
+    """Why a session could replace ``path`` or a directory on the way to it, if
+    it could.
+
+    Every directory that resolving ``path`` looks a name up in is checked,
+    those a link leads through included. A session can rename any entry of a
+    directory it can write; in a sticky one only its own, so there the entry
+    must be a directory the worker owns, not a link.
+    """
+    directory = Path("/")
+    pending = list(path.parts[1:])
+    hops = 0
+    while pending:
+        name = pending.pop(0)
+        if name == "..":
+            directory = directory.parent
+            continue
+        entry = directory / name
+        try:
+            dir_mode = os.stat(directory).st_mode
+            info: os.stat_result | None = os.lstat(entry)
+        except FileNotFoundError:
+            info = None
+        except OSError as exc:
+            return f"cannot inspect {entry} on the way to worker state {path}: {exc}"
+        if dir_mode & stat.S_IWOTH:
+            if not dir_mode & stat.S_ISVTX:
+                return (
+                    f"{directory}, on the way to worker state {path}, is "
+                    "world-writable, so a session could replace what it holds"
+                )
+            if info is not None and (
+                info.st_uid != os.geteuid() or stat.S_ISLNK(info.st_mode)
+            ):
+                return (
+                    f"{entry}, on the way to worker state {path}, sits in a shared "
+                    "directory but is not a directory this worker owns"
+                )
+        if info is None:
+            return None
+        if stat.S_ISLNK(info.st_mode):
+            hops += 1
+            if hops > _MAX_LINK_HOPS:
+                return f"too many links on the way to worker state {path}"
+            target = PurePosixPath(os.readlink(entry))
+            if target.is_absolute():
+                directory = Path("/")
+                pending[:0] = target.parts[1:]
+            else:
+                pending[:0] = target.parts
+            continue
+        directory = entry
     return None
 
 
@@ -631,10 +684,10 @@ def _acl_ready(config: WorkerConfig) -> bool:
             "package in the worker image)"
         )
         return False
+    if problem := _state_problem(config):
+        logger.info("Process SSH backend unavailable: %s", problem)
+        return False
     for root in denied_roots(config):
-        if problem := _root_problem(root):
-            logger.info("Process SSH backend unavailable: %s", problem)
-            return False
         try:
             acl.probe(_probe_dir(root))
         except (OSError, ExecutionError) as exc:
@@ -646,14 +699,6 @@ def _acl_ready(config: WorkerConfig) -> bool:
             )
             return False
     return True
-
-
-def _is_shared_dir(path: Path) -> bool:
-    try:
-        mode = os.stat(path).st_mode
-    except OSError:
-        return False
-    return bool(mode & (stat.S_ISVTX | stat.S_IWOTH))
 
 
 def _required_path_under(root: Path) -> Path | None:
