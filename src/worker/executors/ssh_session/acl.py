@@ -29,6 +29,8 @@ PROBE_UID = 65534
 _ACL_TIMEOUT_SEC = 30.0
 _DENIED_USER_RE = re.compile(r"^user:(\d+):---$")
 _NAMED_USER_RE = re.compile(r"^(?:default:)?user:(\d+):")
+_NAMED_ACCESS_ENTRY_RE = re.compile(r"^(?:user|group):[^:]+:")
+_PERMS = "rwx"
 _record_lock = threading.Lock()
 
 
@@ -45,25 +47,38 @@ def tools_available() -> bool:
 
 
 def deny(uid: int, path: Path) -> None:
-    """Deny ``uid`` every access to ``path``."""
-    _setfacl("-m", f"u:{uid}:---", path)
+    """Deny ``uid`` every access to ``path``, leaving the mask as it was."""
+    _setfacl(path, "-n", "-m", f"u:{uid}:---")
 
 
 def revoke(uid: int, path: Path) -> None:
     """Remove ``uid``'s entry from ``path``, and the mask when nothing needs it.
 
     A mask left behind would make a later ``chmod`` on ``path`` change the mask
-    instead of the group bits, so it is dropped once no named entry remains;
-    ``setfacl`` refuses that while one does, which is the case to leave alone.
+    instead of the group bits, so it is dropped once no named entry remains and
+    it grants the group everything the group entry does. A mask narrower than
+    the group entry was set by someone else and is kept. Dropping it is best
+    effort, since another worker may add an entry in between.
     """
-    _setfacl("-x", f"u:{uid}", path)
-    setfacl = _require(find_setfacl(), "setfacl")
-    subprocess.run(  # nosec B603 - argv list, no shell=True, absolute path via shutil.which()
-        [setfacl, "-x", "m::", "--", path.as_posix()],
-        capture_output=True,
-        timeout=_ACL_TIMEOUT_SEC,
-        check=False,
-    )
+    _setfacl(path, "-n", "-x", f"u:{uid}")
+    if mask_is_redundant(_read_acl(path)):
+        _setfacl(path, "-x", "m::", check=False)
+
+
+def mask_is_redundant(getfacl_output: str) -> bool:
+    """Whether dropping the access ACL's mask leaves every permission unchanged."""
+    group = mask = None
+    for line in getfacl_output.splitlines():
+        entry = line.split("#", 1)[0].strip()
+        if entry.startswith("group::"):
+            group = entry.removeprefix("group::")
+        elif entry.startswith("mask::"):
+            mask = entry.removeprefix("mask::")
+        elif _NAMED_ACCESS_ENTRY_RE.match(entry):
+            return False
+    if group is None or mask is None:
+        return False
+    return all(perm in mask for perm in group if perm in _PERMS)
 
 
 def denied_uids(path: Path) -> set[int]:
@@ -171,15 +186,15 @@ def _write_records(entries: set[tuple[int, str]]) -> None:
         ) from exc
 
 
-def _setfacl(action: str, entry: str, path: Path) -> None:
+def _setfacl(path: Path, *options: str, check: bool = True) -> None:
     setfacl = _require(find_setfacl(), "setfacl")
     result = subprocess.run(  # nosec B603 - argv list, no shell=True, absolute path via shutil.which()
-        [setfacl, action, entry, "--", path.as_posix()],
+        [setfacl, *options, "--", path.as_posix()],
         capture_output=True,
         timeout=_ACL_TIMEOUT_SEC,
         check=False,
     )
-    if result.returncode != 0:
+    if check and result.returncode != 0:
         raise ExecutionError(
             f"Failed to update the ACL of {path.as_posix()}: {_stderr(result)}"
         )

@@ -425,6 +425,55 @@ class TestSessionGroups:
 
 
 @pytest.fixture
+def acl_dir(tmp_path: Path) -> Path:
+    if not acl.tools_available():
+        pytest.skip("setfacl/getfacl are not installed")
+    directory = tmp_path / "state"
+    directory.mkdir()
+    directory.chmod(0o775)
+    try:
+        acl.probe(tmp_path)
+    except ExecutionError:
+        pytest.skip("this filesystem does not store ACL entries")
+    return directory
+
+
+class TestAclMask:
+    def test_a_mask_is_redundant_only_when_it_narrows_nothing(self) -> None:
+        assert acl.mask_is_redundant("user::rwx\ngroup::rwx\nmask::rwx\nother::r-x\n")
+        assert acl.mask_is_redundant(
+            "user::rwx\ngroup::r-x\nmask::rwx\nother::---\ndefault:user:1000:rwx\n"
+        )
+        assert not acl.mask_is_redundant(
+            "user::rwx\ngroup::rwx\t#effective:r-x\nmask::r-x\nother::r-x\n"
+        )
+        assert not acl.mask_is_redundant(
+            "user::rwx\nuser:1000:r-x\ngroup::r-x\nmask::r-x\nother::r-x\n"
+        )
+        assert not acl.mask_is_redundant("user::rwx\ngroup::r-x\nother::r-x\n")
+
+    def test_a_narrowed_mask_survives_a_deny_and_its_revoke(
+        self, acl_dir: Path
+    ) -> None:
+        acl._setfacl(acl_dir, "-m", "m::r-x")
+        acl.deny(61001, acl_dir)
+        assert "mask::r-x" in acl._read_acl(acl_dir).splitlines()
+        acl.revoke(61001, acl_dir)
+        after = acl._read_acl(acl_dir).splitlines()
+        assert "mask::r-x" in after
+        assert not any(line.startswith("user:61001") for line in after)
+
+    def test_a_minimal_acl_is_minimal_again_after_revoke(self, acl_dir: Path) -> None:
+        acl.deny(61001, acl_dir)
+        acl.revoke(61001, acl_dir)
+        assert not any(
+            line.startswith(("mask::", "user:61001"))
+            for line in acl._read_acl(acl_dir).splitlines()
+        )
+        assert stat.S_IMODE(acl_dir.stat().st_mode) == 0o775
+
+
+@pytest.fixture
 def zombie() -> Iterator[psutil.Process]:
     pid = os.fork()
     if pid == 0:
