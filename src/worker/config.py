@@ -7,6 +7,7 @@ the worker code can depend on a structured config object.
 
 import json
 import os
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -22,6 +23,21 @@ from shared.utils.worker_token import external_token_alias
 
 from .gpu_availability import GpuGateConfig
 from .utils.health import get_hb_config
+
+# Env vars that name the cache directories of the worker's libraries.
+_STATE_DIR_ENV_VARS = (
+    "HF_HOME",
+    "HF_HUB_CACHE",
+    "HUGGINGFACE_HUB_CACHE",
+    "HF_DATASETS_CACHE",
+    "TRANSFORMERS_CACHE",
+    "TORCH_HOME",
+    "XDG_CACHE_HOME",
+    "VLLM_CACHE_ROOT",
+    "FASTEMBED_CACHE_PATH",
+)
+# Directories that worker-side tools create under the temp dir.
+_TEMP_STATE_DIR_NAMES = ("utu", "fastembed_cache")
 
 
 @dataclass(frozen=True)
@@ -56,6 +72,7 @@ class WorkerConfig:
     ssh_direct_host: str | None = None
     enable_unisolated_ssh_session: bool = False
     foreign_gpu_gate: GpuGateConfig = GpuGateConfig()
+    state_dirs: tuple[Path, ...] = ()
 
     @staticmethod
     def from_env() -> "WorkerConfig":
@@ -207,4 +224,18 @@ class WorkerConfig:
             ssh_direct_host=ssh_direct_host,
             enable_unisolated_ssh_session=enable_unisolated_ssh_session,
             foreign_gpu_gate=foreign_gpu_gate,
+            state_dirs=_state_dirs_from_env(),
         )
+
+
+def _state_dirs_from_env() -> tuple[Path, ...]:
+    """Return the worker's home, each library cache directory set in the
+    environment, and the tool directories under the temp dir, as absolute paths."""
+    dirs = [Path.home()]
+    dirs.extend(
+        Path(value)
+        for name in _STATE_DIR_ENV_VARS
+        if (value := os.getenv(name, "").strip())
+    )
+    dirs.extend(Path(tempfile.gettempdir()) / name for name in _TEMP_STATE_DIR_NAMES)
+    return tuple(Path(os.path.abspath(path)) for path in dirs)

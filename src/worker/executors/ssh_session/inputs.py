@@ -60,11 +60,15 @@ def resolve_inputs(
 
 
 def stage_inputs_locally(
-    resolved_inputs: list[ResolvedSSHInput], session_id: str
+    resolved_inputs: list[ResolvedSSHInput],
+    session_id: str,
+    staging_dir: Path | None = None,
 ) -> Path:
-    staging_dir = Path(
-        tempfile.mkdtemp(prefix=f"flowmesh-ssh-inputs-{session_id[:8]}-")
-    )
+    """Copy each input into ``staging_dir``, or a new temporary directory."""
+    if staging_dir is None:
+        staging_dir = Path(
+            tempfile.mkdtemp(prefix=f"flowmesh-ssh-inputs-{session_id[:8]}-")
+        )
     for resolved in resolved_inputs:
         destination = staging_dir / resolved.task_id
         if resolved.source_path.exists():

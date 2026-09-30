@@ -65,3 +65,40 @@ Optional, for the search tools:
 
 - `SERPER_API_KEY`
 - `JINA_API_KEY`
+
+## SSH executor (process backend)
+
+On a root worker, a `process` session runs under its own account, which is
+denied the worker's state through a POSIX ACL entry on each of: `RESULTS_DIR`,
+the directory holding `WORKER_HB_FILE`, the worker's home, any of `HF_HOME`,
+`HF_HUB_CACHE`, `HUGGINGFACE_HUB_CACHE`, `HF_DATASETS_CACHE`,
+`TRANSFORMERS_CACHE`, `TORCH_HOME`, `XDG_CACHE_HOME`, `VLLM_CACHE_ROOT` and
+`FASTEMBED_CACHE_PATH` that is set, and the `utu` and `fastembed_cache`
+directories in the temp dir. The worker therefore needs the `acl` package
+(`setfacl` / `getfacl`) and ACL support on the filesystems behind those paths;
+without either, it does not offer `process`. It also does not offer `process`
+when:
+
+- another worker in the same container, or on the same machine outside
+  containers, already serves `process` sessions;
+- one of those paths contains a directory every session needs, such as the
+  temp dir or `/mnt/flowmesh`;
+- a directory that resolving one of those paths passes through, links
+  included, is world-writable, unless it is one of those paths or inside one,
+  or it is sticky and holds the next component as a directory the worker owns
+  rather than a link.
+
+Each session account has a group of its own, and takes its uid and gid from
+61000–64999. The deny entries do not cover files an agent tool writes directly
+into the temp dir.
+
+A session's inputs and output live in its own directory in the worker's temp
+dir (`TMPDIR`, `/tmp` by default), so that filesystem must have room for them.
+Each `mountPath` is a link to them under `/mnt/flowmesh`. `/mnt/flowmesh` is
+emptied before and after every session, so it must not have a filesystem
+mounted below it or be shared between workers (for example, one host directory
+bind-mounted into several containers). A `mountPath` must name a path below
+`/mnt/flowmesh`, must not contain `..`, must have at most 32 components and 1024
+characters, and must not be nested inside another one. Output is collected as
+the regular files the session owns; links and special files are dropped, and
+output nested more than 64 directories deep fails the task.
