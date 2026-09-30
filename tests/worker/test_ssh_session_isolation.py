@@ -8,6 +8,7 @@ import dataclasses
 import os
 import pwd
 import stat
+import subprocess
 import tempfile
 import types
 import typing
@@ -565,18 +566,21 @@ class TestLingeringSessionProcesses:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         calls: list[tuple[list[str], dict[str, Any]]] = []
+
+        def run(argv: list[str], **kwargs: Any) -> "subprocess.CompletedProcess[bytes]":
+            calls.append((argv, kwargs))
+            return subprocess.CompletedProcess(argv, 0, b"", b"")
+
         monkeypatch.setattr(os, "geteuid", lambda: 0)
         monkeypatch.setattr(os, "getuid", lambda: 0)
-        monkeypatch.setattr(
-            identity_module.subprocess,
-            "run",
-            lambda argv, **kwargs: calls.append((argv, kwargs)),
-        )
+        monkeypatch.setattr(identity_module.subprocess, "run", run)
         identity_module._kill_all_as(61001)
         [(argv, kwargs)] = calls
-        assert "os.kill(-1, signal.SIGKILL)" in argv[-1]
-        assert kwargs["user"] == 61001
-        assert kwargs["extra_groups"] == []
+        script, uid, gid = argv[-3:]
+        assert "os.setuid(int(sys.argv[1]))" in script
+        assert "os.kill(-1, signal.SIGKILL)" in script
+        assert (uid, gid) == ("61001", "65534")
+        assert "user" not in kwargs
 
     @pytest.mark.parametrize("euid,uid,target", [(0, 0, 0), (0, 61001, 61001)])
     def test_the_worker_never_signals_as_itself(

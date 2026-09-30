@@ -42,7 +42,16 @@ _UID_ATTEMPTS = 16
 _KILL_GRACE_SEC = 5.0
 _KILL_ROUNDS = 10
 _KILL_ROUND_SEC = 0.5
-_KILL_ALL_SCRIPT = "import os, signal; os.kill(-1, signal.SIGKILL)"
+_KILL_ALL_SCRIPT = (
+    "import os, signal, sys\n"
+    "os.setgroups([])\n"
+    "os.setgid(int(sys.argv[2]))\n"
+    "os.setuid(int(sys.argv[1]))\n"
+    "try:\n"
+    "    os.kill(-1, signal.SIGKILL)\n"
+    "except ProcessLookupError:\n"
+    "    pass\n"
+)
 _KILL_ALL_TIMEOUT_SEC = 10.0
 _NOGROUP_GID = 65534
 _USERADD_TIMEOUT_SEC = 30.0
@@ -440,11 +449,13 @@ def _terminate_uid(uid: int) -> bool:
             continue
     if victims:
         psutil.wait_procs(victims, timeout=_KILL_GRACE_SEC)
+    # A snapshot can miss a process that forks and exits in a loop, so it is
+    # only trusted once kill(-1) has left the uid unable to start another.
     for _ in range(_KILL_ROUNDS):
+        _kill_all_as(uid)
         survivors = _processes_of(uid)
         if not survivors:
             return True
-        _kill_all_as(uid)
         for proc in survivors:
             try:
                 proc.send_signal(signal.SIGKILL)
@@ -461,15 +472,24 @@ def _kill_all_as(uid: int) -> None:
     taken, so a fork loop outruns one. ``kill(-1)`` sent as ``uid`` reaches all
     of that uid's processes at once, and a process that cannot be started as
     ``uid`` leaves the snapshot rounds to do what they can.
+
+    The helper drops to ``uid`` itself rather than through ``subprocess``'s
+    ``user=``, which forces a plain ``fork()`` whose atfork handlers crash the
+    child of a process running gRPC threads.
     """
     if os.geteuid() != 0 or uid in (0, os.getuid()):
         return
     try:
-        subprocess.run(  # nosec B603 - argv list, no shell=True, the worker's own interpreter
-            [sys.executable, "-I", "-S", "-c", _KILL_ALL_SCRIPT],
-            user=uid,
-            group=_NOGROUP_GID,
-            extra_groups=[],
+        result = subprocess.run(  # nosec B603 - argv list, no shell=True, the worker's own interpreter
+            [
+                sys.executable,
+                "-I",
+                "-S",
+                "-c",
+                _KILL_ALL_SCRIPT,
+                str(uid),
+                str(_NOGROUP_GID),
+            ],
             env={},
             cwd="/",
             stdin=subprocess.DEVNULL,
@@ -479,6 +499,14 @@ def _kill_all_as(uid: int) -> None:
         )
     except (OSError, subprocess.SubprocessError):
         logger.debug("Failed to signal every process of uid %d", uid, exc_info=True)
+        return
+    if result.returncode != 0:
+        logger.debug(
+            "Signalling every process of uid %d exited %d: %s",
+            uid,
+            result.returncode,
+            result.stderr.decode("utf-8", errors="replace").strip(),
+        )
 
 
 def _processes_of(uid: int) -> list[psutil.Process]:
