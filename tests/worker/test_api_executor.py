@@ -1086,7 +1086,7 @@ class TestBatch:
         assert excinfo.value.retryable is True
 
     def test_parse_error_fails_with_mapping_error_not_keyerror(
-        self, tmp_path: Path
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
         """A 200 with a non-mapping body and parse_json true fails the task with
         the parse error, not a KeyError from the collection loop."""
@@ -1098,9 +1098,25 @@ class TestBatch:
             def _handler(self, request: httpx.Request) -> httpx.Response:
                 return httpx.Response(200, json=[1])
 
-        task = _batch_task(["a", "b"], response={"parse_json": True})
-        with pytest.raises(ExecutionError, match="not a valid JSON mapping"):
-            _run(_executor(), task, _ArrayBody(), tmp_path)
+        task = _batch_task(["a", "b"], response={"parse_json": True}, concurrency=1)
+        with caplog.at_level(logging.INFO, logger="worker.executors.api_executor"):
+            with pytest.raises(ExecutionError, match="not a valid JSON mapping"):
+                _run(_executor(), task, _ArrayBody(), tmp_path)
+        call_lines = [
+            r.getMessage()
+            for r in caplog.records
+            if r.getMessage().startswith("api call")
+        ]
+        assert len(call_lines) == 1
+        assert "status=200" in call_lines[0]
+        summary = [
+            r.getMessage()
+            for r in caplog.records
+            if r.getMessage().startswith("api summary")
+        ]
+        assert len(summary) == 1
+        assert "calls=1" in summary[0]
+        assert "failures=1" in summary[0]
 
     def test_retry_stops_when_another_row_fails(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -1802,10 +1818,9 @@ class TestGraphTemplateAggregate:
         content = body["messages"][0]["content"]
         assert "c0" in content and "c1" in content
         assert len(result.items) == 1
-        # Aggregate result is a plain item (read at items.json...), not a group
-        # item (read at items.rows.json...).
+        # Aggregate result is a plain item (read at items.json...), not a group item.
         item = result.items[0]
-        assert not hasattr(item, "rows")
+        assert isinstance(item, APIItem)
         assert item.response_json["choices"][0]["message"]["content"].startswith(
             "echo:all:"
         )
@@ -2153,6 +2168,74 @@ class TestPythonStage:
         assert "c0" in group0 and "c1" not in group0
         assert "c1" in group1 and "c0" not in group1
 
+    def test_graph_template_direct_grouped_column_issues_one_request_per_group(
+        self, tmp_path: Path
+    ) -> None:
+        """A graph_template whose column reads a python stage's grouped output
+        directly (not via a nested dataframe) issues one request per group,
+        each prompt holding all its rows."""
+        upstream = _python_upstream(
+            {
+                "items": [
+                    {"output": [{"claim": "c0"}, {"claim": "c1"}]},
+                    {"output": [{"claim": "c2"}, {"claim": "c3"}, {"claim": "c4"}]},
+                ]
+            }
+        )
+        payload = {
+            "task_id": "task-api-py-gt-direct",
+            "workflow_id": "wf-1",
+            "owner_id": "owner",
+            "assigned_worker": "worker-1",
+            "dispatched_at": "2026-03-22T00:00:00Z",
+            "task": {
+                "apiVersion": "flowmesh/v1",
+                "kind": "Task",
+                "metadata": {"name": "wf:api"},
+                "spec": {
+                    "taskType": "api",
+                    "_upstreamResults": {"Py": upstream},
+                    "api": {
+                        "method": "POST",
+                        "url": "https://custom.example.com/v1/chat/completions",
+                        "json": {"messages": "{{prompt}}"},
+                    },
+                    "data": {
+                        "type": "graph_template",
+                        "template": {
+                            "name": "format",
+                            "columns": [
+                                {
+                                    "label": "claim",
+                                    "node": "Py",
+                                    "path": "value.items.output.claim",
+                                }
+                            ],
+                            "options": {
+                                "format": {
+                                    "steps": [],
+                                    "messages": [
+                                        {"role": "user", "content": "all: {claim}"}
+                                    ],
+                                }
+                            },
+                        },
+                    },
+                },
+            },
+        }
+        task = WorkerTaskMessage.model_validate(payload)
+        transport = _EchoTransport()
+        result = _run(_executor(), task, transport, tmp_path)
+        assert len(transport.requests) == 2
+        assert len(result.items) == 2
+        group0 = result.items[0].response_json["choices"][0]["message"]["content"]
+        group1 = result.items[1].response_json["choices"][0]["message"]["content"]
+        assert "c0" in group0 and "c1" in group0 and "c2" not in group0
+        assert (
+            "c2" in group1 and "c3" in group1 and "c4" in group1 and "c0" not in group1
+        )
+
     def test_empty_group_from_python_value_items_output(self, tmp_path: Path) -> None:
         """A python stage with an empty per-item output list yields an empty
         group: zero requests for it, an APIGroupItem with no rows."""
@@ -2302,6 +2385,38 @@ class TestCallLogging:
         summary = self._records(caplog, "api summary")
         assert len(summary) == 1
         assert "retries=2" in summary[0]
+
+    def test_early_failure_summary_counts_completed_calls(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """With concurrency 1 and the first of three rows failing, the summary
+        counts the one request actually sent, not the three planned prompts."""
+        task = _batch_task(
+            ["a", "b", "c"],
+            concurrency=1,
+            response={"raise_for_status": True},
+        )
+
+        class _FirstFails(httpx.MockTransport):
+            def __init__(self) -> None:
+                super().__init__(self._handler)
+
+            def _handler(self, request: httpx.Request) -> httpx.Response:
+                prompt = json.loads(request.read())["messages"][0]["content"]
+                if prompt == "a":
+                    return httpx.Response(400, json={"error": "boom"})
+                return _ok_response()
+
+        transport = _FirstFails()
+        with caplog.at_level(logging.INFO, logger="worker.executors.api_executor"):
+            with pytest.raises(ExecutionError, match="row 0"):
+                _run(_executor(), task, transport, tmp_path)
+        call_lines = self._records(caplog, "api call")
+        assert len(call_lines) == 1
+        summary = self._records(caplog, "api summary")
+        assert len(summary) == 1
+        assert "calls=1" in summary[0]
+        assert "failures=1" in summary[0]
 
     def test_non_json_body_logs_dash_without_raising(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
