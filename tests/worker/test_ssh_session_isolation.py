@@ -24,11 +24,7 @@ import pytest
 from shared.tasks.specs import SSHSpecStrict
 from tests.worker.factories import DEFAULT_WORKER_CONFIG, make_live_worker_config
 from worker import config as worker_config_module
-from worker.config import (
-    SESSION_ALLOWED_PATH_FIELDS,
-    SESSION_DENIED_PATH_FIELDS,
-    WorkerConfig,
-)
+from worker.config import WorkerConfig
 from worker.executors.base_executor import ExecutionError
 from worker.executors.ssh_session import acl
 from worker.executors.ssh_session import session_identity as identity_module
@@ -128,13 +124,13 @@ class TestDeniedStateRoots:
             for field in dataclasses.fields(WorkerConfig)
             if _path_typed(hints[field.name])
         }
-        denied = set(SESSION_DENIED_PATH_FIELDS)
-        allowed = set(SESSION_ALLOWED_PATH_FIELDS)
+        denied = set(process_module.DENIED_CONFIG_FIELDS)
+        allowed = set(process_module.ALLOWED_CONFIG_FIELDS)
         assert not denied & allowed
         unclassified = path_fields - denied - allowed
         assert not unclassified, (
-            f"Classify {sorted(unclassified)} in SESSION_DENIED_PATH_FIELDS or "
-            "SESSION_ALLOWED_PATH_FIELDS"
+            f"Classify {sorted(unclassified)} in DENIED_CONFIG_FIELDS or "
+            "ALLOWED_CONFIG_FIELDS"
         )
         assert denied | allowed <= path_fields
 
@@ -142,8 +138,8 @@ class TestDeniedStateRoots:
         self, tmp_path: Path
     ) -> None:
         cache = tmp_path / "hf"
-        cfg = make_live_worker_config(tmp_path, session_state_dirs=(cache,))
-        denied = cfg.session_denied_paths()
+        cfg = make_live_worker_config(tmp_path, state_dirs=(cache,))
+        denied = denied_roots(cfg)
         assert cfg.results_dir in denied
         assert cfg.hb_file.parent in denied
         assert cache in denied
@@ -153,7 +149,7 @@ class TestDeniedStateRoots:
     ) -> None:
         monkeypatch.setenv("HF_HOME", (tmp_path / "hf").as_posix())
         monkeypatch.delenv("TORCH_HOME", raising=False)
-        dirs = worker_config_module._session_state_dirs_from_env()
+        dirs = worker_config_module._state_dirs_from_env()
         assert Path.home() in dirs
         assert tmp_path / "hf" in dirs
         assert Path(tempfile.gettempdir()) / "utu" in dirs
@@ -538,8 +534,7 @@ class TestResolvingStateRoots:
         data.mkdir(parents=True)
         (tmp_path / "results").symlink_to(data)
         cfg = dataclasses.replace(
-            make_live_worker_config(tmp_path, session_state_dirs=()),
-            results_dir=tmp_path / "results",
+            make_live_worker_config(tmp_path), results_dir=tmp_path / "results"
         )
         roots = denied_roots(cfg)
         assert data in roots
@@ -548,9 +543,10 @@ class TestResolvingStateRoots:
     def test_the_heartbeat_directory_is_denied_not_just_the_file(
         self, tmp_path: Path
     ) -> None:
-        cfg = make_live_worker_config(tmp_path, session_state_dirs=())
-        assert cfg.hb_file.parent in cfg.session_denied_paths()
-        assert cfg.hb_file not in cfg.session_denied_paths()
+        cfg = make_live_worker_config(tmp_path)
+        paths = denied_roots(cfg)
+        assert cfg.hb_file.parent in paths
+        assert cfg.hb_file not in paths
 
     def test_a_link_in_a_shared_dir_is_refused_not_followed(
         self, tmp_path: Path
@@ -561,7 +557,7 @@ class TestResolvingStateRoots:
         victim = tmp_path / "victim"
         (victim / "data").mkdir(parents=True)
         (shared / "utu").symlink_to(victim)
-        cfg = make_live_worker_config(tmp_path, session_state_dirs=(shared / "utu",))
+        cfg = make_live_worker_config(tmp_path, state_dirs=(shared / "utu",))
         assert shared / "utu" in denied_roots(cfg)
         assert "link" in (_root_problem(shared / "utu") or "")
         assert (victim / "data").is_dir()
@@ -603,7 +599,7 @@ class TestProcessBackendIsolation:
         monkeypatch.setattr(os, "getuid", lambda: 0)
         monkeypatch.setattr(process_module, "_acquire_backend_lock", lambda: True)
         monkeypatch.setattr(acl, "tools_available", lambda: True)
-        cfg = make_live_worker_config(tmp_path, session_state_dirs=(Path("/"),))
+        cfg = make_live_worker_config(tmp_path, state_dirs=(Path("/"),))
         assert ProcessSessionBackend._isolation_ready(cfg) is False
 
     def test_another_worker_holding_the_backend_lock_offers_no_process_backend(

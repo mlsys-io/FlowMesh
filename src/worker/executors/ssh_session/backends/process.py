@@ -104,6 +104,9 @@ _SESSION_REQUIRED_PATHS = (
     Path("/etc"),
     Path("/lib"),
 )
+# Every path-typed ``WorkerConfig`` field belongs to exactly one of these.
+DENIED_CONFIG_FIELDS = ("results_dir", "hb_file", "state_dirs")
+ALLOWED_CONFIG_FIELDS: tuple[str, ...] = ()
 _MOUNTINFO = Path("/proc/self/mountinfo")
 _OCTAL_ESCAPE_RE = re.compile(r"\\([0-7]{3})")
 _backend_lock_fd: int | None = None
@@ -574,20 +577,27 @@ def _link_mount_path(root: Path, mount_path: str, target: Path) -> None:
 
 
 def denied_roots(config: WorkerConfig) -> list[Path]:
-    """The worker's state roots, as the paths an ACL entry will actually land on.
+    """Return the worker state a session is denied, as the paths ``setfacl`` acts on.
 
-    ``setfacl`` follows a link, so links an operator configured are resolved
-    here. Under a world-writable parent only the parent is resolved: a link
-    there is something anyone could have planted, and :func:`_root_problem`
-    refuses it rather than following it.
+    Each path in ``DENIED_CONFIG_FIELDS`` is made absolute, with the heartbeat
+    file replaced by its directory, and links an operator configured are
+    resolved. A path in a world-writable directory is left unresolved, so that
+    :func:`_root_problem` refuses a link planted there instead of following it.
     """
     roots: dict[Path, None] = {}
-    for path in config.session_denied_paths():
-        parent = Path(os.path.realpath(path.parent))
-        if _is_shared_dir(parent):
-            roots[parent / path.name] = None
-        else:
-            roots[Path(os.path.realpath(path))] = None
+    for field_name in DENIED_CONFIG_FIELDS:
+        value = getattr(config, field_name)
+        for configured in value if isinstance(value, tuple) else (value,):
+            path = Path(os.path.abspath(configured))
+            if field_name == "hb_file":
+                # Denying only the file would still let a session list its
+                # name, which contains the worker token.
+                path = path.parent
+            parent = Path(os.path.realpath(path.parent))
+            if _is_shared_dir(parent):
+                roots[parent / path.name] = None
+            else:
+                roots[Path(os.path.realpath(path))] = None
     return list(roots)
 
 
