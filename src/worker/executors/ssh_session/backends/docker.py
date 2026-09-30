@@ -506,7 +506,10 @@ class DockerSessionBackend(SSHSessionBackend):
             )
             reserve_mount_path(used_mount_paths, output_mount_path)
             artifacts_dir = out_dir / ARTIFACTS_DIR
-            if results_source:
+            # A hardened session's output is copied out of the container, which
+            # keeps regular files only: a writable bind mount would let the code
+            # plant symlinks the worker then follows on its own filesystem.
+            if results_source or cfg.hardened:
                 create_dirs.append(output_mount_path)
                 copy_output_path = output_mount_path
             else:

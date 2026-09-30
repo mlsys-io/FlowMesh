@@ -174,3 +174,18 @@ def test_multiprocessing_runs_the_codes_functions(tmp_path: Path) -> None:
         "    return spawned + forked\n"
     )
     assert _run(tmp_path, code).value == [1, 4, 9, 16, 25]
+
+
+def test_planted_symlinks_never_reach_the_worker(tmp_path: Path) -> None:
+    code = (
+        "import os\n"
+        "def main():\n"
+        "    out = os.environ['FLOWMESH_OUTPUT']\n"
+        "    os.symlink('/etc/hostname', os.path.join(out, 'leak'))\n"
+        "    open(os.path.join(out, 'kept.txt'), 'w').write('ok')\n"
+        "    return 1\n"
+    )
+    assert _run(tmp_path, code).value == 1
+    artifacts = tmp_path / "out" / "artifacts"
+    assert (artifacts / "kept.txt").read_text() == "ok"
+    assert not os.path.lexists(artifacts / "leak")

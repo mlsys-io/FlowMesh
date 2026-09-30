@@ -21,6 +21,8 @@ task where it would run unisolated on the host.
 import json
 import logging
 import math
+import os
+import stat
 from pathlib import Path
 from typing import Any
 
@@ -145,12 +147,50 @@ class PythonExecutor(SessionExecutor):
         return cfg
 
 
+def _read_task_file(path: Path) -> str:
+    """The text of a file the task wrote, which must be a regular file.
+
+    Refusing symlinks keeps the worker from reading its own filesystem on the
+    task's behalf, and ``O_NONBLOCK`` keeps a FIFO from blocking the open.
+    """
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(fd, encoding="utf-8") as fh:
+        if not stat.S_ISREG(os.fstat(fh.fileno()).st_mode):
+            raise OSError(f"{path.name} is not a regular file")
+        return fh.read()
+
+
+def _reject_constant(name: str) -> Any:
+    raise ValueError(f"{name} is not a JSON value")
+
+
+def _finite_float(text: str) -> float:
+    value = float(text)
+    if not math.isfinite(value):
+        raise ValueError(f"{text} is out of range")
+    return value
+
+
+def _load_json(path: Path) -> Any:
+    """Parse a file the task wrote: a regular file holding strict, finite JSON."""
+    try:
+        return json.loads(
+            _read_task_file(path),
+            parse_constant=_reject_constant,
+            parse_float=_finite_float,
+        )
+    except (OSError, ValueError) as exc:
+        raise ExecutionError(
+            f"python task wrote an unreadable {path.name}: {exc}"
+        ) from exc
+
+
 def _read_json(path: Path) -> Any:
     try:
-        return json.loads(path.read_text())
+        return json.loads(_read_task_file(path))
     except FileNotFoundError:
         return None
-    except (OSError, json.JSONDecodeError) as exc:
+    except (OSError, ValueError) as exc:
         logger.warning("Unreadable %s from python task: %s", path.name, exc)
         return None
 
@@ -162,11 +202,11 @@ def _read_result(artifacts: Path, emits: list[str]) -> PythonResult:
     bootstrap writes or checks anything, so a clean exit alone proves nothing.
     """
     result_file = artifacts / "result.json"
-    if not result_file.is_file():
+    if not os.path.lexists(result_file):
         raise ExecutionError("python task exited without writing a result")
     value = _load_json(result_file)
     metrics_file = artifacts / "metrics.json"
-    metrics = _load_json(metrics_file) if metrics_file.is_file() else {}
+    metrics = _load_json(metrics_file) if os.path.lexists(metrics_file) else {}
     if not isinstance(metrics, dict) or not all(
         _is_finite_number(v) for v in metrics.values()
     ):
@@ -174,15 +214,6 @@ def _read_result(artifacts: Path, emits: list[str]) -> PythonResult:
     if missing := [name for name in emits if name not in metrics]:
         raise ExecutionError(f"python task did not report declared emits {missing}")
     return PythonResult(exit_code=0, value=value, metrics=metrics)
-
-
-def _load_json(path: Path) -> Any:
-    try:
-        return json.loads(path.read_text())
-    except (OSError, json.JSONDecodeError) as exc:
-        raise ExecutionError(
-            f"python task wrote an unreadable {path.name}: {exc}"
-        ) from exc
 
 
 def _is_finite_number(value: Any) -> bool:

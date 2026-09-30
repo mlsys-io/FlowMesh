@@ -18,7 +18,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from shared.schemas.result import SSHResult
+from shared.schemas.result import PythonResult, SSHResult
 from shared.tasks.specs import PythonSpecStrict, SSHSpecStrict
 from tests.worker.factories import DEFAULT_WORKER_CONFIG, make_live_worker_config
 from worker.executors import python_executor as python_executor_module
@@ -216,6 +216,16 @@ class TestDockerHardening:
         kwargs = self._kwargs(tmp_path, cfg)
         assert kwargs["tmpfs"] == {"/tmp": f"rw,exec,nosuid,nodev,size={2 * 1024**3}"}
 
+    def test_output_is_copied_out_not_bind_mounted(self, tmp_path: Path) -> None:
+        cfg = _executor(tmp_path)._python_config(_spec())
+        backend = DockerSessionBackend(make_live_worker_config(tmp_path))
+        plan = backend._build_mount_plan(
+            MagicMock(), tmp_path / "out", [], cfg, "session-1", "worker-1"
+        )
+        assert plan.direct_output_path is None
+        assert plan.copy_output_path == OUTPUT_MOUNT_PATH
+        assert not any(v.endswith(":rw") for v in plan.volumes)
+
     def test_archive_carries_extra_files(self) -> None:
         archive = DockerSessionBackend._build_ssh_run_archive(
             {CODE_PATH: b"print(1)\n"}
@@ -335,8 +345,14 @@ class TestEnding:
             ({"result.json": "1"}, "declared emits ['score']"),
             (
                 {"result.json": "1", "metrics.json": '{"score": NaN}'},
+                "unreadable metrics.json",
+            ),
+            (
+                {"result.json": "1", "metrics.json": '{"score": "high"}'},
                 "not finite numbers",
             ),
+            ({"result.json": '{"x": NaN}'}, "unreadable result.json"),
+            ({"result.json": '{"x": 1e999}'}, "unreadable result.json"),
             ({"result.json": "{bad"}, "unreadable result.json"),
             (
                 {"result.json": "1", "metrics.json": "{bad"},
@@ -355,6 +371,41 @@ class TestEnding:
             (out / "artifacts" / name).write_text(text)
         executor.require_spec = MagicMock(return_value=_spec(emits=["score"]))  # type: ignore[method-assign]
         with pytest.raises(ExecutionError, match=re.escape(error)):
+            executor.run(MagicMock(upstream_task_ids=None), out)
+
+    def _run_clean_exit(self, tmp_path: Path, out: Path) -> PythonResult:
+        executor = _executor(tmp_path)
+        executor._run_session = MagicMock(return_value=_outcome("exited", 0))  # type: ignore[method-assign]
+        executor.require_spec = MagicMock(return_value=_spec())  # type: ignore[method-assign]
+        return executor.run(MagicMock(upstream_task_ids=None), out)
+
+    def test_symlinked_result_is_not_followed(self, tmp_path: Path) -> None:
+        secret = tmp_path / "worker-secret.json"
+        secret.write_text('{"token": "hunter2"}')
+        out = tmp_path / "out"
+        (out / "artifacts").mkdir(parents=True)
+        (out / "artifacts/result.json").symlink_to(secret)
+        with pytest.raises(ExecutionError, match="unreadable result.json") as exc:
+            self._run_clean_exit(tmp_path, out)
+        assert "hunter2" not in str(exc.value)
+
+    def test_fifo_result_fails_without_blocking(self, tmp_path: Path) -> None:
+        out = tmp_path / "out"
+        (out / "artifacts").mkdir(parents=True)
+        os.mkfifo(out / "artifacts/result.json")
+        with pytest.raises(ExecutionError, match="not a regular file"):
+            self._run_clean_exit(tmp_path, out)
+
+    def test_symlinked_error_is_not_followed(self, tmp_path: Path) -> None:
+        secret = tmp_path / "worker-secret.json"
+        secret.write_text('{"type": "Leak", "message": "hunter2"}')
+        out = tmp_path / "out"
+        (out / "artifacts").mkdir(parents=True)
+        (out / "artifacts/error.json").symlink_to(secret)
+        executor = _executor(tmp_path)
+        executor._run_session = MagicMock(return_value=_outcome("exited", 1))  # type: ignore[method-assign]
+        executor.require_spec = MagicMock(return_value=_spec())  # type: ignore[method-assign]
+        with pytest.raises(ExecutionError, match="^python task exited with code 1$"):
             executor.run(MagicMock(upstream_task_ids=None), out)
 
     def test_success_reads_result_and_metrics(self, tmp_path: Path) -> None:
