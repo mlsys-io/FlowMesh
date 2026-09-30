@@ -662,12 +662,21 @@ class APIExecutor(DataMixin, Executor):
                     prompt_str=prompt_str,
                 )
             except BaseException as exc:
+                _record_call(idx, attempts, resp.status_code, start, None, failed=True)
                 if not first_error:
                     first_error.append(exc)
                 failed.set()
                 raise
 
             if self._cancel_event.is_set():
+                _record_call(
+                    idx,
+                    attempts,
+                    resp.status_code,
+                    start,
+                    item.response_json,
+                    failed=True,
+                )
                 raise TaskCancelledError("API task cancelled")
 
             _record_call(
@@ -729,6 +738,7 @@ class APIExecutor(DataMixin, Executor):
             heartbeat.join(timeout=5)
             wall = time.monotonic() - task_start
             with stats_lock:
+                done_snapshot = done
                 failures_snapshot = failures
                 retries_snapshot = total_retries
                 latencies_snapshot = list(latencies)
@@ -738,7 +748,7 @@ class APIExecutor(DataMixin, Executor):
                 backends_snapshot = dict(backend_counts)
             self._log_summary(
                 task.task_id,
-                total,
+                done_snapshot,
                 failures_snapshot,
                 retries_snapshot,
                 wall,
