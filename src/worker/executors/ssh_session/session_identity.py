@@ -42,25 +42,25 @@ _UID_ATTEMPTS = 16
 _KILL_GRACE_SEC = 5.0
 _KILL_ROUNDS = 10
 _KILL_ROUND_SEC = 0.5
-# Prologue of every helper run as a session uid: argv is (uid, gid, *args).
-_AS_UID_PROLOGUE = (
-    "import os, sys\n"
+# Prepended to every helper script. It imports what the scripts use before
+# switching to the uid and gid in argv[1:3], since that uid may be unable to
+# read the interpreter's standard library.
+_AS_UID_PREAMBLE = (
+    "import ctypes, os, signal, sys\n"
     "uid = int(sys.argv[1])\n"
     "if os.getuid() != uid:\n"
     "    os.setgroups([])\n"
     "    os.setgid(int(sys.argv[2]))\n"
     "    os.setuid(uid)\n"
 )
-_KILL_ALL_SCRIPT = _AS_UID_PROLOGUE + (
-    "import signal\n"
+_KILL_ALL_SCRIPT = (
     "try:\n"
     "    os.kill(-1, signal.SIGKILL)\n"
     "except ProcessLookupError:\n"
     "    pass\n"
 )
-# argv[3:] are "<kind>:<id>" pairs; IPC_RMID is 0.
-_REMOVE_IPC_SCRIPT = _AS_UID_PROLOGUE + (
-    "import ctypes\n"
+# argv[3:] is "<kind>:<id>" per object; 0 is IPC_RMID.
+_REMOVE_IPC_SCRIPT = (
     "libc = ctypes.CDLL(None, use_errno=True)\n"
     "failed = 0\n"
     "for spec in sys.argv[3:]:\n"
@@ -583,11 +583,12 @@ def _kill_all_as(uid: int) -> None:
 def _run_as(
     uid: int, script: str, args: list[str]
 ) -> "subprocess.CompletedProcess[bytes] | None":
-    """Run ``script`` in a helper interpreter that drops to ``uid`` first.
+    """Run ``_AS_UID_PREAMBLE`` then ``script`` in a new interpreter, with ``uid``,
+    a gid and ``args`` on its argv; return ``None`` if it cannot start.
 
-    The helper drops privileges itself rather than through ``subprocess``'s
-    ``user=``, which forces a plain ``fork()`` whose atfork handlers crash the
-    child of a process running gRPC threads.
+    The interpreter starts as the worker and the preamble switches to ``uid``,
+    because ``subprocess``'s ``user=`` forces a plain ``fork()``, which gRPC's
+    fork handlers crash.
     """
     try:
         return subprocess.run(  # nosec B603 - argv list, no shell=True, the worker's own interpreter
@@ -596,7 +597,7 @@ def _run_as(
                 "-I",
                 "-S",
                 "-c",
-                script,
+                _AS_UID_PREAMBLE + script,
                 str(uid),
                 str(_NOGROUP_GID),
                 *args,

@@ -697,6 +697,15 @@ class TestLingeringSessionProcesses:
         assert (uid, gid) == ("61001", "65534")
         assert "user" not in kwargs
 
+    def test_helpers_import_nothing_after_switching_uid(self) -> None:
+        preamble = identity_module._AS_UID_PREAMBLE
+        assert preamble.rindex("import") < preamble.index("os.setuid")
+        for script in (
+            identity_module._KILL_ALL_SCRIPT,
+            identity_module._REMOVE_IPC_SCRIPT,
+        ):
+            assert "import" not in script
+
     @pytest.mark.parametrize("euid,uid,target", [(0, 0, 0), (0, 61001, 61001)])
     def test_the_worker_never_signals_as_itself(
         self, monkeypatch: pytest.MonkeyPatch, euid: int, uid: int, target: int
