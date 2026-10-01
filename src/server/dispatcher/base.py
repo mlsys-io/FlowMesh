@@ -23,9 +23,11 @@ from shared.tasks import (
     TaskEnvelopeTemplate,
     TaskSpecStrict,
 )
-from shared.tasks.placeholders import PLACEHOLDER_PATTERN
+from shared.tasks.placeholders import PLACEHOLDER_PATTERN, placeholder_fields
 from shared.tasks.specs import (
     ConditionSpec,
+    PythonSpecStrict,
+    PythonSpecTemplate,
     SSHSpecStrict,
     SSHSpecTemplate,
 )
@@ -367,6 +369,9 @@ class Dispatcher:
         # 6. Resolve stage references
         try:
             rendered_task = self._resolve_stage_references(task_id, task, record)
+            upstream_task_ids = self._resolve_upstream_task_ids(
+                record, rendered_task.spec
+            )
         except StageReferenceNotReady as exc:
             self._logger.debug("Task %s waiting on stage artifacts: %s", task_id, exc)
             self.requeue_task(
@@ -525,9 +530,7 @@ class Dispatcher:
             shard_index=record.shard_index,
             shard_total=record.shard_total,
             merged_children=rendered_children,
-            upstream_task_ids=self._resolve_upstream_task_ids(
-                record, rendered_task.spec
-            ),
+            upstream_task_ids=upstream_task_ids,
         )
 
         # 8. Publish task
@@ -863,7 +866,7 @@ class Dispatcher:
         self, value: Any, token: str, path: tuple[str, ...]
     ) -> bool:
         if isinstance(value, BaseModel):
-            for key, sub in value:
+            for key, sub in placeholder_fields(value):
                 next_path = path + (str(key).lower(),)
                 if self._search_weight_reference(sub, token, next_path):
                     return True
@@ -961,7 +964,7 @@ class Dispatcher:
             return tuple(self._resolve_placeholders(item, context) for item in value)
         if isinstance(value, BaseModel):
             updates: dict[str, Any] = {}
-            for key, current in value:
+            for key, current in placeholder_fields(value):
                 transformed = self._resolve_placeholders(current, context)
                 if transformed is not current:
                     updates[key] = transformed
@@ -997,6 +1000,8 @@ class Dispatcher:
         if record.task.has_placeholder():
             return True
         spec = record.task.spec
+        if isinstance(spec, (PythonSpecStrict, PythonSpecTemplate)):
+            return True
         return isinstance(spec, (SSHSpecStrict, SSHSpecTemplate)) and bool(spec.inputs)
 
     def _dependency_task_ids(self, task_id: str) -> set[str]:
@@ -1106,30 +1111,53 @@ class Dispatcher:
     def _resolve_upstream_task_ids(
         self, record: TaskRecord, spec: TaskSpecStrict
     ) -> dict[str, str] | None:
-        if not isinstance(spec, SSHSpecStrict) or not spec.inputs:
+        if isinstance(spec, PythonSpecStrict):
+            if spec.inputs is None:
+                # Without ``inputs``, a python task reads each of its direct
+                # dependencies; ``inputs: []`` reads none.
+                return self._direct_dependency_stages(record) or None
+            stages = [entry.stage for entry in spec.inputs]
+        elif isinstance(spec, SSHSpecStrict) and spec.inputs:
+            stages = [entry.stage for entry in spec.inputs]
+        else:
             return None
 
         context = self._build_stage_context(record)
         resolved: dict[str, str] = {}
-        for entry in spec.inputs:
-            stage_name = entry.stage.strip()
+        for stage in stages:
+            stage_name = stage.strip()
             if not stage_name:
-                raise ValueError("SSH input stage names must be non-empty")
+                raise ValueError("Input stage names must be non-empty")
             upstream = context.get(stage_name)
             if upstream is None:
                 raise ValueError(
-                    f"Unknown SSH input stage '{stage_name}' for task {record.task_id}"
+                    f"Unknown input stage '{stage_name}' for task {record.task_id}"
                 )
             if upstream.task_id == record.task_id:
                 raise ValueError(
-                    f"SSH input stage '{stage_name}' cannot reference the current task"
+                    f"Input stage '{stage_name}' cannot reference the current task"
                 )
             if upstream.status != TaskStatus.DONE:
                 raise StageReferenceNotReady(
-                    f"Stage '{stage_name}' has not completed for SSH input mount"
+                    f"Stage '{stage_name}' has not completed for input mount"
                 )
             resolved[stage_name] = upstream.task_id
         return resolved or None
+
+    def _direct_dependency_stages(self, record: TaskRecord) -> dict[str, str]:
+        """{stage name: task id} for each completed direct dependency."""
+        resolved: dict[str, str] = {}
+        for dep_id in self._task_dependencies(record.task_id):
+            other = self._runtime.get_record(dep_id)
+            if other is None:
+                continue
+            if other.status != TaskStatus.DONE:
+                raise StageReferenceNotReady(
+                    f"Dependency {dep_id} has not completed for python input mount"
+                )
+            keys = self._stage_context_keys(other)
+            resolved[keys[0] if keys else dep_id] = other.task_id
+        return resolved
 
     def _load_stage_result(self, stage_task_id: str) -> ResultEnvelope:
         path = result_file_path(self._results_dir, stage_task_id)

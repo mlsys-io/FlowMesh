@@ -8,6 +8,7 @@ import pytest
 from shared.tasks.specs import SSHSpecStrict
 from tests.worker.factories import DEFAULT_WORKER_CONFIG, make_live_worker_config
 from worker.executors.base_executor import ExecutionError, TaskCancelledError
+from worker.executors.session_executor import SessionEnd
 from worker.executors.ssh_executor import SSHExecutor
 from worker.executors.ssh_session import SSHConfig, SSHSession
 from worker.executors.ssh_session.backends import docker as docker_backend_module
@@ -89,7 +90,7 @@ class TestIdleReaping:
         cfg = _fast_poll(_cfg(ttlSeconds=600), idle_sec=0.05)
         session = _FakeSession(connections=0)
 
-        assert executor._wait_for_session(session, cfg) == 0
+        assert executor._wait_for_session(session, cfg) == SessionEnd("idle")
         assert session.stopped_with == 1
 
     def test_connected_session_is_not_reaped(self, tmp_path: Path) -> None:
@@ -98,8 +99,8 @@ class TestIdleReaping:
         cfg.ttl_sec = 0.3
         session = _FakeSession(connections=1)
 
-        assert executor._wait_for_session(session, cfg) == 0
-        assert session.stopped_with is None
+        assert executor._wait_for_session(session, cfg) == SessionEnd("ttl")
+        assert session.stopped_with == cfg.stop_timeout_sec
 
     def test_unobservable_connections_never_reap(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
@@ -111,9 +112,9 @@ class TestIdleReaping:
         session = _FakeSession(connections=None)
 
         with caplog.at_level("WARNING"):
-            assert executor._wait_for_session(session, cfg) == 0
+            assert executor._wait_for_session(session, cfg) == SessionEnd("ttl")
 
-        assert session.stopped_with is None
+        assert session.stopped_with == cfg.stop_timeout_sec
         assert any(
             "idle timeout cannot be enforced" in record.message
             for record in caplog.records
@@ -130,8 +131,8 @@ class TestIdleReaping:
         cfg.ttl_sec = 0.3
         session = _FakeSession(connections=0)
 
-        assert executor._wait_for_session(session, cfg) == 0
-        assert session.stopped_with is None
+        assert executor._wait_for_session(session, cfg) == SessionEnd("ttl")
+        assert session.stopped_with == cfg.stop_timeout_sec
 
     def test_zero_idle_timeout_disables_reaping(self, tmp_path: Path) -> None:
         executor = _executor(tmp_path)
@@ -139,8 +140,8 @@ class TestIdleReaping:
         cfg.ttl_sec = 0.3
         session = _FakeSession(connections=0)
 
-        assert executor._wait_for_session(session, cfg) == 0
-        assert session.stopped_with is None
+        assert executor._wait_for_session(session, cfg) == SessionEnd("ttl")
+        assert session.stopped_with == cfg.stop_timeout_sec
 
 
 class TestSessionLoop:
@@ -149,7 +150,7 @@ class TestSessionLoop:
         cfg = _fast_poll(_cfg(ttlSeconds=600), idle_sec=600)
         session = _FakeSession(connections=1, exit_code=3)
 
-        assert executor._wait_for_session(session, cfg) == 3
+        assert executor._wait_for_session(session, cfg) == SessionEnd("exited", 3)
 
     def test_cancellation_propagates(self, tmp_path: Path) -> None:
         executor = _executor(tmp_path)

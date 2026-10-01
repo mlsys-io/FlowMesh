@@ -17,6 +17,7 @@ class TaskType(StrEnum):
     DATA_RETRIEVAL = "data_retrieval"
     EMBEDDING = "embedding"
     SSH = "ssh"
+    PYTHON = "python"
     OMNI_TEXT2IMAGE = "omni_text2image"
     OMNI_TEXT2SPEECH = "omni_text2speech"
     OMNI_TEXT2AUDIO = "omni_text2audio"

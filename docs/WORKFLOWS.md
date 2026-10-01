@@ -132,6 +132,76 @@ spec:
       parse_json: true
 ```
 
+## Python task
+
+`taskType: python` runs a function from `spec.code` in its own container, and
+its return value and metrics become the task's result. It runs on workers with
+Docker session support; a supervisor-launched worker has it when SSH is enabled
+for it (`enable_ssh`), and the worker's SSH caps and TTL apply (see
+[`ENV.md`](ENV.md)). `${...}` in `code` is ordinary Python, not a stage
+reference.
+
+The entrypoint (default `main`) returns a JSON-serialisable value, returned as
+`PythonResult.value`. Metrics, reported under a `"metrics"` key of the return
+value or written to `$FLOWMESH_OUTPUT/metrics.json`, are returned as
+`PythonResult.metrics` and must be finite numbers. The task fails, with the
+error as its message, when the code raises, calls `sys.exit()`, runs past
+`timeoutSeconds`, or does not report a metric named in `emits`.
+
+```yaml
+spec:
+  stages:
+    - name: prepare
+      spec:
+        taskType: echo
+        data:
+          type: list
+          items: [the quick brown fox]
+    - name: score
+      dependsOn: [prepare]
+      spec:
+        taskType: python
+        emits: [mean_words]
+        code: |
+          def main(prepare):
+              words = [len(str(i["output"]).split()) for i in prepare["items"]]
+              return {"metrics": {"mean_words": sum(words) / len(words)}}
+```
+
+See `examples/templates/python_two_stage.yaml` for a runnable workflow.
+
+### Reading upstream stages
+
+A python task's inputs are the stages in `inputs`, or each of its direct
+dependencies when `inputs` is omitted. The entrypoint receives them as keyword
+arguments, bound by parameter name:
+
+- A parameter named after an input stage receives that stage's output: a
+  python stage's return value, `None` for a stage skipped by its condition,
+  and for any other task type its result as `flowmesh result fetch` shows it.
+- A parameter named `inputs` receives every input stage as a `StageInput`.
+- `**kwargs` collects the input stages no other parameter took.
+- Any other parameter without a default fails the task before the call.
+
+```python
+def main(train, evaluate, inputs):
+    checkpoint = inputs["train"].artifacts / "model.pt"
+    return {"metrics": {"accuracy": evaluate["accuracy"]}}
+```
+
+A `StageInput` is path-like and exposes the stage's `output`, `result`,
+`metadata`, `skipped`, `task_type` and `artifacts` directory, plus
+`artifact(ref)` to resolve an artifact reference under `artifacts`.
+
+### Isolation
+
+The code runs as an unprivileged user with `/tmp` as its writable scratch
+space; `/tmp` is held in memory and counts against the task's memory limit. It
+has no network unless `network: bridge` is set, which `requirements`
+need to install; `bridge` is the worker's isolated session network, and a worker
+without one does not run the task. The code sees GPUs only when
+`resources.hardware.gpu` asks for them.
+
 ## data_retrieval: type lumid
 
 `type: lumid` routes the retrieval through lumid-data-app (HTTP). Three

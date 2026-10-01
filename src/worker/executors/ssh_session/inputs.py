@@ -68,7 +68,11 @@ def stage_inputs_locally(
     for resolved in resolved_inputs:
         destination = staging_dir / resolved.task_id
         if resolved.source_path.exists():
-            shutil.copytree(resolved.source_path, destination, dirs_exist_ok=True)
+            # Links are copied as links: an upstream session's output could
+            # otherwise point the copy at the worker's own files.
+            shutil.copytree(
+                resolved.source_path, destination, symlinks=True, dirs_exist_ok=True
+            )
             continue
         download_result_bundle(resolved.task_id, staging_dir)
         if not destination.exists():
