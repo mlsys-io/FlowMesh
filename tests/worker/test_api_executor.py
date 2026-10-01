@@ -16,7 +16,13 @@ import httpx
 import pytest
 from pydantic import ValidationError
 
-from shared.schemas.result import APIGroupItem, APIItem, APIResult, PythonResult
+from shared.schemas.result import (
+    APIGroupItem,
+    APIItem,
+    APIResult,
+    APIUsage,
+    PythonResult,
+)
 from shared.tasks.specs.misc import _MAX_CONCURRENCY, _MAX_RETRIES
 from shared.tasks.worker_message import WorkerTaskMessage
 from worker.executors import api_executor as api_executor_module
@@ -1099,7 +1105,7 @@ class TestBatch:
                 return httpx.Response(200, json=[1])
 
         task = _batch_task(["a", "b"], response={"parse_json": True}, concurrency=1)
-        with caplog.at_level(logging.INFO, logger="worker.executors.api_executor"):
+        with caplog.at_level(logging.DEBUG, logger="worker.executors.api_executor"):
             with pytest.raises(ExecutionError, match="not a valid JSON mapping"):
                 _run(_executor(), task, _ArrayBody(), tmp_path)
         call_lines = [
@@ -2335,7 +2341,7 @@ class TestCallLogging:
                 )
             ]
         )
-        with caplog.at_level(logging.INFO, logger="worker.executors.api_executor"):
+        with caplog.at_level(logging.DEBUG, logger="worker.executors.api_executor"):
             _run(_executor(), task, transport, tmp_path)
         call_lines = self._records(caplog, "api call")
         assert len(call_lines) == 1
@@ -2355,7 +2361,7 @@ class TestCallLogging:
         """A retried 503 then 200 logs attempts=2."""
         task = _batch_task(["hi"], retries=2)
         transport = _SequenceTransport([_error_response(503), _ok_response()])
-        with caplog.at_level(logging.INFO, logger="worker.executors.api_executor"):
+        with caplog.at_level(logging.DEBUG, logger="worker.executors.api_executor"):
             _run(_executor(), task, transport, tmp_path)
         call_lines = self._records(caplog, "api call")
         assert len(call_lines) == 1
@@ -2376,7 +2382,7 @@ class TestCallLogging:
                 raise httpx.ConnectError("boom", request=request)
 
         transport = _RaisingTransport()
-        with caplog.at_level(logging.INFO, logger="worker.executors.api_executor"):
+        with caplog.at_level(logging.DEBUG, logger="worker.executors.api_executor"):
             with pytest.raises(ExecutionError, match="API request failed"):
                 _run(_executor(), task, transport, tmp_path)
         call_lines = self._records(caplog, "api call")
@@ -2408,7 +2414,7 @@ class TestCallLogging:
                 return _ok_response()
 
         transport = _FirstFails()
-        with caplog.at_level(logging.INFO, logger="worker.executors.api_executor"):
+        with caplog.at_level(logging.DEBUG, logger="worker.executors.api_executor"):
             with pytest.raises(ExecutionError, match="row 0"):
                 _run(_executor(), task, transport, tmp_path)
         call_lines = self._records(caplog, "api call")
@@ -2432,7 +2438,7 @@ class TestCallLogging:
                 )
             ]
         )
-        with caplog.at_level(logging.INFO, logger="worker.executors.api_executor"):
+        with caplog.at_level(logging.DEBUG, logger="worker.executors.api_executor"):
             result = _run(_executor(), task, transport, tmp_path)
         assert result.items[0].text == "not json"
         call_lines = self._records(caplog, "api call")
@@ -2459,7 +2465,7 @@ class TestCallLogging:
                 )
             ]
         )
-        with caplog.at_level(logging.INFO, logger="worker.executors.api_executor"):
+        with caplog.at_level(logging.DEBUG, logger="worker.executors.api_executor"):
             result = _run(_executor(), task, transport, tmp_path)
         assert result.items[0].status_code == 200
         call_lines = self._records(caplog, "api call")
@@ -2503,7 +2509,7 @@ class TestCallLogging:
                 ),
             ]
         )
-        with caplog.at_level(logging.INFO, logger="worker.executors.api_executor"):
+        with caplog.at_level(logging.DEBUG, logger="worker.executors.api_executor"):
             _run(_executor(), task, transport, tmp_path)
         summary = self._records(caplog, "api summary")
         assert len(summary) == 1
@@ -2512,3 +2518,116 @@ class TestCallLogging:
         assert "failures=0" in msg
         assert "retries=0" in msg
         assert "backends=backend-a=2,backend-b=1" in msg
+
+
+class TestUsage:
+    @pytest.fixture(autouse=True)
+    def _nebula_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("NEBULA_API_BASE_URL", "https://nebula.example.com")
+        monkeypatch.setenv("NEBULA_API_TOKEN", "nebula-token")
+
+    def test_usage_totals_across_rows(self, tmp_path: Path) -> None:
+        """The result's usage sums tokens and calls across every row, counting
+        a finish_reason=length call as truncated."""
+        task = _batch_task(["a", "b", "c"])
+        transport = _SequenceTransport(
+            [
+                httpx.Response(
+                    200,
+                    json={
+                        "choices": [
+                            {
+                                "message": {"content": "a"},
+                                "finish_reason": "stop",
+                            }
+                        ],
+                        "usage": {
+                            "prompt_tokens": 10,
+                            "completion_tokens": 5,
+                            "completion_tokens_details": {"reasoning_tokens": 2},
+                        },
+                    },
+                ),
+                httpx.Response(
+                    200,
+                    json={
+                        "choices": [
+                            {
+                                "message": {"content": "b"},
+                                "finish_reason": "length",
+                            }
+                        ],
+                        "usage": {
+                            "prompt_tokens": 20,
+                            "completion_tokens": 7,
+                        },
+                    },
+                ),
+                httpx.Response(
+                    200,
+                    json={"choices": [{"message": {"content": "c"}}]},
+                ),
+            ]
+        )
+        result = _run(_executor(), task, transport, tmp_path)
+        assert result.usage is not None
+        assert result.usage.prompt_tokens == 30
+        assert result.usage.completion_tokens == 12
+        assert result.usage.reasoning_tokens == 2
+        assert result.usage.calls == 3
+        assert result.usage.failures == 0
+        assert result.usage.retries == 0
+        assert result.usage.truncated_calls == 1
+        assert result.usage.wall_sec >= 0
+
+    def test_usage_counts_retries(self, tmp_path: Path) -> None:
+        """A retried 503 then 200 counts the retry in usage."""
+        task = _batch_task(["a"], retries=2)
+        transport = _SequenceTransport(
+            [
+                _error_response(503),
+                httpx.Response(
+                    200,
+                    json={
+                        "choices": [{"message": {"content": "a"}}],
+                        "usage": {"prompt_tokens": 4, "completion_tokens": 1},
+                    },
+                ),
+            ]
+        )
+        result = _run(_executor(), task, transport, tmp_path)
+        assert result.usage is not None
+        assert result.usage.calls == 1
+        assert result.usage.retries == 1
+        assert result.usage.prompt_tokens == 4
+        assert result.usage.completion_tokens == 1
+
+    def test_usage_absent_when_no_rows(self, tmp_path: Path) -> None:
+        """A task with no rows raises before producing a usage object."""
+        task = _batch_task([])
+        with pytest.raises(ExecutionError, match="no rows"):
+            _run(_executor(), task, _EchoTransport(), tmp_path)
+
+    def test_single_call_usage_shape(self, tmp_path: Path) -> None:
+        """A one-row task's usage is a typed APIUsage, not a raw provider dict."""
+        task = _batch_task(["hi"])
+        transport = _SequenceTransport(
+            [
+                httpx.Response(
+                    200,
+                    json={
+                        "choices": [{"message": {"content": "hello"}}],
+                        "usage": {"prompt_tokens": 10, "completion_tokens": 5},
+                    },
+                )
+            ]
+        )
+        result = _run(_executor(), task, transport, tmp_path)
+        assert isinstance(result.usage, APIUsage)
+        assert result.usage.prompt_tokens == 10
+        assert result.usage.completion_tokens == 5
+        assert result.usage.reasoning_tokens == 0
+        assert result.usage.calls == 1
+        assert result.usage.failures == 0
+        assert result.usage.retries == 0
+        assert result.usage.truncated_calls == 0

@@ -71,10 +71,9 @@ contract.
 
 ## API task
 
-`taskType: api` issues one HTTP request per row of `spec.data`, in parallel,
-and returns the responses in `APIResult.items`. A single request is a one-row
-`spec.data`. `spec.data` is required, exactly as for the vLLM executor; it
-supports the same data types (`list`, `dataset`, `graph_template`,
+`taskType: api` sends one HTTP request per `spec.data` prompt, in parallel, and
+returns the responses in `APIResult.items`. `spec.data` is required; it supports
+the same data types as the vLLM executor (`list`, `dataset`, `graph_template`,
 `dataframe`).
 
 By default it routes to the Nebula endpoint and authenticates with the worker's `NEBULA_API_TOKEN`.
@@ -108,17 +107,11 @@ spec:
 
 ### Per-row prompts
 
-When `spec.data` is present, the task batches: one request is issued per row,
-and the results are returned in `APIResult.items`. Each row's prompt is
-substituted for the `{{prompt}}` placeholder in the request body. Server-side
-stage references are `${...}`; `{{prompt}}` is a worker-side per-row slot, so
-it is not touched by server-side resolution. A failure in any row fails the
-whole task rather than shifting the remaining rows. `spec.api.concurrency`
-(default 8, an integer from 1 to 8; any other value is rejected when the
-workflow is submitted) bounds the number of in-flight requests. Cancelling the
-task prevents not-yet-started rows from issuing and marks the task cancelled
-once in-flight requests return; a request already inside the HTTP call is not
-interrupted.
+Each row's prompt replaces `{{prompt}}` in the request body; a value that is
+exactly `{{prompt}}` takes the prompt as-is, so a message-list row fills
+`messages`. `spec.api.concurrency` (default and maximum 8) bounds in-flight
+requests. Any failed row fails the task. Cancelling the task skips rows that
+have not started and marks it cancelled once in-flight requests return.
 
 A body value that is exactly `{{prompt}}` is replaced by the row's prompt
 object as-is (a message list stays a list of `{"role", "content"}` dicts). An
@@ -128,22 +121,18 @@ JSON.
 
 ### Grouped results
 
-When `spec.data` is a `dataframe`, the result is grouped: `APIResult.items`
-holds one `APIGroupItem` per table, each with an `index` and a `rows` list of
-the table's row responses in order. A dataframe spec decides grouping from the
-upstream structure — a list of `APIGroupItem.rows`, or nested lists — never
-from the shape of the cell values; a per-row list is a cell value, not a group.
-Ungrouped data is a single table, so it still returns one `APIGroupItem`
-holding all rows.
+A `dataframe` spec returns one `APIGroupItem` per table in `APIResult.items`,
+with the table's row responses in `rows`; an empty table has empty `rows`. A
+`graph_template` spec over grouped columns sends one request per group and
+returns one `APIItem` for each. Other specs return one `APIItem` per row.
 
-An empty group or a column that resolves to zero rows yields zero requests for
-that group; the group still appears as an `APIGroupItem` with an empty `rows`
-list so downstream paths resolve. The result's `status_code` is taken from the
-first row across all groups, so a leading empty group does not zero it.
+A column is grouped when it reads one list of records per upstream item: an
+upstream API task's `items.rows`, or a python stage whose items each carry a
+list of records in `output` (`path: value.items.output.<field>`). Each list
+becomes one table, so group sizes may differ. A per-row list of scalars stays
+one cell.
 
-Downstream stages read dataframe responses through the group shape:
-`items.rows.json...` addresses a field of each row within a group. For example,
-a dataframe column that reads an upstream's message content uses
+Downstream stages read a grouped result through `rows`, for example
 `path: items.rows.json.choices[0].message.content`.
 
 A dataframe column reads a python stage with `node: <stage>` and a path that
@@ -178,25 +167,6 @@ spec:
           messages:
             - role: user
               content: "Answer in one word: {Q}"
-```
-
-```yaml
-spec:
-  taskType: api
-  data:
-    type: list
-    items:
-      - Explain vector databases
-      - Explain attention
-  api:
-    method: POST
-    body:
-      model: gpt-4o
-      messages:
-        - role: user
-          content: "{{prompt}}"
-    response:
-      parse_json: true
 ```
 
 ## Python task

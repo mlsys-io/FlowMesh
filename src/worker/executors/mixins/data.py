@@ -28,6 +28,7 @@ from ..utils.artifacts import (
 )
 from ..utils.data_utils import normalize_prompt_payload
 from ..utils.graph_templates import (
+    _build_grouped_dataframes,
     _evaluate_expr,
     _resolve_columns,
     build_prompts_from_graph_template,
@@ -585,56 +586,9 @@ class DataMixin(GovernanceMixin):
                     "for type == 'dataframe'."
                 )
 
-            grouped_columns: dict[str, list[list[Any]]] = {}
-            for column in resolved_columns:
-                label = column["label"]
-                value = column["value"]
-                if column.get("grouped"):
-                    if not isinstance(value, list):
-                        raise ExecutionError(
-                            f"Column '{label}' is grouped but did not resolve "
-                            "to a list."
-                        )
-                    groups = value
-                else:
-                    groups = [value]
-                grouped_columns[label] = groups
+            table_stores_list = _build_grouped_dataframes(resolved_columns)
 
-            group_count = max(len(groups) for groups in grouped_columns.values())
-            for label, groups in list(grouped_columns.items()):
-                if len(groups) == 1 and group_count > 1:
-                    grouped_columns[label] = groups * group_count
-                elif len(groups) != group_count:
-                    raise ExecutionError(
-                        "spec.data.columns must resolve to the same number of groups."
-                    )
-
-            table_stores_list = []
-            for group_idx in range(group_count):
-                max_len = 0
-                raw_group_values: dict[str, list[Any]] = {}
-                for label, groups in grouped_columns.items():
-                    values = groups[group_idx]
-                    if not isinstance(values, list):
-                        values = [values]
-                    if values:
-                        max_len = max(max_len, len(values))
-                    raw_group_values[label] = values
-
-                normalized_rows: dict[str, list[Any]] = {}
-                for label, values in raw_group_values.items():
-                    if len(values) == 1 and max_len > 1:
-                        values = [values[0] for _ in range(max_len)]
-                    elif len(values) != max_len:
-                        raise ExecutionError(
-                            "spec.data.columns must resolve to "
-                            "the same number of rows per group."
-                        )
-                    normalized_rows[label] = values
-
-                df = pd.DataFrame(normalized_rows)
-                table_stores_list.append(df)
-
+            for df in table_stores_list:
                 if fetch_images:
                     contents = df.get(
                         "content", pd.Series(["" for _ in range(len(df))])

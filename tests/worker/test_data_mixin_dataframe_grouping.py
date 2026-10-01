@@ -5,6 +5,8 @@ never from the shape of the cell values (FM-7)."""
 from types import SimpleNamespace
 from typing import Any, cast
 
+import pandas as pd
+
 from shared.schemas.result import APIGroupItem, APIItem, APIResult, BaseExecutorResult
 from worker.executors.mixins.data import DataMixin
 
@@ -217,3 +219,83 @@ def test_index_mapping_over_nested_list_stays_one_group() -> None:
     df = entry.tables[0]
     assert len(df) == 3
     assert df["content"].tolist() == ["c0", "c1", "c2"]
+
+
+def test_example_table_and_content_shape_yields_three_prompts() -> None:
+    """The ``data_retrieval_then_inference.yaml`` summarize shape — a dataframe
+    over ``items.table.<col>`` (a list of DataFrames) and ``items.content`` (S3
+    lists) — yields one prompt per article, not one prompt for the whole
+    table."""
+    metadata = BaseExecutorResult.model_validate(
+        {
+            "items": [
+                {
+                    "table": {
+                        "df": pd.DataFrame(
+                            {"title": ["t0"], "publishedDate": ["d0"]}
+                        ).to_json()
+                    }
+                },
+                {
+                    "table": {
+                        "df": pd.DataFrame(
+                            {"title": ["t1"], "publishedDate": ["d1"]}
+                        ).to_json()
+                    }
+                },
+                {
+                    "table": {
+                        "df": pd.DataFrame(
+                            {"title": ["t2"], "publishedDate": ["d2"]}
+                        ).to_json()
+                    }
+                },
+            ],
+            "count": 3,
+        }
+    )
+    html = BaseExecutorResult.model_validate(
+        {
+            "items": [
+                {"content": ["<html>0</html>"]},
+                {"content": ["<html>1</html>"]},
+                {"content": ["<html>2</html>"]},
+            ],
+            "count": 3,
+        }
+    )
+    spec = cast(
+        Any,
+        SimpleNamespace(
+            data={
+                "type": "dataframe",
+                "columns": [
+                    {"label": "title", "node": "Meta", "path": "items.table.title"},
+                    {
+                        "label": "publishedDate",
+                        "node": "Meta",
+                        "path": "items.table.publishedDate",
+                    },
+                    {"label": "html", "node": "Html", "path": "items.content"},
+                ],
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": "Summarize: {title} {publishedDate} {html}",
+                    }
+                ],
+            },
+            inference={},
+            upstreamResults={"Meta": metadata, "Html": html},
+        ),
+    )
+    entry = _Mixin()._collect_prompts_for_spec(spec, "tsk-example")
+
+    assert len(entry.prompts) == 3
+    assert [len(df) for df in entry.tables] == [1, 1, 1]
+    assert [df["title"].tolist() for df in entry.tables] == [["t0"], ["t1"], ["t2"]]
+    assert [df["html"].tolist() for df in entry.tables] == [
+        ["<html>0</html>"],
+        ["<html>1</html>"],
+        ["<html>2</html>"],
+    ]

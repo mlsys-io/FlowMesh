@@ -19,6 +19,19 @@ class GenerationUsage(StrictModel):
     latency_sec: float
 
 
+class APIUsage(StrictModel):
+    """Token/call accounting for an API task, summed over its requests."""
+
+    prompt_tokens: int
+    completion_tokens: int
+    reasoning_tokens: int
+    calls: int
+    failures: int
+    retries: int
+    truncated_calls: int
+    wall_sec: float
+
+
 class EmbeddingUsage(StrictModel):
     """Token/latency accounting for embedding inference."""
 

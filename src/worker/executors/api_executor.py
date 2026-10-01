@@ -12,7 +12,7 @@ from typing import Any, ClassVar
 
 import httpx
 
-from shared.schemas.result import APIGroupItem, APIItem, APIResult
+from shared.schemas.result import APIGroupItem, APIItem, APIResult, APIUsage
 from shared.tasks.specs import ApiSpecStrict
 from shared.tasks.specs.misc import ApiConfig, ApiResponseConfig
 from shared.tasks.task_type import TaskType
@@ -446,7 +446,7 @@ class APIExecutor(DataMixin, Executor):
         backends = ",".join(
             f"{name}={count}" for name, count in sorted(backend_counts.items())
         )
-        logger.info(
+        logger.debug(
             "api summary task=%s calls=%d failures=%d retries=%d wall=%.3fs "
             "latency_p50=%.3fs latency_p95=%.3fs latency_max=%.3fs "
             "prompt_tokens=%d completion_tokens=%d reasoning_tokens=%d "
@@ -538,6 +538,7 @@ class APIExecutor(DataMixin, Executor):
         sum_prompt = 0
         sum_completion = 0
         sum_reasoning = 0
+        truncated_calls = 0
         backend_counts: dict[str, int] = {}
         task_start = time.monotonic()
         in_flight: dict[int, float] = {}
@@ -554,7 +555,7 @@ class APIExecutor(DataMixin, Executor):
             failed: bool,
         ) -> None:
             nonlocal done, failures, total_retries
-            nonlocal sum_prompt, sum_completion, sum_reasoning
+            nonlocal sum_prompt, sum_completion, sum_reasoning, truncated_calls
             wall = time.monotonic() - start
             with in_flight_lock:
                 in_flight.pop(idx, None)
@@ -577,9 +578,11 @@ class APIExecutor(DataMixin, Executor):
                     sum_completion += completion_tokens
                 if reasoning_tokens is not None:
                     sum_reasoning += reasoning_tokens
+                if finish_reason == "length":
+                    truncated_calls += 1
                 if backend is not None:
                     backend_counts[backend] = backend_counts.get(backend, 0) + 1
-            logger.info(
+            logger.debug(
                 "api call task=%s row=%d attempts=%d status=%s wall=%.3fs "
                 "prompt_tokens=%s completion_tokens=%s reasoning_tokens=%s "
                 "finish_reason=%s backend=%s",
@@ -745,6 +748,7 @@ class APIExecutor(DataMixin, Executor):
                 prompt_snapshot = sum_prompt
                 completion_snapshot = sum_completion
                 reasoning_snapshot = sum_reasoning
+                truncated_snapshot = truncated_calls
                 backends_snapshot = dict(backend_counts)
             self._log_summary(
                 task.task_id,
@@ -819,4 +823,14 @@ class APIExecutor(DataMixin, Executor):
             status_code=status_code,
             truncated=truncated,
             items=result_items,
+            usage=APIUsage(
+                prompt_tokens=prompt_snapshot,
+                completion_tokens=completion_snapshot,
+                reasoning_tokens=reasoning_snapshot,
+                calls=total,
+                failures=failures_snapshot,
+                retries=retries_snapshot,
+                truncated_calls=truncated_snapshot,
+                wall_sec=wall,
+            ),
         )

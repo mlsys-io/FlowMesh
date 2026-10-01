@@ -75,11 +75,6 @@ class EchoExecutor(DataMixin, Executor):
 
             if not isinstance(data_cfg, dict):
                 raise ExecutionError("echo executor requires spec.data to be a mapping")
-            if data_cfg.get("type") == "function":
-                raise ExecutionError(
-                    "echo executor spec.data.type 'function' is no longer supported; "
-                    "use a python task instead"
-                )
             items_cfg = data_cfg.get("items")
             if not isinstance(items_cfg, list):
                 raise ExecutionError(

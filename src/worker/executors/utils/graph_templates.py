@@ -7,7 +7,7 @@ from typing import Any
 import pandas as pd
 from pydantic import BaseModel
 
-from shared.schemas.result import APIGroupItem, BaseExecutorResult
+from shared.schemas.result import BaseExecutorResult
 from shared.tasks.specs import TaskSpecStrictBase
 from shared.utils.json import validate_keys
 
@@ -602,10 +602,12 @@ def _evaluate_expr(
 ) -> tuple[Any, bool]:
     """Resolve an expression against upstream results.
 
-    Returns ``(value, grouped)``. ``grouped`` is True only when the resolved
-    value is a list of groups, decided from the upstream structure (a list of
-    ``APIGroupItem.rows``, or nested lists) — never from the shape of the cell
-    values. A per-row list is a cell value, not a group.
+    Returns ``(value, grouped)``. ``grouped`` is True when the resolved value
+    is a list of groups, decided from the upstream structure — the first
+    attribute access over the items list that yields one list per item (an
+    upstream API task's ``items.rows``, a python/vLLM stage's ``items.output``,
+    S3 ``content``) — never from the shape of the cell values. A per-row list
+    is a cell value, not a group.
     """
     if not expr:
         return None, False
@@ -618,12 +620,15 @@ def _evaluate_expr(
 
     value: Any = result
     grouped = False
+    mapped_items = False
     for token in parts[1:]:
         if not token:
             continue
         attr, indexes = _split_indexes(token)
         if attr:
-            value, grouped = _apply_attr(value, attr, token, parts, grouped)
+            value, grouped, mapped_items = _apply_attr(
+                value, attr, token, parts, grouped, mapped_items
+            )
         for idx in indexes:
             value, grouped = _apply_index(value, idx, token, grouped)
         # Attempt to deserialize DataFrame if applicable
@@ -635,48 +640,71 @@ def _evaluate_expr(
 
 
 def _apply_attr(
-    value: Any, attr: str, token: str, parts: list[str], grouped: bool
-) -> tuple[Any, bool]:
+    value: Any,
+    attr: str,
+    token: str,
+    parts: list[str],
+    grouped: bool,
+    mapped_items: bool,
+) -> tuple[Any, bool, bool]:
     """Resolve an attribute access, mapping over lists of dicts, DataFrames,
-    or pydantic models (including nested lists)."""
+    or pydantic models (including nested lists). Returns ``(value, grouped,
+    mapped_items)`` where ``mapped_items`` is True once an attribute has been
+    mapped over the items list; only that first access can set ``grouped``."""
     if isinstance(value, dict) and attr in value:
-        return value[attr], grouped
+        return value[attr], grouped, mapped_items
     if isinstance(value, list):
         if all(isinstance(v, dict) and attr in v for v in value):
-            return [v[attr] for v in value], grouped
+            mapped = [v[attr] for v in value]
+            return (
+                mapped,
+                grouped or _groups_on_first_access(mapped, mapped_items),
+                True,
+            )
         if all(isinstance(v, pd.DataFrame) for v in value):
             if any(attr not in v.columns for v in value):
                 raise ExecutionError(
                     f"{attr} not a valid column in one of the "
                     f"DataFrames for {token}."
                 )
-            return [v[attr].tolist() for v in value], grouped
+            return [v[attr].tolist() for v in value], True, True
         if all(isinstance(v, BaseModel) for v in value):
-            is_grouped = attr == "rows" and all(
-                isinstance(v, APIGroupItem) for v in value
-            )
+            mapped = [_model_attr(v, attr, token) for v in value]
             return (
-                [_model_attr(v, attr, token) for v in value],
-                grouped or is_grouped,
+                mapped,
+                grouped or _groups_on_first_access(mapped, mapped_items),
+                True,
             )
         if all(isinstance(v, list) for v in value):
-            # Each inner list of records is one group; a per-row list cell is not.
-            is_grouped = bool(value) and all(
-                all(isinstance(r, (dict, BaseModel)) for r in v) for v in value
-            )
-            mapped: list[Any] = []
+            # Mapping over groups keeps grouped as-is; a raw list of lists
+            # groups only when its inner lists hold records.
+            if not grouped:
+                grouped = bool(value) and all(
+                    all(isinstance(r, (dict, BaseModel)) for r in v) for v in value
+                )
+            mapped_rows: list[Any] = []
             for v in value:
-                inner, _ = _apply_attr(v, attr, token, parts, grouped)
-                mapped.append(inner)
-            return mapped, grouped or is_grouped
+                inner, _, _ = _apply_attr(v, attr, token, parts, grouped, mapped_items)
+                mapped_rows.append(inner)
+            return mapped_rows, grouped, mapped_items
     if isinstance(value, pd.DataFrame):
         if attr not in value.columns:
             raise ExecutionError(f"{attr} not a valid column in DataFrame for {token}.")
-        return value[attr].tolist(), grouped
+        return value[attr].tolist(), grouped, mapped_items
     if isinstance(value, BaseModel):
-        return _model_attr(value, attr, token), grouped
+        return _model_attr(value, attr, token), grouped, mapped_items
     raise ExecutionError(
         f"{attr} in {parts} is not a valid key - " f"{type(value).__name__}, {value}"
+    )
+
+
+def _groups_on_first_access(mapped: list[Any], mapped_items: bool) -> bool:
+    """True when this is the first attribute access over the items list and it
+    yields one list per item (a list of lists), i.e. the grouping access. A
+    per-row list of scalars is a later access, which ``mapped_items`` already
+    rules out."""
+    return (
+        not mapped_items and bool(mapped) and all(isinstance(v, list) for v in mapped)
     )
 
 
@@ -689,7 +717,7 @@ def _model_attr(value: BaseModel, attr: str, token: str) -> Any:
     for name, f in fields.items():
         if f.alias == attr:
             return getattr(value, name)
-    extras = getattr(value, "__pydantic_extra__", None)
+    extras = value.model_extra
     if extras and attr in extras:
         return extras[attr]
     raise ExecutionError(

@@ -65,13 +65,3 @@ Optional, for the search tools:
 
 - `SERPER_API_KEY`
 - `JINA_API_KEY`
-
-## Echo executor
-
-`taskType: echo` returns input values back as the result. It is useful for
-inspecting and shaping data between stages.
-
-`spec.data.type: list` echoes each `spec.data.items` entry. An entry is either
-a string literal or a mapping with an expression (`expr`, or both `node` and
-`path`) resolved against the upstream results. A resolved list is flattened
-into one echo item per element; a scalar becomes a single item.
