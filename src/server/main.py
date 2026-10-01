@@ -181,6 +181,7 @@ if IS_ROOT_NODE:
         results_dir=RESULTS_DIR,
         log_stream_ttl_sec=config.log_stream.ttl_sec,
         server_base_url=config.identity.base_url,
+        workflow_registry=WORKFLOW_REGISTRY,
     )
 
     LOG_ARCHIVER = TaskLogArchiver(

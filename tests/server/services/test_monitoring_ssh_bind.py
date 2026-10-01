@@ -30,6 +30,7 @@ def _make_monitor(
         serve_proxy_enabled=False,
         port_forward=port_forward,
         server_base_url="http://server.example.com:8000",
+        workflow_registry=MagicMock(),
     )
 
 

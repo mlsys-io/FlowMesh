@@ -20,6 +20,7 @@ def _monitor(worker_registry: MagicMock) -> EventMonitor:
         node_registry=MagicMock(),
         metrics_recorder=MagicMock(),
         watchdog=MagicMock(),
+        workflow_registry=MagicMock(),
     )
 
 

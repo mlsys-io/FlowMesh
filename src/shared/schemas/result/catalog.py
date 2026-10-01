@@ -247,9 +247,9 @@ class EchoResult(StrictExecutorResult):
 
 
 class APIResult(StrictExecutorResult):
-    """HTTP request output. ``response_json``/``usage``/``headers`` are the
-    upstream API's own payloads and stay open mappings. ``items`` carries one
-    entry per row."""
+    """HTTP request output. ``response_json``/``headers`` are the upstream
+    API's own payloads and stay open mappings; ``usage`` is the task's summed
+    token/call accounting. ``items`` carries one entry per row."""
 
     task_type: Literal[TaskType.API] = TaskType.API
     executor: str
