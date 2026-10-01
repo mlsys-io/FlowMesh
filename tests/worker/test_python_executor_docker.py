@@ -202,3 +202,48 @@ def test_output_past_max_bytes_is_refused_at_collection(tmp_path: Path) -> None:
     with pytest.raises(ExecutionError, match="exceeded maxBytes"):
         _run(tmp_path, code, pythonOutput={"maxBytes": 1_000_000})
     assert not (tmp_path / "out" / "artifacts" / "big.bin").exists()
+
+
+def test_root_is_read_only_and_scratch_is_tmpfs(tmp_path: Path) -> None:
+    # python:3.12-slim leaves /var/tmp world-writable: on a writable root that
+    # wrote into the container's layer on the worker's disk, bounded by nothing.
+    code = (
+        "import os\n"
+        "def main():\n"
+        "    out = {}\n"
+        "    for p in ['/var/tmp/x', '/tmp/x', '/x', '/opt/flowmesh/x']:\n"
+        "        try:\n"
+        "            open(p, 'w').write('1')\n"
+        "            out[p] = 'written'\n"
+        "        except OSError as exc:\n"
+        "            out[p] = type(exc).__name__\n"
+        "    out['root_ro'] = bool(os.statvfs('/').f_flag & os.ST_RDONLY)\n"
+        "    mounts = open('/proc/mounts').read().split('\\n')\n"
+        "    fs = [m.split()[2] for m in mounts if m.split()[1:2] == ['/var/tmp']]\n"
+        "    out['var_tmp_fs'] = fs[0] if fs else None\n"
+        "    return out\n"
+    )
+    value = _run(tmp_path, code).value
+    assert value["root_ro"] is True
+    assert value["/x"] != "written"
+    assert (
+        value["/opt/flowmesh/x"] != "written"
+    ), "the task can rewrite its own bootstrap"
+    assert value["/tmp/x"] == "written"
+    assert value["/var/tmp/x"] == "written" and value["var_tmp_fs"] == "tmpfs"
+
+
+def test_upstream_input_and_output_survive_a_read_only_root(tmp_path: Path) -> None:
+    # Staged inputs and the output directory are created by the entrypoint at
+    # start and the output is collected after exit: both must still work.
+    code = (
+        "def main():\n"
+        "    import os\n"
+        "    p = os.path.join(os.environ['FLOWMESH_OUTPUT'], 'extra.txt')\n"
+        "    open(p, 'w').write('kept')\n"
+        "    return {'metrics': {'n': 1}}\n"
+    )
+    result = _run(tmp_path, code, emits=["n"])
+    assert result.exit_code == 0
+    assert result.metrics == {"n": 1}
+    assert (tmp_path / "out" / "artifacts" / "extra.txt").read_text() == "kept"

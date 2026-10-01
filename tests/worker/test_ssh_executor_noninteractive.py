@@ -506,7 +506,7 @@ class TestNoninteractiveContainerStartup:
             backend._run_noninteractive_container(client, {"image": "x"})
 
         container.start.assert_not_called()
-        container.remove.assert_called_once_with(force=True)
+        container.remove.assert_called_once_with(force=True, v=True)
 
     def test_pulls_missing_image_and_retries_create(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

@@ -8,6 +8,7 @@
 #   FLOWMESH_STAGED_INPUT_SPECS  - newline-separated "mount_path\ttarget_path" pairs
 #   FLOWMESH_CREATE_DIRS         - newline-separated list of directories to create
 #   FLOWMESH_FINISH_SENTINEL     - path to the finish sentinel file
+#   FLOWMESH_NO_FINISH_HELPER    - set on a read-only root: skip the helper
 set -e
 
 FLOWMESH_FINISH_SENTINEL="${FLOWMESH_FINISH_SENTINEL:-/tmp/.flowmesh_finish}"
@@ -35,7 +36,9 @@ if [ -n "${FLOWMESH_CREATE_DIRS:-}" ]; then
     done
 fi
 
-# In-session helper to finish the SSH task successfully.
+# In-session helper to finish the SSH task successfully. Not on a read-only
+# root (a hardened session), which cannot hold it and does not honour it.
+if [ -z "${FLOWMESH_NO_FINISH_HELPER:-}" ]; then
 cat > /usr/local/bin/flowmesh-finish << EOF
 #!/bin/sh
 set -e
@@ -43,6 +46,7 @@ touch "$FLOWMESH_FINISH_SENTINEL"
 echo "FlowMesh finish requested; the container will stop shortly."
 EOF
 chmod 755 /usr/local/bin/flowmesh-finish
+fi
 
 # Hand off to the user's process.
 exec "$@"
