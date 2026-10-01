@@ -113,6 +113,12 @@ exactly `{{prompt}}` takes the prompt as-is, so a message-list row fills
 requests. Any failed row fails the task. Cancelling the task skips rows that
 have not started and marks it cancelled once in-flight requests return.
 
+A body value that is exactly `{{prompt}}` is replaced by the row's prompt
+object as-is (a message list stays a list of `{"role", "content"}` dicts). An
+embedded `{{prompt}}` inside a longer string keeps string substitution: a
+string prompt is inserted verbatim, and any other prompt value is rendered as
+JSON.
+
 ### Grouped results
 
 A `dataframe` spec returns one `APIGroupItem` per table, with that table's
