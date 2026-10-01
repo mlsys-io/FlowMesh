@@ -156,6 +156,7 @@ _RESULT_MODEL_NAMES = [
     "EchoItem",
     "APIItem",
     "APIGroupItem",
+    "APIUsage",
 ]
 
 RESULT_MODEL_PAIRS = [
