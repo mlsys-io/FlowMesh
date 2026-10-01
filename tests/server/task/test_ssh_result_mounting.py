@@ -6,6 +6,7 @@ import textwrap
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
+from unittest import mock
 
 import pytest
 
@@ -109,6 +110,7 @@ def test_dispatcher_resolves_ssh_input_stage_names_from_local_stage_names() -> N
         worker_registry=cast(WorkerRegistry, object()),
         results_dir=Path("/tmp"),
         logger=logging.getLogger("test-ssh-phase2"),
+        workflow_registry=mock.Mock(),
     )
 
     spec = SSHSpecStrict.model_validate(current.task.spec.model_dump())
@@ -149,6 +151,7 @@ def test_dispatcher_requeues_when_ssh_input_stage_not_done() -> None:
         worker_registry=cast(WorkerRegistry, object()),
         results_dir=Path("/tmp"),
         logger=logging.getLogger("test-ssh-phase2"),
+        workflow_registry=mock.Mock(),
     )
     spec = SSHSpecStrict.model_validate(current.task.spec.model_dump())
 
@@ -219,6 +222,7 @@ def test_build_stage_context_includes_only_transitive_dependencies() -> None:
         worker_registry=cast(WorkerRegistry, object()),
         results_dir=Path("/tmp"),
         logger=logging.getLogger("test-stage-context"),
+        workflow_registry=mock.Mock(),
     )
 
     context = dispatcher._build_stage_context(current)
@@ -298,6 +302,7 @@ def test_collect_upstream_results_excludes_unrelated_completed_stages(
         worker_registry=cast(WorkerRegistry, object()),
         results_dir=tmp_path,
         logger=logging.getLogger("test-stage-results"),
+        workflow_registry=mock.Mock(),
     )
 
     context = dispatcher._build_stage_context(current)
@@ -372,6 +377,7 @@ def test_stage_reference_uses_payload_root_for_local_and_http_results(
         worker_registry=cast(WorkerRegistry, object()),
         results_dir=tmp_path,
         logger=logging.getLogger("test-stage-reference-root"),
+        workflow_registry=mock.Mock(),
     )
 
     local_value = dispatcher._resolve_reference(

@@ -3,6 +3,7 @@
 import logging
 from pathlib import Path
 from typing import cast
+from unittest import mock
 
 import pytest
 
@@ -47,6 +48,7 @@ def _dispatcher(
         worker_registry=cast(WorkerRegistry, object()),
         results_dir=results_dir,
         logger=logging.getLogger("test-python-inputs"),
+        workflow_registry=mock.Mock(),
     )
 
 

@@ -56,6 +56,7 @@ def make_capturing_dispatcher(
     idle_ids: list[str] | None = None,
     satisfying_ids: list[str] | None = None,
     grace_sec: int = 60,
+    workflow_registry: Any = None,
 ) -> CapturingDispatcher:
     """Build a CapturingDispatcher whose registry returns the given worker ids."""
     registry = mock.Mock()
@@ -71,4 +72,7 @@ def make_capturing_dispatcher(
         results_dir=Path(tempfile.gettempdir()),
         logger=logging.getLogger("dispatcher-test"),
         no_worker_grace_sec=grace_sec,
+        workflow_registry=(
+            workflow_registry if workflow_registry is not None else mock.Mock()
+        ),
     )

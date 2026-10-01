@@ -7,6 +7,7 @@ values without opening any result file.
 
 import logging
 from collections.abc import Iterator
+from pathlib import Path
 from typing import Any, cast
 from unittest import mock
 
@@ -19,6 +20,7 @@ from lumid_hooks import PrincipalContext, ResourceRef
 from server.app_state import get_logger, get_workflow_registry
 from server.auth.security import authenticate_connection
 from server.clients.redis import AsyncRedisClient, RedisClient, SyncRedisClient
+from server.dispatcher.base import Dispatcher
 from server.hooks import PERMISSION_CHECKERS
 from server.registries.workflow import (
     UNKNOWN_USAGE,
@@ -28,7 +30,10 @@ from server.registries.workflow import (
 )
 from server.routers.v1 import results as results_router
 from server.routers.v1 import workflows as workflows_router
+from server.task.runtime import TaskRuntime
 from shared.schemas.result import (
+    APIItem,
+    APIResult,
     APIUsage,
     DataProfilingResult,
     DataRetrievalResult,
@@ -39,7 +44,9 @@ from shared.schemas.result import (
     ResultEnvelope,
     ServeResult,
     SSHResult,
+    write_result,
 )
+from shared.tasks import TaskEnvelopeStrict
 
 
 @pytest.fixture
@@ -362,3 +369,93 @@ async def test_get_workflow_does_not_open_result_files(
 
     assert resp.status_code == 200
     assert resp.json()["usage"]["prompt_tokens"] == 30
+
+
+_SKIP_WORKFLOW = """
+apiVersion: flowmesh/v1
+kind: Workflow
+metadata:
+  name: skip-usage
+spec:
+  graph:
+    nodes:
+      - name: judge
+        spec:
+          taskType: api
+      - name: refine
+        dependsOn: [judge]
+        spec:
+          taskType: api
+          condition:
+            node: judge
+            field: items.0.text
+            equals: insufficient
+"""
+
+
+@pytest.mark.anyio
+async def test_condition_skipped_task_records_no_usage_and_keeps_sum(
+    registry: WorkflowRegistry, allow_all_permissions: None, tmp_path: Path
+) -> None:
+    """A condition-skipped task records the no-usage marker, so the workflow
+    usage stays the sum of the tasks that made calls."""
+    logger = logging.getLogger("test.workflow_usage")
+    runtime = TaskRuntime(registry, mock.Mock(), logger)
+    workflow_id, parsed = await runtime.register("owner", "org", _SKIP_WORKFLOW)
+    ids = {str(p.graph_node_name): p.task_id for p in parsed}
+
+    write_result(
+        tmp_path,
+        ResultEnvelope(
+            task_id=ids["judge"],
+            result=APIResult(
+                ok=True,
+                executor="api",
+                method="POST",
+                url="https://api.example.com/v1/chat/completions",
+                status_code=200,
+                items=[
+                    APIItem(
+                        index=0,
+                        url="https://api.example.com/v1/chat/completions",
+                        status_code=200,
+                        text="sufficient",
+                    )
+                ],
+            ),
+        ),
+    )
+    await registry.save_task_usage_async(ids["judge"], _api_usage(calls=7))
+    runtime.mark_succeeded(ids["judge"], None, {}, "2026-01-01T00:00:00Z")
+
+    dispatcher = Dispatcher(
+        runtime=runtime,
+        worker_registry=mock.Mock(),
+        results_dir=tmp_path,
+        logger=logger,
+        workflow_registry=registry,
+    )
+    record = runtime.get_record(ids["refine"])
+    assert record is not None
+    skipped = dispatcher._evaluate_condition_skip(
+        ids["refine"], TaskEnvelopeStrict.model_validate(record.task), record
+    )
+
+    assert skipped is True
+    usages = await registry.load_task_usages_async(ids["refine"])
+    assert usages == {ids["refine"]: None}
+
+    app = FastAPI()
+    app.state.logger = logger
+    app.include_router(workflows_router.router, prefix="/api/v1")
+    app.dependency_overrides[get_workflow_registry] = lambda: registry
+    app.dependency_overrides[get_logger] = lambda: logger
+    app.dependency_overrides[authenticate_connection] = lambda: _principal()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as ac:
+        resp = await ac.get(f"/api/v1/workflows/{workflow_id}")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["usage"] is not None
+    assert body["usage"]["calls"] == 7
+    assert body["usage"]["prompt_tokens"] == 30
