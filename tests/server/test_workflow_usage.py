@@ -30,9 +30,15 @@ from server.routers.v1 import results as results_router
 from server.routers.v1 import workflows as workflows_router
 from shared.schemas.result import (
     APIUsage,
+    DataProfilingResult,
+    DataRetrievalResult,
+    EchoResult,
     GenerationUsage,
     InferenceResult,
+    PythonResult,
     ResultEnvelope,
+    ServeResult,
+    SSHResult,
 )
 
 
@@ -200,12 +206,31 @@ async def test_usage_sums_api_and_inference_tasks(registry: WorkflowRegistry) ->
 
 
 @pytest.mark.anyio
-async def test_no_model_task_contributes_nothing(registry: WorkflowRegistry) -> None:
+@pytest.mark.parametrize(
+    "result",
+    [
+        EchoResult(ok=True),
+        SSHResult(ok=True, session_id="s", exit_code=0),
+        DataProfilingResult(ok=True),
+        DataRetrievalResult(ok=True),
+        PythonResult(ok=True, exit_code=0),
+        ServeResult(ok=True, model="m", port=8000),
+    ],
+)
+async def test_no_model_task_contributes_nothing(
+    registry: WorkflowRegistry, result: Any
+) -> None:
     """A task that calls no model contributes nothing and is not a failure."""
+    assert (
+        results_router._task_usage_from_envelope(
+            ResultEnvelope(task_id="tsk-no-model", result=result)
+        )
+        is None
+    )
     await registry.save_task_usage_async("tsk-api", _api_usage())
-    await registry.save_task_usage_async("tsk-echo", None)
+    await registry.save_task_usage_async("tsk-no-model", None)
 
-    usage = await _sum(registry, ["tsk-api", "tsk-echo"])
+    usage = await _sum(registry, ["tsk-api", "tsk-no-model"])
     assert usage is not None
     assert usage.prompt_tokens == 30
     assert usage.calls == 3

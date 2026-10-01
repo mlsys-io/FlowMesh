@@ -29,6 +29,7 @@ from shared.schemas.result import (
     InferenceResult,
     PythonResult,
     ResultEnvelope,
+    ServeResult,
     SSHResult,
     read_result,
     result_file_path,
@@ -70,6 +71,7 @@ _NO_USAGE_RESULT_TYPES = (
     DataProfilingResult,
     DataRetrievalResult,
     PythonResult,
+    ServeResult,
 )
 
 
@@ -81,9 +83,9 @@ def _task_usage_from_envelope(
     API tasks carry an ``APIUsage``; vLLM inference tasks map their
     ``GenerationUsage`` token counts with reasoning 0, ``calls`` from
     ``num_requests``, and ``wall_sec`` from ``latency_sec``. Task types that
-    make no model calls (echo, ssh, data profiling, data retrieval, python)
-    contribute nothing (``None``). A model-calling task whose usage cannot be
-    mapped returns ``UNKNOWN_USAGE`` so the workflow fails closed.
+    make no model calls (echo, ssh, serve, data profiling, data retrieval,
+    python) contribute nothing (``None``). A model-calling task whose usage
+    cannot be mapped returns ``UNKNOWN_USAGE`` so the workflow fails closed.
     """
     result = envelope.result
     if isinstance(result, APIResult):
