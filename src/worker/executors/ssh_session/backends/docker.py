@@ -86,6 +86,12 @@ _EXEC_ENVIRONMENT = {
 }
 _CONTAINER_RESULTS_SOURCE_ROOT = "/root/.flowmesh/results-source"
 _SSH_RUN_ENTRYPOINT_PATH = "/flowmesh-ssh-run.sh"
+# A hardened session runs on a read-only root, where Docker refuses to unpack
+# an archive anywhere but a volume. Its files -- the entrypoint wrapper and the
+# caller's (python-run.py, the task code) -- go into an anonymous volume here,
+# owned by root and so not writable by the unprivileged task.
+_HARDENED_FILES_DIR = "/opt/flowmesh"
+_HARDENED_ENTRYPOINT_PATH = f"{_HARDENED_FILES_DIR}/flowmesh-ssh-run.sh"
 _SSH_RUN_SCRIPT_SOURCE = (
     Path(worker.__file__).resolve().parent / "docker" / "ssh-run.sh"
 )
@@ -145,7 +151,7 @@ class DockerSessionBackend(SSHSessionBackend):
         for c in containers:
             try:
                 c.stop(timeout=stop_timeout_sec)
-                c.remove(force=True)
+                c.remove(force=True, v=True)
                 logger.info("Removed SSH session container on teardown")
             except Exception as exc:
                 logger.warning("Failed to remove container: %s", exc)
@@ -204,9 +210,15 @@ class DockerSessionBackend(SSHSessionBackend):
             container_cmd,
             interactive,
         )
+        if cfg.hardened and not interactive:
+            self._harden_root(kwargs, mount_plan)
         try:
             container, log_stream = self._start_container(
-                client, kwargs, interactive, cfg.extra_files
+                client,
+                kwargs,
+                interactive,
+                cfg.extra_files,
+                files_root=_HARDENED_FILES_DIR if cfg.hardened else "/",
             )
         except Exception:
             self._cleanup_mount_plan(client, mount_plan)
@@ -295,7 +307,9 @@ class DockerSessionBackend(SSHSessionBackend):
         if volumes:
             kwargs["volumes"] = volumes
         if not interactive:
-            kwargs["entrypoint"] = [_SSH_RUN_ENTRYPOINT_PATH]
+            kwargs["entrypoint"] = [
+                _HARDENED_ENTRYPOINT_PATH if cfg.hardened else _SSH_RUN_ENTRYPOINT_PATH
+            ]
             if command:
                 kwargs["command"] = command
         if cfg.cpu_limit is not None:
@@ -332,8 +346,9 @@ class DockerSessionBackend(SSHSessionBackend):
             if cfg.memory_limit_bytes is not None:
                 tmp_opts += f",size={cfg.memory_limit_bytes}"
             kwargs["tmpfs"] = {
-                "/tmp": tmp_opts
-            }  # nosec B108 - a fresh per-container tmpfs, not the host /tmp
+                "/tmp": tmp_opts,
+                "/var/tmp": tmp_opts,
+            }  # nosec B108 - fresh per-container tmpfs, not the host's
         return kwargs
 
     def _resolve_noninteractive_command(
@@ -369,12 +384,40 @@ class DockerSessionBackend(SSHSessionBackend):
             )
         return combined
 
+    @staticmethod
+    def _harden_root(kwargs: dict[str, Any], plan: SSHMountPlan) -> None:
+        """Make a hardened session's root filesystem read-only.
+
+        Without it, any path the image leaves writable to the task's uid
+        (``/var/tmp`` in python:3.12-slim, anything a custom image chmods)
+        takes writes into the container's layer on the worker's disk, bounded
+        by nothing. What the session legitimately writes gets its own mount:
+        ``/tmp`` and ``/var/tmp`` are tmpfs (charged to the memory limit), and
+        the directories the entrypoint creates -- staged inputs and the output,
+        which is collected after the container exits and so cannot be tmpfs --
+        are anonymous volumes, removed with the container.
+        """
+        kwargs["read_only"] = True
+        anonymous = [_HARDENED_FILES_DIR]
+        anonymous += [mount_path for mount_path, _ in plan.staged_input_specs]
+        anonymous += list(plan.create_dirs)
+        volumes = list(kwargs.get("volumes") or [])
+        bound = {v.split(":")[1] for v in volumes if ":" in v}
+        for path in dict.fromkeys(anonymous):
+            if path not in bound:
+                volumes.append(path)
+        kwargs["volumes"] = volumes
+        environment = dict(kwargs.get("environment") or {})
+        environment["FLOWMESH_NO_FINISH_HELPER"] = "1"
+        kwargs["environment"] = environment
+
     def _start_container(
         self,
         client: DockerClient,
         kwargs: dict[str, Any],
         interactive: bool,
         extra_files: dict[str, bytes] | None = None,
+        files_root: str = "/",
     ) -> tuple[Container, DemuxLogStream | None]:
         image = kwargs.get("image")
         mode = "interactive" if interactive else "non-interactive"
@@ -384,7 +427,7 @@ class DockerSessionBackend(SSHSessionBackend):
                 container = client.containers.run(**kwargs)
             else:
                 container, log_stream = self._run_noninteractive_container(
-                    client, kwargs, extra_files
+                    client, kwargs, extra_files, files_root
                 )
         except Exception as exc:
             if isinstance(image, str) and "No such image" in str(exc):
@@ -395,7 +438,7 @@ class DockerSessionBackend(SSHSessionBackend):
                         container = client.containers.run(**kwargs)
                     else:
                         container, log_stream = self._run_noninteractive_container(
-                            client, kwargs, extra_files
+                            client, kwargs, extra_files, files_root
                         )
                 except Exception as pull_exc:
                     raise ExecutionError(
@@ -414,6 +457,7 @@ class DockerSessionBackend(SSHSessionBackend):
         client: DockerClient,
         kwargs: dict[str, Any],
         extra_files: dict[str, bytes] | None = None,
+        files_root: str = "/",
     ) -> tuple[Container, DemuxLogStream]:
         try:
             container = client.containers.create(**kwargs)
@@ -423,7 +467,9 @@ class DockerSessionBackend(SSHSessionBackend):
             ) from exc
         assert isinstance(container, Container)
         try:
-            container.put_archive("/", self._build_ssh_run_archive(extra_files))
+            container.put_archive(
+                files_root, self._build_ssh_run_archive(extra_files, files_root)
+            )
             log_stream = cast(
                 DemuxLogStream,
                 container.attach(
@@ -433,7 +479,7 @@ class DockerSessionBackend(SSHSessionBackend):
             container.start()
         except Exception as exc:
             try:
-                container.remove(force=True)
+                container.remove(force=True, v=True)
             except Exception:
                 logger.debug(
                     "Failed to remove non-interactive container after startup error",
@@ -445,19 +491,31 @@ class DockerSessionBackend(SSHSessionBackend):
         return container, log_stream
 
     @staticmethod
-    def _build_ssh_run_archive(extra_files: dict[str, bytes] | None = None) -> bytes:
+    def _build_ssh_run_archive(
+        extra_files: dict[str, bytes] | None = None, root: str = "/"
+    ) -> bytes:
         """The entrypoint wrapper, plus any caller files (read-only, 0644).
 
         Written with ``put_archive`` before start, so a caller's files never
         travel through the environment (which caps a single value at 128 KiB).
+        ``root`` is where the archive is unpacked: ``/`` normally, the files
+        volume for a hardened session, whose files must all live under it.
         """
-        files = {_SSH_RUN_ENTRYPOINT_PATH: (_SSH_RUN_SCRIPT_SOURCE.read_bytes(), 0o755)}
+        entrypoint = (
+            _SSH_RUN_ENTRYPOINT_PATH if root == "/" else _HARDENED_ENTRYPOINT_PATH
+        )
+        files = {entrypoint: (_SSH_RUN_SCRIPT_SOURCE.read_bytes(), 0o755)}
         for path, data in (extra_files or {}).items():
             files[path] = (data, 0o644)
+        prefix = root.rstrip("/") + "/"
         stream = io.BytesIO()
         with tarfile.open(fileobj=stream, mode="w") as tar:
             for path, (data, mode) in files.items():
-                info = tarfile.TarInfo(name=path.lstrip("/"))
+                if not path.startswith(prefix):
+                    raise ExecutionError(
+                        f"{path} is outside {root}, where this session's files go"
+                    )
+                info = tarfile.TarInfo(name=path[len(prefix) :])
                 info.size = len(data)
                 info.mode = mode
                 tar.addfile(info, io.BytesIO(data))
@@ -761,7 +819,8 @@ class DockerSession(SSHSession):
 
     def cleanup(self) -> None:
         try:
-            self._container.remove(force=True)
+            # v=True: a hardened session's anonymous volumes go with it.
+            self._container.remove(force=True, v=True)
             logger.info("Removed SSH session container")
         except Exception as exc:
             logger.debug("Error removing container: %s", exc)

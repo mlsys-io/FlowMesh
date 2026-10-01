@@ -207,14 +207,36 @@ class TestDockerHardening:
         assert "network" not in kwargs
         assert kwargs["cap_drop"] == ["ALL"]
         assert "NET_RAW" not in cast(list[str], kwargs["cap_add"])
-        assert kwargs["tmpfs"] == {"/tmp": "rw,exec,nosuid,nodev"}
+        opts = "rw,exec,nosuid,nodev"
+        assert kwargs["tmpfs"] == {"/tmp": opts, "/var/tmp": opts}
+        assert kwargs["entrypoint"] == ["/opt/flowmesh/flowmesh-ssh-run.sh"]
 
     def test_scratch_space_is_bounded_by_the_memory_limit(self, tmp_path: Path) -> None:
         cfg = _base_cfg()
         cfg.hardened = True
         cfg.memory_limit_bytes = 2 * 1024**3
         kwargs = self._kwargs(tmp_path, cfg)
-        assert kwargs["tmpfs"] == {"/tmp": f"rw,exec,nosuid,nodev,size={2 * 1024**3}"}
+        opts = f"rw,exec,nosuid,nodev,size={2 * 1024**3}"
+        assert kwargs["tmpfs"] == {"/tmp": opts, "/var/tmp": opts}
+
+    def test_hardened_root_is_read_only_with_volumes_for_what_it_writes(self) -> None:
+        plan = MagicMock(
+            staged_input_specs=[("/mnt/flowmesh/inputs/prep", "/src/prep")],
+            create_dirs=["/mnt/flowmesh/output"],
+        )
+        kwargs: dict[str, object] = {
+            "volumes": ["stage-vol:/root/.flowmesh/results-source:ro"],
+            "environment": {"A": "1"},
+        }
+        DockerSessionBackend._harden_root(kwargs, plan)
+        assert kwargs["read_only"] is True
+        assert kwargs["volumes"] == [
+            "stage-vol:/root/.flowmesh/results-source:ro",
+            "/opt/flowmesh",
+            "/mnt/flowmesh/inputs/prep",
+            "/mnt/flowmesh/output",
+        ]
+        assert kwargs["environment"] == {"A": "1", "FLOWMESH_NO_FINISH_HELPER": "1"}
 
     def test_output_is_copied_out_not_bind_mounted(self, tmp_path: Path) -> None:
         cfg = _executor(tmp_path)._python_config(_spec())
@@ -245,6 +267,17 @@ class TestDockerHardening:
             member = tar.getmember(CODE_PATH.lstrip("/"))
             assert member.mode == 0o644
             assert tar.extractfile(member).read() == b"print(1)\n"  # type: ignore[union-attr]
+
+    def test_hardened_archive_unpacks_into_the_files_volume(self) -> None:
+        archive = DockerSessionBackend._build_ssh_run_archive(
+            {CODE_PATH: b"print(1)\n"}, "/opt/flowmesh"
+        )
+        with tarfile.open(fileobj=io.BytesIO(archive)) as tar:
+            assert sorted(tar.getnames()) == ["flowmesh-ssh-run.sh", "flowmesh_task.py"]
+        with pytest.raises(ExecutionError, match="outside /opt/flowmesh"):
+            DockerSessionBackend._build_ssh_run_archive(
+                {"/etc/x": b""}, "/opt/flowmesh"
+            )
 
 
 # ------------------------------------------------------------------ #
