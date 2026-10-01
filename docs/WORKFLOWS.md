@@ -113,61 +113,13 @@ exactly `{{prompt}}` takes the prompt as-is, so a message-list row fills
 requests. Any failed row fails the task. Cancelling the task skips rows that
 have not started and marks it cancelled once in-flight requests return.
 
-A body value that is exactly `{{prompt}}` is replaced by the row's prompt
-object as-is (a message list stays a list of `{"role", "content"}` dicts). An
-embedded `{{prompt}}` inside a longer string keeps string substitution: a
-string prompt is inserted verbatim, and any other prompt value is rendered as
-JSON.
-
 ### Grouped results
 
-A `dataframe` spec returns one `APIGroupItem` per table in `APIResult.items`,
-with the table's row responses in `rows`; an empty table has empty `rows`. A
-`graph_template` spec over grouped columns sends one request per group and
-returns one `APIItem` for each. Other specs return one `APIItem` per row.
-
-A column is grouped when it reads one list of records per upstream item: an
-upstream API task's `items.rows`, or a python stage whose items each carry a
-list of records in `output` (`path: value.items.output.<field>`). Each list
-becomes one table, so group sizes may differ. A per-row list of scalars stays
-one cell.
-
-Downstream stages read a grouped result through `rows`, for example
-`path: items.rows.json.choices[0].message.content`.
-
-A dataframe column reads a python stage with `node: <stage>` and a path that
-starts at the result as `flowmesh result fetch` shows it — for a python stage
-that returns `{"items": [{"output": [...]}, ...]}`, `path: value.items.output.q`
-reads the `q` field of each record. When each item's `output` is a list of
-records, each item is one group and group sizes may differ (3 and 2); a per-row
-list of scalars stays one cell value. For example, a python stage T0 that
-returns two such items feeds a dataframe API task T1 that reads them as two
-groups:
-
-```yaml
-spec:
-  stages:
-    - name: T0
-      spec:
-        taskType: python
-        code: |
-          def main():
-              return {"items": [{"output": [{"q": "..."}, {"q": "..."}, {"q": "..."}]},
-                               {"output": [{"q": "..."}, {"q": "..."}]}]}
-    - name: T1
-      dependsOn: [T0]
-      spec:
-        taskType: api
-        data:
-          type: dataframe
-          columns:
-            - label: Q
-              node: T0
-              path: value.items.output.q
-          messages:
-            - role: user
-              content: "Answer in one word: {Q}"
-```
+A `dataframe` spec returns one `APIGroupItem` per table, with that table's
+responses in `rows`. A column is grouped when it reads one list of records per
+upstream item, such as an upstream API task's `items.rows` or a python stage's
+`items.output.<field>`; each list becomes one table. Downstream stages read the
+responses through `items.rows`.
 
 ## Python task
 
