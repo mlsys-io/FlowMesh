@@ -8,7 +8,7 @@ from pydantic import BaseModel
 
 from server.task.models import TaskInfo
 from shared.tasks import TaskEnvelopeTemplate
-from shared.utils.redact import REDACTED
+from shared.utils.redact import REDACTED, redact_raw_yaml
 
 # TODO(deprecate): remove this module with the `raw_yaml` shim in
 # server/task/models.py.
@@ -90,9 +90,10 @@ def test_dump_carries_both_keys() -> None:
 
 
 def test_raw_yaml_is_redacted_like_source() -> None:
-    dumped = _info("api:\n  headers:\n    Authorization: Bearer SECRET\n").model_dump(
-        mode="json"
-    )
+    # ``source`` is redacted once at registration; ``raw_yaml`` mirrors it.
+    dumped = _info(
+        redact_raw_yaml("api:\n  headers:\n    Authorization: Bearer SECRET\n")
+    ).model_dump(mode="json")
     assert "SECRET" not in json.dumps(dumped)
     assert dumped["raw_yaml"] == dumped["source"]
     assert REDACTED in dumped["raw_yaml"]

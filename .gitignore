@@ -181,3 +181,5 @@ dump.rdb
 
 plugins/
 plugin-data/
+# Local scratch (throwaway)
+scratch/

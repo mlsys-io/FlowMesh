@@ -123,19 +123,57 @@ async def test_list_tasks_filters_by_workflow_id_with_permissions(
 
 
 @pytest.mark.anyio
-async def test_event_loop_stays_responsive_during_list(no_checkers: None) -> None:
+async def test_list_tasks_repeated_workflow_id_returns_both(no_checkers: None) -> None:
+    runtime, _ = build_runtime()
+    wf_a = await _register(runtime, _PAYLOAD)
+    wf_b = await _register(runtime, _PAYLOAD)
+    ids_a = _task_ids(runtime, wf_a)
+    ids_b = _task_ids(runtime, wf_b)
+
+    async with _client(runtime) as ac:
+        resp = await ac.get(
+            f"{PREFIX}/tasks", params=[("workflow_id", wf_a), ("workflow_id", wf_b)]
+        )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert {t["task_id"] for t in body} == set(ids_a) | set(ids_b)
+
+
+@pytest.mark.anyio
+async def test_list_tasks_repeated_status_returns_both(no_checkers: None) -> None:
+    runtime, _ = build_runtime()
+    wf_a = await _register(runtime, _PAYLOAD)
+    ids_a = _task_ids(runtime, wf_a)
+
+    async with _client(runtime) as ac:
+        resp = await ac.get(
+            f"{PREFIX}/tasks", params=[("status", "PENDING"), ("status", "DONE")]
+        )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert {t["task_id"] for t in body} == set(ids_a)
+
+
+@pytest.mark.anyio
+async def test_event_loop_stays_responsive_during_list(
+    no_checkers: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
     runtime, _ = build_runtime()
     wf_a = await _register(runtime, _PAYLOAD)
     await _register(runtime, _PAYLOAD)
 
-    # Patch the store call to block, as a slow store would.
-    orig = runtime.list_tasks
+    # Make the real filtering/serialisation path slow by redacting a large source
+    # on every TaskInfo build, as a slow store would. The work happens inside the
+    # thread, so the event loop stays free.
+    orig_build = runtime._build_task_info_locked
 
-    def slow_list(*args: Any, **kwargs: Any) -> Any:
+    def slow_build(task_id: str, record: Any) -> Any:
         time.sleep(0.5)
-        return orig(*args, **kwargs)
+        return orig_build(task_id, record)
 
-    runtime.list_tasks = slow_list  # type: ignore[method-assign]
+    monkeypatch.setattr(runtime, "_build_task_info_locked", slow_build)
 
     app = FastAPI()
     app.state.logger = logging.getLogger("test.tasks_router")
