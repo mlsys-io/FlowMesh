@@ -1,7 +1,7 @@
 """Tests for _evaluate_expr attribute/index resolution over pydantic models,
 aliases, and nested lists."""
 
-from typing import cast
+from typing import Any, cast
 
 import pandas as pd
 
@@ -19,6 +19,7 @@ from worker.executors.utils.graph_templates import (
     _aggregate_structural_messages,
     _build_grouped_dataframes,
     _evaluate_expr,
+    _render_lambda_func,
 )
 
 
@@ -97,6 +98,25 @@ def test_expr_over_list_of_models_with_alias() -> None:
     assert grouped is False
 
 
+def test_expr_over_list_of_models_ungrouped_after_first_access() -> None:
+    """Grouping is decided only at the first attribute access over the items
+    list; a later access over a list of lists (``choices``) does not re-decide
+    from shape, so ``choices.message.content`` stays ungrouped."""
+    upstream = APIResult(
+        ok=True,
+        executor="api",
+        method="POST",
+        url="https://up.example.com",
+        status_code=200,
+        items=[_item("c0"), _item("c1")],
+    )
+    value, grouped = _evaluate_expr(
+        "Up.items.json.choices.message.content", {"Up": upstream}
+    )
+    assert value == [["c0"], ["c1"]]
+    assert grouped is False
+
+
 def test_expr_over_nested_lists_of_models() -> None:
     """Attribute access maps through nested lists (a list of groups, each a
     list of APIItem models), yielding one inner list per group."""
@@ -129,6 +149,20 @@ def test_build_grouped_dataframes_all_empty_columns_yield_zero_rows() -> None:
     assert dataframes[0].empty
     assert list(dataframes[0].columns) == ["text", "statement"]
     assert isinstance(dataframes[0], pd.DataFrame)
+
+
+def test_build_grouped_dataframes_empty_group_with_constant_column() -> None:
+    """An empty group with a constant one-item column builds an empty table for
+    that group: the length-1 column becomes ``[]`` instead of failing the
+    row-count check."""
+    columns: list[dict[str, Any]] = [
+        {"label": "text", "value": [[]], "grouped": True},
+        {"label": "statement", "value": ["constant"]},
+    ]
+    dataframes = _build_grouped_dataframes(columns)
+    assert len(dataframes) == 1
+    assert dataframes[0].empty
+    assert list(dataframes[0].columns) == ["text", "statement"]
 
 
 def _grouped_value(expr: str, upstream: object) -> tuple[list[list[object]], bool]:
@@ -237,3 +271,21 @@ def test_list_of_dataframes_groups_by_item() -> None:
     )
     assert grouped is True
     assert value == [["t0", "t1"], ["t2"]]
+
+
+def test_lambda_func_passes_grouped_labels_whole_per_group() -> None:
+    """A function step's message arguments carry one value per group, the way
+    the prompt path does: with ragged groups [a0, a1] and [b0], the step runs
+    once per group and receives each group's whole column (nothing dropped)."""
+    columns: dict[str, list[list[str]]] = {
+        "a": [["a0", "a1"], ["b0"]],
+        "b": [["a0", "a1"], ["b0"]],
+    }
+    fn = "lambda args: args[0][0]['content']"
+    prompts = _render_lambda_func(
+        cast("dict[str, Any]", columns),
+        fn,
+        [[{"role": "user", "content": "row {a}"}]],
+        grouped_labels={"a", "b"},
+    )
+    assert prompts == ['row ["a0", "a1"]', 'row ["b0"]']

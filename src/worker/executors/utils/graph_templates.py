@@ -218,19 +218,26 @@ def _build_grouped_dataframes(columns: list[dict[str, Any]]) -> list[pd.DataFram
     dataframes: list[pd.DataFrame] = []
     for group_idx in range(group_count):
         max_len = 0
+        has_empty = False
         raw_values: dict[str, list[Any]] = {}
         for label, groups in grouped_columns.items():
             values = groups[group_idx]
             if not isinstance(values, list):
                 values = [values]
-            if values:
+            if len(values) != 1:
                 max_len = max(max_len, len(values))
+                if len(values) == 0:
+                    has_empty = True
             raw_values[label] = values
+        if max_len == 0 and not has_empty:
+            max_len = 1
 
         normalized: dict[str, list[Any]] = {}
         for label, values in raw_values.items():
             if len(values) == 1 and max_len > 1:
                 values = [values[0] for _ in range(max_len)]
+            elif len(values) == 1 and max_len == 0:
+                values = []
             elif len(values) != max_len:
                 raise ExecutionError(
                     "dataframe column values must resolve to "
@@ -432,6 +439,7 @@ def _render_lambda_func(
     columns: dict[str, Sequence[str | MaterializedMessageOrTable]],
     fn: str,
     fn_args: Sequence[Message | str],
+    grouped_labels: set[str],
 ) -> list[str | MaterializedMessage]:
     list_lengths = [len(v) for v in columns.values() if len(v) > 1]
     if list_lengths:
@@ -448,7 +456,7 @@ def _render_lambda_func(
     for arg in fn_args:
         if not isinstance(arg, str):
             materialized_args.append(
-                _aggregate_structural_messages(columns, arg, set())
+                _aggregate_structural_messages(columns, arg, grouped_labels)
             )
             continue
 
@@ -525,7 +533,7 @@ def _render_structural_messages(
         elif "function" in step_option:
             fn_args = step_option.get("arguments", [])
             formatted_prompts[step_option["label"]] = _render_lambda_func(
-                formatted_prompts, step_option["function"], fn_args
+                formatted_prompts, step_option["function"], fn_args, grouped_labels
             )
         else:
             raise RuntimeError(
@@ -678,7 +686,7 @@ def _apply_attr(
         if all(isinstance(v, list) for v in value):
             # Mapping over groups keeps grouped as-is; a raw list of lists
             # groups only when its inner lists hold records.
-            if not grouped:
+            if not grouped and not mapped_items:
                 grouped = bool(value) and all(
                     all(isinstance(r, (dict, BaseModel)) for r in v) for v in value
                 )

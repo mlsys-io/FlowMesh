@@ -2570,15 +2570,15 @@ class TestUsage:
             ]
         )
         result = _run(_executor(), task, transport, tmp_path)
-        assert result.usage is not None
-        assert result.usage.prompt_tokens == 30
-        assert result.usage.completion_tokens == 12
-        assert result.usage.reasoning_tokens == 2
-        assert result.usage.calls == 3
-        assert result.usage.failures == 0
-        assert result.usage.retries == 0
-        assert result.usage.truncated_calls == 1
-        assert result.usage.wall_sec >= 0
+        assert result.usage_summary is not None
+        assert result.usage_summary.prompt_tokens == 30
+        assert result.usage_summary.completion_tokens == 12
+        assert result.usage_summary.reasoning_tokens == 2
+        assert result.usage_summary.calls == 3
+        assert result.usage_summary.failures == 0
+        assert result.usage_summary.retries == 0
+        assert result.usage_summary.truncated_calls == 1
+        assert result.usage_summary.wall_sec >= 0
 
     def test_usage_counts_retries(self, tmp_path: Path) -> None:
         """A retried 503 then 200 counts the retry in usage."""
@@ -2596,11 +2596,11 @@ class TestUsage:
             ]
         )
         result = _run(_executor(), task, transport, tmp_path)
-        assert result.usage is not None
-        assert result.usage.calls == 1
-        assert result.usage.retries == 1
-        assert result.usage.prompt_tokens == 4
-        assert result.usage.completion_tokens == 1
+        assert result.usage_summary is not None
+        assert result.usage_summary.calls == 1
+        assert result.usage_summary.retries == 1
+        assert result.usage_summary.prompt_tokens == 4
+        assert result.usage_summary.completion_tokens == 1
 
     def test_usage_absent_when_no_rows(self, tmp_path: Path) -> None:
         """A task with no rows raises before producing a usage object."""
@@ -2623,11 +2623,11 @@ class TestUsage:
             ]
         )
         result = _run(_executor(), task, transport, tmp_path)
-        assert isinstance(result.usage, APIUsage)
-        assert result.usage.prompt_tokens == 10
-        assert result.usage.completion_tokens == 5
-        assert result.usage.reasoning_tokens == 0
-        assert result.usage.calls == 1
-        assert result.usage.failures == 0
-        assert result.usage.retries == 0
-        assert result.usage.truncated_calls == 0
+        assert isinstance(result.usage_summary, APIUsage)
+        assert result.usage_summary.prompt_tokens == 10
+        assert result.usage_summary.completion_tokens == 5
+        assert result.usage_summary.reasoning_tokens == 0
+        assert result.usage_summary.calls == 1
+        assert result.usage_summary.failures == 0
+        assert result.usage_summary.retries == 0
+        assert result.usage_summary.truncated_calls == 0

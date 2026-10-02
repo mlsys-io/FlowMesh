@@ -4,13 +4,15 @@ import json
 from typing import Any
 
 import pytest
-from pydantic import Field, ValidationError
+from pydantic import Field, TypeAdapter, ValidationError
 
 from shared.schemas.artifact import ArtifactContext, ArtifactRef
 from shared.schemas.result import (
+    AnyExecutorResult,
     APIGroupItem,
     APIItem,
     APIResult,
+    APIUsage,
     BaseExecutorResult,
     DataRetrievalItem,
     DataRetrievalResult,
@@ -268,3 +270,51 @@ def test_api_result_payload_uses_wire_alias_json() -> None:
     assert grouped.rows[0].response_json["choices"][0]["message"]["content"] == (
         "grouped"
     )
+
+
+def test_api_result_v019_usage_payload_validates() -> None:
+    """A v0.1.9-shaped APIResult carries the upstream usage dict in the
+    top-level ``usage`` field, which is an open mapping again, so it validates
+    through the shared AnyExecutorResult without a fallback reader."""
+    payload = {
+        "task_type": "api",
+        "executor": "api",
+        "method": "POST",
+        "url": "http://example.com/v1/chat/completions",
+        "status_code": 200,
+        "usage": {"prompt_tokens": 3, "completion_tokens": 5, "total_tokens": 8},
+    }
+    result: APIResult = TypeAdapter(AnyExecutorResult).validate_python(payload)
+    assert isinstance(result, APIResult)
+    assert result.usage == {
+        "prompt_tokens": 3,
+        "completion_tokens": 5,
+        "total_tokens": 8,
+    }
+    assert result.usage_summary is None
+
+
+def test_api_result_usage_summary_carries_summed_fields() -> None:
+    """A fresh APIResult carries the summed per-task accounting in
+    ``usage_summary``, distinct from the upstream ``usage`` payload."""
+    result = APIResult(
+        ok=True,
+        executor="api",
+        method="POST",
+        url="http://example.com/v1/chat/completions",
+        status_code=200,
+        usage_summary=APIUsage(
+            prompt_tokens=3,
+            completion_tokens=5,
+            reasoning_tokens=0,
+            calls=1,
+            failures=0,
+            retries=0,
+            truncated_calls=0,
+            wall_sec=1.5,
+        ),
+    )
+    assert result.usage_summary is not None
+    assert result.usage_summary.prompt_tokens == 3
+    assert result.usage_summary.completion_tokens == 5
+    assert result.usage_summary.calls == 1

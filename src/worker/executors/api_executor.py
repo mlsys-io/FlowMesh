@@ -823,7 +823,7 @@ class APIExecutor(DataMixin, Executor):
             status_code=status_code,
             truncated=truncated,
             items=result_items,
-            usage=APIUsage(
+            usage_summary=APIUsage(
                 prompt_tokens=prompt_snapshot,
                 completion_tokens=completion_snapshot,
                 reasoning_tokens=reasoning_snapshot,

@@ -51,6 +51,7 @@ from flowmesh.models import (
     WorkflowValidateResponse,
     WorkflowValidateTaskEntry,
 )
+from pydantic import TypeAdapter
 
 import shared.schemas.result as srv_results
 
@@ -266,6 +267,30 @@ def test_api_result_items_union_matches() -> None:
     srv_items = srv_results.APIResult.model_fields["items"].annotation
     sdk_items = sdk_models.APIResult.model_fields["items"].annotation
     assert _union_member_names(srv_items) == _union_member_names(sdk_items)
+
+
+def test_api_result_v019_usage_payload_validates_sdk() -> None:
+    """A v0.1.9-shaped APIResult (top-level ``usage`` as the upstream usage
+    dict) validates through the SDK's AnyExecutorResult, because ``usage`` is
+    an open mapping again and the summed accounting lives in ``usage_summary``."""
+    payload = {
+        "task_type": "api",
+        "executor": "api",
+        "method": "POST",
+        "url": "http://example.com/v1/chat/completions",
+        "status_code": 200,
+        "usage": {"prompt_tokens": 3, "completion_tokens": 5, "total_tokens": 8},
+    }
+    result: sdk_models.APIResult = TypeAdapter(
+        sdk_models.AnyExecutorResult
+    ).validate_python(payload)
+    assert isinstance(result, sdk_models.APIResult)
+    assert result.usage == {
+        "prompt_tokens": 3,
+        "completion_tokens": 5,
+        "total_tokens": 8,
+    }
+    assert result.usage_summary is None
 
 
 # ------------------------------------------------------------------ #
