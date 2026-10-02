@@ -164,9 +164,8 @@ async def test_event_loop_stays_responsive_during_list(
     wf_a = await _register(runtime, _PAYLOAD)
     await _register(runtime, _PAYLOAD)
 
-    # Make the real filtering/serialisation path slow by redacting a large source
-    # on every TaskInfo build, as a slow store would. The work happens inside the
-    # thread, so the event loop stays free.
+    # Sleep inside the real TaskInfo build path, as a slow store would. The work
+    # happens inside the thread, so the event loop stays free.
     orig_build = runtime._build_task_info_locked
 
     def slow_build(task_id: str, record: Any) -> Any:
