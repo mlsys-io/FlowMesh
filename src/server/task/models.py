@@ -15,7 +15,6 @@ from pydantic import (
 from shared.tasks import TaskEnvelopeTemplate, TaskSpecTemplate
 from shared.tasks.worker_message import HardwareUsage
 from shared.utils.pydantic_utils import copy_preserving_fields_set
-from shared.utils.redact import redact_raw_yaml
 
 from ..utils.time import now_iso
 
@@ -177,13 +176,7 @@ class TaskRecord(BaseModel):
         """The most recent worker to have failed this task."""
         return self.failed_workers[-1] if self.failed_workers else None
 
-    _redacted_source: str | None = PrivateAttr(default=None)
     _redacted_spec: TaskSpecTemplate | None = PrivateAttr(default=None)
-
-    def _redact_source(self) -> str:
-        if self._redacted_source is None:
-            self._redacted_source = redact_raw_yaml(self.source)
-        return self._redacted_source
 
     def _redact_spec(self) -> TaskSpecTemplate:
         if self._redacted_spec is None:
@@ -197,11 +190,11 @@ class TaskRecord(BaseModel):
         Redacting a copy and letting the default handler walk it keeps the live
         task untouched while every dump option — ``by_alias``, ``exclude``/``include``,
         ``exclude_unset``, ``exclude_none`` — applies to the redacted output natively.
+        ``source`` is already redacted once at registration and stored as-is.
         """
         redacted = copy_preserving_fields_set(
             self,
             {
-                "source": self._redact_source(),
                 "task": copy_preserving_fields_set(
                     self.task, {"spec": self._redact_spec()}
                 ),
@@ -225,7 +218,7 @@ class TaskInfo(TaskRecord):
     @property
     def raw_yaml(self) -> str:
         """Deprecated alias of the redacted ``source`` for SDK clients before 0.1.10."""
-        return self._redact_source()
+        return self.source
 
 
 class TaskParsingResult(BaseModel):

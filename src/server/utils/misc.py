@@ -99,6 +99,9 @@ def filter_models_by_queries[T: BaseModel](
     for key, value in _query_items(queries):
         query_map[str(key)].append(str(value))
 
+    if not query_map:
+        return models
+
     filtered = []
     for model in models:
         model_dict = model.model_dump()
