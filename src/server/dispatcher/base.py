@@ -35,7 +35,6 @@ from shared.tasks.worker_message import WorkerStatus, WorkerTaskMessage
 
 from ..clients.redis import REDIS_CONN_ERRORS
 from ..registries.worker import Worker, WorkerRegistry
-from ..registries.workflow import WorkflowRegistry
 from ..services.metrics import MetricsRecorder
 from ..task.metadata import extract_model_dataset_names
 from ..task.models import TaskRecord, TaskStatus
@@ -68,7 +67,6 @@ class Dispatcher:
         worker_registry: WorkerRegistry,
         results_dir: Path,
         logger: logging.Logger,
-        workflow_registry: WorkflowRegistry,
         worker_selection_strategy: str = DEFAULT_WORKER_SELECTION,
         enable_context_reuse: bool = True,
         enable_task_merge: bool = True,
@@ -84,7 +82,6 @@ class Dispatcher:
         self._worker_registry = worker_registry
         self._logger = logger
         self._results_dir = Path(results_dir)
-        self._workflow_registry = workflow_registry
         self._worker_selection_strategy = worker_selection_strategy
         self._context_reuse_enabled = enable_context_reuse
         self._task_merge_enabled = enable_task_merge
@@ -1259,8 +1256,6 @@ class Dispatcher:
             write_result(self._results_dir, skip_envelope)
             self._runtime.release_merge(task_id)
             ts = now_iso()
-            # A skipped task made no model calls; record the no-usage marker.
-            self._workflow_registry.save_task_usage(task_id, None)
             self._runtime.mark_succeeded(
                 task_id,
                 worker_id=None,

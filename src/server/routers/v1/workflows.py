@@ -15,7 +15,6 @@ from fastapi import (
 from fastapi.responses import StreamingResponse
 
 from shared.schemas.event import TaskEvent
-from shared.schemas.result import APIUsage
 
 from ...app_state import (
     get_logger,
@@ -37,7 +36,7 @@ from ...clients.redis import (
     workflow_log_stream_key,
 )
 from ...hooks import SUBMISSION_GUARDS, ResourceAction, ResourceKind
-from ...registries.workflow import UnknownUsage, Workflow, WorkflowRegistry
+from ...registries.workflow import Workflow, WorkflowRegistry
 from ...schemas.logs import LogEntry, LogEvent, LogQueryResponse
 from ...schemas.workflow import (
     WorkflowSubmitResponse,
@@ -70,57 +69,6 @@ _WORKFLOW_REQUEST_BODY_FORMAT = {
     },
 }
 router = APIRouter(prefix="/workflows", tags=["Workflows"])
-
-
-def _sum_usage(
-    usages: dict[str, APIUsage | None | UnknownUsage],
-    completed_tasks: list[str],
-    logger: logging.Logger,
-) -> APIUsage | None:
-    """Sum per-task usage into one workflow figure.
-
-    Fail closed: a completed task whose usage was never recorded (its result
-    missing or unparsable) or could not be mapped (``UNKNOWN_USAGE``) makes the
-    whole workflow's usage null, with one log line naming the task. A task type
-    that makes no model calls (echo, lambda) maps to ``None`` and contributes
-    nothing, which is not a failure. When every completed task is recorded, the
-    (possibly all-zero) sum is returned.
-    """
-    totals: dict[str, Any] = {
-        "prompt_tokens": 0,
-        "completion_tokens": 0,
-        "reasoning_tokens": 0,
-        "calls": 0,
-        "failures": 0,
-        "retries": 0,
-        "truncated_calls": 0,
-        "wall_sec": 0.0,
-    }
-    for task_id in completed_tasks:
-        if task_id not in usages:
-            logger.warning(
-                "workflow usage unavailable: task %s has no recorded usage",
-                task_id,
-            )
-            return None
-        usage = usages[task_id]
-        if usage is None:
-            continue
-        if isinstance(usage, UnknownUsage):
-            logger.warning(
-                "workflow usage unavailable: task %s has unmappable usage",
-                task_id,
-            )
-            return None
-        totals["prompt_tokens"] += usage.prompt_tokens
-        totals["completion_tokens"] += usage.completion_tokens
-        totals["reasoning_tokens"] += usage.reasoning_tokens
-        totals["calls"] += usage.calls
-        totals["failures"] += usage.failures
-        totals["retries"] += usage.retries
-        totals["truncated_calls"] += usage.truncated_calls
-        totals["wall_sec"] += usage.wall_sec
-    return APIUsage(**totals)
 
 
 def _parse_submission_body(raw_body: bytes, content_type: str) -> str:
@@ -336,8 +284,6 @@ async def get_workflow(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Workflow '{workflow_id}' not found",
         )
-    usages = await registry.load_task_usages_async(*workflow.completed_tasks)
-    workflow.usage = _sum_usage(usages, workflow.completed_tasks, logger)
     return workflow
 
 

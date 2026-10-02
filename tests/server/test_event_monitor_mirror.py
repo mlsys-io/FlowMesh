@@ -31,7 +31,6 @@ def _make_monitor(results_dir: Path) -> EventMonitor:
         metrics_recorder=MagicMock(),
         watchdog=MagicMock(),
         results_dir=results_dir,
-        workflow_registry=MagicMock(),
     )
 
 

@@ -5,7 +5,6 @@ import logging
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
-from unittest import mock
 
 from server.dispatcher.base import Dispatcher
 from server.registries.worker import WorkerRegistry
@@ -101,7 +100,6 @@ def test_api_dependent_stage_resolves_first_row_text(tmp_path: Path) -> None:
         worker_registry=cast(WorkerRegistry, object()),
         results_dir=tmp_path,
         logger=logging.getLogger("test-api-dependent-stage"),
-        workflow_registry=mock.Mock(),
     )
 
     value = dispatcher._resolve_reference("stage.items.0.text", {"stage": upstream})
@@ -205,7 +203,6 @@ def test_translated_n8n_dependent_api_stage_resolves(tmp_path: Path) -> None:
         worker_registry=cast(WorkerRegistry, object()),
         results_dir=tmp_path,
         logger=logging.getLogger("test-n8n-dependent-stage"),
-        workflow_registry=mock.Mock(),
     )
 
     context = dispatcher._build_stage_context(downstream_record)

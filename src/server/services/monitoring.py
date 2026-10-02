@@ -51,7 +51,6 @@ from ..hooks import (
 )
 from ..registries.node import NodeRegistry
 from ..registries.worker import WorkerRegistry
-from ..registries.workflow import WorkflowRegistry
 from ..schemas.logs import LogEvent
 from ..task.metadata import extract_model_dataset_names
 from ..task.models import TaskRecord, TaskStatus, TaskUsage
@@ -100,7 +99,6 @@ class EventMonitor:
         node_registry: NodeRegistry,
         metrics_recorder: MetricsRecorder,
         watchdog: WorkerWatchdog,
-        workflow_registry: WorkflowRegistry,
         ssh_proxy_enabled: bool = False,
         serve_proxy_enabled: bool = False,
         port_forward: PortForwardService | None = None,
@@ -121,7 +119,6 @@ class EventMonitor:
         self._serve_proxy_enabled = serve_proxy_enabled
         self._port_forward = port_forward
         self._results_dir = Path(results_dir)
-        self._workflow_registry = workflow_registry
         self._log_stream_ttl_sec = max(0, int(log_stream_ttl_sec))
         self._server_base_url = self._validate_server_base_url(server_base_url)
 
@@ -280,10 +277,6 @@ class EventMonitor:
                 if record:
                     expected_artifacts = record.task.spec.get_artifacts()
                 sync_manifest(dst_dir, child_id, expected_artifacts)
-                # A mirrored child has no result of its own (the executor
-                # produced no ``children`` entry for it), so the parent's total
-                # already contains its calls; record the no-usage marker.
-                self._workflow_registry.save_task_usage(child_id, None)
             except Exception as exc:
                 self._logger.debug(
                     "Failed to mirror results from %s to %s: %s",

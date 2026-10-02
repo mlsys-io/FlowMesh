@@ -13,13 +13,10 @@ from pydantic import (
     model_serializer,
 )
 
-from shared.schemas.result import APIUsage
-
 from ..clients.redis import (
     WORKFLOWS_SET_KEY,
     RedisClient,
     task_state_key,
-    task_usage_key,
     workflow_cancelled_tasks_key,
     workflow_dispatched_tasks_key,
     workflow_failed_tasks_key,
@@ -29,13 +26,6 @@ from ..clients.redis import (
 )
 from ..task.models import TaskRecord, TaskStatus
 from ..utils.time import now_iso
-
-
-class UnknownUsage:
-    """Sentinel for a model-calling task whose usage could not be mapped."""
-
-
-UNKNOWN_USAGE = UnknownUsage()
 
 
 class PersistedTask(BaseModel):
@@ -113,10 +103,6 @@ class Workflow(BaseModel):
     completed_tasks: list[str] = Field(description="Completed task identifiers.")
     failed_tasks: list[str] = Field(description="Failed task identifiers.")
     cancelled_tasks: list[str] = Field(description="Cancelled task identifiers.")
-    usage: APIUsage | None = Field(
-        default=None,
-        description="Token/call usage summed over the workflow's finished tasks.",
-    )
 
 
 def _create_workflow_record(
@@ -189,7 +175,6 @@ class WorkflowRegistry:
             pipe.delete(*(workflow_sched_key(wid) for wid in workflow_ids))
             for task_id in task_ids:
                 pipe.delete(task_state_key(task_id))
-                pipe.delete(task_usage_key(task_id))
             pipe.execute()
 
     async def unregister_workflows_async(self, *workflow_ids: str) -> None:
@@ -204,7 +189,6 @@ class WorkflowRegistry:
             pipe.delete(*(workflow_sched_key(wid) for wid in workflow_ids))
             for task_id in task_ids:
                 pipe.delete(task_state_key(task_id))
-                pipe.delete(task_usage_key(task_id))
             await pipe.execute()
 
     def get_workflow_ids(self) -> set[str]:
@@ -347,62 +331,6 @@ class WorkflowRegistry:
         return [
             PersistedTask.model_validate_json(blob) if blob else None for blob in blobs
         ]
-
-    def save_task_usage(
-        self, task_id: str, usage: APIUsage | None | UnknownUsage
-    ) -> None:
-        """Synchronous variant of ``save_task_usage_async`` for the event loop."""
-        key = task_usage_key(task_id)
-        if usage is None:
-            self._rds.sync.set_value(key, "null")
-        elif isinstance(usage, UnknownUsage):
-            self._rds.sync.set_value(key, "unknown")
-        else:
-            self._rds.sync.set_value(key, usage.model_dump_json())
-
-    async def save_task_usage_async(
-        self, task_id: str, usage: APIUsage | None | UnknownUsage
-    ) -> None:
-        """Persist one task's usage contribution.
-
-        ``None`` marks a task type that makes no model calls (echo, lambda);
-        ``UNKNOWN_USAGE`` marks a model-calling task whose usage could not be
-        mapped. Both are written so a completed task with no entry at all is
-        detectable as one whose result was never ingested.
-        """
-        key = task_usage_key(task_id)
-        if usage is None:
-            await self._rds.asyncio.set_value(key, "null")
-        elif isinstance(usage, UnknownUsage):
-            await self._rds.asyncio.set_value(key, "unknown")
-        else:
-            await self._rds.asyncio.set_value(key, usage.model_dump_json())
-
-    async def load_task_usages_async(
-        self, *task_ids: str
-    ) -> dict[str, APIUsage | None | UnknownUsage]:
-        """Load persisted usage for the given tasks.
-
-        ``None`` means the task type makes no model calls; ``UNKNOWN_USAGE``
-        means a model-calling task's usage could not be mapped; a task absent
-        from the result means its usage was never recorded.
-        """
-        if not task_ids:
-            return {}
-        blobs = await self._rds.asyncio.mget(
-            [task_usage_key(task_id) for task_id in task_ids]
-        )
-        result: dict[str, APIUsage | None | UnknownUsage] = {}
-        for task_id, blob in zip(task_ids, blobs, strict=True):
-            if blob is None:
-                continue
-            if blob == "null":
-                result[task_id] = None
-            elif blob == "unknown":
-                result[task_id] = UNKNOWN_USAGE
-            else:
-                result[task_id] = APIUsage.model_validate_json(blob)
-        return result
 
     async def save_workflow_sched_async(
         self, workflow_id: str, in_epoch_order: bool, epoch_frontier: int

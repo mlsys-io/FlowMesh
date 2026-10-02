@@ -58,7 +58,6 @@ def test_unknown_input_stage_fails_the_task(tmp_path: Path) -> None:
         logger=logging.getLogger("dispatch-python-inputs"),
         worker_selection_strategy="first_fit",
         enable_context_reuse=False,
-        workflow_registry=mock.Mock(),
     )
 
     assert disp.dispatch_once(nodes["score"]) is True

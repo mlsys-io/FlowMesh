@@ -94,7 +94,6 @@ def test_dispatch_fails_redacted_merged_child_and_carries_survivors() -> None:
         enable_context_reuse=False,
         enable_task_merge=True,
         task_merge_max_batch_size=4,
-        workflow_registry=mock.Mock(),
     )
 
     assert disp.dispatch_once(parent) is True

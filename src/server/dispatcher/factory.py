@@ -4,7 +4,6 @@ from pathlib import Path
 from ..config import DispatchConfig
 from ..dispatcher import Dispatcher
 from ..registries.worker import WorkerRegistry
-from ..registries.workflow import WorkflowRegistry
 from ..services.metrics import MetricsRecorder
 from ..task.runtime import TaskRuntime
 
@@ -21,7 +20,6 @@ def create_dispatcher(
     worker_registry: WorkerRegistry,
     results_dir: Path,
     logger: logging.Logger,
-    workflow_registry: WorkflowRegistry,
     metrics_recorder: MetricsRecorder | None = None,
 ) -> Dispatcher:
     """
@@ -61,5 +59,4 @@ def create_dispatcher(
         enable_stage_weight_stickiness=config.enable_stage_weight_stickiness,
         no_worker_grace_sec=config.no_worker_grace_sec,
         metrics_recorder=metrics_recorder,
-        workflow_registry=workflow_registry,
     )
