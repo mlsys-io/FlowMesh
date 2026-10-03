@@ -262,7 +262,7 @@ async def test_analyze_workflow_trace_runs_analyzer(tmp_path: Path) -> None:
         registry=_registry(["tsk-a"]),
         results_dir=tmp_path,
     )
-    summary = ProfileSummary.model_validate_json(response.body)
+    summary = ProfileSummary.model_validate_json(bytes(response.body))
     assert summary.event_count == 3
     assert len(summary.assets) == 1
     assert summary.workflow_id == "wfl-1"
