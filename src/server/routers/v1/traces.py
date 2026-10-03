@@ -1,5 +1,6 @@
 """Trace endpoints — per-task upload, workflow-level read + analyzer."""
 
+import json
 import logging
 from collections.abc import Iterable, Iterator
 from pathlib import Path
@@ -12,7 +13,7 @@ from pydantic import TypeAdapter
 
 from shared.schemas.result import result_file_path
 from shared.utils.atomic import atomic_write_stream
-from shared.utils.json import encode_jsonl_bytes, parse_jsonl_lines
+from shared.utils.json import encode_jsonl_bytes
 
 from ...app_state import get_logger, get_results_dir, get_workflow_registry
 from ...auth.security import (
@@ -33,8 +34,11 @@ _TYPE_TO_FILENAME: dict[str, str] = {
     "lineage": "lineage.jsonl",
 }
 
-# The longest trace line read; a longer one is skipped rather than held in memory.
+# A trace file holds JSON lines our writers keep far shorter than this; a file with
+# a longer line, or with this many lines in a row that hold no row, is not a trace,
+# and the rest of it is not read.
 _MAX_TRACE_LINE_BYTES = 4 << 20
+_MAX_SKIPPED_TRACE_LINES = 100
 
 
 def _logs_dir_for_task(results_dir: Path, task_id: str) -> Path:
@@ -53,24 +57,50 @@ def _iter_workflow_jsonl(
         if not path.exists() or not path.is_file():
             continue
         with path.open("rb") as fh:
-            yield from parse_jsonl_lines(_bounded_lines(fh, filename, task_id, logger))
+            yield from _rows(fh, filename, task_id, logger)
 
 
-def _bounded_lines(
+def _rows(
     fh: BinaryIO, filename: str, task_id: str, logger: logging.Logger
-) -> Iterator[str]:
+) -> Iterator[dict[str, Any]]:
+    skipped = 0
     while line := fh.readline(_MAX_TRACE_LINE_BYTES + 1):
         if len(line) > _MAX_TRACE_LINE_BYTES and not line.endswith(b"\n"):
-            logger.warning(
-                "Skipping a %s line of task %s longer than %d bytes",
-                filename,
+            _stop(
                 task_id,
-                _MAX_TRACE_LINE_BYTES,
+                filename,
+                f"a line longer than {_MAX_TRACE_LINE_BYTES} bytes",
+                logger,
             )
-            while line and not line.endswith(b"\n"):
-                line = fh.readline(_MAX_TRACE_LINE_BYTES)
+            return
+        row = _parse_row(line)
+        if row is None:
+            skipped += 1
+            if skipped >= _MAX_SKIPPED_TRACE_LINES:
+                _stop(
+                    task_id,
+                    filename,
+                    f"{skipped} lines in a row that hold no row",
+                    logger,
+                )
+                return
             continue
-        yield line.decode("utf-8", errors="replace")
+        skipped = 0
+        yield row
+
+
+def _stop(task_id: str, filename: str, reason: str, logger: logging.Logger) -> None:
+    logger.warning(
+        "Not reading the rest of task %s's %s: %s", task_id, filename, reason
+    )
+
+
+def _parse_row(line: bytes) -> Any | None:
+    """The JSON value on ``line``, or None when it holds none."""
+    try:
+        return json.loads(line) if line.strip() else None
+    except ValueError:
+        return None
 
 
 async def _resolve_task_ids(workflow_id: str, registry: WorkflowRegistry) -> list[str]:
