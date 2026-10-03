@@ -232,13 +232,13 @@ def test_a_bundle_leaves_out_in_flight_writes_and_files_removed_under_it(
     (artifacts / "nested" / "kept.bin").write_bytes(b"x")
     in_flight = Path(tempfile.mkstemp(prefix=".fm-tmp-", dir=artifacts)[1])
     assert atomic.is_atomic_temp(in_flight.name)
-    rglob = Path.rglob
+    walk = results_router._bounded_walk
 
-    def _with_removed(self: Path, pattern: str) -> Iterator[Path]:
-        yield from rglob(self, pattern)
-        yield self / "gone.bin"
+    def _with_removed(root: Path) -> Iterator[Path]:
+        yield from walk(root)
+        yield root / "gone.bin"
 
-    monkeypatch.setattr(Path, "rglob", _with_removed)
+    monkeypatch.setattr(results_router, "_bounded_walk", _with_removed)
 
     bundle = results_router._create_result_bundle_archive(
         "t-1", tmp_path, ("artifacts",)
@@ -254,3 +254,17 @@ def test_a_bundle_leaves_out_in_flight_writes_and_files_removed_under_it(
         "t-1/artifacts/nested",
         "t-1/artifacts/nested/kept.bin",
     ]
+
+
+def test_a_bundle_walk_descends_no_deeper_than_the_bound(tmp_path: Path) -> None:
+    artifacts = tmp_path / "artifacts"
+    deep = artifacts
+    for _ in range(results_router._MAX_WALK_DEPTH + 5):
+        deep = deep / "d"
+    deep.mkdir(parents=True)
+    (deep / "leaf.bin").write_bytes(b"x")
+
+    walked = list(results_router._bounded_walk(artifacts))
+
+    # The walk stops at the depth bound rather than descending the whole tree.
+    assert len(walked) <= results_router._MAX_WALK_DEPTH
