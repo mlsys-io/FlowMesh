@@ -7,7 +7,8 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
+from pydantic import TypeAdapter
 
 from shared.schemas.result import result_file_path
 from shared.utils.atomic import atomic_write_stream
@@ -66,23 +67,28 @@ async def analyze_workflow_trace(
     registry: WorkflowRegistry = Depends(get_workflow_registry),
     results_dir: Path = Depends(get_results_dir),
     logger: logging.Logger = Depends(get_logger),
-) -> ProfileSummary:
+) -> Response:
     await require_permission(
         principal, ResourceKind.WORKFLOW, workflow_id, ResourceAction.READ, logger
     )
     task_ids = await _resolve_task_ids(workflow_id, registry)
-    return await run_in_threadpool(
+    body = await run_in_threadpool(
         _analyze_workflow, results_dir, task_ids, workflow_id
     )
+    return Response(body, media_type="application/json")
+
+
+_PROFILE_SUMMARY = TypeAdapter(ProfileSummary)
 
 
 def _analyze_workflow(
     results_dir: Path, task_ids: list[str], workflow_id: str
-) -> ProfileSummary:
+) -> bytes:
     spans = list(_iter_workflow_jsonl(results_dir, task_ids, "spans.jsonl"))
     assets = list(_iter_workflow_jsonl(results_dir, task_ids, "assets.jsonl"))
     lineage = list(_iter_workflow_jsonl(results_dir, task_ids, "lineage.jsonl"))
-    return analyze(spans, assets, lineage, workflow_id=workflow_id)
+    summary = analyze(spans, assets, lineage, workflow_id=workflow_id)
+    return _PROFILE_SUMMARY.dump_json(summary, by_alias=True)
 
 
 @router.get(
