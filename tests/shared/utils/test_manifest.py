@@ -2,6 +2,7 @@
 
 import io
 import json
+import os
 import stat
 import tempfile
 import threading
@@ -199,3 +200,13 @@ def test_a_long_filename_writes_atomically(tmp_path: Path) -> None:
     atomic.atomic_write_stream(target, io.BytesIO(b"data"))
 
     assert target.read_bytes() == b"data"
+
+
+def test_an_existing_entry_that_is_not_a_file_is_present(tmp_path: Path) -> None:
+    os.mkfifo(tmp_path / "pipe")
+
+    entry = manifest._describe_path(tmp_path, Path("pipe"), required=False)
+    gone = manifest._describe_path(tmp_path, Path("gone.bin"), required=False)
+
+    assert (entry["status"], entry["size"], entry["file_count"]) == ("present", 0, 0)
+    assert gone["status"] == "missing"
