@@ -72,6 +72,8 @@ class TaskLogArchiver:
         """task_id -> _TaskArchiveState"""
         self._buffers: dict[str, list[tuple[str, dict[str, Any]]]] = {}
         """task_id -> list of (stream_id, fields)"""
+        self._archived_ids: set[str] = set()
+        """Finished tasks known to need no archiving, so each is probed once."""
 
     def run(self, stop_event: Event) -> None:
         while not stop_event.is_set():
@@ -86,13 +88,18 @@ class TaskLogArchiver:
         terminal: set[str] = set()
 
         # Ensure all tasks are being tracked
-        for task_id, task_status in self._runtime.task_statuses().items():
+        statuses = self._runtime.task_statuses()
+        self._archived_ids.intersection_update(statuses)
+        for task_id, task_status in statuses.items():
             if task_status in {
                 TaskStatus.DONE,
                 TaskStatus.FAILED,
                 TaskStatus.CANCELLED,
             }:
+                if task_id in self._archived_ids:
+                    continue
                 if task_id not in self._states and self._archived(task_id):
+                    self._archived_ids.add(task_id)
                     continue
                 terminal.add(task_id)
             self._ensure_task(task_id, now)
@@ -153,6 +160,7 @@ class TaskLogArchiver:
                     continue
                 self._finalize_manifest(task_id)
                 maybe_state.done = True
+                self._archived_ids.add(task_id)
             except Exception:
                 self._forget(task_id)
                 raise

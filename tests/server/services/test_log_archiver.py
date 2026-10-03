@@ -359,3 +359,16 @@ def test_the_first_retry_waits_its_full_delay_after_a_blocking_read(
     assert len(attempts) >= 2
     assert attempts[1] - attempts[0] >= log_archiver._FIRST_RETRY_SEC
     assert _lines(archiver, "tsk-1") == ['{"m": "late"}']
+
+
+def test_each_archived_task_is_probed_once(tmp_path: Path) -> None:
+    finished = {f"tsk-{n}": TaskStatus.DONE for n in range(50)}
+    archiver, streams = _streaming_archiver(tmp_path, finished)
+    for task_id in finished:
+        streams.checkpoints[task_log_archived_key(task_id)] = "1"
+
+    with patch.object(log_archiver.time, "sleep"):
+        for _ in range(20):
+            archiver._tick()
+
+    assert streams.redis.get.call_count == len(finished)
