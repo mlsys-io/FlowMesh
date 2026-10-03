@@ -1,5 +1,6 @@
 """Tests for the shared manifest helpers."""
 
+import hashlib
 import io
 import json
 import os
@@ -205,8 +206,68 @@ def test_a_long_filename_writes_atomically(tmp_path: Path) -> None:
 def test_an_existing_entry_that_is_not_a_file_is_present(tmp_path: Path) -> None:
     os.mkfifo(tmp_path / "pipe")
 
-    entry = manifest._describe_path(tmp_path, Path("pipe"), required=False)
-    gone = manifest._describe_path(tmp_path, Path("gone.bin"), required=False)
+    budget = manifest._HashBudget(manifest._HASH_BUDGET_BYTES)
+    entry = manifest._describe_path(tmp_path, Path("pipe"), budget, required=False)
+    gone = manifest._describe_path(tmp_path, Path("gone.bin"), budget, required=False)
 
     assert (entry["status"], entry["size"], entry["file_count"]) == ("present", 0, 0)
     assert gone["status"] == "missing"
+
+
+_BUDGET = 256 << 20
+
+
+class _CountingHashlib:
+    """``hashlib`` for the manifest module, counting the bytes it digests."""
+
+    def __init__(self) -> None:
+        self.digested = 0
+
+    def sha256(self) -> Any:
+        counter = self
+        real = hashlib.sha256()
+
+        class _Counting:
+            def update(self, data: bytes) -> None:
+                counter.digested += len(data)
+                real.update(data)
+
+            def hexdigest(self) -> str:
+                return real.hexdigest()
+
+        return _Counting()
+
+
+def _sparse(path: Path, size: int) -> None:
+    with path.open("wb") as fh:
+        fh.truncate(size)
+
+
+def test_a_file_over_the_hash_budget_is_listed_by_size_alone(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    counting = _CountingHashlib()
+    monkeypatch.setattr(manifest, "hashlib", counting)
+    _sparse(tmp_path / "huge.bin", 8 << 30)
+
+    entries = {e["path"]: e for e in sync_manifest(tmp_path, "t", [])["entries"]}
+
+    assert entries["huge.bin"]["size"] == 8 << 30
+    assert "sha256" not in entries["huge.bin"]
+    assert counting.digested == 0
+
+
+def test_a_sync_digests_at_most_its_budget_in_manifest_order(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    counting = _CountingHashlib()
+    monkeypatch.setattr(manifest, "hashlib", counting)
+    for index in range(10):
+        _sparse(tmp_path / f"f{index}.bin", 60 << 20)
+    _sparse(tmp_path / "f9.bin", 1 << 20)
+
+    entries = {e["path"]: e for e in sync_manifest(tmp_path, "t", [])["entries"]}
+
+    digested = [f"f{i}.bin" for i in range(10) if "sha256" in entries[f"f{i}.bin"]]
+    assert digested == ["f0.bin", "f1.bin", "f2.bin", "f3.bin", "f9.bin"]
+    assert counting.digested <= _BUDGET
