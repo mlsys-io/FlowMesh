@@ -133,6 +133,48 @@ def _workflow_update(mapping: dict[str, Any] | None = None) -> dict[str, Any]:
     return mapping
 
 
+def _queue_task_states(pipe: Any, items: Sequence[PersistedTask]) -> None:
+    for item in items:
+        pipe.set(task_state_key(item.record.task_id), item.model_dump_json())
+
+
+def _queue_transition(
+    pipe: Any,
+    workflow_id: str,
+    records: Sequence[PersistedTask],
+    dispatched: Sequence[str],
+    pending: Sequence[str],
+    done: Sequence[str],
+    failed: Sequence[str],
+    cancelled: Sequence[str],
+    sched: WorkflowSched | None,
+) -> None:
+    terminal = (*done, *failed, *cancelled)
+    touched_membership = bool(dispatched or pending or terminal)
+    _queue_task_states(pipe, records)
+    if dispatched:
+        pipe.sadd(workflow_dispatched_tasks_key(workflow_id), *dispatched)
+    if pending:
+        pipe.srem(workflow_dispatched_tasks_key(workflow_id), *pending)
+    if terminal:
+        pipe.srem(workflow_tasks_key(workflow_id), *terminal)
+        pipe.srem(workflow_dispatched_tasks_key(workflow_id), *terminal)
+    if failed:
+        pipe.sadd(workflow_failed_tasks_key(workflow_id), *failed)
+    if cancelled:
+        pipe.sadd(workflow_cancelled_tasks_key(workflow_id), *cancelled)
+    if touched_membership or sched is not None:
+        pipe.hset(workflow_key(workflow_id), mapping=_workflow_update())
+    if sched is not None:
+        pipe.set(workflow_sched_key(workflow_id), sched.model_dump_json())
+
+
+def _sched_payload(in_epoch_order: bool, epoch_frontier: int) -> str:
+    return WorkflowSched(
+        in_epoch_order=in_epoch_order, epoch_frontier=epoch_frontier
+    ).model_dump_json()
+
+
 class WorkflowRegistry:
     def __init__(self, rds: RedisClient) -> None:
         self._rds = rds
@@ -178,7 +220,7 @@ class WorkflowRegistry:
             pipe.execute()
 
     async def unregister_workflows_async(self, *workflow_ids: str) -> None:
-        task_ids = self._collect_task_ids(workflow_ids)
+        task_ids = await self._collect_task_ids_async(workflow_ids)
         async with self._rds.asyncio.control_pipeline() as pipe:
             pipe.srem(WORKFLOWS_SET_KEY, *workflow_ids)
             pipe.delete(*(workflow_key(wid) for wid in workflow_ids))
@@ -280,36 +322,61 @@ class WorkflowRegistry:
         commit together or not at all, so a crash mid-persist can never leave
         durable state half-applied.
         """
-        terminal = (*done, *failed, *cancelled)
-        touched_membership = bool(dispatched or pending or terminal)
         with self._rds.sync.control_pipeline() as pipe:
-            for item in records:
-                pipe.set(task_state_key(item.record.task_id), item.model_dump_json())
-            if dispatched:
-                pipe.sadd(workflow_dispatched_tasks_key(workflow_id), *dispatched)
-            if pending:
-                pipe.srem(workflow_dispatched_tasks_key(workflow_id), *pending)
-            if terminal:
-                pipe.srem(workflow_tasks_key(workflow_id), *terminal)
-                pipe.srem(workflow_dispatched_tasks_key(workflow_id), *terminal)
-            if failed:
-                pipe.sadd(workflow_failed_tasks_key(workflow_id), *failed)
-            if cancelled:
-                pipe.sadd(workflow_cancelled_tasks_key(workflow_id), *cancelled)
-            if touched_membership or sched is not None:
-                pipe.hset(workflow_key(workflow_id), mapping=_workflow_update())
-            if sched is not None:
-                pipe.set(workflow_sched_key(workflow_id), sched.model_dump_json())
+            _queue_transition(
+                pipe,
+                workflow_id,
+                records,
+                dispatched,
+                pending,
+                done,
+                failed,
+                cancelled,
+                sched,
+            )
             pipe.execute()
 
+    async def commit_transition_async(
+        self,
+        workflow_id: str,
+        *,
+        records: Sequence[PersistedTask] = (),
+        dispatched: Sequence[str] = (),
+        pending: Sequence[str] = (),
+        done: Sequence[str] = (),
+        failed: Sequence[str] = (),
+        cancelled: Sequence[str] = (),
+        sched: WorkflowSched | None = None,
+    ) -> None:
+        """Apply a workflow state delta as ``commit_transition`` does."""
+        async with self._rds.asyncio.control_pipeline() as pipe:
+            _queue_transition(
+                pipe,
+                workflow_id,
+                records,
+                dispatched,
+                pending,
+                done,
+                failed,
+                cancelled,
+                sched,
+            )
+            await pipe.execute()
+
     # ---- Durable task state (for restart rehydration) ----------------- #
+
+    def save_task_states(self, items: Sequence[PersistedTask]) -> None:
+        if not items:
+            return
+        with self._rds.sync.control_pipeline() as pipe:
+            _queue_task_states(pipe, items)
+            pipe.execute()
 
     async def save_task_states_async(self, items: Sequence[PersistedTask]) -> None:
         if not items:
             return
         async with self._rds.asyncio.control_pipeline() as pipe:
-            for item in items:
-                pipe.set(task_state_key(item.record.task_id), item.model_dump_json())
+            _queue_task_states(pipe, items)
             await pipe.execute()
 
     def load_task_states(self, *task_ids: str) -> list[PersistedTask | None]:
@@ -332,13 +399,25 @@ class WorkflowRegistry:
             PersistedTask.model_validate_json(blob) if blob else None for blob in blobs
         ]
 
+    def save_workflow_sched(
+        self, workflow_id: str, in_epoch_order: bool, epoch_frontier: int
+    ) -> None:
+        self._rds.sync.set_value(
+            workflow_sched_key(workflow_id),
+            _sched_payload(in_epoch_order, epoch_frontier),
+        )
+
     async def save_workflow_sched_async(
         self, workflow_id: str, in_epoch_order: bool, epoch_frontier: int
     ) -> None:
-        payload = WorkflowSched(
-            in_epoch_order=in_epoch_order, epoch_frontier=epoch_frontier
-        ).model_dump_json()
-        await self._rds.asyncio.set_value(workflow_sched_key(workflow_id), payload)
+        await self._rds.asyncio.set_value(
+            workflow_sched_key(workflow_id),
+            _sched_payload(in_epoch_order, epoch_frontier),
+        )
+
+    def load_workflow_sched(self, workflow_id: str) -> WorkflowSched | None:
+        blob = self._rds.sync.get(workflow_sched_key(workflow_id))
+        return WorkflowSched.model_validate_json(blob) if blob else None
 
     async def load_workflow_sched_async(self, workflow_id: str) -> WorkflowSched | None:
         blob = await self._rds.asyncio.get(workflow_sched_key(workflow_id))
@@ -389,6 +468,14 @@ class WorkflowRegistry:
         task_ids: list[str] = []
         for wid in workflow_ids:
             record = self.get_workflow_record(wid)
+            if record:
+                task_ids.extend(record.task_ids)
+        return task_ids
+
+    async def _collect_task_ids_async(self, workflow_ids: Sequence[str]) -> list[str]:
+        task_ids: list[str] = []
+        for wid in workflow_ids:
+            record = await self.get_workflow_record_async(wid)
             if record:
                 task_ids.extend(record.task_ids)
         return task_ids
