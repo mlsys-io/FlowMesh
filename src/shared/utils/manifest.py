@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import threading
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
@@ -16,6 +17,9 @@ ARTIFACTS_DIR = "artifacts"
 SCRATCH_DIR = "scratch"
 
 _SHARED_DIR_MODE = 0o0777
+# A manifest is a rescan of its directory; serializing the rescans makes the last
+# one written see every file written before it.
+_MANIFEST_LOCK = threading.Lock()
 
 
 def _ensure_shared_dir(path: Path) -> None:
@@ -57,6 +61,13 @@ def sync_manifest(
     """
     Build a manifest by reconciling expected versus actual files.
     """
+    with _MANIFEST_LOCK:
+        return _sync_manifest(base_dir, task_id, expected)
+
+
+def _sync_manifest(
+    base_dir: Path, task_id: str, expected: Iterable[str]
+) -> dict[str, Any]:
     prepare_output_dir(base_dir)
     expected_set = {_normalize_artifact_name(item) for item in expected or [] if item}
     expected_set.update({RESULTS_NAME, LOGS_DIR, ARTIFACTS_DIR})

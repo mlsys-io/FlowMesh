@@ -4,9 +4,11 @@ import json
 import stat
 import threading
 from pathlib import Path
+from typing import Any
 
 import pytest
 
+from shared.utils import manifest
 from shared.utils.manifest import (
     ARTIFACTS_DIR,
     LOGS_DIR,
@@ -108,3 +110,37 @@ class TestSyncManifest:
         sync_manifest(tmp_path, "t-2", expected=[])
         data = json.loads((tmp_path / MANIFEST_NAME).read_text())
         assert data["task_id"] == "t-2"
+
+    def test_a_sync_never_overwrites_a_later_one(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        write = manifest.atomic_write_text
+        first_scanned = threading.Event()
+        later_wrote = threading.Event()
+
+        def _held_first_write(target: Path, content: str, **kwargs: Any) -> None:
+            if not first_scanned.is_set():
+                # The first sync has scanned; hold its write until the later sync
+                # writes, or briefly when the later sync cannot run alongside it.
+                first_scanned.set()
+                later_wrote.wait(0.5)
+            else:
+                later_wrote.set()
+            write(target, content, **kwargs)
+
+        monkeypatch.setattr(manifest, "atomic_write_text", _held_first_write)
+        (tmp_path / "a.txt").write_text("a")
+        first = threading.Thread(target=sync_manifest, args=(tmp_path, "t", []))
+        first.start()
+        assert first_scanned.wait(5)
+        (tmp_path / "b.txt").write_text("b")
+        later = threading.Thread(target=sync_manifest, args=(tmp_path, "t", []))
+        later.start()
+        first.join(5)
+        later.join(5)
+
+        paths = {
+            e["path"]
+            for e in json.loads((tmp_path / MANIFEST_NAME).read_text())["entries"]
+        }
+        assert {"a.txt", "b.txt"} <= paths
