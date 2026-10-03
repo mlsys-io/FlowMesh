@@ -1,6 +1,7 @@
 import json
 from collections.abc import Sequence
 from enum import StrEnum
+from itertools import batched
 from typing import Any
 
 from pydantic import (
@@ -136,6 +137,15 @@ def _workflow_update(mapping: dict[str, Any] | None = None) -> dict[str, Any]:
 def _queue_task_states(pipe: Any, items: Sequence[PersistedTask]) -> None:
     for item in items:
         pipe.set(task_state_key(item.record.task_id), item.model_dump_json())
+
+
+def _queue_workflow_reads(pipe: Any, workflow_ids: Sequence[str]) -> None:
+    for workflow_id in workflow_ids:
+        pipe.hgetall(workflow_key(workflow_id))
+        pipe.smembers(workflow_dispatched_tasks_key(workflow_id))
+        pipe.smembers(workflow_failed_tasks_key(workflow_id))
+        pipe.smembers(workflow_cancelled_tasks_key(workflow_id))
+        pipe.smembers(workflow_tasks_key(workflow_id))
 
 
 def _queue_transition(
@@ -301,6 +311,22 @@ class WorkflowRegistry:
             remaining_tasks,
         )
 
+    def get_workflows(self, workflow_ids: Sequence[str]) -> list[Workflow]:
+        """Read the named workflows, in order, in one round trip; leave out a missing
+        one."""
+        with self._rds.sync.control_pipeline() as pipe:
+            _queue_workflow_reads(pipe, workflow_ids)
+            replies = pipe.execute()
+        return self._built_workflows(replies)
+
+    async def get_workflows_async(self, workflow_ids: Sequence[str]) -> list[Workflow]:
+        """Read the named workflows, in order, in one round trip; leave out a missing
+        one."""
+        async with self._rds.asyncio.control_pipeline() as pipe:
+            _queue_workflow_reads(pipe, workflow_ids)
+            replies = await pipe.execute()
+        return self._built_workflows(replies)
+
     def commit_transition(
         self,
         workflow_id: str,
@@ -463,6 +489,19 @@ class WorkflowRegistry:
             failed_tasks=list(failed_tasks),
             cancelled_tasks=list(cancelled_tasks),
         )
+
+    def _built_workflows(self, replies: Sequence[Any]) -> list[Workflow]:
+        return [
+            self._build_workflow(
+                WorkflowRecord.model_validate(data),
+                dispatched,
+                failed,
+                cancelled,
+                remaining,
+            )
+            for data, dispatched, failed, cancelled, remaining in batched(replies, 5)
+            if data
+        ]
 
     def _collect_task_ids(self, workflow_ids: Sequence[str]) -> list[str]:
         task_ids: list[str] = []

@@ -529,11 +529,7 @@ async def list_workflows(
     )
     if allowed is not None:
         workflow_ids = workflow_ids & allowed
-    workflows: list[Workflow] = []
-    for workflow_id in workflow_ids:
-        workflow = await registry.get_workflow_async(workflow_id)
-        if workflow:
-            workflows.append(workflow)
+    workflows = await registry.get_workflows_async(sorted(workflow_ids))
     return filter_models_by_queries(workflows, request.query_params)
 
 
