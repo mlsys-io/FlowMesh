@@ -1,10 +1,13 @@
 """Atomic file-write primitives for files written by multiple parties."""
 
 import os
+import shutil
 import tempfile
 from pathlib import Path
+from typing import BinaryIO
 
 _SHARED_FILE_MODE = 0o0666
+_COPY_CHUNK_BYTES = 1 << 20
 
 
 def atomic_write_text(target: Path, content: str, *, encoding: str = "utf-8") -> None:
@@ -20,6 +23,22 @@ def atomic_write_text(target: Path, content: str, *, encoding: str = "utf-8") ->
     try:
         with os.fdopen(fd, "w", encoding=encoding) as fh:
             fh.write(content)
+        tmp_path.chmod(_SHARED_FILE_MODE)
+        os.replace(tmp_path, target)
+    except BaseException:
+        tmp_path.unlink(missing_ok=True)
+        raise
+
+
+def atomic_write_stream(target: Path, source: BinaryIO) -> None:
+    """Replace ``target`` with the rest of ``source`` atomically, copying it in
+    bounded chunks; creates the parent directory when missing."""
+    target.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{target.name}.", dir=target.parent)
+    tmp_path = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "wb") as fh:
+            shutil.copyfileobj(source, fh, _COPY_CHUNK_BYTES)
         tmp_path.chmod(_SHARED_FILE_MODE)
         os.replace(tmp_path, target)
     except BaseException:

@@ -6,9 +6,11 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import StreamingResponse
 
 from shared.schemas.result import result_file_path
+from shared.utils.atomic import atomic_write_stream
 from shared.utils.json import encode_jsonl_bytes, read_jsonl
 
 from ...app_state import get_logger, get_results_dir, get_workflow_registry
@@ -69,6 +71,14 @@ async def analyze_workflow_trace(
         principal, ResourceKind.WORKFLOW, workflow_id, ResourceAction.READ, logger
     )
     task_ids = await _resolve_task_ids(workflow_id, registry)
+    return await run_in_threadpool(
+        _analyze_workflow, results_dir, task_ids, workflow_id
+    )
+
+
+def _analyze_workflow(
+    results_dir: Path, task_ids: list[str], workflow_id: str
+) -> ProfileSummary:
     spans = list(_iter_workflow_jsonl(results_dir, task_ids, "spans.jsonl"))
     assets = list(_iter_workflow_jsonl(results_dir, task_ids, "assets.jsonl"))
     lineage = list(_iter_workflow_jsonl(results_dir, task_ids, "lineage.jsonl"))
@@ -125,10 +135,8 @@ async def upload_task_trace(
             detail=f"unknown type '{trace_type}'; expected spans, assets, or lineage",
         )
     target_path = _logs_dir_for_task(results_dir, task_id) / filename
-    target_path.parent.mkdir(parents=True, exist_ok=True)
     try:
-        with target_path.open("wb") as out:
-            out.write(await file.read())
+        await run_in_threadpool(atomic_write_stream, target_path, file.file)
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

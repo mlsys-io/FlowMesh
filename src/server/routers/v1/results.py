@@ -1,3 +1,4 @@
+import asyncio
 import gzip
 import json
 import logging
@@ -25,7 +26,14 @@ from shared.schemas.result import (
     result_file_path,
     write_result,
 )
-from shared.utils.manifest import ARTIFACTS_DIR, LOGS_DIR, RESULTS_NAME, sync_manifest
+from shared.utils.atomic import atomic_write_stream
+from shared.utils.manifest import (
+    ARTIFACTS_DIR,
+    LOGS_DIR,
+    RESULTS_NAME,
+    prepare_output_dir,
+    sync_manifest,
+)
 
 from ...app_state import (
     get_event_monitor,
@@ -183,22 +191,22 @@ async def upload_result_file(
             status_code=status.HTTP_400_BAD_REQUEST, detail="invalid filename"
         )
 
-    target_path.parent.mkdir(parents=True, exist_ok=True)
+    record = runtime.get_record(task_id)
+    expected_artifacts = record.task.spec.get_artifacts() if record else []
     try:
-        with target_path.open("wb") as out:
-            out.write(await file.read())
+        await asyncio.to_thread(_store_artifact, file, base_dir, target_path)
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to store artifact: {exc}",
         ) from exc
-
-    record = runtime.get_record(task_id)
-    expected_artifacts: list[str] = []
-    if record:
-        expected_artifacts = record.task.spec.get_artifacts()
-    sync_manifest(base_dir, task_id, expected_artifacts)
+    await asyncio.to_thread(sync_manifest, base_dir, task_id, expected_artifacts)
     return PathResponse(ok=True, path=str(target_path))
+
+
+def _store_artifact(file: UploadFile, base_dir: Path, target_path: Path) -> None:
+    prepare_output_dir(base_dir)
+    atomic_write_stream(target_path, file.file)
 
 
 @router.get(
@@ -289,8 +297,8 @@ async def download_result_bundle(
         )
 
     try:
-        bundle_path = _create_result_bundle_archive(
-            task_id, base_dir, sections=sections
+        bundle_path = await asyncio.to_thread(
+            _create_result_bundle_archive, task_id, base_dir, sections=sections
         )
     except Exception as exc:
         raise HTTPException(
