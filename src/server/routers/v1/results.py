@@ -5,6 +5,7 @@ import json
 import logging
 import tarfile
 import tempfile
+from collections.abc import Iterator
 from pathlib import Path
 
 from fastapi import (
@@ -57,6 +58,8 @@ from ...task.runtime import TaskRuntime
 _BUNDLE_SECTIONS_CONCRETE = ("results", "artifacts", "logs")
 _BUNDLE_SECTIONS_ACCEPTED = (*_BUNDLE_SECTIONS_CONCRETE, "all")
 _BUNDLE_SECTIONS_DEFAULT = ("results", "artifacts")
+# The deepest a results-tree walk descends; a deeper tree is left unarchived below it.
+_MAX_WALK_DEPTH = 128
 
 router = APIRouter(prefix="/results", tags=["Results"])
 
@@ -399,7 +402,7 @@ def _add_tree(archive: tarfile.TarFile, root: Path, arcname: str) -> None:
     """Add ``root`` and everything under it, leaving out in-flight atomic writes and
     any file removed while the archive is built."""
     archive.add(root, arcname=arcname, recursive=False)
-    for path in sorted(root.rglob("*")):
+    for path in _bounded_walk(root):
         if is_atomic_temp(path.name):
             continue
         with contextlib.suppress(FileNotFoundError):
@@ -408,6 +411,24 @@ def _add_tree(archive: tarfile.TarFile, root: Path, arcname: str) -> None:
                 arcname=f"{arcname}/{path.relative_to(root).as_posix()}",
                 recursive=False,
             )
+
+
+def _bounded_walk(root: Path) -> Iterator[Path]:
+    """Yield every path under ``root``, descending no deeper than
+    ``_MAX_WALK_DEPTH`` so a pathological tree cannot be walked unbounded."""
+    stack: list[tuple[Path, int]] = [(root, 0)]
+    while stack:
+        current, depth = stack.pop()
+        if depth >= _MAX_WALK_DEPTH:
+            continue
+        try:
+            children = sorted(current.iterdir())
+        except OSError:
+            continue
+        for child in children:
+            yield child
+            if child.is_dir():
+                stack.append((child, depth + 1))
 
 
 def _bundle_section_path(base_dir: Path, section: str) -> Path | None:
