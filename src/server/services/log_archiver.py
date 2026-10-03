@@ -118,6 +118,7 @@ class TaskLogArchiver:
             retry_ts = min(self._states[task_id].next_attempt_ts for task_id in active)
             if retry_ts > now:
                 time.sleep(min(retry_ts - now, _READ_BLOCK_SEC))
+        now = time.time()
         for stream_key, batch in rows:
             task_id = stream_key.removeprefix(TASK_LOGS_STREAM_PREFIX)
             buf = self._buffers.setdefault(task_id, [])
