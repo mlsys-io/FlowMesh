@@ -17,9 +17,10 @@ ARTIFACTS_DIR = "artifacts"
 SCRATCH_DIR = "scratch"
 
 _SHARED_DIR_MODE = 0o0777
-# A manifest is a rescan of its directory; serializing the rescans makes the last
-# one written see every file written before it.
-_MANIFEST_LOCK = threading.Lock()
+# A manifest is a rescan of its directory; serializing a directory's rescans makes
+# the last one written see every file written before it.
+_MANIFEST_LOCKS: dict[Path, threading.Lock] = {}
+_MANIFEST_LOCKS_GUARD = threading.Lock()
 
 
 def _ensure_shared_dir(path: Path) -> None:
@@ -61,8 +62,13 @@ def sync_manifest(
     """
     Build a manifest by reconciling expected versus actual files.
     """
-    with _MANIFEST_LOCK:
+    with _manifest_lock(base_dir):
         return _sync_manifest(base_dir, task_id, expected)
+
+
+def _manifest_lock(base_dir: Path) -> threading.Lock:
+    with _MANIFEST_LOCKS_GUARD:
+        return _MANIFEST_LOCKS.setdefault(base_dir.resolve(), threading.Lock())
 
 
 def _sync_manifest(
