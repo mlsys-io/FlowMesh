@@ -323,3 +323,39 @@ def test_a_failed_write_never_cuts_another_writers_append(
 
     assert path.read_text().splitlines()[:2] == ['{"m": "before"}', '{"m": "theirs"}']
     assert not archiver._buffers["tsk-1"]
+
+
+def test_the_first_retry_waits_its_full_delay_after_a_blocking_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    clock = _Clock()
+    monkeypatch.setattr(log_archiver.time, "time", clock.time)
+
+    def _sleep(seconds: float) -> None:
+        clock.now += seconds
+
+    monkeypatch.setattr(log_archiver.time, "sleep", _sleep)
+    archiver, streams = _streaming_archiver(tmp_path, {"tsk-1": TaskStatus.DISPATCHED})
+    read = streams.redis.xread_telemetry.side_effect
+
+    def _read_after_blocking(requested: dict[str, str], **kwargs: Any) -> list[Any]:
+        clock.now += kwargs["block_ms"] / 1000
+        return read(requested, **kwargs)
+
+    streams.redis.xread_telemetry.side_effect = _read_after_blocking
+    attempts: list[float] = []
+    failing = _Failing(archiver, "tsk-1", 1)
+
+    def _logs_path(tid: str) -> Path:
+        attempts.append(clock.now)
+        return failing(tid)
+
+    monkeypatch.setattr(archiver, "_logs_path", _logs_path)
+    streams.publish("tsk-1", "late")
+
+    for _ in range(5):
+        archiver._tick()
+
+    assert len(attempts) >= 2
+    assert attempts[1] - attempts[0] >= log_archiver._FIRST_RETRY_SEC
+    assert _lines(archiver, "tsk-1") == ['{"m": "late"}']
