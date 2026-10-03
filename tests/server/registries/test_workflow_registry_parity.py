@@ -93,6 +93,9 @@ def test_the_workflow_reads_agree(server: fakeredis.FakeServer) -> None:
     assert registry.get_workflow("wfl-1") == asyncio.run(
         registry.get_workflow_async("wfl-1")
     )
+    assert registry.get_workflows(["wfl-1", "wfl-2"]) == asyncio.run(
+        registry.get_workflows_async(["wfl-1", "wfl-2"])
+    )
 
 
 def test_the_workflow_writes_agree(server: fakeredis.FakeServer) -> None:
