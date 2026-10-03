@@ -372,3 +372,27 @@ def test_each_archived_task_is_probed_once(tmp_path: Path) -> None:
             archiver._tick()
 
     assert streams.redis.get.call_count == len(finished)
+
+
+def test_a_transient_error_probing_a_finished_task_still_archives_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    archiver, streams = _streaming_archiver(
+        tmp_path, {"tsk-1": TaskStatus.DONE}, flush_max_entries=100
+    )
+    streams.publish("tsk-1", "kept")
+    logs_path = archiver._logs_path
+    failures = [OSError(errno.EMFILE, "Too many open files")]
+
+    def _logs_path(tid: str) -> Path:
+        if failures:
+            raise failures.pop()
+        return logs_path(tid)
+
+    monkeypatch.setattr(archiver, "_logs_path", _logs_path)
+
+    with patch.object(log_archiver.time, "sleep"):
+        for _ in range(3):
+            archiver._tick()
+
+    assert _lines(archiver, "tsk-1") == ['{"m": "kept"}']
