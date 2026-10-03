@@ -144,3 +144,11 @@ class TestSyncManifest:
             for e in json.loads((tmp_path / MANIFEST_NAME).read_text())["entries"]
         }
         assert {"a.txt", "b.txt"} <= paths
+
+    def test_a_directory_lock_lives_only_while_a_sync_holds_it(
+        self, tmp_path: Path
+    ) -> None:
+        for index in range(50):
+            sync_manifest(tmp_path / f"task-{index}", f"t{index}", [])
+
+        assert len(manifest._MANIFEST_LOCKS) == 0

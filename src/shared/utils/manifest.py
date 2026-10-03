@@ -3,6 +3,7 @@
 import hashlib
 import json
 import threading
+import weakref
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
@@ -18,8 +19,11 @@ SCRATCH_DIR = "scratch"
 
 _SHARED_DIR_MODE = 0o0777
 # A manifest is a rescan of its directory; serializing a directory's rescans makes
-# the last one written see every file written before it.
-_MANIFEST_LOCKS: dict[Path, threading.Lock] = {}
+# the last one written see every file written before it. A directory's lock lives
+# only while a sync holds it.
+_MANIFEST_LOCKS: weakref.WeakValueDictionary[Path, threading.Lock] = (
+    weakref.WeakValueDictionary()
+)
 _MANIFEST_LOCKS_GUARD = threading.Lock()
 
 
@@ -67,8 +71,11 @@ def sync_manifest(
 
 
 def _manifest_lock(base_dir: Path) -> threading.Lock:
+    key = base_dir.resolve()
     with _MANIFEST_LOCKS_GUARD:
-        return _MANIFEST_LOCKS.setdefault(base_dir.resolve(), threading.Lock())
+        if (lock := _MANIFEST_LOCKS.get(key)) is None:
+            lock = _MANIFEST_LOCKS[key] = threading.Lock()
+        return lock
 
 
 def _sync_manifest(
