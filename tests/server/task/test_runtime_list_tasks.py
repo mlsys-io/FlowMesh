@@ -133,6 +133,19 @@ def test_list_tasks_without_filter_returns_everything() -> None:
     assert len(tasks) == 4
 
 
+def test_task_statuses_returns_statuses_without_building_task_infos() -> None:
+    runtime = _spy_runtime()
+    asyncio.run(_register(runtime, _PAYLOAD))
+
+    runtime.build_count = 0
+    statuses = runtime.task_statuses()
+
+    assert statuses == {
+        task_id: record.status for task_id, record in runtime._tasks.items()
+    }
+    assert runtime.build_count == 0
+
+
 def test_workflow_filter_does_not_build_non_matching_tasks() -> None:
     runtime = _spy_runtime()
     wf_a = asyncio.run(_register(runtime, _PAYLOAD))
