@@ -148,7 +148,7 @@ def _describe_path(base_dir: Path, rel_path: Path, *, required: bool) -> dict[st
     try:
         if target.is_file():
             stats = {"size": target.stat().st_size, "sha256": _sha256_file(target)}
-        elif target.is_dir():
+        elif target.exists():
             size, count = _directory_stats(target)
             stats = {"size": size, "file_count": count}
         else:
