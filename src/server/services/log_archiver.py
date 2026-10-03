@@ -25,9 +25,12 @@ from ..task.runtime import TaskRuntime
 # interval. A task whose writes keep failing for the give-up window has its buffer
 # dropped: a volume that fills briefly, as when another task's output is cleaned up,
 # loses nothing, while a broken one cannot hold lines forever. A retrying task reads
-# no new lines, so its buffer holds at most what it had read when the writes failed.
+# no new lines, so its buffer holds at most what it had read when the writes failed,
+# and a tick with only retrying tasks waits for the earliest retry, at most as long
+# as a stream read blocks.
 _FIRST_RETRY_SEC = 1.0
 _GIVE_UP_SEC = 300.0
+_READ_BLOCK_SEC = 1.0
 
 
 class _TornWrite(OSError):
@@ -106,11 +109,15 @@ class TaskLogArchiver:
                 streams[key] = self._states[task_id].last_id
 
         # Read new log entries
-        rows = (
-            self._redis.xread_telemetry(streams, count=500, block_ms=1000)
-            if streams
-            else []
-        )
+        rows: list[Any] = []
+        if streams:
+            rows = self._redis.xread_telemetry(
+                streams, count=500, block_ms=int(_READ_BLOCK_SEC * 1000)
+            )
+        else:
+            retry_ts = min(self._states[task_id].next_attempt_ts for task_id in active)
+            if retry_ts > now:
+                time.sleep(min(retry_ts - now, _READ_BLOCK_SEC))
         for stream_key, batch in rows:
             task_id = stream_key.removeprefix(TASK_LOGS_STREAM_PREFIX)
             buf = self._buffers.setdefault(task_id, [])
@@ -124,8 +131,10 @@ class TaskLogArchiver:
             state = self._states[task_id]
             if task_id in terminal or now < state.next_attempt_ts:
                 continue
-            should_flush = len(buffer) >= self._flush_max_entries or (
-                buffer and (now - state.last_flush_ts) >= self._flush_interval_sec
+            should_flush = (
+                state.retrying
+                or len(buffer) >= self._flush_max_entries
+                or (buffer and (now - state.last_flush_ts) >= self._flush_interval_sec)
             )
             if should_flush:
                 self._flush_buffer(task_id, now)

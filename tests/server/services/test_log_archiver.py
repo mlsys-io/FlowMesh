@@ -253,3 +253,44 @@ def test_a_finished_tasks_last_lines_are_archived(tmp_path: Path) -> None:
         archiver._tick()
 
     assert _lines(archiver, "tsk-1") == ['{"m": "last"}']
+
+
+def test_a_tick_with_only_retrying_tasks_waits_for_the_earliest_retry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    clock = _Clock()
+    monkeypatch.setattr(log_archiver.time, "time", clock.time)
+    sleeps: list[float] = []
+
+    def _sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+        clock.now += seconds
+
+    monkeypatch.setattr(log_archiver.time, "sleep", _sleep)
+    archiver, streams = _streaming_archiver(
+        tmp_path, {"tsk-1": TaskStatus.DISPATCHED, "tsk-old": TaskStatus.DONE}
+    )
+    streams.checkpoints[task_log_archived_key("tsk-old")] = "1"
+    read = streams.redis.xread_telemetry.side_effect
+
+    def _blocking_read(requested: dict[str, str], **kwargs: Any) -> list[Any]:
+        if not (rows := read(requested, **kwargs)):
+            clock.now += kwargs["block_ms"] / 1000
+        return rows
+
+    streams.redis.xread_telemetry.side_effect = _blocking_read
+    failing = _Failing(archiver, "tsk-1", -1)
+    monkeypatch.setattr(archiver, "_logs_path", failing)
+    streams.publish("tsk-1", "held")
+
+    window = 60.0
+    end = clock.now + window
+    ticks = 0
+    while clock.now < end and ticks < 10_000:
+        archiver._tick()
+        ticks += 1
+
+    assert sleeps and all(0 < seconds <= 1.0 for seconds in sleeps)
+    assert ticks <= 2 * window
+    assert streams.redis.get.call_count <= 2 * ticks + 10
+    assert failing.attempts <= window / archiver._flush_interval_sec + 5
