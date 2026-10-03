@@ -73,6 +73,28 @@ reached; the terminal error is the executor's own message. Controlled
 executor errors are not retried. A task that no worker can satisfy fails
 after `TASK_NO_WORKER_GRACE_SEC`.
 
+The dispatcher requests result envelopes needed by downstream stage contexts.
+Python and SSH input mounts request complete upstream artifact directories;
+named artifact references request only the selected file or directory subtree.
+Workers publish these selections independently of user output destinations,
+even with `WORKER_UPLOAD_RESULTS=false`. With `WORKER_UPLOAD_RESULTS=true`,
+workers publish every result and artifact, including leaf tasks.
+
+System publication is best-effort and preserves computed task success on a
+transfer failure. A dependent waits for complete required data and fails after
+`TASK_STAGE_RESULT_GRACE_SEC` from upstream completion if delivery remains
+incomplete. Consumers hydrate missing artifacts into local caches, so local
+checkpoint paths work across workers. Complete snapshots identify cache
+contents and prevent partial transfers from unblocking consumers. Merged children
+publish their own results and fail individually when a dependency expires.
+Deploy updated workers before relying on dependency delivery instructions.
+
+User HTTP destinations retain their own delivery and error behavior. Result
+availability to clients depends on what reached the server; worker-only leaf
+results return 404. Logs travel through supervisor telemetry and the server's
+log archive independently of result publication.
+Terminal tasks flush buffered log entries before finalizing their archives.
+
 ## Directory map
 
 ```

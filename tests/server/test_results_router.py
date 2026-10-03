@@ -88,7 +88,8 @@ async def test_download_result_file_resolves_flat_name_under_artifacts(
     )
 
     assert isinstance(response, FileResponse)
-    assert Path(response.path) == artifact_path
+    assert Path(response.path).read_bytes() == artifact_path.read_bytes()
+    Path(response.path).unlink()
 
 
 @pytest.mark.anyio
@@ -107,7 +108,8 @@ async def test_download_result_file_falls_back_to_task_root_for_flat_filename(
     )
 
     assert isinstance(response, FileResponse)
-    assert Path(response.path) == root_file
+    assert Path(response.path).read_bytes() == root_file.read_bytes()
+    Path(response.path).unlink()
 
 
 def test_resolve_artifact_relative_path_scopes_nested_paths_to_artifacts() -> None:

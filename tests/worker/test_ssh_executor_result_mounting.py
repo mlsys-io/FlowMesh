@@ -7,6 +7,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from shared.schemas.result import BaseExecutorResult, ResultEnvelope, write_result
 from shared.tasks.specs import SSHSpecStrict
 from shared.tasks.worker_message import WorkerTaskMessage
 from tests.worker.factories import DEFAULT_WORKER_CONFIG, make_live_worker_config
@@ -159,10 +160,16 @@ def test_stage_inputs_locally_downloads_missing_upstream_results(
     monkeypatch.setenv("RESULTS_DIR", str(tmp_path / "results"))
     resolved_inputs = inputs_module.resolve_inputs(task, cfg, worker_cfg.results_dir)
 
-    def _download(task_id: str, destination_dir: Path) -> None:
-        staged = destination_dir / task_id
-        staged.mkdir(parents=True)
-        (staged / "results.json").write_text("{}", encoding="utf-8")
+    def _download(
+        task_id: str,
+        destination_dir: Path,
+        paths: list[str] | None = None,
+        generation: str | None = None,
+    ) -> None:
+        write_result(
+            destination_dir,
+            ResultEnvelope(task_id=task_id, result=BaseExecutorResult()),
+        )
 
     monkeypatch.setattr(inputs_module, "download_result_bundle", _download)
 
@@ -181,7 +188,22 @@ def test_stage_inputs_in_volume_downloads_missing_upstream_results(
         _worker_config(tmp_path, network_mode="container:flowmesh-worker-1")
     )
     local_source = tmp_path / "results" / "task-local"
-    local_source.mkdir(parents=True)
+    write_result(
+        local_source.parent,
+        ResultEnvelope(task_id="task-local", result=BaseExecutorResult()),
+    )
+
+    def hydrate(
+        task_id: str,
+        root: Path,
+        paths: list[str] | None = None,
+        generation: str | None = None,
+    ) -> None:
+        write_result(root, ResultEnvelope(task_id=task_id, result=BaseExecutorResult()))
+
+    monkeypatch.setattr(
+        "worker.executors.ssh_session.backends.docker.hydrate_result", hydrate
+    )
     resolved_inputs = [
         ResolvedSSHInput(
             stage="local",
@@ -238,11 +260,7 @@ def test_stage_inputs_in_volume_downloads_missing_upstream_results(
         fake_client.containers.kwargs["network_mode"] == "container:flowmesh-worker-1"
     )
     assert "cp -a /src/task-local/. /dst/task-local/" in command
-    assert (
-        "wget -qO- -T 300 -t 1 --header 'Authorization: Bearer secret-token' "
-        "'http://flowmesh.example/api/v1/results/task-remote/bundle"
-        "?include=results&include=artifacts' | tar -xz -C /dst" in command
-    )
+    assert "cp -a /src/task-remote/. /dst/task-remote/" in command
 
 
 def test_extract_result_bundle_rejects_path_traversal(tmp_path: Path) -> None:
@@ -261,6 +279,9 @@ def test_local_input_staging_keeps_links_as_links(tmp_path: Path) -> None:
     secret.write_text("hunter2")
     source = tmp_path / "results" / "t-up"
     (source / "artifacts").mkdir(parents=True)
+    write_result(
+        source.parent, ResultEnvelope(task_id="t-up", result=BaseExecutorResult())
+    )
     (source / "artifacts" / "leak").symlink_to(secret)
     staged = inputs_module.stage_inputs_locally(
         [ResolvedSSHInput("up", "t-up", source, "/mnt/flowmesh/inputs/up")], "ssn-1"

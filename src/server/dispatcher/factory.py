@@ -58,5 +58,6 @@ def create_dispatcher(
         selection_jitter_epsilon=config.selection_jitter,
         enable_stage_weight_stickiness=config.enable_stage_weight_stickiness,
         no_worker_grace_sec=config.no_worker_grace_sec,
+        stage_result_grace_sec=config.stage_result_grace_sec,
         metrics_recorder=metrics_recorder,
     )

@@ -33,6 +33,7 @@ listed here is in `.env.example`.
 | `WORKER_CACHE_TTL_SEC` | `3600` | Cache metadata TTL |
 | `ENABLE_STAGE_WEIGHT_STICKINESS` | `false` | Pin stages to checkpoint-producing workers |
 | `TASK_NO_WORKER_GRACE_SEC` | `60` | Grace before failing a task no worker can satisfy |
+| `TASK_STAGE_RESULT_GRACE_SEC` | `120` | Grace after an upstream stage finishes for its result to reach the server before a dependent that reads it fails |
 | `ENABLE_WORKER_WATCHDOG` | `true` | Worker death detection |
 | `WORKER_DEATH_GRACE_SEC` | `60` | Grace period before marking dead |
 | `WORKER_REHYDRATION_GRACE_SEC` | `120` | Extra grace for a worker's rehydrated in-flight tasks after the root restarts, before the watchdog may reclaim them |
@@ -73,7 +74,7 @@ Spark), set `DOCKER_GPU_RUNTIME=` in the stack env.
 | `RESULTS_DIR` | `./results` | Task output directory |
 | `WORKER_TAGS` | `` | Scheduler hints |
 | `WORKER_COST_PER_HOUR` | `1.0` | Cost metadata |
-| `WORKER_UPLOAD_RESULTS` | `false` | Upload results when no destination set |
+| `WORKER_UPLOAD_RESULTS` | `false` | Publish every result and artifact to FlowMesh, independently of user output destinations |
 | `WORKER_EXECUTOR_IDLE_CLEANUP_SEC` | `60` | Seconds a worker waits before unloading an idle executor to release the resources it holds; higher values avoid reload thrash between tasks but keep those resources reserved while idle |
 | `WORKER_FOREIGN_GPU_GATE` | `true` | Report a GPU as unavailable while a process outside FlowMesh is using it |
 | `WORKER_FOREIGN_GPU_MEM_MIB` | `1024` | Foreign GPU-memory threshold in MiB |
@@ -83,6 +84,14 @@ Spark), set `DOCKER_GPU_RUNTIME=` in the stack env.
 | `HEARTBEAT_INTERVAL_SEC` | `30` | Heartbeat cadence |
 | `SERVE_DEFAULT_TTL_SEC` | `3600` | Default vLLM serve session TTL when `spec.ttlSeconds` is unset |
 | `SERVE_MAX_TTL_SEC` | `86400` | Upper bound on vLLM serve session TTL, regardless of `spec.ttlSeconds` |
+
+With `WORKER_UPLOAD_RESULTS=false`, workers publish envelopes and artifact
+selections required by downstream tasks. With `true`, they also publish leaves
+and unused artifacts. System publication is best-effort; connectivity failures
+leave results on the worker and missing dependency data fails after
+`TASK_STAGE_RESULT_GRACE_SEC`. `FLOWMESH_BASE_URL` and worker authentication
+must reach the server. `MODEL_CLEANUP_AFTER_UPLOAD` retains training artifacts
+when system delivery is requested, preserving dependency reuse.
 
 ## Supervisor
 

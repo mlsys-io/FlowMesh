@@ -108,6 +108,9 @@ class TaskRecord(BaseModel):
     last_queue_ts: float = Field(
         default_factory=time.time, description="Last queue timestamp (epoch seconds)."
     )
+    result_dispatch: str | None = Field(
+        default=None, description="Result publication dispatch identity."
+    )
     dispatched_ts: float | None = Field(
         default=None, description="Dispatch timestamp (epoch seconds)."
     )

@@ -9,6 +9,7 @@ from typing import Any, Literal
 
 from pydantic import TypeAdapter
 
+from ..exceptions import FlowMeshError
 from ..models.result import AnyExecutorResult, ResultEnvelope
 from ._base import AsyncResource, SyncResource
 
@@ -71,7 +72,7 @@ class Results(SyncResource):
             tmp_path = Path(tmp.name)
         try:
             self._client._download(_bundle_path(task_id, sections), tmp_path)
-            extracted = _extract_bundle(tmp_path, output_dir)
+            extracted = _extract_bundle(tmp_path, output_dir, task_id, sections)
         finally:
             tmp_path.unlink(missing_ok=True)
 
@@ -142,7 +143,7 @@ class AsyncResults(AsyncResource):
             tmp_path = Path(tmp.name)
         try:
             await self._client._download(_bundle_path(task_id, sections), tmp_path)
-            extracted = _extract_bundle(tmp_path, output_dir)
+            extracted = _extract_bundle(tmp_path, output_dir, task_id, sections)
         finally:
             tmp_path.unlink(missing_ok=True)
 
@@ -174,11 +175,42 @@ def _bundle_path(task_id: str, include: Iterable[BundleSection] | None) -> str:
     return f"/results/{task_id}/bundle?{query}"
 
 
-def _extract_bundle(bundle_path: Path, output_dir: Path) -> list[Path]:
+def _extract_bundle(
+    bundle_path: Path,
+    output_dir: Path,
+    task_id: str,
+    sections: tuple[BundleSection, ...],
+) -> list[Path]:
     extracted: list[Path] = []
     dest_root = output_dir.resolve()
     with tarfile.open(bundle_path, mode="r:*") as archive:
-        for member in archive:
+        members = archive.getmembers()
+        required = ("results", "artifacts", "logs") if "all" in sections else sections
+        names = {
+            member.name.rstrip("/")
+            for member in members
+            if member.isfile() or member.isdir()
+        }
+        for section in required:
+            expected = (
+                f"{task_id}/results.json"
+                if section == "results"
+                else f"{task_id}/{section}"
+            )
+            present = (
+                any(member.name == expected and member.isfile() for member in members)
+                if section == "results"
+                else any(
+                    name == expected or name.startswith(expected + "/")
+                    for name in names
+                )
+            )
+            if not present:
+                raise FlowMeshError(
+                    f"Result bundle for {task_id} is missing "
+                    f"requested section '{section}'"
+                )
+        for member in members:
             member_path = (dest_root / member.name).resolve()
             try:
                 member_path.relative_to(dest_root)
@@ -200,8 +232,10 @@ def _finalize_materialize(
 ) -> tuple[dict[str, Any], Path, list[Path]]:
     """Validate the envelope and point _artifacts at the local extracted dir."""
     json_path = output_dir / task_id / "results.json"
-    if not json_path.is_file():
+    if "results" not in sections and "all" not in sections:
         return {}, json_path, extracted
+    if not json_path.is_file():
+        raise FlowMeshError(f"Result bundle for {task_id} is missing results.json")
 
     envelope = ResultEnvelope.model_validate_json(json_path.read_text())
     if _wants_artifacts(sections) and (ctx := envelope.result.artifacts_):

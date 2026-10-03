@@ -115,6 +115,7 @@ class TaskLogArchiver:
                 continue
             try:
                 self._drain_task(task_id)
+                self._flush_task(task_id, self._buffers.get(task_id) or [])
                 self._finalize_manifest(task_id)
                 maybe_state.done = True
             finally:

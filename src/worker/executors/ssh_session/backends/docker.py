@@ -21,14 +21,15 @@ import worker
 from shared.schemas.worker import SSHBackendName
 from shared.tasks.worker_message import WorkerHardware
 from shared.utils import parse_float_env
-from shared.utils.http import auth_headers
 from shared.utils.manifest import ARTIFACTS_DIR
+from shared.utils.result_delivery import artifacts_ready, safe_relative
 from worker.config import WorkerConfig
 from worker.executors.utils.docker import (
     DockerUnavailableError,
     docker_available,
     docker_client,
 )
+from worker.result_delivery import hydrate_result
 
 from ...base_executor import ExecutionError
 from ..base import (
@@ -52,11 +53,7 @@ from ..config import (
     normalize_mount_path,
     reserve_mount_path,
 )
-from ..inputs import (
-    RESULT_BUNDLE_TIMEOUT_SEC,
-    result_bundle_url,
-    stage_inputs_locally,
-)
+from ..inputs import stage_inputs_locally
 
 try:
     from docker import DockerClient
@@ -555,13 +552,42 @@ class DockerSessionBackend(SSHSessionBackend):
         )
         commands = ["set -e"]
         for resolved in resolved_inputs:
+            if not artifacts_ready(
+                resolved.source_path,
+                resolved.task_id,
+                resolved.artifact_paths,
+                resolved.generation,
+            ):
+                hydrate_result(
+                    resolved.task_id,
+                    resolved.source_path.parent,
+                    resolved.artifact_paths,
+                    resolved.generation,
+                )
             if resolved.source_path.exists():
                 src = shlex.quote(f"/src/{resolved.task_id}")
                 dst = shlex.quote(f"/dst/{resolved.task_id}")
                 commands.append(f"mkdir -p {dst}")
-                commands.append(f"cp -a {src}/. {dst}/")
+                if resolved.artifact_paths is None:
+                    commands.append(f"cp -a {src}/. {dst}/")
+                else:
+                    commands.append(f"cp {src}/results.json {dst}/results.json")
+                    for name in resolved.artifact_paths:
+                        relative = Path("artifacts") / safe_relative(name)
+                        target_parent = shlex.quote(
+                            f"/dst/{resolved.task_id}/{relative.parent.as_posix()}"
+                        )
+                        source = shlex.quote(
+                            f"/src/{resolved.task_id}/{relative.as_posix()}"
+                        )
+                        target = shlex.quote(
+                            f"/dst/{resolved.task_id}/{relative.as_posix()}"
+                        )
+                        commands.extend(
+                            [f"mkdir -p {target_parent}", f"cp -a {source} {target}"]
+                        )
                 continue
-            commands.append(self._build_remote_stage_command(resolved.task_id))
+            raise ExecutionError(f"Missing hydrated input {resolved.task_id}")
         command = " && ".join(commands)
         try:
             run_kwargs: dict[str, Any] = {
@@ -587,16 +613,6 @@ class DockerSessionBackend(SSHSessionBackend):
                 )
             raise
         return volume_name
-
-    @staticmethod
-    def _build_remote_stage_command(task_id: str) -> str:
-        url = shlex.quote(result_bundle_url(task_id))
-        header_parts = [
-            f"--header {shlex.quote(f'{k}: {v}')}" for k, v in auth_headers().items()
-        ]
-        header_prefix = f"{' '.join(header_parts)} " if header_parts else ""
-        timeout = int(RESULT_BUNDLE_TIMEOUT_SEC)
-        return f"wget -qO- -T {timeout} -t 1 {header_prefix}{url} | tar -xz -C /dst"
 
     @staticmethod
     def _cleanup_mount_plan(client: DockerClient, mount_plan: SSHMountPlan) -> None:

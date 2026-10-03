@@ -109,8 +109,7 @@ def test_upload_results_enabled_via_env(
     monkeypatch.delenv("FLOWMESH_API_KEY", raising=False)
     spec = _spec(None)
     out = get_http_destination(spec)
-    assert out is not None
-    assert out.ignore_error is True
+    assert out is None
 
 
 @pytest.mark.parametrize("falsy", ["0", "false", "no", "off", "", "  "])
@@ -129,10 +128,7 @@ def test_upload_results_uses_base_url(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("FLOWMESH_API_KEY", raising=False)
     spec = _spec(None)
     out = get_http_destination(spec)
-    assert out is not None
-    assert out.url == "http://flowmesh-host:8000/api/v1/results"
-    assert out.ignore_error is True
-    assert out.method == "POST"
+    assert out is None
 
 
 def test_upload_results_without_base_url_returns_none(
