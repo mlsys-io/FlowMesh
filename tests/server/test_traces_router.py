@@ -2,6 +2,7 @@
 
 import json
 import logging
+import threading
 from collections.abc import Iterator
 from io import BytesIO
 from pathlib import Path
@@ -15,6 +16,7 @@ from lumid_hooks import PrincipalContext, ResourceRef
 
 from server.hooks import PERMISSION_CHECKERS
 from server.routers.v1 import traces as traces_router
+from shared.utils import atomic
 
 
 @pytest.fixture
@@ -340,3 +342,52 @@ async def test_upload_task_trace_denied_without_permission(
             logger=logger,
         )
     assert exc.value.status_code == status.HTTP_403_FORBIDDEN
+
+
+@pytest.mark.anyio
+async def test_upload_task_trace_copies_in_chunks_off_the_event_loop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    copies: list[tuple[int, int]] = []
+    copy = atomic.shutil.copyfileobj
+
+    def _recording(source: Any, target: Any, length: int = 0) -> None:
+        copies.append((threading.get_ident(), length))
+        copy(source, target, length)
+
+    async def _whole_read(*args: Any) -> bytes:
+        raise AssertionError("the upload was read whole")
+
+    monkeypatch.setattr(atomic.shutil, "copyfileobj", _recording)
+    upload = _upload(b'{"name":"task"}\n')
+    monkeypatch.setattr(upload, "read", _whole_read)
+
+    await traces_router.upload_task_trace(
+        task_id="tsk-up", trace_type="spans", file=upload, results_dir=tmp_path
+    )
+
+    assert copies == [(copies[0][0], 1 << 20)]
+    assert copies[0][0] != threading.get_ident()
+    assert (tmp_path / "tsk-up" / "logs" / "spans.jsonl").read_bytes() == (
+        b'{"name":"task"}\n'
+    )
+
+
+@pytest.mark.anyio
+async def test_analyze_workflow_trace_runs_off_the_event_loop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    threads: list[int] = []
+    analyze = traces_router.analyze
+
+    def _recording(*args: Any, **kwargs: Any) -> Any:
+        threads.append(threading.get_ident())
+        return analyze(*args, **kwargs)
+
+    monkeypatch.setattr(traces_router, "analyze", _recording)
+
+    await traces_router.analyze_workflow_trace(
+        workflow_id="wfl-1", registry=_registry(["tsk-a"]), results_dir=tmp_path
+    )
+
+    assert threads and threads[0] != threading.get_ident()
