@@ -54,6 +54,9 @@ local path, including `checkpoint.load.type: local`. Python/SSH input mounts
 hydrate the complete upstream artifact directory. System delivery preserves
 artifact contexts from declared output destinations. Training cleanup retains
 artifacts when system publication is requested.
+Training generates model archives for blanket publication, explicit HTTP output,
+or a downstream archive reference. HTTP checkpoint references can unpack a
+hydrated local archive without downloading it again.
 
 ## Agent executor (utu / youtu-agent)
 

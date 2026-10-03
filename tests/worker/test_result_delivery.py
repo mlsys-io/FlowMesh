@@ -1,4 +1,5 @@
 import logging
+import tarfile
 from pathlib import Path
 from typing import Any, cast
 from unittest.mock import Mock
@@ -10,9 +11,9 @@ from shared.schemas.result import BaseExecutorResult
 from shared.schemas.result_delivery import ArtifactInput, ResultDeliveryRequest
 from shared.tasks import TaskType
 from shared.tasks.components.output import OutputSpec
-from shared.tasks.specs import EchoSpecStrict, PythonSpecStrict
+from shared.tasks.specs import EchoSpecStrict, PythonSpecStrict, SFTSpecStrict
 from shared.tasks.worker_message import WorkerTaskMessage
-from shared.utils.result_delivery import read_receipt
+from shared.utils.result_delivery import make_receipt, read_receipt, write_receipt
 from tests.shared.test_result_delivery import populate
 from tests.worker.factories import make_worker_hardware, make_worker_task_message
 from worker import result_delivery
@@ -211,6 +212,82 @@ def test_training_cleanup_retains_dependency_artifacts(
     task.result_delivery = {}
     TrainingMixin()._cleanup_local_artifacts(task, checkpoint, model, archive)
     assert all(not path.exists() for path in (checkpoint, model, archive))
+
+
+@pytest.mark.parametrize(
+    "mode", ["blanket", "archive", "explicit", "directory", "envelope", "none"]
+)
+def test_training_archive_generation_matches_delivery_requirements(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str
+) -> None:
+    monkeypatch.setenv("WORKER_UPLOAD_RESULTS", str(int(mode == "blanket")))
+    monkeypatch.setenv("MODEL_ARCHIVE_USE_PIGZ", "0")
+    model = tmp_path / "final_model"
+    model.mkdir()
+    (model / "weights").write_bytes(b"model weights")
+    output = (
+        OutputSpec.model_validate(
+            {"destination": {"type": "http", "url": "http://external"}}
+        )
+        if mode == "explicit"
+        else None
+    )
+    requests = {
+        "archive": ResultDeliveryRequest(artifact_fields=["final_model_archive"]),
+        "directory": ResultDeliveryRequest(all_artifacts=True),
+        "envelope": ResultDeliveryRequest(),
+    }
+    task = make_worker_task_message(
+        SFTSpecStrict(taskType=TaskType.SFT, output=output),
+        result_delivery={"tsk-test": requests[mode]} if mode in requests else {},
+    )
+    archive = TrainingMixin()._archive_model(task, model)
+    if mode in {"blanket", "archive", "explicit"}:
+        assert archive is not None and archive.is_file()
+        with tarfile.open(archive) as contents:
+            weights = contents.extractfile("final_model/weights")
+            assert weights is not None and weights.read() == b"model weights"
+    else:
+        assert archive is None
+        assert not model.with_suffix(".tar.gz").exists()
+
+
+def test_hydrated_http_checkpoint_archive_unpacks_without_second_download(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("MODEL_ARCHIVE_USE_PIGZ", "0")
+    producer = populate(tmp_path / "producer")
+    (producer / "artifacts" / "model" / "config.json").write_text("{}")
+    monkeypatch.setenv("WORKER_UPLOAD_RESULTS", "1")
+    archive = TrainingMixin()._archive_model(
+        make_worker_task_message(SFTSpecStrict(taskType=TaskType.SFT)),
+        producer / "artifacts" / "model",
+    )
+    assert archive is not None
+    write_receipt(producer, make_receipt(producer, "tsk-up", None))
+    url = "http://server/api/v1/results/tsk-up/files/model.tar.gz"
+    task = make_worker_task_message(
+        SFTSpecStrict(
+            taskType=TaskType.SFT,
+            checkpoint={"load": {"type": "http", "url": url}},
+        ),
+        artifact_inputs={
+            "tsk-test": [ArtifactInput(task_id="tsk-up", path=archive.name, source=url)]
+        },
+    )
+    hydrated = result_delivery.hydrate_task(task, tmp_path / "producer")
+    download = Mock(
+        side_effect=AssertionError("Cached archive must not download again")
+    )
+    monkeypatch.setattr("worker.executors.utils.checkpoints.requests.get", download)
+    assert isinstance(hydrated.spec, SFTSpecStrict)
+    assert hydrated.spec.checkpoint is not None
+    model = resolve_checkpoint_load(
+        hydrated.spec.checkpoint["load"], tmp_path / "consumer"
+    )
+    assert (model / "weights").read_bytes() == b"model"
+    assert (model / "config.json").read_text() == "{}"
+    download.assert_not_called()
 
 
 def test_delivery_wire_round_trip() -> None:

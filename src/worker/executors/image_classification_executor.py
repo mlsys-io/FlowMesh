@@ -37,9 +37,7 @@ from ..utils.logging import configure_hf_library_logging
 from .base_executor import ExecutionError, Executor, ExecutorTask
 from .mixins.training import TrainingMixin
 from .utils.checkpoints import (
-    archive_model_dir,
     determine_resume_path,
-    get_http_destination,
     maybe_upload_artifacts,
     write_executor_result,
 )
@@ -244,10 +242,10 @@ class ImageClassificationTrainingExecutor(TrainingMixin, Executor):
                 processor.save_pretrained(model_path)
                 final_model_path = model_path
                 logger.info("Saved fine-tuned model to %s", model_path)
-                if get_http_destination(spec):
-                    final_archive_path = archive_model_dir(model_path)
+                final_archive_path = self._archive_model(task, model_path)
+                if final_archive_path:
                     logger.info(
-                        "Archived fine-tuned model to %s for HTTP delivery",
+                        "Archived fine-tuned model to %s for delivery",
                         final_archive_path,
                     )
 
