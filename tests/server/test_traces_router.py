@@ -14,6 +14,7 @@ from fastapi import HTTPException, UploadFile, status
 from fastapi.responses import StreamingResponse
 from lumid_hooks import PrincipalContext, ResourceRef
 
+from server.governance import ProfileSummary
 from server.hooks import PERMISSION_CHECKERS
 from server.routers.v1 import traces as traces_router
 from shared.utils import atomic
@@ -254,11 +255,12 @@ async def test_analyze_workflow_trace_runs_analyzer(tmp_path: Path) -> None:
         ],
     )
 
-    summary = await traces_router.analyze_workflow_trace(
+    response = await traces_router.analyze_workflow_trace(
         workflow_id="wfl-1",
         registry=_registry(["tsk-a"]),
         results_dir=tmp_path,
     )
+    summary = ProfileSummary.model_validate_json(response.body)
     assert summary.event_count == 3
     assert len(summary.assets) == 1
     assert summary.workflow_id == "wfl-1"
@@ -384,10 +386,19 @@ async def test_analyze_workflow_trace_runs_off_the_event_loop(
         threads.append(threading.get_ident())
         return analyze(*args, **kwargs)
 
+    class _RecordingAdapter:
+        def dump_json(self, *args: Any, **kwargs: Any) -> bytes:
+            threads.append(threading.get_ident())
+            return summary_adapter.dump_json(*args, **kwargs)
+
+    summary_adapter = traces_router._PROFILE_SUMMARY
     monkeypatch.setattr(traces_router, "analyze", _recording)
+    monkeypatch.setattr(traces_router, "_PROFILE_SUMMARY", _RecordingAdapter())
 
     await traces_router.analyze_workflow_trace(
         workflow_id="wfl-1", registry=_registry(["tsk-a"]), results_dir=tmp_path
     )
 
-    assert threads and threads[0] != threading.get_ident()
+    # The analysis and the response's serialization both run in a worker thread.
+    assert len(threads) == 2
+    assert threading.get_ident() not in threads
