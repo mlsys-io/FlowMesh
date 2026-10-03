@@ -3,7 +3,7 @@
 import logging
 from collections.abc import Iterable, Iterator
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from fastapi.concurrency import run_in_threadpool
@@ -12,7 +12,7 @@ from pydantic import TypeAdapter
 
 from shared.schemas.result import result_file_path
 from shared.utils.atomic import atomic_write_stream
-from shared.utils.json import encode_jsonl_bytes, read_jsonl
+from shared.utils.json import encode_jsonl_bytes, parse_jsonl_lines
 
 from ...app_state import get_logger, get_results_dir, get_workflow_registry
 from ...auth.security import (
@@ -33,6 +33,9 @@ _TYPE_TO_FILENAME: dict[str, str] = {
     "lineage": "lineage.jsonl",
 }
 
+# The longest trace line read; a longer one is skipped rather than held in memory.
+_MAX_TRACE_LINE_BYTES = 4 << 20
+
 
 def _logs_dir_for_task(results_dir: Path, task_id: str) -> Path:
     """Per-task ``logs/`` directory holding the trace JSONL artifacts."""
@@ -40,10 +43,34 @@ def _logs_dir_for_task(results_dir: Path, task_id: str) -> Path:
 
 
 def _iter_workflow_jsonl(
-    results_dir: Path, task_ids: Iterable[str], filename: str
+    results_dir: Path,
+    task_ids: Iterable[str],
+    filename: str,
+    logger: logging.Logger,
 ) -> Iterator[dict[str, Any]]:
     for task_id in task_ids:
-        yield from read_jsonl(_logs_dir_for_task(results_dir, task_id) / filename)
+        path = _logs_dir_for_task(results_dir, task_id) / filename
+        if not path.exists() or not path.is_file():
+            continue
+        with path.open("rb") as fh:
+            yield from parse_jsonl_lines(_bounded_lines(fh, filename, task_id, logger))
+
+
+def _bounded_lines(
+    fh: BinaryIO, filename: str, task_id: str, logger: logging.Logger
+) -> Iterator[str]:
+    while line := fh.readline(_MAX_TRACE_LINE_BYTES + 1):
+        if len(line) > _MAX_TRACE_LINE_BYTES and not line.endswith(b"\n"):
+            logger.warning(
+                "Skipping a %s line of task %s longer than %d bytes",
+                filename,
+                task_id,
+                _MAX_TRACE_LINE_BYTES,
+            )
+            while line and not line.endswith(b"\n"):
+                line = fh.readline(_MAX_TRACE_LINE_BYTES)
+            continue
+        yield line.decode("utf-8", errors="replace")
 
 
 async def _resolve_task_ids(workflow_id: str, registry: WorkflowRegistry) -> list[str]:
@@ -73,7 +100,7 @@ async def analyze_workflow_trace(
     )
     task_ids = await _resolve_task_ids(workflow_id, registry)
     body = await run_in_threadpool(
-        _analyze_workflow, results_dir, task_ids, workflow_id
+        _analyze_workflow, results_dir, task_ids, workflow_id, logger
     )
     return Response(body, media_type="application/json")
 
@@ -82,11 +109,14 @@ _PROFILE_SUMMARY = TypeAdapter(ProfileSummary)
 
 
 def _analyze_workflow(
-    results_dir: Path, task_ids: list[str], workflow_id: str
+    results_dir: Path,
+    task_ids: list[str],
+    workflow_id: str,
+    logger: logging.Logger,
 ) -> bytes:
-    spans = list(_iter_workflow_jsonl(results_dir, task_ids, "spans.jsonl"))
-    assets = list(_iter_workflow_jsonl(results_dir, task_ids, "assets.jsonl"))
-    lineage = list(_iter_workflow_jsonl(results_dir, task_ids, "lineage.jsonl"))
+    spans = list(_iter_workflow_jsonl(results_dir, task_ids, "spans.jsonl", logger))
+    assets = list(_iter_workflow_jsonl(results_dir, task_ids, "assets.jsonl", logger))
+    lineage = list(_iter_workflow_jsonl(results_dir, task_ids, "lineage.jsonl", logger))
     summary = analyze(spans, assets, lineage, workflow_id=workflow_id)
     return _PROFILE_SUMMARY.dump_json(summary, by_alias=True)
 
@@ -114,7 +144,9 @@ async def get_workflow_trace(
         )
     task_ids = await _resolve_task_ids(workflow_id, registry)
     return StreamingResponse(
-        encode_jsonl_bytes(_iter_workflow_jsonl(results_dir, task_ids, filename)),
+        encode_jsonl_bytes(
+            _iter_workflow_jsonl(results_dir, task_ids, filename, logger)
+        ),
         media_type="application/x-ndjson",
     )
 
