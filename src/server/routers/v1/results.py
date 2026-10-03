@@ -427,7 +427,7 @@ def _bounded_walk(root: Path) -> Iterator[Path]:
             continue
         for child in children:
             yield child
-            if child.is_dir():
+            if child.is_dir() and not child.is_symlink():
                 stack.append((child, depth + 1))
 
 
