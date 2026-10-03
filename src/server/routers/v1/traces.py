@@ -99,7 +99,7 @@ def _parse_row(line: bytes) -> Any | None:
     """The JSON value on ``line``, or None when it holds none."""
     try:
         return json.loads(line) if line.strip() else None
-    except ValueError:
+    except (ValueError, RecursionError):
         return None
 
 
