@@ -493,3 +493,24 @@ async def test_a_trace_file_of_lines_holding_no_rows_is_read_no_further(
     assert rows == [{"n": 1}]
     assert read[0] <= traces_router._MAX_SKIPPED_TRACE_LINES * (1 << 20) + 64
     assert "hold no row" in caplog.text
+
+
+@pytest.mark.anyio
+async def test_a_deeply_nested_trace_line_is_skipped_as_no_row(tmp_path: Path) -> None:
+    for task_id in ("tsk-a", "tsk-b"):
+        (tmp_path / task_id / "logs").mkdir(parents=True)
+    (tmp_path / "tsk-a" / "logs" / "spans.jsonl").write_bytes(
+        b'{"n": 1}\n' + b"[" * 100_000 + b'\n{"n": 2}\n'
+    )
+    (tmp_path / "tsk-b" / "logs" / "spans.jsonl").write_bytes(b'{"n": 3}\n')
+
+    response = await traces_router.get_workflow_trace(
+        workflow_id="wfl-1",
+        trace_type="spans",
+        registry=_registry(["tsk-a", "tsk-b"]),
+        results_dir=tmp_path,
+        logger=logging.getLogger("test.traces"),
+    )
+    rows = [json.loads(line) for line in await _collect_streamed_lines(response)]
+
+    assert rows == [{"n": 1}, {"n": 2}, {"n": 3}]
