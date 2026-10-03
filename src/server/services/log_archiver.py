@@ -273,24 +273,36 @@ class TaskLogArchiver:
 
     def _append(self, task_id: str, data: bytes) -> None:
         """Append ``data`` to the task's log file whole or not at all: a failed write
-        is truncated back to the file's prior end."""
+        is truncated back to the file's prior end, unless another writer appended
+        meanwhile, whose lines the truncate would cut."""
         logs_path = self._logs_path(task_id)
         with logs_path.open("a", encoding="utf-8") as fh:
             fd = fh.fileno()
             end = os.fstat(fd).st_size
-            view = memoryview(data)
+            written = 0
             try:
-                while view:
-                    view = view[os.write(fd, view) :]
+                while written < len(data):
+                    written += os.write(fd, data[written:])
             except OSError as exc:
-                try:
-                    os.ftruncate(fd, end)
-                except OSError as truncate_exc:
-                    raise _TornWrite(
-                        truncate_exc.errno,
-                        f"a failed write ({exc}) could not be truncated away",
-                    ) from exc
+                if written:
+                    self._undo_append(fd, end, written, exc)
                 raise
+
+    @staticmethod
+    def _undo_append(fd: int, end: int, written: int, exc: OSError) -> None:
+        try:
+            appended = os.fstat(fd).st_size != end + written
+            if not appended:
+                os.ftruncate(fd, end)
+        except OSError as truncate_exc:
+            raise _TornWrite(
+                truncate_exc.errno,
+                f"a failed write ({exc}) could not be truncated away",
+            ) from exc
+        if appended:
+            raise _TornWrite(
+                exc.errno, f"another writer appended beside a failed write ({exc})"
+            ) from exc
 
     def _drain_task(self, task_id: str, now: float) -> bool:
         """Read and write the rest of the task's log stream; return whether every
