@@ -272,10 +272,10 @@ def test_api_result_payload_uses_wire_alias_json() -> None:
     )
 
 
-def test_api_result_v019_usage_payload_validates() -> None:
-    """A v0.1.9-shaped APIResult carries the upstream usage dict in the
-    top-level ``usage`` field, which is an open mapping again, so it validates
-    through the shared AnyExecutorResult without a fallback reader."""
+def test_api_result_accepts_upstream_usage_dict() -> None:
+    """Enforces that an APIResult whose top-level ``usage`` is the upstream
+    usage dict validates through the shared AnyExecutorResult as-is, leaving
+    ``usage_summary`` unset."""
     payload = {
         "task_type": "api",
         "executor": "api",

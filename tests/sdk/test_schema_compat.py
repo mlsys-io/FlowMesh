@@ -269,10 +269,10 @@ def test_api_result_items_union_matches() -> None:
     assert _union_member_names(srv_items) == _union_member_names(sdk_items)
 
 
-def test_api_result_v019_usage_payload_validates_sdk() -> None:
-    """A v0.1.9-shaped APIResult (top-level ``usage`` as the upstream usage
-    dict) validates through the SDK's AnyExecutorResult, because ``usage`` is
-    an open mapping again and the summed accounting lives in ``usage_summary``."""
+def test_sdk_api_result_accepts_upstream_usage_dict() -> None:
+    """Enforces that an APIResult whose top-level ``usage`` is the upstream
+    usage dict validates through the SDK's AnyExecutorResult as-is, leaving
+    ``usage_summary`` unset."""
     payload = {
         "task_type": "api",
         "executor": "api",
