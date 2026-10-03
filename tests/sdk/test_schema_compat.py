@@ -4,8 +4,6 @@ Imports both server Pydantic models (via conftest stubs) and SDK models,
 then compares ``model_fields`` to detect drift.
 """
 
-from typing import Any
-
 import pytest
 from flowmesh import models as sdk_models
 
@@ -105,6 +103,7 @@ from .helpers import (
     assert_enum_members_match,
     assert_extra_policy_matches,
     assert_field_aliases_match,
+    assert_field_types_match,
     assert_fields_match,
 )
 
@@ -246,6 +245,16 @@ def test_result_extra_policy_matches(server_model: type, sdk_model: type) -> Non
     assert_extra_policy_matches(server_model, sdk_model)
 
 
+@pytest.mark.parametrize(
+    "server_model,sdk_model",
+    RESULT_MODEL_PAIRS,
+    ids=[f"{h.__name__}->{s.__name__}" for h, s in RESULT_MODEL_PAIRS],
+)
+def test_result_field_types_match(server_model: type, sdk_model: type) -> None:
+    """SDK result models must declare the same field types as the shared models."""
+    assert_field_types_match(server_model, sdk_model)
+
+
 def test_task_info_fields() -> None:
     """TaskInfo: last_queue_ts is server-internal, skip it."""
     assert_fields_match(SrvTaskInfo, TaskInfo, skip_server_fields={"last_queue_ts"})
@@ -253,20 +262,6 @@ def test_task_info_fields() -> None:
 
 def test_worker_register_response_fields() -> None:
     assert_fields_match(SrvWorkerRegisterResponse, WorkerRegisterResponse)
-
-
-def _union_member_names(annotation: Any) -> set[str]:
-    """Names of the members of a ``list[A | B]`` field annotation."""
-    list_args = annotation.__args__[0]
-    return {t.__name__ for t in list_args.__args__}
-
-
-def test_api_result_items_union_matches() -> None:
-    """APIResult.items must be the same union on both sides; the field-name
-    check alone misses a type drift (e.g. SDK-only list[APIItem])."""
-    srv_items = srv_results.APIResult.model_fields["items"].annotation
-    sdk_items = sdk_models.APIResult.model_fields["items"].annotation
-    assert _union_member_names(srv_items) == _union_member_names(sdk_items)
 
 
 def test_sdk_api_result_accepts_upstream_usage_dict() -> None:

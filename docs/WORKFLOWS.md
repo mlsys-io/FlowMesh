@@ -109,23 +109,21 @@ spec:
 
 Each row's prompt replaces `{{prompt}}` in the request body; a value that is
 exactly `{{prompt}}` takes the prompt as-is, so a message-list row fills
-`messages`. `spec.api.concurrency` (default and maximum 8) bounds in-flight
-requests. Any failed row fails the task. Cancelling the task skips rows that
-have not started and marks it cancelled once in-flight requests return.
-
-A body value that is exactly `{{prompt}}` is replaced by the row's prompt
-object as-is (a message list stays a list of `{"role", "content"}` dicts). An
-embedded `{{prompt}}` inside a longer string keeps string substitution: a
-string prompt is inserted verbatim, and any other prompt value is rendered as
-JSON.
+`messages`. An embedded `{{prompt}}` inside a longer string keeps string
+substitution: a string prompt is inserted verbatim, and any other prompt value
+is rendered as JSON. `spec.api.concurrency` (default and maximum 8) bounds
+in-flight requests. Any failed row fails the task. Cancelling the task skips
+rows that have not started and marks it cancelled once in-flight requests
+return.
 
 ### Grouped results
 
 A `dataframe` spec returns one `APIGroupItem` per table, with that table's
 responses in `rows`. A column is grouped when it reads one list of records per
 upstream item, such as an upstream API task's `items.rows` or a python stage's
-`items.output.<field>`; each list becomes one table. Downstream stages read the
-responses through `items.rows`.
+`value.items.output.<field>`; each list becomes one table. Downstream stages
+read the responses through `items.rows`. A `graph_template` over a grouped
+column sends one request per group and returns one `APIItem` for each.
 
 ## Python task
 

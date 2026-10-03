@@ -109,6 +109,80 @@ def _as_token_count(value: Any) -> int | None:
     return value
 
 
+class _UsageTracker:
+    """Call accounting for one API task, shared by its request threads."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._start = time.monotonic()
+        self._calls = 0
+        self._retries = 0
+        self._latencies: list[float] = []
+        self._prompt_tokens = 0
+        self._completion_tokens = 0
+        self._reasoning_tokens = 0
+        self._truncated_calls = 0
+        self._backend_counts: dict[str, int] = {}
+
+    @property
+    def calls(self) -> int:
+        with self._lock:
+            return self._calls
+
+    def record(
+        self,
+        attempts: int,
+        wall: float,
+        prompt_tokens: int | None,
+        completion_tokens: int | None,
+        reasoning_tokens: int | None,
+        finish_reason: Any,
+        backend: str | None,
+    ) -> None:
+        """Count one finished call."""
+        with self._lock:
+            self._calls += 1
+            self._retries += max(0, attempts - 1)
+            self._latencies.append(wall)
+            if prompt_tokens is not None:
+                self._prompt_tokens += prompt_tokens
+            if completion_tokens is not None:
+                self._completion_tokens += completion_tokens
+            if reasoning_tokens is not None:
+                self._reasoning_tokens += reasoning_tokens
+            if finish_reason == "length":
+                self._truncated_calls += 1
+            if backend is not None:
+                self._backend_counts[backend] = self._backend_counts.get(backend, 0) + 1
+
+    def snapshot(self) -> APIUsage:
+        """The summed accounting so far, with the wall time since the task started."""
+        with self._lock:
+            return APIUsage(
+                prompt_tokens=self._prompt_tokens,
+                completion_tokens=self._completion_tokens,
+                reasoning_tokens=self._reasoning_tokens,
+                calls=self._calls,
+                retries=self._retries,
+                truncated_calls=self._truncated_calls,
+                wall_sec=time.monotonic() - self._start,
+            )
+
+    def latency_stats(self) -> tuple[float, float, float]:
+        """The p50, p95 and max call latency so far."""
+        with self._lock:
+            latencies = list(self._latencies)
+        return (
+            _percentile(latencies, 50),
+            _percentile(latencies, 95),
+            max(latencies) if latencies else 0.0,
+        )
+
+    def backends(self) -> dict[str, int]:
+        with self._lock:
+            return dict(self._backend_counts)
+
+
 class APIExecutor(DataMixin, Executor):
     """Performs HTTP requests defined by task YAML.
 
@@ -429,39 +503,28 @@ class APIExecutor(DataMixin, Executor):
 
         return item
 
-    def _log_summary(
-        self,
-        task_id: str,
-        total: int,
-        failures: int,
-        total_retries: int,
-        wall: float,
-        latencies: list[float],
-        sum_prompt: int,
-        sum_completion: int,
-        sum_reasoning: int,
-        backend_counts: dict[str, int],
-    ) -> None:
+    def _log_summary(self, task_id: str, tracker: _UsageTracker) -> None:
         """Log one summary line for a finished API task."""
+        usage = tracker.snapshot()
+        p50, p95, latency_max = tracker.latency_stats()
         backends = ",".join(
-            f"{name}={count}" for name, count in sorted(backend_counts.items())
+            f"{name}={count}" for name, count in sorted(tracker.backends().items())
         )
         logger.debug(
-            "api summary task=%s calls=%d failures=%d retries=%d wall=%.3fs "
+            "api summary task=%s calls=%d retries=%d wall=%.3fs "
             "latency_p50=%.3fs latency_p95=%.3fs latency_max=%.3fs "
             "prompt_tokens=%d completion_tokens=%d reasoning_tokens=%d "
             "backends=%s",
             task_id,
-            total,
-            failures,
-            total_retries,
-            wall,
-            _percentile(latencies, 50),
-            _percentile(latencies, 95),
-            max(latencies) if latencies else 0.0,
-            sum_prompt,
-            sum_completion,
-            sum_reasoning,
+            usage.calls,
+            usage.retries,
+            usage.wall_sec,
+            p50,
+            p95,
+            latency_max,
+            usage.prompt_tokens,
+            usage.completion_tokens,
+            usage.reasoning_tokens,
             backends or "-",
         )
 
@@ -531,19 +594,9 @@ class APIExecutor(DataMixin, Executor):
         first_error: list[BaseException] = []
 
         total = len(prompts)
-        done = 0
-        failures = 0
-        total_retries = 0
-        latencies: list[float] = []
-        sum_prompt = 0
-        sum_completion = 0
-        sum_reasoning = 0
-        truncated_calls = 0
-        backend_counts: dict[str, int] = {}
-        task_start = time.monotonic()
+        tracker = _UsageTracker()
         in_flight: dict[int, float] = {}
         in_flight_lock = threading.Lock()
-        stats_lock = threading.Lock()
 
         def _record_call(
             idx: int,
@@ -551,11 +604,7 @@ class APIExecutor(DataMixin, Executor):
             status: Any,
             start: float,
             body: Any,
-            *,
-            failed: bool,
         ) -> None:
-            nonlocal done, failures, total_retries
-            nonlocal sum_prompt, sum_completion, sum_reasoning, truncated_calls
             wall = time.monotonic() - start
             with in_flight_lock:
                 in_flight.pop(idx, None)
@@ -566,22 +615,15 @@ class APIExecutor(DataMixin, Executor):
                 finish_reason,
                 backend,
             ) = _chat_completion_stats(body)
-            with stats_lock:
-                done += 1
-                if failed:
-                    failures += 1
-                total_retries += max(0, attempts - 1)
-                latencies.append(wall)
-                if prompt_tokens is not None:
-                    sum_prompt += prompt_tokens
-                if completion_tokens is not None:
-                    sum_completion += completion_tokens
-                if reasoning_tokens is not None:
-                    sum_reasoning += reasoning_tokens
-                if finish_reason == "length":
-                    truncated_calls += 1
-                if backend is not None:
-                    backend_counts[backend] = backend_counts.get(backend, 0) + 1
+            tracker.record(
+                attempts,
+                wall,
+                prompt_tokens,
+                completion_tokens,
+                reasoning_tokens,
+                finish_reason,
+                backend,
+            )
             logger.debug(
                 "api call task=%s row=%d attempts=%d status=%s wall=%.3fs "
                 "prompt_tokens=%s completion_tokens=%s reasoning_tokens=%s "
@@ -626,7 +668,6 @@ class APIExecutor(DataMixin, Executor):
                     exc.error.__class__.__name__,
                     start,
                     None,
-                    failed=True,
                 )
                 error = ExecutionError(
                     f"API request failed (row {idx}): {exc.error}", retryable=True
@@ -649,7 +690,7 @@ class APIExecutor(DataMixin, Executor):
                 if body_text:
                     message = f"{message}: {body_text}"
                 retryable = _is_retryable_status(resp.status_code)
-                _record_call(idx, attempts, resp.status_code, start, None, failed=True)
+                _record_call(idx, attempts, resp.status_code, start, None)
                 error = ExecutionError(message, retryable=retryable)
                 if not first_error:
                     first_error.append(error)
@@ -665,7 +706,7 @@ class APIExecutor(DataMixin, Executor):
                     prompt_str=prompt_str,
                 )
             except BaseException as exc:
-                _record_call(idx, attempts, resp.status_code, start, None, failed=True)
+                _record_call(idx, attempts, resp.status_code, start, None)
                 if not first_error:
                     first_error.append(exc)
                 failed.set()
@@ -678,7 +719,6 @@ class APIExecutor(DataMixin, Executor):
                     resp.status_code,
                     start,
                     item.response_json,
-                    failed=True,
                 )
                 raise TaskCancelledError("API task cancelled")
 
@@ -688,7 +728,6 @@ class APIExecutor(DataMixin, Executor):
                 resp.status_code,
                 start,
                 item.response_json,
-                failed=False,
             )
             return item
 
@@ -701,13 +740,12 @@ class APIExecutor(DataMixin, Executor):
                     outstanding = dict(in_flight)
                 if not outstanding:
                     continue
-                with stats_lock:
-                    done_snapshot = done
+                done = tracker.calls
                 oldest = min(outstanding.values())
                 logger.info(
                     "api heartbeat task=%s done=%d/%d in_flight=%d oldest_age=%.0fs",
                     task.task_id,
-                    done_snapshot,
+                    done,
                     total,
                     len(outstanding),
                     time.monotonic() - oldest,
@@ -739,29 +777,7 @@ class APIExecutor(DataMixin, Executor):
         finally:
             heartbeat_stop.set()
             heartbeat.join(timeout=5)
-            wall = time.monotonic() - task_start
-            with stats_lock:
-                done_snapshot = done
-                failures_snapshot = failures
-                retries_snapshot = total_retries
-                latencies_snapshot = list(latencies)
-                prompt_snapshot = sum_prompt
-                completion_snapshot = sum_completion
-                reasoning_snapshot = sum_reasoning
-                truncated_snapshot = truncated_calls
-                backends_snapshot = dict(backend_counts)
-            self._log_summary(
-                task.task_id,
-                done_snapshot,
-                failures_snapshot,
-                retries_snapshot,
-                wall,
-                latencies_snapshot,
-                prompt_snapshot,
-                completion_snapshot,
-                reasoning_snapshot,
-                backends_snapshot,
-            )
+            self._log_summary(task.task_id, tracker)
 
         if self._cancel_event.is_set():
             raise TaskCancelledError("API task cancelled")
@@ -823,14 +839,5 @@ class APIExecutor(DataMixin, Executor):
             status_code=status_code,
             truncated=truncated,
             items=result_items,
-            usage_summary=APIUsage(
-                prompt_tokens=prompt_snapshot,
-                completion_tokens=completion_snapshot,
-                reasoning_tokens=reasoning_snapshot,
-                calls=total,
-                failures=failures_snapshot,
-                retries=retries_snapshot,
-                truncated_calls=truncated_snapshot,
-                wall_sec=wall,
-            ),
+            usage_summary=tracker.snapshot(),
         )

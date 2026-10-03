@@ -308,13 +308,13 @@ def _aggregate_structural_messages(
                 row_count = max(row_count, len(group_value))
         group_row_counts.append(row_count)
 
-    columns = {key: [] for key in grouped_columns}
+    row_columns: dict[str, list[Any]] = {key: [] for key in grouped_columns}
     for group_idx, row_count in enumerate(group_row_counts):
         for key, values in grouped_columns.items():
             group_value = values[group_idx]
             if key in grouped_labels:
                 # A grouped column is kept whole per group, repeated across its rows.
-                columns[key].extend([group_value] * row_count)  # type: ignore
+                row_columns[key].extend([group_value] * row_count)
             elif _is_expandable_group_value(group_value):
                 value_list = list(group_value)
                 if len(value_list) == 1 and row_count > 1:
@@ -324,9 +324,9 @@ def _aggregate_structural_messages(
                         "Grouped graph-template values must resolve to the same "
                         "number of rows per group."
                     )
-                columns[key].extend(value_list)  # type: ignore
+                row_columns[key].extend(value_list)
             else:
-                columns[key].extend([group_value for _ in range(row_count)])  # type: ignore
+                row_columns[key].extend([group_value for _ in range(row_count)])
 
     num_rows = sum(group_row_counts)
 
@@ -342,8 +342,8 @@ def _aggregate_structural_messages(
                 f"Each message must have 'content' field. {message_metadata}"
             )
         raw_content: str = message_metadata["content"]
-        if raw_content in columns:
-            content = columns[raw_content]  # Materialize Message
+        if raw_content in row_columns:
+            content = row_columns[raw_content]  # Materialize Message
         else:
             rendered_rows: list[str] = []
             # Disable pandas width caps so wide DataFrame cells render in full.
@@ -357,7 +357,7 @@ def _aggregate_structural_messages(
             ):
                 for row_idx in range(num_rows):
                     row_mapping: dict[str, str] = {}
-                    for label, values in columns.items():
+                    for label, values in row_columns.items():
                         row_value = values[row_idx]
                         if isinstance(row_value, pd.DataFrame):
                             row_mapping[label] = row_value.to_markdown(index=False)
@@ -368,14 +368,14 @@ def _aggregate_structural_messages(
         if role := message_metadata.get("role"):
             assert all(isinstance(prompt, str) for prompt in content), (
                 content,
-                columns,
+                row_columns,
             )
             for messages, prompt in zip(batch_messages, content):
                 messages.append({"role": role, "content": prompt})  # type: ignore
         else:
             assert all(isinstance(msg, dict) for prompt in content for msg in prompt), (
                 content,
-                columns,
+                row_columns,
             )
             for messages, prompt in zip(batch_messages, content):
                 messages.extend(prompt)  # type: ignore

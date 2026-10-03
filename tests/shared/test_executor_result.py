@@ -308,7 +308,6 @@ def test_api_result_usage_summary_carries_summed_fields() -> None:
             completion_tokens=5,
             reasoning_tokens=0,
             calls=1,
-            failures=0,
             retries=0,
             truncated_calls=0,
             wall_sec=1.5,

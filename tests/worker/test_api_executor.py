@@ -1122,7 +1122,6 @@ class TestBatch:
         ]
         assert len(summary) == 1
         assert "calls=1" in summary[0]
-        assert "failures=1" in summary[0]
 
     def test_retry_stops_when_another_row_fails(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -2422,7 +2421,6 @@ class TestCallLogging:
         summary = self._records(caplog, "api summary")
         assert len(summary) == 1
         assert "calls=1" in summary[0]
-        assert "failures=1" in summary[0]
 
     def test_non_json_body_logs_dash_without_raising(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
@@ -2515,7 +2513,6 @@ class TestCallLogging:
         assert len(summary) == 1
         msg = summary[0]
         assert "calls=3" in msg
-        assert "failures=0" in msg
         assert "retries=0" in msg
         assert "backends=backend-a=2,backend-b=1" in msg
 
@@ -2575,7 +2572,6 @@ class TestUsage:
         assert result.usage_summary.completion_tokens == 12
         assert result.usage_summary.reasoning_tokens == 2
         assert result.usage_summary.calls == 3
-        assert result.usage_summary.failures == 0
         assert result.usage_summary.retries == 0
         assert result.usage_summary.truncated_calls == 1
         assert result.usage_summary.wall_sec >= 0
@@ -2628,6 +2624,5 @@ class TestUsage:
         assert result.usage_summary.completion_tokens == 5
         assert result.usage_summary.reasoning_tokens == 0
         assert result.usage_summary.calls == 1
-        assert result.usage_summary.failures == 0
         assert result.usage_summary.retries == 0
         assert result.usage_summary.truncated_calls == 0
