@@ -3,11 +3,18 @@
 import os
 import shutil
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
-from typing import BinaryIO
+from typing import Any, BinaryIO
 
 _SHARED_FILE_MODE = 0o0666
 _COPY_CHUNK_BYTES = 1 << 20
+_TEMP_PREFIX = ".fm-tmp-"
+
+
+def is_atomic_temp(name: str) -> bool:
+    """Return whether ``name`` is an in-flight atomic write's temp file."""
+    return name.startswith(_TEMP_PREFIX)
 
 
 def atomic_write_text(target: Path, content: str, *, encoding: str = "utf-8") -> None:
@@ -18,27 +25,24 @@ def atomic_write_text(target: Path, content: str, *, encoding: str = "utf-8") ->
     shared results volume). The new file is chmodded to 0o0666 so a peer
     UID can replace it on the next call.
     """
-    fd, tmp_name = tempfile.mkstemp(prefix=f".{target.name}.", dir=target.parent)
-    tmp_path = Path(tmp_name)
-    try:
-        with os.fdopen(fd, "w", encoding=encoding) as fh:
-            fh.write(content)
-        tmp_path.chmod(_SHARED_FILE_MODE)
-        os.replace(tmp_path, target)
-    except BaseException:
-        tmp_path.unlink(missing_ok=True)
-        raise
+    _atomic_replace(target, lambda fh: fh.write(content.encode(encoding)))
 
 
 def atomic_write_stream(target: Path, source: BinaryIO) -> None:
     """Replace ``target`` with the rest of ``source`` atomically, copying it in
     bounded chunks; creates the parent directory when missing."""
     target.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp_name = tempfile.mkstemp(prefix=f".{target.name}.", dir=target.parent)
+    _atomic_replace(
+        target, lambda fh: shutil.copyfileobj(source, fh, _COPY_CHUNK_BYTES)
+    )
+
+
+def _atomic_replace(target: Path, write: Callable[[BinaryIO], Any]) -> None:
+    fd, tmp_name = tempfile.mkstemp(prefix=_TEMP_PREFIX, dir=target.parent)
     tmp_path = Path(tmp_name)
     try:
         with os.fdopen(fd, "wb") as fh:
-            shutil.copyfileobj(source, fh, _COPY_CHUNK_BYTES)
+            write(fh)
         tmp_path.chmod(_SHARED_FILE_MODE)
         os.replace(tmp_path, target)
     except BaseException:

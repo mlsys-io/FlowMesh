@@ -8,7 +8,7 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
-from .atomic import atomic_write_text
+from .atomic import atomic_write_text, is_atomic_temp
 from .time import now_iso
 
 MANIFEST_NAME = "manifest.json"
@@ -97,7 +97,7 @@ def _sync_manifest(
     # Capture additional files/directories that exist but were not declared.
     for item in base_dir.iterdir():
         key = item.relative_to(base_dir).as_posix()
-        if key in added or item.name == MANIFEST_NAME:
+        if key in added or item.name == MANIFEST_NAME or is_atomic_temp(item.name):
             continue
         entry = _describe_path(base_dir, item.relative_to(base_dir), required=False)
         entries.append(entry)
@@ -144,19 +144,21 @@ def _describe_path(base_dir: Path, rel_path: Path, *, required: bool) -> dict[st
         "required": required,
     }
 
-    if target.exists():
-        entry["status"] = "present"
-        entry["updated_at"] = now_iso()
+    stats: dict[str, Any]
+    try:
         if target.is_file():
-            stat = target.stat()
-            entry["size"] = stat.st_size
-            entry["sha256"] = _sha256_file(target)
-        else:
+            stats = {"size": target.stat().st_size, "sha256": _sha256_file(target)}
+        elif target.is_dir():
             size, count = _directory_stats(target)
-            entry["size"] = size
-            entry["file_count"] = count
-    else:
+            stats = {"size": size, "file_count": count}
+        else:
+            raise FileNotFoundError(target)
+    except FileNotFoundError:
         entry["status"] = "missing"
+        return entry
+    entry["status"] = "present"
+    entry["updated_at"] = now_iso()
+    entry.update(stats)
     return entry
 
 
@@ -181,8 +183,12 @@ def _directory_stats(path: Path) -> tuple[int, int]:
     total_size = 0
     file_count = 0
     for item in path.rglob("*"):
-        if item.is_file():
-            stat = item.stat()
-            total_size += stat.st_size
-            file_count += 1
+        if is_atomic_temp(item.name):
+            continue
+        try:
+            if item.is_file():
+                total_size += item.stat().st_size
+                file_count += 1
+        except FileNotFoundError:
+            continue
     return total_size, file_count
