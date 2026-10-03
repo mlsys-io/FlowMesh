@@ -21,6 +21,16 @@ class GenerationUsage(StrictModel):
     latency_sec: float
 
 
+class APIUsage(StrictModel):
+    prompt_tokens: int
+    completion_tokens: int
+    reasoning_tokens: int
+    calls: int
+    retries: int
+    truncated_calls: int
+    wall_sec: float
+
+
 class EmbeddingUsage(StrictModel):
     prompt_tokens: int
     total_tokens: int
@@ -174,3 +184,11 @@ class APIItem(StrictModel):
     usage: dict[str, Any] | None = None
     text: str | None = None
     prompt: str | None = None
+
+
+class APIGroupItem(StrictModel):
+    """One group's row responses in a batched API task over grouped data; ``rows``
+    holds the group's row responses in order."""
+
+    index: int
+    rows: list[APIItem]

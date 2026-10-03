@@ -20,7 +20,9 @@ from .payloads import (
     AgentItem,
     AgentMetadata,
     AgentUsage,
+    APIGroupItem,
     APIItem,
+    APIUsage,
     CostEstimates,
     DataRetrievalItem,
     EchoItem,
@@ -246,8 +248,9 @@ class EchoResult(StrictExecutorResult):
 
 class APIResult(StrictExecutorResult):
     """HTTP request output. ``response_json``/``usage``/``headers`` are the
-    upstream API's own payloads and stay open mappings. ``items`` carries one
-    entry per row."""
+    upstream API's own payloads and stay open mappings; ``usage_summary`` is
+    the task's summed token/call accounting. ``items`` carries one entry per
+    row."""
 
     task_type: Literal[TaskType.API] = TaskType.API
     executor: str
@@ -258,8 +261,9 @@ class APIResult(StrictExecutorResult):
     headers: dict[str, str] | None = None
     response_json: Any = Field(default=None, alias="json")
     usage: dict[str, Any] | None = None
+    usage_summary: APIUsage | None = None
     text: str | None = None
-    items: list[APIItem] = Field(default_factory=list)
+    items: list[APIItem | APIGroupItem] = Field(default_factory=list)
 
 
 class SSHResult(StrictExecutorResult):

@@ -141,10 +141,11 @@ def _resolve_columns(
 
         if expr:
             assert data is None
-            value = _evaluate_expr(expr.strip(), context)
+            value, grouped = _evaluate_expr(expr.strip(), context)
             if value is None:
                 if "default" in raw:
                     value = raw.get("default")
+                    grouped = False
                 else:
                     raise ExecutionError(
                         f"Column '{label}' expression '{expr}' resolved to null."
@@ -162,10 +163,12 @@ def _resolve_columns(
                     if not isinstance(items, list):
                         raise ExecutionError("data.items must be a list.")
                     value = items
+                    grouped = False
                 case "dataframe":
                     nested_columns_cfg = data.get("columns")
                     nested_columns = _resolve_columns(nested_columns_cfg, context)
                     value = _build_grouped_dataframes(nested_columns)
+                    grouped = True
                 case _:
                     raise ExecutionError(f"Unsupported column 'data' type: {dtype}")
         else:
@@ -178,6 +181,7 @@ def _resolve_columns(
                 "label": label,
                 "value": value,
                 "expr": expr,
+                "grouped": grouped,
             }
         )
 
@@ -192,16 +196,14 @@ def _build_grouped_dataframes(columns: list[dict[str, Any]]) -> list[pd.DataFram
     for column in columns:
         label = column["label"]
         value = column["value"]
-        if (
-            isinstance(value, list)
-            and value
-            and all(isinstance(v, list) for v in value)
-        ):
+        if column.get("grouped"):
+            if not isinstance(value, list):
+                raise ExecutionError(
+                    f"Column '{label}' is grouped but did not resolve to a list."
+                )
             groups = value
-        elif isinstance(value, list):
-            groups = [value]
         else:
-            groups = [[value]]
+            groups = [value]
         grouped_columns[label] = groups
 
     group_count = max(len(groups) for groups in grouped_columns.values())
@@ -215,20 +217,27 @@ def _build_grouped_dataframes(columns: list[dict[str, Any]]) -> list[pd.DataFram
 
     dataframes: list[pd.DataFrame] = []
     for group_idx in range(group_count):
-        max_len = 1
+        max_len = 0
+        has_empty = False
         raw_values: dict[str, list[Any]] = {}
         for label, groups in grouped_columns.items():
             values = groups[group_idx]
             if not isinstance(values, list):
                 values = [values]
-            if values:
+            if len(values) != 1:
                 max_len = max(max_len, len(values))
+                if len(values) == 0:
+                    has_empty = True
             raw_values[label] = values
+        if max_len == 0 and not has_empty:
+            max_len = 1
 
         normalized: dict[str, list[Any]] = {}
         for label, values in raw_values.items():
             if len(values) == 1 and max_len > 1:
                 values = [values[0] for _ in range(max_len)]
+            elif len(values) == 1 and max_len == 0:
+                values = []
             elif len(values) != max_len:
                 raise ExecutionError(
                     "dataframe column values must resolve to "
@@ -269,6 +278,7 @@ def _render_inline_text(
 def _aggregate_structural_messages(
     columns: dict[str, Sequence[str | MaterializedMessageOrTable]],
     msg_options: Sequence[dict[str, str]],
+    grouped_labels: set[str],
 ) -> Sequence[MaterializedMessage]:
     def _is_expandable_group_value(value: Any) -> bool:
         return isinstance(value, list) and not all(
@@ -290,17 +300,22 @@ def _aggregate_structural_messages(
     group_row_counts: list[int] = []
     for group_idx in range(num_groups):
         row_count = 1
-        for values in grouped_columns.values():
+        for key, values in grouped_columns.items():
+            if key in grouped_labels:
+                continue
             group_value = values[group_idx]
             if _is_expandable_group_value(group_value):
                 row_count = max(row_count, len(group_value))
         group_row_counts.append(row_count)
 
-    columns = {key: [] for key in grouped_columns}
+    row_columns: dict[str, list[Any]] = {key: [] for key in grouped_columns}
     for group_idx, row_count in enumerate(group_row_counts):
         for key, values in grouped_columns.items():
             group_value = values[group_idx]
-            if _is_expandable_group_value(group_value):
+            if key in grouped_labels:
+                # A grouped column is kept whole per group, repeated across its rows.
+                row_columns[key].extend([group_value] * row_count)
+            elif _is_expandable_group_value(group_value):
                 value_list = list(group_value)
                 if len(value_list) == 1 and row_count > 1:
                     value_list = [value_list[0] for _ in range(row_count)]
@@ -309,9 +324,9 @@ def _aggregate_structural_messages(
                         "Grouped graph-template values must resolve to the same "
                         "number of rows per group."
                     )
+                row_columns[key].extend(value_list)
             else:
-                value_list = [group_value for _ in range(row_count)]
-            columns[key].extend(value_list)  # type: ignore
+                row_columns[key].extend([group_value for _ in range(row_count)])
 
     num_rows = sum(group_row_counts)
 
@@ -327,8 +342,8 @@ def _aggregate_structural_messages(
                 f"Each message must have 'content' field. {message_metadata}"
             )
         raw_content: str = message_metadata["content"]
-        if raw_content in columns:
-            content = columns[raw_content]  # Materialize Message
+        if raw_content in row_columns:
+            content = row_columns[raw_content]  # Materialize Message
         else:
             rendered_rows: list[str] = []
             # Disable pandas width caps so wide DataFrame cells render in full.
@@ -342,7 +357,7 @@ def _aggregate_structural_messages(
             ):
                 for row_idx in range(num_rows):
                     row_mapping: dict[str, str] = {}
-                    for label, values in columns.items():
+                    for label, values in row_columns.items():
                         row_value = values[row_idx]
                         if isinstance(row_value, pd.DataFrame):
                             row_mapping[label] = row_value.to_markdown(index=False)
@@ -353,14 +368,14 @@ def _aggregate_structural_messages(
         if role := message_metadata.get("role"):
             assert all(isinstance(prompt, str) for prompt in content), (
                 content,
-                columns,
+                row_columns,
             )
             for messages, prompt in zip(batch_messages, content):
                 messages.append({"role": role, "content": prompt})  # type: ignore
         else:
             assert all(isinstance(msg, dict) for prompt in content for msg in prompt), (
                 content,
-                columns,
+                row_columns,
             )
             for messages, prompt in zip(batch_messages, content):
                 messages.extend(prompt)  # type: ignore
@@ -424,6 +439,7 @@ def _render_lambda_func(
     columns: dict[str, Sequence[str | MaterializedMessageOrTable]],
     fn: str,
     fn_args: Sequence[Message | str],
+    grouped_labels: set[str],
 ) -> list[str | MaterializedMessage]:
     list_lengths = [len(v) for v in columns.values() if len(v) > 1]
     if list_lengths:
@@ -439,7 +455,9 @@ def _render_lambda_func(
     materialized_args: list[Sequence[MaterializedMessage | str]] = []
     for arg in fn_args:
         if not isinstance(arg, str):
-            materialized_args.append(_aggregate_structural_messages(columns, arg))
+            materialized_args.append(
+                _aggregate_structural_messages(columns, arg, grouped_labels)
+            )
             continue
 
         if arg in columns:
@@ -502,6 +520,7 @@ def _render_structural_messages(
         )
         for column in columns
     }
+    grouped_labels = {column["label"] for column in columns if column.get("grouped")}
     for step_option in format_options.get("steps", []):
         if "template" in step_option:
             format_kwargs = {
@@ -514,7 +533,7 @@ def _render_structural_messages(
         elif "function" in step_option:
             fn_args = step_option.get("arguments", [])
             formatted_prompts[step_option["label"]] = _render_lambda_func(
-                formatted_prompts, step_option["function"], fn_args
+                formatted_prompts, step_option["function"], fn_args, grouped_labels
             )
         else:
             raise RuntimeError(
@@ -522,7 +541,7 @@ def _render_structural_messages(
             )
 
     batch_messages = _aggregate_structural_messages(
-        formatted_prompts, format_options["messages"]
+        formatted_prompts, format_options["messages"], grouped_labels
     )
 
     return batch_messages
@@ -586,71 +605,141 @@ def _format_column_line(label: str, value: str) -> str:
     return f"• {label}: {indented}"
 
 
-def _evaluate_expr(expr: str, context: dict[str, BaseExecutorResult]) -> Any:
+def _evaluate_expr(
+    expr: str, context: dict[str, BaseExecutorResult]
+) -> tuple[Any, bool]:
+    """Resolve an expression against upstream results.
+
+    Returns ``(value, grouped)``. ``grouped`` is True when the resolved value
+    is a list of groups, decided from the upstream structure — the first
+    attribute access over the items list that yields one list per item (an
+    upstream API task's ``items.rows``, a python/vLLM stage's ``items.output``,
+    S3 ``content``) — never from the shape of the cell values. A per-row list
+    is a cell value, not a group.
+    """
     if not expr:
-        return None
+        return None, False
 
     parts = expr.split(".")
     root = parts[0]
     result = context.get(root)
     if result is None:
-        return None
+        return None, False
 
     value: Any = result
+    grouped = False
+    mapped_items = False
     for token in parts[1:]:
         if not token:
             continue
         attr, indexes = _split_indexes(token)
         if attr:
-            if isinstance(value, dict) and attr in value:
-                value = value[attr]
-            elif isinstance(value, list) and all(
-                isinstance(v, dict) and attr in v for v in value
-            ):
-                value = [v[attr] for v in value]
-            elif isinstance(value, list) and all(
-                isinstance(v, pd.DataFrame) for v in value
-            ):
-                if any(attr not in v.columns for v in value):
-                    raise ExecutionError(
-                        f"{attr} not a valid column in one of the "
-                        f"DataFrames for {token}."
-                    )
-                value = [v[attr].tolist() for v in value]
-            elif isinstance(value, pd.DataFrame):
-                if attr not in value.columns:
-                    raise ExecutionError(
-                        f"{attr} not a valid column in DataFrame for {token}."
-                    )
-                value = value[attr].tolist()
-            elif isinstance(value, BaseModel):
-                resolved = getattr(value, attr, _SENTINEL)
-                if resolved is _SENTINEL:
-                    raise ExecutionError(
-                        f"{attr} not a valid attribute of {type(value).__name__} "
-                        f"for {token}."
-                    )
-                value = resolved
-            else:
-                raise ExecutionError(
-                    f"{attr} in {parts} is not a valid key - "
-                    f"{type(value).__name__}, {value}"
-                )
+            value, grouped, mapped_items = _apply_attr(
+                value, attr, token, parts, grouped, mapped_items
+            )
         for idx in indexes:
-            if isinstance(value, list) and -len(value) <= idx < len(value):
-                value = value[idx]
-            elif isinstance(value, list) and all(isinstance(v, list) for v in value):
-                value = [v[idx] for v in value]
-            else:
-                raise ExecutionError(
-                    f"{idx} not a valid index in {token} - {len(value)}"
-                )
+            value, grouped = _apply_index(value, idx, token, grouped)
         # Attempt to deserialize DataFrame if applicable
         if isinstance(value, dict):
             value = try_deserialize_dataframe(value)
         elif isinstance(value, list) and all(isinstance(v, dict) for v in value):
             value = [try_deserialize_dataframe(v) for v in value]
-    return value
+    return value, grouped
+
+
+def _apply_attr(
+    value: Any,
+    attr: str,
+    token: str,
+    parts: list[str],
+    grouped: bool,
+    mapped_items: bool,
+) -> tuple[Any, bool, bool]:
+    """Resolve an attribute access, mapping over lists of dicts, DataFrames,
+    or pydantic models (including nested lists). Returns ``(value, grouped,
+    mapped_items)`` where ``mapped_items`` is True once an attribute has been
+    mapped over the items list; only that first access can set ``grouped``."""
+    if isinstance(value, dict) and attr in value:
+        return value[attr], grouped, mapped_items
+    if isinstance(value, list):
+        if all(isinstance(v, dict) and attr in v for v in value):
+            mapped = [v[attr] for v in value]
+            return (
+                mapped,
+                grouped or _groups_on_first_access(mapped, mapped_items),
+                True,
+            )
+        if all(isinstance(v, pd.DataFrame) for v in value):
+            if any(attr not in v.columns for v in value):
+                raise ExecutionError(
+                    f"{attr} not a valid column in one of the "
+                    f"DataFrames for {token}."
+                )
+            return [v[attr].tolist() for v in value], True, True
+        if all(isinstance(v, BaseModel) for v in value):
+            mapped = [_model_attr(v, attr, token) for v in value]
+            return (
+                mapped,
+                grouped or _groups_on_first_access(mapped, mapped_items),
+                True,
+            )
+        if all(isinstance(v, list) for v in value):
+            # Mapping over groups keeps grouped as-is; a raw list of lists
+            # groups only when its inner lists hold records.
+            if not grouped and not mapped_items:
+                grouped = bool(value) and all(
+                    all(isinstance(r, (dict, BaseModel)) for r in v) for v in value
+                )
+            mapped_rows: list[Any] = []
+            for v in value:
+                inner, _, _ = _apply_attr(v, attr, token, parts, grouped, mapped_items)
+                mapped_rows.append(inner)
+            return mapped_rows, grouped, mapped_items
+    if isinstance(value, pd.DataFrame):
+        if attr not in value.columns:
+            raise ExecutionError(f"{attr} not a valid column in DataFrame for {token}.")
+        return value[attr].tolist(), grouped, mapped_items
+    if isinstance(value, BaseModel):
+        return _model_attr(value, attr, token), grouped, mapped_items
+    raise ExecutionError(
+        f"{attr} in {parts} is not a valid key - " f"{type(value).__name__}, {value}"
+    )
+
+
+def _groups_on_first_access(mapped: list[Any], mapped_items: bool) -> bool:
+    """True when this is the first attribute access over the items list and it
+    yields one list per item (a list of lists), i.e. the grouping access. A
+    per-row list of scalars is a later access, which ``mapped_items`` already
+    rules out."""
+    return (
+        not mapped_items and bool(mapped) and all(isinstance(v, list) for v in mapped)
+    )
+
+
+def _model_attr(value: BaseModel, attr: str, token: str) -> Any:
+    """Resolve a declared pydantic field by name or alias, never a method."""
+    fields = type(value).model_fields
+    field = fields.get(attr)
+    if field is not None:
+        return getattr(value, attr)
+    for name, f in fields.items():
+        if f.alias == attr:
+            return getattr(value, name)
+    extras = value.model_extra
+    if extras and attr in extras:
+        return extras[attr]
+    raise ExecutionError(
+        f"{attr} not a valid attribute of {type(value).__name__} for {token}."
+    )
+
+
+def _apply_index(value: Any, idx: int, token: str, grouped: bool) -> tuple[Any, bool]:
+    """Index into a list, mapping over a list of lists (one per group)."""
+    if isinstance(value, list) and all(isinstance(v, list) for v in value):
+        return [_apply_index(v, idx, token, grouped)[0] for v in value], grouped
+    if isinstance(value, list) and -len(value) <= idx < len(value):
+        return value[idx], grouped
+    raise ExecutionError(f"{idx} not a valid index in {token} - {len(value)}")
 
 
 def _split_indexes(token: str) -> tuple[str, list[int]]:

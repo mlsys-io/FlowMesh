@@ -40,7 +40,9 @@ from .payloads import (
     AgentItem,
     AgentMetadata,
     AgentUsage,
+    APIGroupItem,
     APIItem,
+    APIUsage,
     CostEstimates,
     DataRetrievalItem,
     EchoItem,
@@ -91,7 +93,9 @@ for _model in _RESULT_MODELS:
 
 __all__ = [
     "APIItem",
+    "APIGroupItem",
     "APIResult",
+    "APIUsage",
     "AgentBatchSummary",
     "AgentItem",
     "AgentMetadata",

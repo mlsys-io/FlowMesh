@@ -16,6 +16,13 @@ import httpx
 import pytest
 from pydantic import ValidationError
 
+from shared.schemas.result import (
+    APIGroupItem,
+    APIItem,
+    APIResult,
+    APIUsage,
+    PythonResult,
+)
 from shared.tasks.specs.misc import _MAX_CONCURRENCY, _MAX_RETRIES
 from shared.tasks.worker_message import WorkerTaskMessage
 from worker.executors import api_executor as api_executor_module
@@ -144,6 +151,8 @@ def _executor() -> APIExecutor:
     executor._active_task_id = None
     executor._pending_cancelled_ids = set()
     executor._cancel_lock = threading.Lock()
+    executor._task_id = None
+    executor._current_batch_id = None
     return executor
 
 
@@ -174,6 +183,13 @@ def _batch_task(items: list[Any], **api_updates: Any) -> WorkerTaskMessage:
         },
     }
     return WorkerTaskMessage.model_validate(payload)
+
+
+def _api_item(content: str) -> APIItem:
+    """An upstream APIItem whose response carries the given content."""
+    item = APIItem(index=0, url="u", status_code=200)
+    item.response_json = {"choices": [{"message": {"content": content}}]}
+    return item
 
 
 class TestNebulaPath:
@@ -1076,7 +1092,7 @@ class TestBatch:
         assert excinfo.value.retryable is True
 
     def test_parse_error_fails_with_mapping_error_not_keyerror(
-        self, tmp_path: Path
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
         """A 200 with a non-mapping body and parse_json true fails the task with
         the parse error, not a KeyError from the collection loop."""
@@ -1088,9 +1104,24 @@ class TestBatch:
             def _handler(self, request: httpx.Request) -> httpx.Response:
                 return httpx.Response(200, json=[1])
 
-        task = _batch_task(["a", "b"], response={"parse_json": True})
-        with pytest.raises(ExecutionError, match="not a valid JSON mapping"):
-            _run(_executor(), task, _ArrayBody(), tmp_path)
+        task = _batch_task(["a", "b"], response={"parse_json": True}, concurrency=1)
+        with caplog.at_level(logging.DEBUG, logger="worker.executors.api_executor"):
+            with pytest.raises(ExecutionError, match="not a valid JSON mapping"):
+                _run(_executor(), task, _ArrayBody(), tmp_path)
+        call_lines = [
+            r.getMessage()
+            for r in caplog.records
+            if r.getMessage().startswith("api call")
+        ]
+        assert len(call_lines) == 1
+        assert "status=200" in call_lines[0]
+        summary = [
+            r.getMessage()
+            for r in caplog.records
+            if r.getMessage().startswith("api summary")
+        ]
+        assert len(summary) == 1
+        assert "calls=1" in summary[0]
 
     def test_retry_stops_when_another_row_fails(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -1352,3 +1383,1246 @@ class TestBatch:
 
         assert len(errors) == 1
         assert isinstance(errors[0], TaskCancelledError)
+
+
+class TestPromptSubstitution:
+    def test_exact_placeholder_substitutes_raw_object(self) -> None:
+        """A body value that is exactly {{prompt}} is replaced by the prompt
+        object as-is, so a message list stays a list of dicts."""
+        messages = [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "hi"},
+        ]
+        payload = {
+            "task_id": "task-api-sub",
+            "workflow_id": "wf-1",
+            "owner_id": "owner",
+            "assigned_worker": "worker-1",
+            "dispatched_at": "2026-03-22T00:00:00Z",
+            "task": {
+                "apiVersion": "flowmesh/v1",
+                "kind": "Task",
+                "metadata": {"name": "wf:api"},
+                "spec": {
+                    "taskType": "api",
+                    "api": {
+                        "method": "POST",
+                        "url": "https://custom.example.com/v1/chat/completions",
+                        "json": {"messages": "{{prompt}}"},
+                    },
+                    "data": {"type": "list", "items": [messages]},
+                },
+            },
+        }
+        task = WorkerTaskMessage.model_validate(payload)
+        transport = _EchoTransport()
+        _run(_executor(), task, transport)
+        assert len(transport.requests) == 1
+        body = json.loads(transport.requests[0].read())
+        assert body["messages"] == messages
+
+    def test_embedded_placeholder_substitutes_string(self) -> None:
+        """An embedded {{prompt}} inside a longer string keeps string
+        substitution."""
+        payload = {
+            "task_id": "task-api-sub",
+            "workflow_id": "wf-1",
+            "owner_id": "owner",
+            "assigned_worker": "worker-1",
+            "dispatched_at": "2026-03-22T00:00:00Z",
+            "task": {
+                "apiVersion": "flowmesh/v1",
+                "kind": "Task",
+                "metadata": {"name": "wf:api"},
+                "spec": {
+                    "taskType": "api",
+                    "api": {
+                        "method": "POST",
+                        "url": "https://custom.example.com/v1/chat/completions",
+                        "json": {
+                            "messages": [{"role": "user", "content": "Q: {{prompt}}"}]
+                        },
+                    },
+                    "data": {"type": "list", "items": ["hello"]},
+                },
+            },
+        }
+        task = WorkerTaskMessage.model_validate(payload)
+        transport = _EchoTransport()
+        _run(_executor(), task, transport)
+        body = json.loads(transport.requests[0].read())
+        assert body["messages"][0]["content"] == "Q: hello"
+
+
+class TestDataframeRows:
+    def test_dataframe_column_issues_one_request_per_row(self, tmp_path: Path) -> None:
+        """A dataframe-spec API task whose column reads an upstream APIResult's
+        items issues one request per upstream row, each body carrying that
+        row's messages as a list."""
+        upstream = APIResult(
+            ok=True,
+            executor="api",
+            method="POST",
+            url="https://up.example.com",
+            status_code=200,
+            items=[_api_item("c0"), _api_item("c1")],
+        )
+        payload = {
+            "task_id": "task-api-df",
+            "workflow_id": "wf-1",
+            "owner_id": "owner",
+            "assigned_worker": "worker-1",
+            "dispatched_at": "2026-03-22T00:00:00Z",
+            "task": {
+                "apiVersion": "flowmesh/v1",
+                "kind": "Task",
+                "metadata": {"name": "wf:api"},
+                "spec": {
+                    "taskType": "api",
+                    "_upstreamResults": {"Up": upstream},
+                    "api": {
+                        "method": "POST",
+                        "url": "https://custom.example.com/v1/chat/completions",
+                        "json": {"messages": "{{prompt}}"},
+                    },
+                    "data": {
+                        "type": "dataframe",
+                        "columns": [
+                            {
+                                "label": "L",
+                                "node": "Up",
+                                "path": "items.json.choices[0].message.content",
+                            }
+                        ],
+                        "messages": [
+                            {"role": "user", "content": "row {L}"},
+                        ],
+                    },
+                },
+            },
+        }
+        task = WorkerTaskMessage.model_validate(payload)
+        transport = _EchoTransport()
+        result = _run(_executor(), task, transport, tmp_path)
+        assert len(transport.requests) == 2
+        issued = {
+            json.loads(req.read())["messages"][0]["content"]
+            for req in transport.requests
+        }
+        assert issued == {"row c0", "row c1"}
+        # A single-column dataframe is one table, so one group item holds both rows.
+        assert len(result.items) == 1
+        prompts = [json.loads(r.prompt) for r in result.items[0].rows]
+        assert prompts == [
+            [{"role": "user", "content": "row c0"}],
+            [{"role": "user", "content": "row c1"}],
+        ]
+
+    def test_all_empty_columns_issue_no_request_and_one_empty_group(
+        self, tmp_path: Path
+    ) -> None:
+        """A dataframe whose columns all resolve to zero rows runs zero rows:
+        no HTTP request, and one empty group item so downstream paths resolve."""
+        upstream = APIResult(
+            ok=True,
+            executor="api",
+            method="POST",
+            url="https://up.example.com",
+            status_code=200,
+            items=[],
+        )
+        payload = {
+            "task_id": "task-api-df-empty",
+            "workflow_id": "wf-1",
+            "owner_id": "owner",
+            "assigned_worker": "worker-1",
+            "dispatched_at": "2026-03-22T00:00:00Z",
+            "task": {
+                "apiVersion": "flowmesh/v1",
+                "kind": "Task",
+                "metadata": {"name": "wf:api"},
+                "spec": {
+                    "taskType": "api",
+                    "_upstreamResults": {"Up": upstream},
+                    "api": {
+                        "method": "POST",
+                        "url": "https://custom.example.com/v1/chat/completions",
+                        "json": {"messages": "{{prompt}}"},
+                    },
+                    "data": {
+                        "type": "dataframe",
+                        "columns": [
+                            {
+                                "label": "L",
+                                "node": "Up",
+                                "path": "items.json.choices[0].message.content",
+                            }
+                        ],
+                        "messages": [
+                            {"role": "user", "content": "row {L}"},
+                        ],
+                    },
+                },
+            },
+        }
+        task = WorkerTaskMessage.model_validate(payload)
+        transport = _EchoTransport()
+        result = _run(_executor(), task, transport, tmp_path)
+        assert transport.requests == []
+        assert len(result.items) == 1
+        assert isinstance(result.items[0], APIGroupItem)
+        assert result.items[0].index == 0
+        assert result.items[0].rows == []
+        assert result.status_code == 0
+
+    def test_cancelled_zero_row_grouped_task_raises(self, tmp_path: Path) -> None:
+        """A zero-row grouped task with a pending cancellation for its id is
+        cancelled, not reported as a successful empty result."""
+        upstream = APIResult(
+            ok=True,
+            executor="api",
+            method="POST",
+            url="https://up.example.com",
+            status_code=200,
+            items=[],
+        )
+        payload = {
+            "task_id": "task-api-df-cancel-empty",
+            "workflow_id": "wf-1",
+            "owner_id": "owner",
+            "assigned_worker": "worker-1",
+            "dispatched_at": "2026-03-22T00:00:00Z",
+            "task": {
+                "apiVersion": "flowmesh/v1",
+                "kind": "Task",
+                "metadata": {"name": "wf:api"},
+                "spec": {
+                    "taskType": "api",
+                    "_upstreamResults": {"Up": upstream},
+                    "api": {
+                        "method": "POST",
+                        "url": "https://custom.example.com/v1/chat/completions",
+                        "json": {"messages": "{{prompt}}"},
+                    },
+                    "data": {
+                        "type": "dataframe",
+                        "columns": [
+                            {
+                                "label": "L",
+                                "node": "Up",
+                                "path": "items.json.choices[0].message.content",
+                            }
+                        ],
+                        "messages": [
+                            {"role": "user", "content": "row {L}"},
+                        ],
+                    },
+                },
+            },
+        }
+        task = WorkerTaskMessage.model_validate(payload)
+        executor = _executor()
+        executor.cancel(task.task_id)
+        with pytest.raises(TaskCancelledError):
+            _run(executor, task, _EchoTransport(), tmp_path)
+
+    def test_zero_vs_three_rows_still_raises(self, tmp_path: Path) -> None:
+        """A real mismatch (one column empty, another with rows) still raises."""
+        empty = APIResult(
+            ok=True,
+            executor="api",
+            method="POST",
+            url="https://up.example.com",
+            status_code=200,
+            items=[],
+        )
+        full = APIResult(
+            ok=True,
+            executor="api",
+            method="POST",
+            url="https://up.example.com",
+            status_code=200,
+            items=[_api_item("c0"), _api_item("c1"), _api_item("c2")],
+        )
+        payload = {
+            "task_id": "task-api-df-mismatch",
+            "workflow_id": "wf-1",
+            "owner_id": "owner",
+            "assigned_worker": "worker-1",
+            "dispatched_at": "2026-03-22T00:00:00Z",
+            "task": {
+                "apiVersion": "flowmesh/v1",
+                "kind": "Task",
+                "metadata": {"name": "wf:api"},
+                "spec": {
+                    "taskType": "api",
+                    "_upstreamResults": {"Empty": empty, "Full": full},
+                    "api": {
+                        "method": "POST",
+                        "url": "https://custom.example.com/v1/chat/completions",
+                        "json": {"messages": "{{prompt}}"},
+                    },
+                    "data": {
+                        "type": "dataframe",
+                        "columns": [
+                            {
+                                "label": "Empty",
+                                "node": "Empty",
+                                "path": "items.json.choices[0].message.content",
+                            },
+                            {
+                                "label": "Full",
+                                "node": "Full",
+                                "path": "items.json.choices[0].message.content",
+                            },
+                        ],
+                        "messages": [
+                            {"role": "user", "content": "row {Empty} {Full}"},
+                        ],
+                    },
+                },
+            },
+        }
+        task = WorkerTaskMessage.model_validate(payload)
+        with pytest.raises(ExecutionError, match="same number of rows"):
+            _run(_executor(), task, _EchoTransport(), tmp_path)
+
+    def test_two_vs_three_rows_still_raises(self, tmp_path: Path) -> None:
+        """A ragged mismatch (2 vs 3 rows) still raises."""
+        two = APIResult(
+            ok=True,
+            executor="api",
+            method="POST",
+            url="https://up.example.com",
+            status_code=200,
+            items=[_api_item("c0"), _api_item("c1")],
+        )
+        three = APIResult(
+            ok=True,
+            executor="api",
+            method="POST",
+            url="https://up.example.com",
+            status_code=200,
+            items=[_api_item("c0"), _api_item("c1"), _api_item("c2")],
+        )
+        payload = {
+            "task_id": "task-api-df-ragged",
+            "workflow_id": "wf-1",
+            "owner_id": "owner",
+            "assigned_worker": "worker-1",
+            "dispatched_at": "2026-03-22T00:00:00Z",
+            "task": {
+                "apiVersion": "flowmesh/v1",
+                "kind": "Task",
+                "metadata": {"name": "wf:api"},
+                "spec": {
+                    "taskType": "api",
+                    "_upstreamResults": {"Two": two, "Three": three},
+                    "api": {
+                        "method": "POST",
+                        "url": "https://custom.example.com/v1/chat/completions",
+                        "json": {"messages": "{{prompt}}"},
+                    },
+                    "data": {
+                        "type": "dataframe",
+                        "columns": [
+                            {
+                                "label": "A",
+                                "node": "Two",
+                                "path": "items.json.choices[0].message.content",
+                            },
+                            {
+                                "label": "B",
+                                "node": "Three",
+                                "path": "items.json.choices[0].message.content",
+                            },
+                        ],
+                        "messages": [
+                            {"role": "user", "content": "row {A} {B}"},
+                        ],
+                    },
+                },
+            },
+        }
+        task = WorkerTaskMessage.model_validate(payload)
+        with pytest.raises(ExecutionError, match="same number of rows"):
+            _run(_executor(), task, _EchoTransport(), tmp_path)
+
+
+class TestGraphTemplateAggregate:
+    def test_graph_template_aggregates_all_rows_into_one_prompt(
+        self, tmp_path: Path
+    ) -> None:
+        """A graph_template aggregate API task over all rows of an upstream
+        APIResult issues one request whose prompt contains every row."""
+        upstream = APIResult(
+            ok=True,
+            executor="api",
+            method="POST",
+            url="https://up.example.com",
+            status_code=200,
+            items=[_api_item("c0"), _api_item("c1")],
+        )
+        payload = {
+            "task_id": "task-api-gt",
+            "workflow_id": "wf-1",
+            "owner_id": "owner",
+            "assigned_worker": "worker-1",
+            "dispatched_at": "2026-03-22T00:00:00Z",
+            "task": {
+                "apiVersion": "flowmesh/v1",
+                "kind": "Task",
+                "metadata": {"name": "wf:api"},
+                "spec": {
+                    "taskType": "api",
+                    "_upstreamResults": {"Up": upstream},
+                    "api": {
+                        "method": "POST",
+                        "url": "https://custom.example.com/v1/chat/completions",
+                        "json": {"messages": "{{prompt}}"},
+                    },
+                    "data": {
+                        "type": "graph_template",
+                        "template": {
+                            "name": "format",
+                            "columns": [
+                                {
+                                    "label": "df",
+                                    "data": {
+                                        "type": "dataframe",
+                                        "columns": [
+                                            {
+                                                "label": "L",
+                                                "node": "Up",
+                                                "path": (
+                                                    "items.json.choices[0].message.content"
+                                                ),
+                                            }
+                                        ],
+                                    },
+                                }
+                            ],
+                            "options": {
+                                "format": {
+                                    "steps": [],
+                                    "messages": [
+                                        {"role": "user", "content": "all: {df}"}
+                                    ],
+                                }
+                            },
+                        },
+                    },
+                },
+            },
+        }
+        task = WorkerTaskMessage.model_validate(payload)
+        transport = _EchoTransport()
+        result = _run(_executor(), task, transport, tmp_path)
+        assert len(transport.requests) == 1
+        body = json.loads(transport.requests[0].read())
+        content = body["messages"][0]["content"]
+        assert "c0" in content and "c1" in content
+        assert len(result.items) == 1
+        # Aggregate result is a plain item (read at items.json...), not a group item.
+        item = result.items[0]
+        assert isinstance(item, APIItem)
+        assert item.response_json["choices"][0]["message"]["content"].startswith(
+            "echo:all:"
+        )
+
+
+class TestGroupedResult:
+    def test_ragged_groups_return_one_item_per_group(self, tmp_path: Path) -> None:
+        """A ragged grouped dataframe API task (groups of different sizes)
+        returns one item per group with the right rows in each."""
+        upstream = APIResult(
+            ok=True,
+            executor="api",
+            method="POST",
+            url="https://up.example.com",
+            status_code=200,
+            items=[
+                APIGroupItem(index=0, rows=[_api_item("c0"), _api_item("c1")]),
+                APIGroupItem(index=1, rows=[_api_item("c2")]),
+            ],
+        )
+        payload = {
+            "task_id": "task-api-grp",
+            "workflow_id": "wf-1",
+            "owner_id": "owner",
+            "assigned_worker": "worker-1",
+            "dispatched_at": "2026-03-22T00:00:00Z",
+            "task": {
+                "apiVersion": "flowmesh/v1",
+                "kind": "Task",
+                "metadata": {"name": "wf:api"},
+                "spec": {
+                    "taskType": "api",
+                    "_upstreamResults": {"Up": upstream},
+                    "api": {
+                        "method": "POST",
+                        "url": "https://custom.example.com/v1/chat/completions",
+                        "json": {"messages": "{{prompt}}"},
+                    },
+                    "data": {
+                        "type": "dataframe",
+                        "columns": [
+                            {
+                                "label": "L",
+                                "node": "Up",
+                                "path": "items.rows.json.choices[0].message.content",
+                            }
+                        ],
+                        "messages": [
+                            {"role": "user", "content": "row {L}"},
+                        ],
+                    },
+                },
+            },
+        }
+        task = WorkerTaskMessage.model_validate(payload)
+        transport = _EchoTransport()
+        result = _run(_executor(), task, transport, tmp_path)
+        assert len(transport.requests) == 3
+        assert len(result.items) == 2
+        assert [len(item.rows) for item in result.items] == [2, 1]
+        # Group 0 holds rows c0, c1; group 1 holds c2.
+        group0 = {json.loads(r.prompt)[0]["content"] for r in result.items[0].rows}
+        assert group0 == {"row c0", "row c1"}
+        assert json.loads(result.items[1].rows[0].prompt)[0]["content"] == "row c2"
+
+    def test_status_code_taken_from_first_row_across_groups(
+        self, tmp_path: Path
+    ) -> None:
+        """A leading empty group must not zero the result status; the first
+        row across all groups supplies it."""
+        upstream = APIResult(
+            ok=True,
+            executor="api",
+            method="POST",
+            url="https://up.example.com",
+            status_code=200,
+            items=[
+                APIGroupItem(index=0, rows=[]),
+                APIGroupItem(index=1, rows=[_api_item("c0")]),
+            ],
+        )
+        payload = {
+            "task_id": "task-api-grp-leading-empty",
+            "workflow_id": "wf-1",
+            "owner_id": "owner",
+            "assigned_worker": "worker-1",
+            "dispatched_at": "2026-03-22T00:00:00Z",
+            "task": {
+                "apiVersion": "flowmesh/v1",
+                "kind": "Task",
+                "metadata": {"name": "wf:api"},
+                "spec": {
+                    "taskType": "api",
+                    "_upstreamResults": {"Up": upstream},
+                    "api": {
+                        "method": "POST",
+                        "url": "https://custom.example.com/v1/chat/completions",
+                        "json": {"messages": "{{prompt}}"},
+                    },
+                    "data": {
+                        "type": "dataframe",
+                        "columns": [
+                            {
+                                "label": "L",
+                                "node": "Up",
+                                "path": "items.rows.json.choices[0].message.content",
+                            }
+                        ],
+                        "messages": [
+                            {"role": "user", "content": "row {L}"},
+                        ],
+                    },
+                },
+            },
+        }
+        task = WorkerTaskMessage.model_validate(payload)
+        transport = _EchoTransport()
+        result = _run(_executor(), task, transport, tmp_path)
+        assert len(transport.requests) == 1
+        assert len(result.items) == 2
+        assert result.items[0].rows == []
+        assert len(result.items[1].rows) == 1
+        assert result.status_code == 200
+
+
+def _python_upstream(value: Any) -> PythonResult:
+    """A python stage whose return value is the Lumilake shape
+    ``{"items": [{"output": ...}, ...]}``."""
+    return PythonResult(exit_code=0, value=value)
+
+
+class TestPythonStage:
+    def test_rows_from_python_value_items_output(self, tmp_path: Path) -> None:
+        """A dataframe API task reads a python stage's rows at
+        ``value.items.output``, one row per output record."""
+        upstream = _python_upstream(
+            {
+                "items": [
+                    {"output": {"claim": "c0", "src": "s0"}},
+                    {"output": {"claim": "c1", "src": "s1"}},
+                    {"output": {"claim": "c2", "src": "s2"}},
+                ]
+            }
+        )
+        payload = {
+            "task_id": "task-api-py",
+            "workflow_id": "wf-1",
+            "owner_id": "owner",
+            "assigned_worker": "worker-1",
+            "dispatched_at": "2026-03-22T00:00:00Z",
+            "task": {
+                "apiVersion": "flowmesh/v1",
+                "kind": "Task",
+                "metadata": {"name": "wf:api"},
+                "spec": {
+                    "taskType": "api",
+                    "_upstreamResults": {"Py": upstream},
+                    "api": {
+                        "method": "POST",
+                        "url": "https://custom.example.com/v1/chat/completions",
+                        "json": {"messages": "{{prompt}}"},
+                    },
+                    "data": {
+                        "type": "dataframe",
+                        "columns": [
+                            {
+                                "label": "claim",
+                                "node": "Py",
+                                "path": "value.items.output.claim",
+                            },
+                            {
+                                "label": "src",
+                                "node": "Py",
+                                "path": "value.items.output.src",
+                            },
+                        ],
+                        "messages": [
+                            {"role": "user", "content": "row {claim} {src}"},
+                        ],
+                    },
+                },
+            },
+        }
+        task = WorkerTaskMessage.model_validate(payload)
+        transport = _EchoTransport()
+        result = _run(_executor(), task, transport, tmp_path)
+        assert len(transport.requests) == 3
+        # A single-column dataframe is one table, so one group item holds all rows.
+        assert len(result.items) == 1
+        prompts = [json.loads(r.prompt)[0]["content"] for r in result.items[0].rows]
+        assert prompts == ["row c0 s0", "row c1 s1", "row c2 s2"]
+
+    def test_ragged_groups_from_python_value_items_output(self, tmp_path: Path) -> None:
+        """A python stage whose per-item ``output`` is a list of records gives
+        one group per item, with uneven group sizes (3 and 2)."""
+        upstream = _python_upstream(
+            {
+                "items": [
+                    {
+                        "output": [
+                            {"claim": "c0", "src": "s0"},
+                            {"claim": "c0", "src": "s1"},
+                            {"claim": "c0", "src": "s2"},
+                        ]
+                    },
+                    {
+                        "output": [
+                            {"claim": "c1", "src": "s3"},
+                            {"claim": "c1", "src": "s4"},
+                        ]
+                    },
+                ]
+            }
+        )
+        payload = {
+            "task_id": "task-api-py-grp",
+            "workflow_id": "wf-1",
+            "owner_id": "owner",
+            "assigned_worker": "worker-1",
+            "dispatched_at": "2026-03-22T00:00:00Z",
+            "task": {
+                "apiVersion": "flowmesh/v1",
+                "kind": "Task",
+                "metadata": {"name": "wf:api"},
+                "spec": {
+                    "taskType": "api",
+                    "_upstreamResults": {"Py": upstream},
+                    "api": {
+                        "method": "POST",
+                        "url": "https://custom.example.com/v1/chat/completions",
+                        "json": {"messages": "{{prompt}}"},
+                    },
+                    "data": {
+                        "type": "dataframe",
+                        "columns": [
+                            {
+                                "label": "claim",
+                                "node": "Py",
+                                "path": "value.items.output.claim",
+                            },
+                            {
+                                "label": "src",
+                                "node": "Py",
+                                "path": "value.items.output.src",
+                            },
+                        ],
+                        "messages": [
+                            {"role": "user", "content": "row {claim} {src}"},
+                        ],
+                    },
+                },
+            },
+        }
+        task = WorkerTaskMessage.model_validate(payload)
+        transport = _EchoTransport()
+        result = _run(_executor(), task, transport, tmp_path)
+        assert len(transport.requests) == 5
+        assert len(result.items) == 2
+        assert [len(item.rows) for item in result.items] == [3, 2]
+        group0 = {json.loads(r.prompt)[0]["content"] for r in result.items[0].rows}
+        assert group0 == {"row c0 s0", "row c0 s1", "row c0 s2"}
+        group1 = {json.loads(r.prompt)[0]["content"] for r in result.items[1].rows}
+        assert group1 == {"row c1 s3", "row c1 s4"}
+
+    def test_graph_template_aggregate_over_python_groups(self, tmp_path: Path) -> None:
+        """A graph_template aggregate over a python stage's ragged groups
+        issues one request per group, each prompt holding all its rows."""
+        upstream = _python_upstream(
+            {
+                "items": [
+                    {
+                        "output": [
+                            {"claim": "c0", "src": "s0"},
+                            {"claim": "c0", "src": "s1"},
+                        ]
+                    },
+                    {
+                        "output": [
+                            {"claim": "c1", "src": "s2"},
+                            {"claim": "c1", "src": "s3"},
+                            {"claim": "c1", "src": "s4"},
+                        ]
+                    },
+                ]
+            }
+        )
+        payload = {
+            "task_id": "task-api-py-gt",
+            "workflow_id": "wf-1",
+            "owner_id": "owner",
+            "assigned_worker": "worker-1",
+            "dispatched_at": "2026-03-22T00:00:00Z",
+            "task": {
+                "apiVersion": "flowmesh/v1",
+                "kind": "Task",
+                "metadata": {"name": "wf:api"},
+                "spec": {
+                    "taskType": "api",
+                    "_upstreamResults": {"Py": upstream},
+                    "api": {
+                        "method": "POST",
+                        "url": "https://custom.example.com/v1/chat/completions",
+                        "json": {"messages": "{{prompt}}"},
+                    },
+                    "data": {
+                        "type": "graph_template",
+                        "template": {
+                            "name": "format",
+                            "columns": [
+                                {
+                                    "label": "df",
+                                    "data": {
+                                        "type": "dataframe",
+                                        "columns": [
+                                            {
+                                                "label": "claim",
+                                                "node": "Py",
+                                                "path": ("value.items.output.claim"),
+                                            }
+                                        ],
+                                    },
+                                }
+                            ],
+                            "options": {
+                                "format": {
+                                    "steps": [],
+                                    "messages": [
+                                        {"role": "user", "content": "all: {df}"}
+                                    ],
+                                }
+                            },
+                        },
+                    },
+                },
+            },
+        }
+        task = WorkerTaskMessage.model_validate(payload)
+        transport = _EchoTransport()
+        result = _run(_executor(), task, transport, tmp_path)
+        assert len(transport.requests) == 2
+        assert len(result.items) == 2
+        # Aggregate results are plain items, one per group.
+        group0 = result.items[0].response_json["choices"][0]["message"]["content"]
+        group1 = result.items[1].response_json["choices"][0]["message"]["content"]
+        assert "c0" in group0 and "c1" not in group0
+        assert "c1" in group1 and "c0" not in group1
+
+    def test_graph_template_direct_grouped_column_issues_one_request_per_group(
+        self, tmp_path: Path
+    ) -> None:
+        """A graph_template whose column reads a python stage's grouped output
+        directly (not via a nested dataframe) issues one request per group,
+        each prompt holding all its rows."""
+        upstream = _python_upstream(
+            {
+                "items": [
+                    {"output": [{"claim": "c0"}, {"claim": "c1"}]},
+                    {"output": [{"claim": "c2"}, {"claim": "c3"}, {"claim": "c4"}]},
+                ]
+            }
+        )
+        payload = {
+            "task_id": "task-api-py-gt-direct",
+            "workflow_id": "wf-1",
+            "owner_id": "owner",
+            "assigned_worker": "worker-1",
+            "dispatched_at": "2026-03-22T00:00:00Z",
+            "task": {
+                "apiVersion": "flowmesh/v1",
+                "kind": "Task",
+                "metadata": {"name": "wf:api"},
+                "spec": {
+                    "taskType": "api",
+                    "_upstreamResults": {"Py": upstream},
+                    "api": {
+                        "method": "POST",
+                        "url": "https://custom.example.com/v1/chat/completions",
+                        "json": {"messages": "{{prompt}}"},
+                    },
+                    "data": {
+                        "type": "graph_template",
+                        "template": {
+                            "name": "format",
+                            "columns": [
+                                {
+                                    "label": "claim",
+                                    "node": "Py",
+                                    "path": "value.items.output.claim",
+                                }
+                            ],
+                            "options": {
+                                "format": {
+                                    "steps": [],
+                                    "messages": [
+                                        {"role": "user", "content": "all: {claim}"}
+                                    ],
+                                }
+                            },
+                        },
+                    },
+                },
+            },
+        }
+        task = WorkerTaskMessage.model_validate(payload)
+        transport = _EchoTransport()
+        result = _run(_executor(), task, transport, tmp_path)
+        assert len(transport.requests) == 2
+        assert len(result.items) == 2
+        group0 = result.items[0].response_json["choices"][0]["message"]["content"]
+        group1 = result.items[1].response_json["choices"][0]["message"]["content"]
+        assert "c0" in group0 and "c1" in group0 and "c2" not in group0
+        assert (
+            "c2" in group1 and "c3" in group1 and "c4" in group1 and "c0" not in group1
+        )
+
+    def test_empty_group_from_python_value_items_output(self, tmp_path: Path) -> None:
+        """A python stage with an empty per-item output list yields an empty
+        group: zero requests for it, an APIGroupItem with no rows."""
+        upstream = _python_upstream(
+            {
+                "items": [
+                    {"output": [{"claim": "c0", "src": "s0"}]},
+                    {"output": []},
+                ]
+            }
+        )
+        payload = {
+            "task_id": "task-api-py-empty",
+            "workflow_id": "wf-1",
+            "owner_id": "owner",
+            "assigned_worker": "worker-1",
+            "dispatched_at": "2026-03-22T00:00:00Z",
+            "task": {
+                "apiVersion": "flowmesh/v1",
+                "kind": "Task",
+                "metadata": {"name": "wf:api"},
+                "spec": {
+                    "taskType": "api",
+                    "_upstreamResults": {"Py": upstream},
+                    "api": {
+                        "method": "POST",
+                        "url": "https://custom.example.com/v1/chat/completions",
+                        "json": {"messages": "{{prompt}}"},
+                    },
+                    "data": {
+                        "type": "dataframe",
+                        "columns": [
+                            {
+                                "label": "claim",
+                                "node": "Py",
+                                "path": "value.items.output.claim",
+                            },
+                            {
+                                "label": "src",
+                                "node": "Py",
+                                "path": "value.items.output.src",
+                            },
+                        ],
+                        "messages": [
+                            {"role": "user", "content": "row {claim} {src}"},
+                        ],
+                    },
+                },
+            },
+        }
+        task = WorkerTaskMessage.model_validate(payload)
+        transport = _EchoTransport()
+        result = _run(_executor(), task, transport, tmp_path)
+        assert len(transport.requests) == 1
+        assert len(result.items) == 2
+        assert len(result.items[0].rows) == 1
+        assert result.items[1].rows == []
+        assert json.loads(result.items[0].rows[0].prompt)[0]["content"] == ("row c0 s0")
+
+
+class TestCallLogging:
+    @pytest.fixture(autouse=True)
+    def _nebula_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("NEBULA_API_BASE_URL", "https://nebula.example.com")
+        monkeypatch.setenv("NEBULA_API_TOKEN", "nebula-token")
+
+    @staticmethod
+    def _records(caplog: pytest.LogCaptureFixture, prefix: str) -> list[str]:
+        return [
+            r.getMessage() for r in caplog.records if r.getMessage().startswith(prefix)
+        ]
+
+    def test_chat_completion_call_line_has_tokens_and_backend(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A chat-completion response yields a per-call line with the token and
+        backend fields."""
+        task = _batch_task(["hi"])
+        transport = _SequenceTransport(
+            [
+                httpx.Response(
+                    200,
+                    json={
+                        "choices": [
+                            {
+                                "message": {"content": "hello"},
+                                "finish_reason": "stop",
+                            }
+                        ],
+                        "usage": {
+                            "prompt_tokens": 10,
+                            "completion_tokens": 5,
+                            "completion_tokens_details": {"reasoning_tokens": 2},
+                        },
+                        "provider": "nebula",
+                    },
+                )
+            ]
+        )
+        with caplog.at_level(logging.DEBUG, logger="worker.executors.api_executor"):
+            _run(_executor(), task, transport, tmp_path)
+        call_lines = self._records(caplog, "api call")
+        assert len(call_lines) == 1
+        msg = call_lines[0]
+        assert "row=0" in msg
+        assert "attempts=1" in msg
+        assert "status=200" in msg
+        assert "prompt_tokens=10" in msg
+        assert "completion_tokens=5" in msg
+        assert "reasoning_tokens=2" in msg
+        assert "finish_reason=stop" in msg
+        assert "backend=nebula" in msg
+
+    def test_retried_503_then_200_shows_attempts_two(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A retried 503 then 200 logs attempts=2."""
+        task = _batch_task(["hi"], retries=2)
+        transport = _SequenceTransport([_error_response(503), _ok_response()])
+        with caplog.at_level(logging.DEBUG, logger="worker.executors.api_executor"):
+            _run(_executor(), task, transport, tmp_path)
+        call_lines = self._records(caplog, "api call")
+        assert len(call_lines) == 1
+        assert "attempts=2" in call_lines[0]
+
+    def test_exhausted_connect_error_logs_attempts_and_retries(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A row whose connection errors exhaust retries logs the real attempt
+        count and the retry total, not zero."""
+        task = _batch_task(["hi"], retries=2)
+
+        class _RaisingTransport(httpx.MockTransport):
+            def __init__(self) -> None:
+                super().__init__(self._handler)
+
+            def _handler(self, request: httpx.Request) -> httpx.Response:
+                raise httpx.ConnectError("boom", request=request)
+
+        transport = _RaisingTransport()
+        with caplog.at_level(logging.DEBUG, logger="worker.executors.api_executor"):
+            with pytest.raises(ExecutionError, match="API request failed"):
+                _run(_executor(), task, transport, tmp_path)
+        call_lines = self._records(caplog, "api call")
+        assert len(call_lines) == 1
+        assert "attempts=3" in call_lines[0]
+        summary = self._records(caplog, "api summary")
+        assert len(summary) == 1
+        assert "retries=2" in summary[0]
+
+    def test_early_failure_summary_counts_completed_calls(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """With concurrency 1 and the first of three rows failing, the summary
+        counts the one request actually sent, not the three planned prompts."""
+        task = _batch_task(
+            ["a", "b", "c"],
+            concurrency=1,
+            response={"raise_for_status": True},
+        )
+
+        class _FirstFails(httpx.MockTransport):
+            def __init__(self) -> None:
+                super().__init__(self._handler)
+
+            def _handler(self, request: httpx.Request) -> httpx.Response:
+                prompt = json.loads(request.read())["messages"][0]["content"]
+                if prompt == "a":
+                    return httpx.Response(400, json={"error": "boom"})
+                return _ok_response()
+
+        transport = _FirstFails()
+        with caplog.at_level(logging.DEBUG, logger="worker.executors.api_executor"):
+            with pytest.raises(ExecutionError, match="row 0"):
+                _run(_executor(), task, transport, tmp_path)
+        call_lines = self._records(caplog, "api call")
+        assert len(call_lines) == 1
+        summary = self._records(caplog, "api summary")
+        assert len(summary) == 1
+        assert "calls=1" in summary[0]
+
+    def test_non_json_body_logs_dash_without_raising(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A non-JSON body logs '-' fields without raising."""
+        task = _batch_task(["hi"], response={"parse_json": False})
+        transport = _SequenceTransport(
+            [
+                httpx.Response(
+                    200,
+                    text="not json",
+                    headers={"Content-Type": "text/plain"},
+                )
+            ]
+        )
+        with caplog.at_level(logging.DEBUG, logger="worker.executors.api_executor"):
+            result = _run(_executor(), task, transport, tmp_path)
+        assert result.items[0].text == "not json"
+        call_lines = self._records(caplog, "api call")
+        assert len(call_lines) == 1
+        msg = call_lines[0]
+        assert "prompt_tokens=-" in msg
+        assert "backend=-" in msg
+
+    def test_malformed_telemetry_does_not_fail_request(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A dict-valued provider and a string token count are skipped in the
+        stats, so a successful request still succeeds and logs a summary."""
+        task = _batch_task(["hi"])
+        transport = _SequenceTransport(
+            [
+                httpx.Response(
+                    200,
+                    json={
+                        "choices": [{"message": {"content": "ok"}}],
+                        "provider": {"name": "backend-a"},
+                        "usage": {"prompt_tokens": "ten", "completion_tokens": 5},
+                    },
+                )
+            ]
+        )
+        with caplog.at_level(logging.DEBUG, logger="worker.executors.api_executor"):
+            result = _run(_executor(), task, transport, tmp_path)
+        assert result.items[0].status_code == 200
+        call_lines = self._records(caplog, "api call")
+        assert len(call_lines) == 1
+        msg = call_lines[0]
+        assert "prompt_tokens=-" in msg
+        assert "completion_tokens=5" in msg
+        assert "backend=-" in msg
+        summary = self._records(caplog, "api summary")
+        assert len(summary) == 1
+        assert "calls=1" in summary[0]
+        assert "backends=-" in summary[0]
+
+    def test_summary_reports_per_backend_counts(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The summary line reports per-backend counts."""
+        task = _batch_task(["a", "b", "c"])
+        transport = _SequenceTransport(
+            [
+                httpx.Response(
+                    200,
+                    json={
+                        "choices": [{"message": {"content": "a"}}],
+                        "provider": "backend-a",
+                    },
+                ),
+                httpx.Response(
+                    200,
+                    json={
+                        "choices": [{"message": {"content": "b"}}],
+                        "provider": "backend-b",
+                    },
+                ),
+                httpx.Response(
+                    200,
+                    json={
+                        "choices": [{"message": {"content": "c"}}],
+                        "provider": "backend-a",
+                    },
+                ),
+            ]
+        )
+        with caplog.at_level(logging.DEBUG, logger="worker.executors.api_executor"):
+            _run(_executor(), task, transport, tmp_path)
+        summary = self._records(caplog, "api summary")
+        assert len(summary) == 1
+        msg = summary[0]
+        assert "calls=3" in msg
+        assert "retries=0" in msg
+        assert "backends=backend-a=2,backend-b=1" in msg
+
+
+class TestUsage:
+    @pytest.fixture(autouse=True)
+    def _nebula_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("NEBULA_API_BASE_URL", "https://nebula.example.com")
+        monkeypatch.setenv("NEBULA_API_TOKEN", "nebula-token")
+
+    def test_usage_totals_across_rows(self, tmp_path: Path) -> None:
+        """The result's usage sums tokens and calls across every row, counting
+        a finish_reason=length call as truncated."""
+        task = _batch_task(["a", "b", "c"])
+        transport = _SequenceTransport(
+            [
+                httpx.Response(
+                    200,
+                    json={
+                        "choices": [
+                            {
+                                "message": {"content": "a"},
+                                "finish_reason": "stop",
+                            }
+                        ],
+                        "usage": {
+                            "prompt_tokens": 10,
+                            "completion_tokens": 5,
+                            "completion_tokens_details": {"reasoning_tokens": 2},
+                        },
+                    },
+                ),
+                httpx.Response(
+                    200,
+                    json={
+                        "choices": [
+                            {
+                                "message": {"content": "b"},
+                                "finish_reason": "length",
+                            }
+                        ],
+                        "usage": {
+                            "prompt_tokens": 20,
+                            "completion_tokens": 7,
+                        },
+                    },
+                ),
+                httpx.Response(
+                    200,
+                    json={"choices": [{"message": {"content": "c"}}]},
+                ),
+            ]
+        )
+        result = _run(_executor(), task, transport, tmp_path)
+        assert result.usage_summary is not None
+        assert result.usage_summary.prompt_tokens == 30
+        assert result.usage_summary.completion_tokens == 12
+        assert result.usage_summary.reasoning_tokens == 2
+        assert result.usage_summary.calls == 3
+        assert result.usage_summary.retries == 0
+        assert result.usage_summary.truncated_calls == 1
+        assert result.usage_summary.wall_sec >= 0
+
+    def test_usage_counts_retries(self, tmp_path: Path) -> None:
+        """A retried 503 then 200 counts the retry in usage."""
+        task = _batch_task(["a"], retries=2)
+        transport = _SequenceTransport(
+            [
+                _error_response(503),
+                httpx.Response(
+                    200,
+                    json={
+                        "choices": [{"message": {"content": "a"}}],
+                        "usage": {"prompt_tokens": 4, "completion_tokens": 1},
+                    },
+                ),
+            ]
+        )
+        result = _run(_executor(), task, transport, tmp_path)
+        assert result.usage_summary is not None
+        assert result.usage_summary.calls == 1
+        assert result.usage_summary.retries == 1
+        assert result.usage_summary.prompt_tokens == 4
+        assert result.usage_summary.completion_tokens == 1
+
+    def test_usage_absent_when_no_rows(self, tmp_path: Path) -> None:
+        """A task with no rows raises before producing a usage object."""
+        task = _batch_task([])
+        with pytest.raises(ExecutionError, match="no rows"):
+            _run(_executor(), task, _EchoTransport(), tmp_path)
+
+    def test_single_call_usage_shape(self, tmp_path: Path) -> None:
+        """A one-row task's usage is a typed APIUsage, not a raw provider dict."""
+        task = _batch_task(["hi"])
+        transport = _SequenceTransport(
+            [
+                httpx.Response(
+                    200,
+                    json={
+                        "choices": [{"message": {"content": "hello"}}],
+                        "usage": {"prompt_tokens": 10, "completion_tokens": 5},
+                    },
+                )
+            ]
+        )
+        result = _run(_executor(), task, transport, tmp_path)
+        assert isinstance(result.usage_summary, APIUsage)
+        assert result.usage_summary.prompt_tokens == 10
+        assert result.usage_summary.completion_tokens == 5
+        assert result.usage_summary.reasoning_tokens == 0
+        assert result.usage_summary.calls == 1
+        assert result.usage_summary.retries == 0
+        assert result.usage_summary.truncated_calls == 0

@@ -49,6 +49,7 @@ from flowmesh.models import (
     WorkflowValidateResponse,
     WorkflowValidateTaskEntry,
 )
+from pydantic import TypeAdapter
 
 import shared.schemas.result as srv_results
 
@@ -102,6 +103,7 @@ from .helpers import (
     assert_enum_members_match,
     assert_extra_policy_matches,
     assert_field_aliases_match,
+    assert_field_types_match,
     assert_fields_match,
 )
 
@@ -153,6 +155,8 @@ _RESULT_MODEL_NAMES = [
     "RagQuery",
     "EchoItem",
     "APIItem",
+    "APIGroupItem",
+    "APIUsage",
 ]
 
 RESULT_MODEL_PAIRS = [
@@ -241,6 +245,16 @@ def test_result_extra_policy_matches(server_model: type, sdk_model: type) -> Non
     assert_extra_policy_matches(server_model, sdk_model)
 
 
+@pytest.mark.parametrize(
+    "server_model,sdk_model",
+    RESULT_MODEL_PAIRS,
+    ids=[f"{h.__name__}->{s.__name__}" for h, s in RESULT_MODEL_PAIRS],
+)
+def test_result_field_types_match(server_model: type, sdk_model: type) -> None:
+    """SDK result models must declare the same field types as the shared models."""
+    assert_field_types_match(server_model, sdk_model)
+
+
 def test_task_info_fields() -> None:
     """TaskInfo: last_queue_ts is server-internal, skip it."""
     assert_fields_match(SrvTaskInfo, TaskInfo, skip_server_fields={"last_queue_ts"})
@@ -248,6 +262,30 @@ def test_task_info_fields() -> None:
 
 def test_worker_register_response_fields() -> None:
     assert_fields_match(SrvWorkerRegisterResponse, WorkerRegisterResponse)
+
+
+def test_sdk_api_result_accepts_upstream_usage_dict() -> None:
+    """Enforces that an APIResult whose top-level ``usage`` is the upstream
+    usage dict validates through the SDK's AnyExecutorResult as-is, leaving
+    ``usage_summary`` unset."""
+    payload = {
+        "task_type": "api",
+        "executor": "api",
+        "method": "POST",
+        "url": "http://example.com/v1/chat/completions",
+        "status_code": 200,
+        "usage": {"prompt_tokens": 3, "completion_tokens": 5, "total_tokens": 8},
+    }
+    result: sdk_models.APIResult = TypeAdapter(
+        sdk_models.AnyExecutorResult
+    ).validate_python(payload)
+    assert isinstance(result, sdk_models.APIResult)
+    assert result.usage == {
+        "prompt_tokens": 3,
+        "completion_tokens": 5,
+        "total_tokens": 8,
+    }
+    assert result.usage_summary is None
 
 
 # ------------------------------------------------------------------ #

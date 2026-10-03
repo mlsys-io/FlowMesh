@@ -28,6 +28,7 @@ from ..utils.artifacts import (
 )
 from ..utils.data_utils import normalize_prompt_payload
 from ..utils.graph_templates import (
+    _build_grouped_dataframes,
     _evaluate_expr,
     _resolve_columns,
     build_prompts_from_graph_template,
@@ -429,7 +430,7 @@ class DataMixin(GovernanceMixin):
                 if expr:
                     context = self._spec_upstream_results(spec)
                     resolved_expr = expr.strip()
-                    items = _evaluate_expr(resolved_expr, context)
+                    items, _ = _evaluate_expr(resolved_expr, context)
                     root_node = resolved_expr.split(".", 1)[0] or None
             if not isinstance(items, list):
                 raise ExecutionError(
@@ -585,57 +586,9 @@ class DataMixin(GovernanceMixin):
                     "for type == 'dataframe'."
                 )
 
-            grouped_columns: dict[str, list[list[Any]]] = {}
-            for column in resolved_columns:
-                label = column["label"]
-                value = column["value"]
-                if (
-                    isinstance(value, list)
-                    and value
-                    and all(isinstance(v, list) for v in value)
-                ):
-                    groups = value
-                elif isinstance(value, list):
-                    groups = [value]
-                else:
-                    groups = [[value]]
-                grouped_columns[label] = groups
+            table_stores_list = _build_grouped_dataframes(resolved_columns)
 
-            group_count = max(len(groups) for groups in grouped_columns.values())
-            for label, groups in list(grouped_columns.items()):
-                if len(groups) == 1 and group_count > 1:
-                    grouped_columns[label] = groups * group_count
-                elif len(groups) != group_count:
-                    raise ExecutionError(
-                        "spec.data.columns must resolve to the same number of groups."
-                    )
-
-            table_stores_list = []
-            for group_idx in range(group_count):
-                max_len = 1
-                raw_group_values: dict[str, list[Any]] = {}
-                for label, groups in grouped_columns.items():
-                    values = groups[group_idx]
-                    if not isinstance(values, list):
-                        values = [values]
-                    if values:
-                        max_len = max(max_len, len(values))
-                    raw_group_values[label] = values
-
-                normalized_rows: dict[str, list[Any]] = {}
-                for label, values in raw_group_values.items():
-                    if len(values) == 1 and max_len > 1:
-                        values = [values[0] for _ in range(max_len)]
-                    elif len(values) != max_len:
-                        raise ExecutionError(
-                            "spec.data.columns must resolve to "
-                            "the same number of rows per group."
-                        )
-                    normalized_rows[label] = values
-
-                df = pd.DataFrame(normalized_rows)
-                table_stores_list.append(df)
-
+            for df in table_stores_list:
                 if fetch_images:
                     contents = df.get(
                         "content", pd.Series(["" for _ in range(len(df))])
@@ -680,7 +633,7 @@ class DataMixin(GovernanceMixin):
             resolved_node = node_hint
             if not resolved_node and isinstance(expr, str):
                 resolved_node = expr.split(".", 1)[0].strip() or None
-            image_embedding_spec: Any = _evaluate_expr(expr.strip(), context)
+            image_embedding_spec: Any = _evaluate_expr(expr.strip(), context)[0]
             artifact_source = maybe_resolve_artifact_ref(
                 image_embedding_spec, context, resolved_node
             )
