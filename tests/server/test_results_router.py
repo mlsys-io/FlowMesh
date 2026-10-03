@@ -1,5 +1,7 @@
 import io
 import logging
+import tarfile
+import tempfile
 import threading
 from collections.abc import Iterator
 from pathlib import Path
@@ -220,3 +222,35 @@ async def test_download_result_bundle_builds_off_the_event_loop(
     assert isinstance(response, FileResponse)
     assert threads and threads[0] != threading.get_ident()
     Path(response.path).unlink()
+
+
+def test_a_bundle_leaves_out_in_flight_writes_and_files_removed_under_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    artifacts = tmp_path / "artifacts"
+    (artifacts / "nested").mkdir(parents=True)
+    (artifacts / "nested" / "kept.bin").write_bytes(b"x")
+    in_flight = Path(tempfile.mkstemp(prefix=".fm-tmp-", dir=artifacts)[1])
+    assert atomic.is_atomic_temp(in_flight.name)
+    rglob = Path.rglob
+
+    def _with_removed(self: Path, pattern: str) -> Iterator[Path]:
+        yield from rglob(self, pattern)
+        yield self / "gone.bin"
+
+    monkeypatch.setattr(Path, "rglob", _with_removed)
+
+    bundle = results_router._create_result_bundle_archive(
+        "t-1", tmp_path, ("artifacts",)
+    )
+    try:
+        with tarfile.open(bundle, mode="r:gz") as archive:
+            names = archive.getnames()
+    finally:
+        bundle.unlink()
+
+    assert names == [
+        "t-1/artifacts",
+        "t-1/artifacts/nested",
+        "t-1/artifacts/nested/kept.bin",
+    ]

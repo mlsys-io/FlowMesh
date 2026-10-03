@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import gzip
 import json
 import logging
@@ -26,7 +27,7 @@ from shared.schemas.result import (
     result_file_path,
     write_result,
 )
-from shared.utils.atomic import atomic_write_stream
+from shared.utils.atomic import atomic_write_stream, is_atomic_temp
 from shared.utils.manifest import (
     ARTIFACTS_DIR,
     LOGS_DIR,
@@ -386,12 +387,27 @@ def _create_result_bundle_archive(
                 candidate = _bundle_section_path(base_dir, section)
                 if candidate is None or not candidate.exists():
                     continue
-                archive.add(candidate, arcname=f"{task_id}/{candidate.name}")
+                _add_tree(archive, candidate, f"{task_id}/{candidate.name}")
     except Exception:
         bundle_path.unlink(missing_ok=True)
         raise
 
     return bundle_path
+
+
+def _add_tree(archive: tarfile.TarFile, root: Path, arcname: str) -> None:
+    """Add ``root`` and everything under it, leaving out in-flight atomic writes and
+    any file removed while the archive is built."""
+    archive.add(root, arcname=arcname, recursive=False)
+    for path in sorted(root.rglob("*")):
+        if is_atomic_temp(path.name):
+            continue
+        with contextlib.suppress(FileNotFoundError):
+            archive.add(
+                path,
+                arcname=f"{arcname}/{path.relative_to(root).as_posix()}",
+                recursive=False,
+            )
 
 
 def _bundle_section_path(base_dir: Path, section: str) -> Path | None:
