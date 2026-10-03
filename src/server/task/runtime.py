@@ -1370,6 +1370,10 @@ class TaskRuntime:
                 and (statuses is None or record.status in statuses)
             ]
 
+    def task_statuses(self) -> dict[str, str]:
+        with self._lock:
+            return {task_id: record.status for task_id, record in self._tasks.items()}
+
     # ------------------------------------------------------------------ #
     # Misc helpers
     # ------------------------------------------------------------------ #

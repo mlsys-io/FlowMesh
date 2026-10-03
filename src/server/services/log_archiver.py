@@ -58,13 +58,11 @@ class TaskLogArchiver:
 
     def _tick(self) -> None:
         now = time.time()
-        tasks = self._runtime.list_tasks()
         terminal: set[str] = set()
 
         # Ensure all tasks are being tracked
-        for task in tasks:
-            task_id = task.task_id
-            if task.status in {
+        for task_id, task_status in self._runtime.task_statuses().items():
+            if task_status in {
                 TaskStatus.DONE,
                 TaskStatus.FAILED,
                 TaskStatus.CANCELLED,
