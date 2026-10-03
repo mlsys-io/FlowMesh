@@ -268,3 +268,24 @@ def test_a_bundle_walk_descends_no_deeper_than_the_bound(tmp_path: Path) -> None
 
     # The walk stops at the depth bound rather than descending the whole tree.
     assert len(walked) <= results_router._MAX_WALK_DEPTH
+
+
+def test_a_bundle_walk_does_not_follow_symlinked_directories(
+    tmp_path: Path,
+) -> None:
+    artifacts = tmp_path / "artifacts"
+    (artifacts / "sub").mkdir(parents=True)
+    (artifacts / "sub" / "f.bin").write_bytes(b"x")
+    (artifacts / "link").symlink_to(artifacts / "sub", target_is_directory=True)
+    (artifacts / "sub" / "loop").symlink_to(artifacts, target_is_directory=True)
+
+    walked = list(results_router._bounded_walk(artifacts))
+
+    # A symlinked directory is yielded once but never descended, so a loop cannot
+    # blow the walk up; this matches what root.rglob yielded before the bound.
+    assert walked == [
+        artifacts / "link",
+        artifacts / "sub",
+        artifacts / "sub" / "f.bin",
+        artifacts / "sub" / "loop",
+    ]
