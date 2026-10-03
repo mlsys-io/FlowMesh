@@ -9,6 +9,7 @@ from pydantic import (
     model_validator,
 )
 
+from shared.schemas.result_delivery import ArtifactInput, ResultDeliveryRequest
 from shared.schemas.worker import WorkerStatus
 from shared.tasks import (
     TaskEnvelopeStrict,
@@ -41,6 +42,10 @@ class WorkerTaskMessage(BaseModel):
         default=None,
         description="Optional mapping from upstream stage name to resolved task ID.",
     )
+    result_delivery: dict[str, ResultDeliveryRequest] = Field(default_factory=dict)
+    result_dispatch: str | None = None
+    artifact_inputs: dict[str, list[ArtifactInput]] = Field(default_factory=dict)
+    upstream_result_generations: dict[str, str] = Field(default_factory=dict)
 
     @property
     def spec(self) -> TaskSpecStrict:

@@ -45,11 +45,25 @@ self-authenticate the same way, sending `FLOWMESH_API_KEY` as the bearer.
 | Method | Path | Description |
 |--------|------|-------------|
 | POST | `/api/v1/results` | Submit task result (worker → server). |
+| POST | `/api/v1/results/{task_id}/delivery` | Publish a complete envelope and artifact selection (multipart tar snapshot). |
 | GET | `/api/v1/results/{task_id}` | Get task result JSON. |
 | GET | `/api/v1/results/{task_id}/bundle` | Download tar.gz bundle (`?include=results,artifacts,logs,all`). |
 | POST | `/api/v1/results/{task_id}/files` | Upload artifact (multipart). |
 | GET | `/api/v1/results/{task_id}/files/{filename}` | Download artifact. |
 | GET | `/api/v1/results/{task_id}/logs` | Download archived `logs.jsonl`. |
+
+Bundle sections use repeated query parameters, such as
+`?include=results&include=artifacts`. Missing requested sections return 404;
+nonterminal tasks return 409. A full artifact bundle requires complete artifact
+publication. Repeated `artifact_path` parameters request selected artifact files
+or subtrees; `generation` can require a specific result snapshot. Selected bundles
+carry completeness information for consumer caches. A completed task whose
+result remains worker-local also returns 404 from result retrieval.
+
+System delivery is independent of user output destinations. With
+`WORKER_UPLOAD_RESULTS=false`, only downstream-required data is published;
+`true` requests every result and artifact. Logs use the telemetry/archive path,
+and archived log downloads return 404 until the archive exists.
 
 ## Traces
 

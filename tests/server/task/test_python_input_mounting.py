@@ -54,22 +54,30 @@ def _spec(record: TaskRecord) -> PythonSpecStrict:
     return PythonSpecStrict.model_validate(record.task.spec.model_dump())
 
 
-def test_no_inputs_mounts_every_direct_dependency() -> None:
+def test_no_inputs_mounts_every_direct_dependency(tmp_path: Path) -> None:
     a = _record("t-a", "prep", TaskStatus.DONE)
     b = _record("t-b", "raw", TaskStatus.DONE)
     py = _record("t-py", "score", TaskStatus.PENDING, entrypoint="main")
-    dispatcher = _dispatcher([a, b, py], ["t-a", "t-b"])
+    for identifier in ("t-a", "t-b"):
+        write_result(
+            tmp_path, ResultEnvelope(task_id=identifier, result=BaseExecutorResult())
+        )
+    dispatcher = _dispatcher([a, b, py], ["t-a", "t-b"], tmp_path)
     assert dispatcher._resolve_upstream_task_ids(py, _spec(py)) == {
         "prep": "t-a",
         "raw": "t-b",
     }
 
 
-def test_explicit_inputs_are_resolved_like_ssh() -> None:
+def test_explicit_inputs_are_resolved_like_ssh(tmp_path: Path) -> None:
     a = _record("t-a", "prep", TaskStatus.DONE)
     b = _record("t-b", "raw", TaskStatus.DONE)
     py = _record("t-py", "score", TaskStatus.PENDING, inputs=[{"stage": "raw"}])
-    dispatcher = _dispatcher([a, b, py], ["t-a", "t-b"])
+    for identifier in ("t-a", "t-b"):
+        write_result(
+            tmp_path, ResultEnvelope(task_id=identifier, result=BaseExecutorResult())
+        )
+    dispatcher = _dispatcher([a, b, py], ["t-a", "t-b"], tmp_path)
     assert dispatcher._resolve_upstream_task_ids(py, _spec(py)) == {"raw": "t-b"}
 
 

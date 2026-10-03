@@ -57,6 +57,8 @@ class ResolvedSSHInput:
     task_id: str
     source_path: Path
     mount_path: str
+    generation: str | None = None
+    artifact_paths: list[str] | None = None
 
 
 @dataclass(slots=True)

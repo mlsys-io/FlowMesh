@@ -16,7 +16,6 @@ from shared.schemas.result import BaseExecutorResult, ResultEnvelope
 from shared.tasks.specs import TaskSpecStrictBase
 from shared.utils.atomic import atomic_write_text
 from shared.utils.http import add_auth_headers
-from shared.utils.parsing import parse_bool_env
 
 from ..base_executor import ExecutionError, TaskReference
 from .artifacts import is_flowmesh_origin_url
@@ -347,8 +346,6 @@ def get_http_destination(spec: TaskSpecStrictBase) -> HTTPDestination | None:
             headers = dest.headers.copy()
         if dest.timeoutSec is not None:
             timeout = dest.timeoutSec
-    elif parse_bool_env("WORKER_UPLOAD_RESULTS", False):
-        ignore_error = True
     else:
         return None
     if not url:

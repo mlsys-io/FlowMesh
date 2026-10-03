@@ -11,12 +11,14 @@ from server.routers.v1.results import (
     _create_result_bundle_archive,
     _resolve_bundle_sections,
 )
+from shared.schemas.result import BaseExecutorResult, ResultEnvelope
 
 
 def _populate_task_dir(task_dir: Path) -> None:
     (task_dir / "artifacts" / "images").mkdir(parents=True)
     (task_dir / "logs").mkdir(parents=True)
-    (task_dir / "results.json").write_text("{}", encoding="utf-8")
+    envelope = ResultEnvelope(task_id=task_dir.name, result=BaseExecutorResult())
+    (task_dir / "results.json").write_text(envelope.model_dump_json(), encoding="utf-8")
     (task_dir / "manifest.json").write_text('{"ok": true}', encoding="utf-8")
     (task_dir / "artifacts" / "images" / "a.png").write_bytes(b"aaa")
     (task_dir / "logs" / "logs.jsonl").write_text("line\n", encoding="utf-8")

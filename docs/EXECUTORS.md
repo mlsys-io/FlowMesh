@@ -48,7 +48,12 @@ the permissive base.
 
 Artifact-bearing fields use `ArtifactRef` (`{"path": rel_path}`);
 relative paths resolve against the producer's `_artifacts` context via
-`artifact_to_source` / `_render_artifact_ref`.
+`artifact_to_source` / `_render_artifact_ref`. Downstream named references
+hydrate the selected file or directory on the consumer worker and resolve to a
+local path, including `checkpoint.load.type: local`. Python/SSH input mounts
+hydrate the complete upstream artifact directory. System delivery preserves
+artifact contexts from declared output destinations. Training cleanup retains
+artifacts when system publication is requested.
 
 ## Agent executor (utu / youtu-agent)
 

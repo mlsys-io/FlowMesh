@@ -10,11 +10,15 @@ from unittest import mock
 
 import pytest
 
+from server.dispatcher.base import StageReferenceNotReady, StageResultMissing
 from server.task.models import TaskStatus
 from shared.schemas.result import BaseExecutorResult, ResultEnvelope, write_result
-from shared.tasks.components.output import OutputDestinationHTTP
 from tests.server.dispatcher.helpers import CapturingDispatcher
+from tests.server.dispatcher.test_merged_child_redaction_dispatch import (
+    _RecordingDispatcher,
+)
 from tests.server.task.merge_harness import build_runtime
+from tests.shared.test_result_delivery import populate
 
 _TWO_STAGE = """
 apiVersion: flowmesh/v1
@@ -104,9 +108,11 @@ def test_a_stage_with_a_reading_dependent_uploads_its_result(
 
     assert disp.dispatch_once(nodes["prep"]) is True
 
-    output = _published_output(registry)
-    assert isinstance(output.destination, OutputDestinationHTTP)
-    assert output.destination.url is None
+    message = registry.publish_task.call_args.args[1]
+    assert message.task.spec.output is None
+    request = message.result_delivery[nodes["prep"]]
+    assert request.all_artifacts is (score_type == "python")
+    assert request.artifact_fields == []
 
 
 def test_a_declared_destination_is_kept(tmp_path: Path) -> None:
@@ -169,4 +175,192 @@ def test_a_result_that_never_arrives_fails_the_dependent(
     [(task_id, error, _)] = disp.failed
     assert task_id == nodes["score"]
     assert f"Result of task {nodes['prep']} has not reached the server" in error
-    assert "WORKER_UPLOAD_RESULTS=1" in error
+    assert "FLOWMESH_BASE_URL" in error
+
+
+def test_named_reference_requests_only_selected_artifact_and_hydration_descriptor(
+    tmp_path: Path,
+) -> None:
+    runtime, _ = build_runtime("stage-named-artifact")
+    payload = (
+        _payload("python")
+        + "        inputs: []\n        env:\n          MODEL: '${prep.model}'\n"
+    )
+    _, nodes = register(runtime, payload)
+    disp, registry = _dispatcher(runtime, tmp_path)
+    assert disp.dispatch_once(nodes["prep"])
+    request = registry.publish_task.call_args.args[1].result_delivery[nodes["prep"]]
+    assert request.all_artifacts is False
+    assert request.artifact_fields == ["model"]
+    runtime._tasks[nodes["prep"]].status = TaskStatus.DONE
+    base = populate(
+        tmp_path,
+        task_id=nodes["prep"],
+        dispatch_id=runtime._tasks[nodes["prep"]].result_dispatch,
+    )
+    registry.reset_mock()
+    assert disp.dispatch_once(nodes["score"])
+    message = registry.publish_task.call_args.args[1]
+    [descriptor] = message.artifact_inputs[nodes["score"]]
+    assert descriptor.task_id == nodes["prep"]
+    assert descriptor.path == "model"
+    assert descriptor.source == (base / "artifacts" / "model").as_posix()
+    assert descriptor.generation
+
+
+def test_transitive_consumer_demand_and_python_code_exemption(tmp_path: Path) -> None:
+    runtime, _ = build_runtime("stage-transitive-demand")
+    payload = _payload() + """
+    - name: final
+      dependsOn: [score]
+      spec:
+        taskType: python
+        inputs: []
+        env:
+          MODEL: '${prep.model}'
+        code: |
+          def main():
+              return '${prep.unused}'
+"""
+    _, nodes = register(runtime, payload)
+    disp, registry = _dispatcher(runtime, tmp_path)
+    assert disp.dispatch_once(nodes["prep"])
+    request = registry.publish_task.call_args.args[1].result_delivery[nodes["prep"]]
+    assert request.all_artifacts is False
+    assert request.artifact_fields == ["model"]
+
+
+def test_missing_mounted_artifacts_uses_the_result_grace(tmp_path: Path) -> None:
+    runtime, _ = build_runtime("stage-partial-artifact")
+    _, nodes = register(runtime, _payload("python"))
+    upstream = runtime._tasks[nodes["prep"]]
+    upstream.status = TaskStatus.DONE
+    upstream.finished_ts = time.time()
+    write_result(
+        tmp_path,
+        ResultEnvelope(
+            task_id=upstream.task_id,
+            result=BaseExecutorResult(),
+            metadata={"independent_results": True},
+        ),
+    )
+    disp, registry = _dispatcher(runtime, tmp_path)
+    assert disp.dispatch_once(nodes["score"]) is False
+    assert not registry.publish_task.called
+    upstream.finished_ts -= 300
+    assert disp.dispatch_once(nodes["score"]) is True
+    assert disp.failed[0][0] == nodes["score"]
+
+
+@pytest.mark.parametrize("later_child_waiting", [False, True])
+def test_expired_merged_child_does_not_fail_parent_or_other_workflow(
+    tmp_path: Path, later_child_waiting: bool
+) -> None:
+    runtime, _ = build_runtime("merged-delivery-expiry")
+    payload = """
+apiVersion: flowmesh/v1
+kind: Workflow
+metadata:
+  name: batch
+spec:
+  graph:
+    nodes:
+      - name: task
+        spec:
+          taskType: inference
+          model:
+            source:
+              identifier: llama
+"""
+    _, first = register(runtime, payload)
+    _, second = register(runtime, payload)
+    _, third = register(runtime, payload)
+    parent, expired, survivor = first["task"], second["task"], third["task"]
+    _, registry = _dispatcher(runtime, tmp_path)
+    disp = _RecordingDispatcher(
+        runtime=runtime,
+        worker_registry=registry,
+        results_dir=tmp_path,
+        logger=logging.getLogger("merged-expiry"),
+        worker_selection_strategy="first_fit",
+        enable_context_reuse=False,
+        enable_task_merge=True,
+        task_merge_max_batch_size=3,
+    )
+    resolve = disp._resolve_stage_references
+
+    def resolve_child(identifier: str, task: Any, record: Any) -> Any:
+        if identifier == expired:
+            raise StageResultMissing("upstream delivery expired")
+        if identifier == survivor and later_child_waiting:
+            raise StageReferenceNotReady("upstream delivery pending")
+        return resolve(identifier, task, record)
+
+    with mock.patch.object(
+        disp, "_resolve_stage_references", side_effect=resolve_child
+    ):
+        assert disp.dispatch_once(parent) is (not later_child_waiting)
+    expired_record = runtime.get_record(expired)
+    parent_record = runtime.get_record(parent)
+    survivor_record = runtime.get_record(survivor)
+    assert (
+        expired_record is not None
+        and parent_record is not None
+        and survivor_record is not None
+    )
+    assert expired_record.status == TaskStatus.FAILED
+    assert expired_record.merged_parent_id is None
+    assert parent_record.status != TaskStatus.FAILED
+    assert survivor_record.status != TaskStatus.FAILED
+    assert disp.failed == []
+    assert any(
+        event["task_id"] == expired and event["is_child"] for event in disp.events
+    )
+    if later_child_waiting:
+        registry.publish_task.assert_not_called()
+    else:
+        assert [
+            child.task_id
+            for child in registry.publish_task.call_args.args[1].merged_children
+        ] == [survivor]
+
+
+@pytest.mark.parametrize("named", [True, False])
+def test_retried_producer_cannot_reuse_previous_dispatch_result(
+    tmp_path: Path, named: bool
+) -> None:
+    runtime, _ = build_runtime("retry-delivery")
+    _, nodes = register(runtime, _payload("python"))
+    upstream = nodes["prep"]
+    disp, registry = _dispatcher(runtime, tmp_path)
+    assert disp.dispatch_once(upstream)
+    first_dispatch = runtime._tasks[upstream].result_dispatch
+    populate(tmp_path, task_id=upstream, dispatch_id=first_dispatch)
+    runtime.mark_pending(upstream, increment_retry=True)
+    assert disp.dispatch_once(upstream)
+    record = runtime._tasks[upstream]
+    assert record.result_dispatch != first_dispatch
+    record.status = TaskStatus.DONE
+    record.finished_ts = time.time()
+    if not named:
+        record.local_name = None
+        record.graph_node_name = None
+    registry.reset_mock()
+    assert disp.dispatch_once(nodes["score"]) is False
+    assert not registry.publish_task.called
+    record.finished_ts -= 300
+    assert disp.dispatch_once(nodes["score"]) is True
+    assert disp.failed[0][0] == nodes["score"]
+
+
+def test_merged_child_dispatch_identity_changes_without_retry_counter(
+    tmp_path: Path,
+) -> None:
+    runtime, _ = build_runtime("merged-retry-delivery")
+    _, nodes = register(runtime, _payload())
+    parent, child = nodes["prep"], nodes["score"]
+    runtime.prepare_result_dispatch(parent, [child], "first-dispatch")
+    attempts = runtime._tasks[child].attempts
+    runtime.prepare_result_dispatch(parent, [child], "second-dispatch")
+    assert runtime._tasks[child].attempts == attempts
+    assert runtime._tasks[child].result_dispatch == "second-dispatch"

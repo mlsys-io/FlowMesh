@@ -1,6 +1,9 @@
 import logging
 from pathlib import Path
 
+from shared.tasks.worker_message import WorkerTaskMessage
+from shared.utils.parsing import parse_bool_env
+
 from ..base_executor import TaskReference
 from ..utils.checkpoints import (
     cleanup_artifact_path,
@@ -32,6 +35,14 @@ class TrainingMixin:
                 self.name,
                 task.task_id,
             )
+            return
+        if parse_bool_env("WORKER_UPLOAD_RESULTS", False) or (
+            isinstance(task, WorkerTaskMessage)
+            and any(
+                request.all_artifacts or request.artifact_fields
+                for request in task.result_delivery.values()
+            )
+        ):
             return
         if not get_http_destination(task.spec):
             return

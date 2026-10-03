@@ -20,7 +20,7 @@ from shared.schemas.event import (
     WorkerEvent,
     parse_event,
 )
-from shared.schemas.result import result_file_path
+from shared.schemas.result import ResultEnvelope, result_file_path
 from shared.schemas.worker import WorkerStatus
 from shared.utils.manifest import RESULTS_NAME, sync_manifest
 
@@ -257,6 +257,16 @@ class EventMonitor:
             )
             return
 
+        parent_result = parent_dir / RESULTS_NAME
+        if parent_result.is_file():
+            try:
+                envelope = ResultEnvelope.model_validate_json(parent_result.read_text())
+                if (envelope.metadata or {}).get("independent_results"):
+                    with self._pending_lock:
+                        self._pending_result_clones.pop(parent_task_id, None)
+                    return
+            except (OSError, ValueError):
+                pass
         for child_id in child_ids:
             if child_id == parent_task_id:
                 continue

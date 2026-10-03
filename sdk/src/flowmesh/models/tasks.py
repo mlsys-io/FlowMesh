@@ -38,6 +38,7 @@ class TaskInfo(BaseModel):
     topic: str | None = None
     submitted_at: str
     submitted_ts: float
+    result_dispatch: str | None = None
     dispatched_ts: float | None = None
     started_ts: float | None = None
     finished_ts: float | None = None
