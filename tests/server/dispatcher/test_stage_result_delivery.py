@@ -13,6 +13,7 @@ import pytest
 from server.dispatcher.base import StageReferenceNotReady, StageResultMissing
 from server.task.models import TaskStatus
 from shared.schemas.result import BaseExecutorResult, ResultEnvelope, write_result
+from shared.utils.result_delivery import artifacts_ready
 from tests.server.dispatcher.helpers import CapturingDispatcher
 from tests.server.dispatcher.test_merged_child_redaction_dispatch import (
     _RecordingDispatcher,
@@ -364,3 +365,38 @@ def test_merged_child_dispatch_identity_changes_without_retry_counter(
     runtime.prepare_result_dispatch(parent, [child], "second-dispatch")
     assert runtime._tasks[child].attempts == attempts
     assert runtime._tasks[child].result_dispatch == "second-dispatch"
+
+
+def test_dispatch_checks_each_artifact_reference_once_without_hashing(
+    tmp_path: Path,
+) -> None:
+    runtime, _ = build_runtime("stage-artifact-check-once")
+    payload = (
+        _payload("python")
+        + "        inputs: []\n        env:\n          MODEL: '${prep.model}'\n"
+    )
+    _, nodes = register(runtime, payload)
+    disp, registry = _dispatcher(runtime, tmp_path)
+    assert disp.dispatch_once(nodes["prep"])
+    runtime._tasks[nodes["prep"]].status = TaskStatus.DONE
+    populate(
+        tmp_path,
+        task_id=nodes["prep"],
+        dispatch_id=runtime._tasks[nodes["prep"]].result_dispatch,
+    )
+    registry.reset_mock()
+
+    with (
+        mock.patch(
+            "server.dispatcher.base.artifacts_ready", wraps=artifacts_ready
+        ) as ready,
+        mock.patch(
+            "shared.utils.result_delivery.describe_file",
+            side_effect=AssertionError("dispatch must not hash artifacts"),
+        ),
+    ):
+        assert disp.dispatch_once(nodes["score"])
+
+    assert registry.publish_task.called
+    assert ready.call_count == 1
+    assert ready.call_args.kwargs["verify_content"] is False

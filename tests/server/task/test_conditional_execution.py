@@ -10,7 +10,6 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from server.dispatcher.base import Dispatcher
 from server.task.parser import parse_workflow
 from shared.schemas.result import BaseExecutorResult
 from shared.tasks.specs import (
@@ -19,6 +18,7 @@ from shared.tasks.specs import (
 )
 from shared.tasks.specs.common import ConditionSpec
 from shared.tasks.task_type import TaskType
+from shared.utils.result_delivery import dig_result_path
 
 
 class TestConditionSpecValidation:
@@ -63,11 +63,8 @@ class TestConditionEvaluation:
 
         Returns True if the condition is met (task should proceed).
         """
-        dispatcher_instance = object.__new__(Dispatcher)
         result = BaseExecutorResult.model_validate(result_payload)
-        actual = dispatcher_instance._dig_result_path(
-            result, condition.field.split(".")
-        )
+        actual = dig_result_path(result, condition.field.split("."))
         return str(actual) == condition.equals
 
     def test_condition_met(self) -> None:

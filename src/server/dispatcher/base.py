@@ -36,6 +36,7 @@ from shared.tasks.worker_message import WorkerStatus, WorkerTaskMessage
 from shared.utils.result_delivery import (
     artifact_path,
     artifacts_ready,
+    dig_result_path,
     read_receipt,
     result_field,
 )
@@ -48,8 +49,6 @@ from ..task.models import TaskRecord, TaskStatus
 from ..task.runtime import TaskRuntime
 from ..utils.time import now_iso
 from .worker_selector import DEFAULT_WORKER_SELECTION, select_worker
-
-_SENTINEL: Any = object()
 
 _NO_WORKER_BACKOFF_SEC = 0.5
 _ERROR_BACKOFF_SEC = 1.0
@@ -382,6 +381,7 @@ class Dispatcher:
         # 6. Resolve stage references
         try:
             rendered_task = self._resolve_stage_references(task_id, task, record)
+            artifact_inputs = {task_id: self._artifact_inputs(record)}
             upstream_task_ids = self._resolve_upstream_task_ids(
                 record, rendered_task.spec
             )
@@ -457,6 +457,7 @@ class Dispatcher:
                     resolved_child_task = self._resolve_stage_references(
                         child_id, child_record.task, child_record
                     )
+                    artifact_inputs[child_id] = self._artifact_inputs(child_record)
                 except StageReferenceNotReady as exc:
                     self._logger.debug(
                         "Merged child %s waiting on stage artifacts: %s",
@@ -575,12 +576,11 @@ class Dispatcher:
                 if (request := self._result_delivery_request(identifier)) is not None
             },
             artifact_inputs={
-                identifier: self._artifact_inputs(item)
+                identifier: artifact_inputs[identifier]
                 for identifier in [
                     task_id,
                     *[child.task_id for child in rendered_children or []],
                 ]
-                if (item := self._runtime.get_record(identifier)) is not None
             },
             upstream_result_generations={
                 identifier: receipt.generation
@@ -990,7 +990,6 @@ class Dispatcher:
         self, task_id: str, task: TaskEnvelopeTemplate, record: TaskRecord
     ) -> TaskEnvelopeStrict:
         context = self._build_stage_context(record)
-        self._artifact_inputs(record)
         resolved_task: TaskEnvelopeTemplate = task
         if context and task.has_placeholder():
             resolved_task = self._resolve_placeholders(task, context)
@@ -1118,7 +1117,7 @@ class Dispatcher:
         if stage_record.status != "DONE":
             raise StageReferenceNotReady(f"Stage '{stage_name}' has not completed")
         envelope = self._load_stage_result(stage_record.task_id)
-        value = self._dig_result_path(envelope.result, path.split("."))
+        value = dig_result_path(envelope.result, path.split("."))
         if value is None:
             raise ValueError(f"Missing value for reference '{expr}'")
         # If the referenced value is an artifact ref (an ``ArtifactRef`` or a
@@ -1277,7 +1276,7 @@ class Dispatcher:
     def _require_artifacts(self, task_id: str, paths: list[str] | None) -> None:
         self._load_stage_result(task_id)
         base_dir = result_file_path(self._results_dir, task_id).parent
-        if artifacts_ready(base_dir, task_id, paths):
+        if artifacts_ready(base_dir, task_id, paths, verify_content=False):
             return
         self._raise_if_result_missing(task_id, base_dir / "artifacts")
         raise StageReferenceNotReady(f"Artifacts for task {task_id} are incomplete")
@@ -1381,36 +1380,6 @@ class Dispatcher:
             request.artifact_fields = sorted(set(request.artifact_fields))
         return request
 
-    def _dig_result_path(self, result: BaseExecutorResult, parts: list[str]) -> Any:
-        current: Any = result
-        for part in parts:
-            part = part.strip()
-            if part == "":
-                continue
-            if isinstance(current, dict):
-                if part not in current:
-                    return None
-                current = current[part]
-                continue
-            if isinstance(current, list):
-                try:
-                    idx = int(part)
-                except ValueError as exc:
-                    raise ValueError(
-                        f"List index must be integer in reference path, got '{part}'"
-                    ) from exc
-                if idx < 0 or idx >= len(current):
-                    return None
-                current = current[idx]
-                continue
-            if isinstance(current, BaseModel):
-                current = getattr(current, part, _SENTINEL)
-                if current is _SENTINEL:
-                    return None
-                continue
-            return None
-        return current
-
     def _evaluate_condition_skip(
         self,
         task_id: str,
@@ -1440,7 +1409,7 @@ class Dispatcher:
                     f"(status={upstream_record.status})"
                 )
             upstream_result = self._load_stage_result(upstream_record.task_id)
-            actual_value = self._dig_result_path(
+            actual_value = dig_result_path(
                 upstream_result.result, condition.field.split(".")
             )
             if str(actual_value) == condition.equals:
