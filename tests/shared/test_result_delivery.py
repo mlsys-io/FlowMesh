@@ -1,4 +1,6 @@
 import errno
+import io
+import os
 import tarfile
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -210,3 +212,77 @@ def test_delivery_directories_remain_writable_by_peer_uids(tmp_path: Path) -> No
     commit_delivery(source, destination, "tsk-up")
     for name in ("artifacts", "artifacts/model", "artifacts/model/empty"):
         assert (destination / name).stat().st_mode & 0o777 == 0o777
+
+
+def test_symlinks_are_delivered_as_links_and_special_files_are_skipped(
+    tmp_path: Path,
+) -> None:
+    producer = populate(tmp_path / "producer")
+    venv = producer / "artifacts" / "venv" / "bin"
+    venv.mkdir(parents=True)
+    (venv / "python").symlink_to("/usr/bin/python3")
+    (producer / "artifacts" / "latest").symlink_to("model")
+    os.mkfifo(producer / "artifacts" / "pipe")
+    write_receipt(producer, make_receipt(producer, "tsk-up", None))
+    assert artifacts_ready(producer, "tsk-up")
+
+    bundle = create_delivery_bundle(producer, "tsk-up", None)
+    try:
+        staging = extract_delivery_bundle(bundle, tmp_path / "stage", "tsk-up")
+        destination = tmp_path / "server" / "tsk-up"
+        commit_delivery(staging, destination, "tsk-up")
+    finally:
+        bundle.unlink()
+
+    assert artifacts_ready(destination, "tsk-up")
+    python = destination / "artifacts" / "venv" / "bin" / "python"
+    assert python.is_symlink() and os.readlink(python) == "/usr/bin/python3"
+    assert os.readlink(destination / "artifacts" / "latest") == "model"
+    assert not (destination / "artifacts" / "pipe").exists()
+
+
+def test_a_changed_link_target_is_not_ready(tmp_path: Path) -> None:
+    base = populate(tmp_path)
+    (base / "artifacts" / "latest").symlink_to("model")
+    write_receipt(base, make_receipt(base, "tsk-up", None))
+    (base / "artifacts" / "latest").unlink()
+    (base / "artifacts" / "latest").symlink_to("unused-checkpoint")
+    assert not artifacts_ready(base, "tsk-up")
+
+
+def test_bundle_member_beneath_a_link_is_rejected(tmp_path: Path) -> None:
+    bundle = tmp_path / "bundle.tar"
+    with tarfile.open(bundle, "w") as archive:
+        link = tarfile.TarInfo("tsk-up/artifacts/escape")
+        link.type = tarfile.SYMTYPE
+        link.linkname = str(tmp_path / "outside")
+        archive.addfile(link)
+        payload = tarfile.TarInfo("tsk-up/artifacts/escape/planted")
+        payload.size = 1
+        archive.addfile(payload, io.BytesIO(b"x"))
+    with pytest.raises(ValueError, match="Unsafe bundle member"):
+        extract_delivery_bundle(bundle, tmp_path / "stage", "tsk-up")
+    assert not (tmp_path / "outside").exists()
+
+
+def test_size_check_detects_incomplete_files_without_hashing(tmp_path: Path) -> None:
+    base = populate(tmp_path)
+    weights = base / "artifacts" / "model" / "weights"
+    weights.write_bytes(b"MODEL")
+    assert artifacts_ready(base, "tsk-up", verify_content=False)
+    assert not artifacts_ready(base, "tsk-up")
+    weights.write_bytes(b"mod")
+    assert not artifacts_ready(base, "tsk-up", verify_content=False)
+
+
+def test_recommit_of_the_same_snapshot_keeps_unchanged_files(tmp_path: Path) -> None:
+    producer = populate(tmp_path / "producer")
+    destination = tmp_path / "server" / "tsk-up"
+    commit_delivery(producer, destination, "tsk-up")
+    weights = destination / "artifacts" / "model" / "weights"
+    inode = weights.stat().st_ino
+
+    commit_delivery(producer, destination, "tsk-up")
+
+    assert weights.stat().st_ino == inode
+    assert artifacts_ready(destination, "tsk-up")

@@ -2,6 +2,7 @@ import fcntl
 import hashlib
 import io
 import json
+import os
 import shutil
 import tarfile
 import tempfile
@@ -19,6 +20,7 @@ from shared.utils.atomic import atomic_write_text
 from shared.utils.manifest import prepare_output_dir
 
 RECEIPT_NAME = ".delivery.json"
+_MISSING = object()
 
 
 @contextmanager
@@ -52,17 +54,44 @@ def artifact_path(value: Any) -> str | None:
     return None
 
 
-def result_field(value: Any, selector: str) -> Any:
-    for part in selector.split("."):
-        if isinstance(value, BaseModel):
-            value = dict(value).get(part)
-        elif isinstance(value, dict):
-            value = value.get(part)
-        elif isinstance(value, list) and part.isdigit() and int(part) < len(value):
-            value = value[int(part)]
+def dig_result_path(value: Any, parts: list[str]) -> Any:
+    """Follow a stage-reference path into a result; ``None`` when it is absent.
+
+    Raises ``ValueError`` when a list is indexed by a non-integer part.
+    """
+    current = value
+    for part in parts:
+        part = part.strip()
+        if part == "":
+            continue
+        if isinstance(current, dict):
+            if part not in current:
+                return None
+            current = current[part]
+        elif isinstance(current, list):
+            try:
+                idx = int(part)
+            except ValueError as exc:
+                raise ValueError(
+                    f"List index must be integer in reference path, got '{part}'"
+                ) from exc
+            if idx < 0 or idx >= len(current):
+                return None
+            current = current[idx]
+        elif isinstance(current, BaseModel):
+            current = getattr(current, part, _MISSING)
+            if current is _MISSING:
+                return None
         else:
             return None
-    return value
+    return current
+
+
+def result_field(value: Any, selector: str) -> Any:
+    try:
+        return dig_result_path(value, selector.split("."))
+    except ValueError:
+        return None
 
 
 def result_generation(base_dir: Path) -> str:
@@ -92,6 +121,7 @@ def make_receipt(
         all_artifacts=paths is None,
         artifact_paths=paths or [],
     )
+    artifacts_root = (base_dir / "artifacts").resolve()
     roots = (
         [Path("artifacts")]
         if paths is None
@@ -99,19 +129,27 @@ def make_receipt(
     )
     for root in roots:
         target = base_dir / root
-        target.resolve().relative_to((base_dir / "artifacts").resolve())
-        if not target.exists():
+        if paths is None:
+            if target.is_symlink():
+                raise ValueError(f"Unsupported artifact: {target}")
+        else:
+            target.parent.resolve().relative_to(artifacts_root)
+        if not target.exists() and not target.is_symlink():
             raise ValueError(f"Missing artifact: {root}")
-        for entry in (
-            [target, *sorted(target.rglob("*"))] if target.is_dir() else [target]
-        ):
-            if entry.is_symlink() or not (entry.is_file() or entry.is_dir()):
-                raise ValueError(f"Unsupported artifact: {entry}")
+        entries = (
+            [target, *sorted(target.rglob("*"))]
+            if target.is_dir() and not target.is_symlink()
+            else [target]
+        )
+        for entry in entries:
             name = entry.relative_to(base_dir).as_posix()
-            if entry.is_dir():
+            if entry.is_symlink():
+                receipt.symlinks[name] = os.readlink(entry)
+            elif entry.is_dir():
                 receipt.directories.append(name)
-            else:
+            elif entry.is_file():
                 receipt.files[name] = describe_file(entry)
+            # Sockets and FIFOs cannot be transferred and are left out.
     return receipt
 
 
@@ -129,7 +167,13 @@ def validate_receipt(
     receipt: ResultDeliveryReceipt,
     task_id: str,
     generation: str | None = None,
+    verify_content: bool = True,
 ) -> None:
+    """Check that ``base_dir`` holds the snapshot ``receipt`` describes.
+
+    With ``verify_content=False`` files are matched by size instead of hash, which
+    is enough to tell a complete snapshot from an in-progress one.
+    """
     envelope = ResultEnvelope.model_validate_json(
         (base_dir / "results.json").read_text()
     )
@@ -140,26 +184,47 @@ def validate_receipt(
         or (generation is not None and generation != receipt.generation)
     ):
         raise ValueError(f"Result snapshot mismatch for {task_id}")
+    root = base_dir.resolve()
     for name in receipt.directories:
         if not name.startswith("artifacts/") and name != "artifacts":
             raise ValueError(f"Invalid artifact directory: {name}")
         path = base_dir / safe_relative(name)
-        path.resolve().relative_to(base_dir.resolve())
+        path.resolve().relative_to(root)
         if path.is_symlink() or not path.is_dir():
             raise ValueError(f"Missing artifact directory: {name}")
     for name, expected in receipt.files.items():
         if not name.startswith("artifacts/"):
             raise ValueError(f"Invalid artifact file: {name}")
         path = base_dir / safe_relative(name)
-        path.resolve().relative_to(base_dir.resolve())
-        if path.is_symlink() or not path.is_file() or describe_file(path) != expected:
+        path.resolve().relative_to(root)
+        if path.is_symlink() or not path.is_file():
+            raise ValueError(f"Incomplete artifact: {name}")
+        actual = (
+            describe_file(path)
+            if verify_content
+            else DeliveredFile(size=path.stat().st_size, sha256=expected.sha256)
+        )
+        if actual != expected:
+            raise ValueError(f"Incomplete artifact: {name}")
+    for name, link in receipt.symlinks.items():
+        if not name.startswith("artifacts/"):
+            raise ValueError(f"Invalid artifact link: {name}")
+        path = base_dir / safe_relative(name)
+        path.parent.resolve().relative_to(root)
+        if not path.is_symlink() or os.readlink(path) != link:
             raise ValueError(f"Incomplete artifact: {name}")
     for name in receipt.artifact_paths:
-        root = (Path("artifacts") / safe_relative(name)).as_posix()
-        if root not in receipt.directories and root not in receipt.files:
+        if not _receipt_has(receipt, name):
             raise ValueError(f"Missing selection: {name}")
     if receipt.all_artifacts and "artifacts" not in receipt.directories:
         raise ValueError("Missing complete artifacts directory")
+
+
+def _receipt_has(receipt: ResultDeliveryReceipt, selection: str) -> bool:
+    name = (Path("artifacts") / safe_relative(selection)).as_posix()
+    return (
+        name in receipt.directories or name in receipt.files or name in receipt.symlinks
+    )
 
 
 def artifacts_ready(
@@ -167,6 +232,7 @@ def artifacts_ready(
     task_id: str,
     paths: list[str] | None = None,
     generation: str | None = None,
+    verify_content: bool = True,
 ) -> bool:
     receipt = read_receipt(base_dir)
     if receipt is None:
@@ -185,13 +251,11 @@ def artifacts_ready(
         except (OSError, ValueError):
             return False
     try:
-        validate_receipt(base_dir, receipt, task_id, generation)
+        validate_receipt(base_dir, receipt, task_id, generation, verify_content)
         if paths is None:
             return receipt.all_artifacts
-        for selection in paths:
-            name = (Path("artifacts") / safe_relative(selection)).as_posix()
-            if name not in receipt.files and name not in receipt.directories:
-                return False
+        if not all(_receipt_has(receipt, selection) for selection in paths):
+            return False
         return all(
             receipt.all_artifacts
             or any(
@@ -222,11 +286,11 @@ def create_delivery_bundle(
                 archive.add(
                     base_dir / "results.json", arcname=f"{task_id}/results.json"
                 )
-                for name in sorted(set(receipt.directories)):
-                    archive.add(
-                        base_dir / name, arcname=f"{task_id}/{name}", recursive=False
-                    )
-                for name in receipt.files:
+                for name in [
+                    *sorted(set(receipt.directories)),
+                    *receipt.files,
+                    *receipt.symlinks,
+                ]:
                     archive.add(
                         base_dir / name, arcname=f"{task_id}/{name}", recursive=False
                     )
@@ -252,21 +316,39 @@ def add_receipt(
 
 
 def extract_delivery_bundle(bundle: Path, destination: Path, task_id: str) -> Path:
+    """Extract a delivery bundle under ``destination`` and verify its receipt.
+
+    Symlinks are recreated as links after every other member is written, and no
+    member may sit beneath one, so a link can never redirect a write.
+    """
     safe_relative(task_id)
     if len(Path(task_id).parts) != 1:
         raise ValueError("Invalid task ID")
     with tarfile.open(bundle, "r:*") as archive:
+        members = archive.getmembers()
         names: set[str] = set()
-        for member in archive:
+        links: dict[str, str] = {}
+        for member in members:
             relative = safe_relative(member.name)
             if (
                 relative.parts[0] != task_id
                 or member.name in names
-                or not (member.isfile() or member.isdir())
+                or not (member.isfile() or member.isdir() or member.issym())
             ):
                 raise ValueError(f"Unsafe bundle member: {member.name}")
             names.add(member.name)
-            archive.extract(member, destination, filter="data")
+            if member.issym():
+                links[member.name] = member.linkname
+        for member in members:
+            if any(parent.as_posix() in links for parent in Path(member.name).parents):
+                raise ValueError(f"Unsafe bundle member: {member.name}")
+        for member in members:
+            if not member.issym():
+                archive.extract(member, destination, filter="data")
+    for name, link in links.items():
+        path = destination / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.symlink_to(link)
     base_dir = destination / task_id
     receipt = read_receipt(base_dir)
     if receipt is None:
@@ -281,6 +363,7 @@ def extract_delivery_bundle(bundle: Path, destination: Path, task_id: str) -> Pa
         "logs/lineage.jsonl",
         *receipt.directories,
         *receipt.files,
+        *receipt.symlinks,
     }
     for name in list(allowed):
         allowed.update(
@@ -311,49 +394,37 @@ def commit_delivery(
                 )
             )
         existing = read_receipt(destination)
-        keep_existing = False
         if existing is not None and existing.generation == receipt.generation:
             try:
                 validate_receipt(destination, existing, task_id)
-                keep_existing = True
             except (OSError, ValueError):
-                pass
+                existing = None
+        else:
+            existing = None
         (destination / RECEIPT_NAME).unlink(missing_ok=True)
-        if not keep_existing:
+        if existing is None:
             shutil.rmtree(destination / "artifacts", ignore_errors=True)
             prepare_output_dir(destination)
+        root = destination.resolve()
         for entry in staging.rglob("*"):
             name = entry.relative_to(staging)
             if name.as_posix() == RECEIPT_NAME:
                 continue
             target = destination / name
-            target.resolve().relative_to(destination.resolve())
-            if entry.is_dir():
+            target.parent.resolve().relative_to(root)
+            if entry.is_symlink():
+                _commit_symlink(target, os.readlink(entry))
+            elif entry.is_dir():
+                if target.is_symlink():
+                    target.unlink()
                 target.mkdir(parents=True, exist_ok=True)
                 try:
                     target.chmod(0o777)
                 except OSError:
                     pass
-            else:
-                target.parent.mkdir(parents=True, exist_ok=True)
-                for parent in [target.parent, *target.parent.parents]:
-                    if parent == destination:
-                        break
-                    try:
-                        parent.chmod(0o777)
-                    except OSError:
-                        pass
-                with tempfile.NamedTemporaryFile(
-                    dir=target.parent, prefix=".delivery-", delete=False
-                ) as temporary:
-                    replacement = Path(temporary.name)
-                try:
-                    shutil.copyfile(entry, replacement)
-                    shutil.copymode(entry, replacement)
-                    replacement.replace(target)
-                finally:
-                    replacement.unlink(missing_ok=True)
-        if keep_existing and existing is not None:
+            elif not _holds_same_file(existing, receipt, name.as_posix(), target):
+                _commit_file(entry, target, destination)
+        if existing is not None:
             receipt.all_artifacts |= existing.all_artifacts
             receipt.artifact_paths = sorted(
                 set(receipt.artifact_paths + existing.artifact_paths)
@@ -362,5 +433,56 @@ def commit_delivery(
                 set(receipt.directories + existing.directories)
             )
             receipt.files = existing.files | receipt.files
-        validate_receipt(destination, receipt, task_id)
+            receipt.symlinks = existing.symlinks | receipt.symlinks
+        validate_receipt(destination, receipt, task_id, verify_content=False)
         write_receipt(destination, receipt)
+
+
+def _holds_same_file(
+    existing: ResultDeliveryReceipt | None,
+    receipt: ResultDeliveryReceipt,
+    name: str,
+    target: Path,
+) -> bool:
+    if existing is None or name not in existing.files:
+        return False
+    return (
+        existing.files[name] == receipt.files.get(name)
+        and target.is_file()
+        and not target.is_symlink()
+    )
+
+
+def _commit_file(source: Path, target: Path, destination: Path) -> None:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    for parent in [target.parent, *target.parent.parents]:
+        if parent == destination:
+            break
+        try:
+            parent.chmod(0o777)
+        except OSError:
+            pass
+    with tempfile.NamedTemporaryFile(
+        dir=target.parent, prefix=".delivery-", delete=False
+    ) as temporary:
+        replacement = Path(temporary.name)
+    try:
+        shutil.copyfile(source, replacement)
+        shutil.copymode(source, replacement)
+        replacement.replace(target)
+    finally:
+        replacement.unlink(missing_ok=True)
+
+
+def _commit_symlink(target: Path, link: str) -> None:
+    if target.is_symlink() and os.readlink(target) == link:
+        return
+    if target.is_dir() and not target.is_symlink():
+        shutil.rmtree(target)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    staging = Path(tempfile.mkdtemp(dir=target.parent, prefix=".delivery-"))
+    try:
+        (staging / "link").symlink_to(link)
+        (staging / "link").replace(target)
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)

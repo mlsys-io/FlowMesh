@@ -25,3 +25,4 @@ class ResultDeliveryReceipt(BaseModel):
     artifact_paths: list[str] = Field(default_factory=list)
     directories: list[str] = Field(default_factory=list)
     files: dict[str, DeliveredFile] = Field(default_factory=dict)
+    symlinks: dict[str, str] = Field(default_factory=dict)

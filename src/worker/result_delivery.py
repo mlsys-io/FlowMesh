@@ -117,7 +117,9 @@ def hydrate_result(
                         if chunk:
                             sink.write(chunk)
             staging = extract_delivery_bundle(bundle, root / "staging", task_id)
-            if not artifacts_ready(staging, task_id, paths, generation):
+            if not artifacts_ready(
+                staging, task_id, paths, generation, verify_content=False
+            ):
                 raise ValueError("Downloaded artifact selection is incomplete or stale")
             commit_delivery(staging, base_dir, task_id)
         except (requests.RequestException, OSError, ValueError) as exc:

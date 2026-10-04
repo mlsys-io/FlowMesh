@@ -289,3 +289,35 @@ def test_local_input_staging_keeps_links_as_links(tmp_path: Path) -> None:
     link = staged / "t-up" / "artifacts" / "leak"
     assert link.is_symlink()
     assert link.readlink() == secret
+
+
+@pytest.mark.parametrize("selection", ["leak", "nested"])
+def test_selected_input_staging_keeps_links_as_links(
+    tmp_path: Path, selection: str
+) -> None:
+    secret = tmp_path / "worker-secret"
+    secret.write_text("hunter2")
+    source = tmp_path / "results" / "t-up"
+    (source / "artifacts" / "nested").mkdir(parents=True)
+    write_result(
+        source.parent, ResultEnvelope(task_id="t-up", result=BaseExecutorResult())
+    )
+    (source / "artifacts" / "leak").symlink_to(secret)
+    (source / "artifacts" / "nested" / "leak").symlink_to(secret)
+    staged = inputs_module.stage_inputs_locally(
+        [
+            ResolvedSSHInput(
+                "up",
+                "t-up",
+                source,
+                "/mnt/flowmesh/references/t-up",
+                artifact_paths=[selection],
+            )
+        ],
+        "ssn-1",
+    )
+    link = staged / "t-up" / "artifacts" / selection
+    if selection == "nested":
+        link = link / "leak"
+    assert link.is_symlink()
+    assert link.readlink() == secret

@@ -108,10 +108,14 @@ def stage_inputs_locally(
                 for name in resolved.artifact_paths:
                     source = resolved.source_path / "artifacts" / safe_relative(name)
                     target = destination / "artifacts" / safe_relative(name)
-                    if source.is_dir():
-                        shutil.copytree(source, target, dirs_exist_ok=True)
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    if source.is_symlink():
+                        target.symlink_to(os.readlink(source))
+                    elif source.is_dir():
+                        shutil.copytree(
+                            source, target, symlinks=True, dirs_exist_ok=True
+                        )
                     else:
-                        target.parent.mkdir(parents=True, exist_ok=True)
                         shutil.copyfile(source, target)
                 write_receipt(
                     destination,
