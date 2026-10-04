@@ -1,3 +1,4 @@
+import asyncio
 import copy
 import heapq
 import json
@@ -109,9 +110,9 @@ class TaskRuntime:
     async def register(
         self, owner_id: str, org_id: str, payload: str, format: str = "native"
     ) -> tuple[str, list[TaskParsingResult]]:
-        parsed_workflow = parse_workflow(payload, format)
+        parsed_workflow = await asyncio.to_thread(parse_workflow, payload, format)
         specs = parsed_workflow.tasks
-        source_text = redact_raw_yaml(payload)
+        source_text = await asyncio.to_thread(redact_raw_yaml, payload)
         results: list[TaskParsingResult] = []
         workflow_id = new_workflow_id()
         task_records: list[TaskRecord] = []

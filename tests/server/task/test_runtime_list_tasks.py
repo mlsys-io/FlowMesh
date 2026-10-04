@@ -2,9 +2,11 @@
 
 import asyncio
 import logging
+import time
 from typing import Any, cast
 from unittest import mock
 
+from server.task.parser import parse_workflow
 from server.task.runtime import TaskRuntime
 from shared.utils.redact import REDACTED, redact_raw_yaml
 
@@ -189,6 +191,33 @@ def test_source_redacted_once_per_workflow_at_registration() -> None:
         assert info.source == expected
         assert REDACTED in info.source
         assert "SECRET" not in info.source
+
+
+def test_register_parses_off_the_event_loop() -> None:
+    runtime, _ = build_runtime()
+
+    def _slow_parse(*args: Any, **kwargs: Any) -> Any:
+        time.sleep(0.5)
+        return parse_workflow(*args, **kwargs)
+
+    async def _run() -> tuple[str, list[Any]]:
+        t0 = asyncio.get_running_loop().time()
+        register_task = asyncio.create_task(
+            runtime.register("owner", "org", _PAYLOAD, format="native")
+        )
+        await asyncio.sleep(0.05)  # let register start and block on the parse
+        # A concurrent coroutine completes while register is awaiting the parse.
+        await asyncio.sleep(0)
+        elapsed = asyncio.get_running_loop().time() - t0
+        workflow_id, results = await register_task
+        assert elapsed < 0.3
+        return workflow_id, results
+
+    with mock.patch("server.task.runtime.parse_workflow", side_effect=_slow_parse):
+        workflow_id, results = asyncio.run(_run())
+
+    assert workflow_id
+    assert results
 
 
 def test_persisted_and_rehydrated_dump_hold_no_raw_credential() -> None:
