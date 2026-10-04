@@ -217,3 +217,18 @@ def test_selected_bundle_carries_the_target_of_a_selected_link(tmp_path: Path) -
         bundle.unlink()
     assert artifacts_ready(cache, "tsk-up", ["latest"])
     assert (cache / "artifacts" / "latest" / "weights").read_bytes() == b"model"
+
+
+def test_server_bundle_makes_links_into_own_artifacts_portable(tmp_path: Path) -> None:
+    base = populate(tmp_path / "server")
+    (base / "artifacts" / "latest").symlink_to("/worker-results/tsk-up/artifacts/model")
+    write_receipt(base, make_receipt(base, "tsk-up", None))
+    bundle = _create_result_bundle_archive(
+        "tsk-up", base, ("results", "artifacts"), ["latest"], None, None
+    )
+    try:
+        cache = extract_delivery_bundle(bundle, tmp_path / "cache", "tsk-up")
+    finally:
+        bundle.unlink()
+    assert (cache / "artifacts" / "latest").readlink() == Path("model")
+    assert (cache / "artifacts" / "latest" / "weights").read_bytes() == b"model"

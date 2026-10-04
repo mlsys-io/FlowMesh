@@ -148,7 +148,7 @@ def make_receipt(
         for entry in entries:
             name = entry.relative_to(base_dir).as_posix()
             if entry.is_symlink():
-                receipt.symlinks[name] = os.readlink(entry)
+                receipt.symlinks[name] = portable_link(entry, base_dir)
             elif entry.is_dir():
                 directories.add(name)
             elif entry.is_file() and name not in receipt.files:
@@ -156,6 +156,31 @@ def make_receipt(
             # Sockets and FIFOs cannot be transferred and are left out.
     receipt.directories = sorted(directories)
     return receipt
+
+
+def portable_link(link_path: Path, base_dir: Path) -> str:
+    """Return the target of ``link_path`` in a form that survives relocation.
+
+    An absolute target inside this task's own artifacts becomes relative. That
+    path was written in the producer's mount namespace, so it is recognized by its
+    ``<task_id>/artifacts/`` segment, with ``base_dir`` named after the task.
+    """
+    target = os.readlink(link_path)
+    path = PurePosixPath(target)
+    if not path.is_absolute():
+        return target
+    parts = path.parts
+    for index in range(len(parts) - 1):
+        inside = parts[index + 2 :]
+        if (
+            parts[index] == base_dir.name
+            and parts[index + 1] == "artifacts"
+            and ".." not in inside
+        ):
+            return os.path.relpath(
+                base_dir.joinpath("artifacts", *inside), link_path.parent
+            )
+    return target
 
 
 def selection_roots(base_dir: Path, paths: list[str]) -> list[str]:
@@ -182,7 +207,8 @@ def selection_roots(base_dir: Path, paths: list[str]) -> list[str]:
         for entry in entries:
             if not entry.is_symlink():
                 continue
-            hop = Path(os.path.normpath(entry.parent.absolute() / os.readlink(entry)))
+            link = portable_link(entry, base_dir)
+            hop = Path(os.path.normpath(entry.parent.absolute() / link))
             try:
                 linked = hop.relative_to(artifacts_root)
             except ValueError:
@@ -256,7 +282,7 @@ def validate_receipt(
             raise ValueError(f"Invalid artifact link: {name}")
         path = base_dir / safe_relative(name)
         path.parent.resolve().relative_to(root)
-        if not path.is_symlink() or os.readlink(path) != link:
+        if not path.is_symlink() or portable_link(path, base_dir) != link:
             raise ValueError(f"Incomplete artifact: {name}")
     for name in receipt.artifact_paths:
         if not _receipt_has(receipt, name):
@@ -331,14 +357,14 @@ def create_delivery_bundle(
                 archive.add(
                     base_dir / "results.json", arcname=f"{task_id}/results.json"
                 )
-                for name in [
-                    *sorted(set(receipt.directories)),
-                    *receipt.files,
-                    *receipt.symlinks,
-                ]:
+                for name in [*sorted(set(receipt.directories)), *receipt.files]:
                     archive.add(
                         base_dir / name, arcname=f"{task_id}/{name}", recursive=False
                     )
+                for name, link in receipt.symlinks.items():
+                    info = archive.gettarinfo(base_dir / name, f"{task_id}/{name}")
+                    info.linkname = link
+                    archive.addfile(info)
                 if include_traces:
                     for name in ("spans.jsonl", "assets.jsonl", "lineage.jsonl"):
                         path = base_dir / "logs" / name
@@ -390,6 +416,8 @@ def extract_delivery_bundle(
                 raise ValueError(f"Unsafe bundle member: {member.name}")
             names.add(member.name)
             if member.issym():
+                if relative.parts[1:2] != ("artifacts",) or len(relative.parts) < 3:
+                    raise ValueError(f"Unsafe bundle member: {member.name}")
                 links[member.name] = member.linkname
         for member in members:
             if any(parent.as_posix() in links for parent in Path(member.name).parents):
@@ -472,6 +500,8 @@ def commit_delivery(
             target = destination / name
             target.parent.resolve().relative_to(root)
             if entry.is_symlink():
+                if name.parts[0] != "artifacts":
+                    raise ValueError(f"Unsupported delivery link: {name}")
                 _commit_symlink(target, os.readlink(entry))
             elif entry.is_dir():
                 if target.is_symlink():

@@ -1,6 +1,7 @@
 import errno
 import io
 import os
+import shutil
 import tarfile
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -330,3 +331,49 @@ def test_selected_link_travels_with_its_in_artifacts_target(tmp_path: Path) -> N
     assert artifacts_ready(destination, "tsk-up", ["latest"])
     assert (destination / "artifacts" / "latest" / "weights").read_bytes() == b"trained"
     assert not (destination / "artifacts" / "unused-checkpoint").exists()
+
+
+@pytest.mark.parametrize("name", ["tsk-up/logs", "tsk-up/results.json"])
+def test_links_outside_artifacts_are_rejected(tmp_path: Path, name: str) -> None:
+    bundle = tmp_path / "bundle.tar"
+    with tarfile.open(bundle, "w") as archive:
+        link = tarfile.TarInfo(name)
+        link.type = tarfile.SYMTYPE
+        link.linkname = str(tmp_path / "outside")
+        archive.addfile(link)
+    with pytest.raises(ValueError, match="Unsafe bundle member"):
+        extract_delivery_bundle(bundle, tmp_path / "stage", "tsk-up")
+
+
+def test_commit_refuses_a_staged_link_outside_artifacts(tmp_path: Path) -> None:
+    staging = populate(tmp_path / "staging")
+    shutil.rmtree(staging / "logs", ignore_errors=True)
+    (staging / "logs").symlink_to(tmp_path / "outside")
+    destination = tmp_path / "server" / "tsk-up"
+    with pytest.raises(ValueError, match="Unsupported delivery link"):
+        commit_delivery(staging, destination, "tsk-up")
+    assert not (destination / "logs").is_symlink()
+
+
+def test_absolute_links_into_own_artifacts_become_portable(tmp_path: Path) -> None:
+    producer = populate(tmp_path / "producer")
+    # Written in the producer's mount namespace, which the reader does not share.
+    (producer / "artifacts" / "latest").symlink_to(
+        "/worker-results/tsk-up/artifacts/model"
+    )
+    write_receipt(producer, make_receipt(producer, "tsk-up", None))
+    receipt = read_receipt(producer)
+    assert receipt is not None and receipt.symlinks["artifacts/latest"] == "model"
+    assert artifacts_ready(producer, "tsk-up")
+
+    bundle = create_delivery_bundle(producer, "tsk-up", ["latest"])
+    try:
+        staging = extract_delivery_bundle(bundle, tmp_path / "stage", "tsk-up")
+        destination = tmp_path / "consumer" / "tsk-up"
+        commit_delivery(staging, destination, "tsk-up")
+    finally:
+        bundle.unlink()
+
+    assert os.readlink(destination / "artifacts" / "latest") == "model"
+    assert (destination / "artifacts" / "latest" / "weights").read_bytes() == b"model"
+    assert artifacts_ready(destination, "tsk-up", ["latest"])

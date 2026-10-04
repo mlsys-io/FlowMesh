@@ -7,7 +7,7 @@ import tarfile
 import tempfile
 from collections.abc import Iterator
 from functools import partial
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import BinaryIO
 from urllib.parse import quote
 
@@ -42,6 +42,7 @@ from shared.utils.result_delivery import (
     delivery_lock,
     extract_delivery_bundle,
     make_receipt,
+    portable_link,
     read_receipt,
     result_generation,
     safe_relative,
@@ -508,13 +509,13 @@ def _create_result_bundle_archive(
                             archive.add(
                                 selected,
                                 arcname=f"{task_id}/artifacts/{name}",
-                                filter=_transferable,
+                                filter=partial(_transferable, base_dir),
                             )
                     else:
                         archive.add(
                             candidate,
                             arcname=f"{task_id}/{candidate.name}",
-                            filter=_transferable,
+                            filter=partial(_transferable, base_dir),
                         )
                 if "results" in sections and "artifacts" in sections:
                     add_receipt(
@@ -627,8 +628,12 @@ def _attachment(filename: str) -> str:
     return f'attachment; filename="{filename}"'
 
 
-def _transferable(member: tarfile.TarInfo) -> tarfile.TarInfo | None:
-    return member if member.isfile() or member.isdir() or member.issym() else None
+def _transferable(base_dir: Path, member: tarfile.TarInfo) -> tarfile.TarInfo | None:
+    if member.issym():
+        link_path = base_dir.joinpath(*PurePosixPath(member.name).parts[1:])
+        member.linkname = portable_link(link_path, base_dir)
+        return member
+    return member if member.isfile() or member.isdir() else None
 
 
 def _bundle_section_path(base_dir: Path, section: str) -> Path | None:
