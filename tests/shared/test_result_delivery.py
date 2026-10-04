@@ -286,3 +286,47 @@ def test_recommit_of_the_same_snapshot_keeps_unchanged_files(tmp_path: Path) -> 
 
     assert weights.stat().st_ino == inode
     assert artifacts_ready(destination, "tsk-up")
+
+
+@pytest.mark.parametrize(
+    "link_name", ["tsk-up/artifacts/./escape", "tsk-up/artifacts//escape"]
+)
+def test_unnormalized_link_names_cannot_hide_a_member_beneath_a_link(
+    tmp_path: Path, link_name: str
+) -> None:
+    bundle = tmp_path / "bundle.tar"
+    with tarfile.open(bundle, "w") as archive:
+        for name, target in [
+            (link_name, str(tmp_path / "outside")),
+            ("tsk-up/artifacts/escape/planted", "/anywhere"),
+        ]:
+            link = tarfile.TarInfo(name)
+            link.type = tarfile.SYMTYPE
+            link.linkname = target
+            archive.addfile(link)
+    (tmp_path / "outside").mkdir()
+    with pytest.raises(ValueError, match="Unsafe bundle member"):
+        extract_delivery_bundle(bundle, tmp_path / "stage", "tsk-up")
+    assert not (tmp_path / "outside" / "planted").is_symlink()
+
+
+def test_selected_link_travels_with_its_in_artifacts_target(tmp_path: Path) -> None:
+    producer = populate(tmp_path / "producer")
+    checkpoint = producer / "artifacts" / "checkpoint-500"
+    checkpoint.mkdir()
+    (checkpoint / "weights").write_bytes(b"trained")
+    (producer / "artifacts" / "final_model").symlink_to("checkpoint-500")
+    (producer / "artifacts" / "latest").symlink_to("final_model")
+    write_receipt(producer, make_receipt(producer, "tsk-up", None))
+
+    bundle = create_delivery_bundle(producer, "tsk-up", ["latest"])
+    try:
+        staging = extract_delivery_bundle(bundle, tmp_path / "stage", "tsk-up")
+        destination = tmp_path / "consumer" / "tsk-up"
+        commit_delivery(staging, destination, "tsk-up")
+    finally:
+        bundle.unlink()
+
+    assert artifacts_ready(destination, "tsk-up", ["latest"])
+    assert (destination / "artifacts" / "latest" / "weights").read_bytes() == b"trained"
+    assert not (destination / "artifacts" / "unused-checkpoint").exists()

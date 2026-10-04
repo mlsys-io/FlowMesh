@@ -89,7 +89,7 @@ def hydrate_result(
     generation: str | None = None,
 ) -> None:
     base_dir = destination_dir / task_id
-    if artifacts_ready(base_dir, task_id, paths, generation):
+    if artifacts_ready(base_dir, task_id, paths, generation, verify_content=False):
         return
     base_url = os.getenv("FLOWMESH_BASE_URL", "").strip()
     if not base_url:
@@ -158,7 +158,7 @@ def _hydrate_inputs(inputs: list[ArtifactInput], results_dir: Path) -> dict[str,
         hydrate_result(entry.task_id, results_dir, [entry.path], entry.generation)
         replacements[entry.source] = (
             (results_dir / entry.task_id / "artifacts" / safe_relative(entry.path))
-            .resolve()
+            .absolute()
             .as_posix()
         )
     return replacements

@@ -1,6 +1,5 @@
 """SSH session input staging and result mounting tests."""
 
-import tarfile
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 from unittest.mock import MagicMock
@@ -160,18 +159,15 @@ def test_stage_inputs_locally_downloads_missing_upstream_results(
     monkeypatch.setenv("RESULTS_DIR", str(tmp_path / "results"))
     resolved_inputs = inputs_module.resolve_inputs(task, cfg, worker_cfg.results_dir)
 
-    def _download(
+    def _hydrate(
         task_id: str,
-        destination_dir: Path,
+        root: Path,
         paths: list[str] | None = None,
         generation: str | None = None,
     ) -> None:
-        write_result(
-            destination_dir,
-            ResultEnvelope(task_id=task_id, result=BaseExecutorResult()),
-        )
+        write_result(root, ResultEnvelope(task_id=task_id, result=BaseExecutorResult()))
 
-    monkeypatch.setattr(inputs_module, "download_result_bundle", _download)
+    monkeypatch.setattr(inputs_module, "hydrate_result", _hydrate)
 
     staging_dir = inputs_module.stage_inputs_locally(resolved_inputs, "session-remote")
 
@@ -263,17 +259,6 @@ def test_stage_inputs_in_volume_downloads_missing_upstream_results(
     assert "cp -a /src/task-remote/. /dst/task-remote/" in command
 
 
-def test_extract_result_bundle_rejects_path_traversal(tmp_path: Path) -> None:
-    bundle = tmp_path / "bundle.tar"
-    with tarfile.open(bundle, mode="w") as archive:
-        payload = tmp_path / "payload.txt"
-        payload.write_text("x", encoding="utf-8")
-        archive.add(payload, arcname="../escape.txt")
-
-    with pytest.raises(Exception, match="Unsafe path"):
-        inputs_module.extract_result_bundle(bundle, tmp_path / "dest")
-
-
 def test_local_input_staging_keeps_links_as_links(tmp_path: Path) -> None:
     secret = tmp_path / "worker-secret"
     secret.write_text("hunter2")
@@ -321,3 +306,28 @@ def test_selected_input_staging_keeps_links_as_links(
         link = link / "leak"
     assert link.is_symlink()
     assert link.readlink() == secret
+
+
+def test_selected_input_staging_brings_in_artifact_link_targets(tmp_path: Path) -> None:
+    source = tmp_path / "results" / "t-up"
+    (source / "artifacts" / "checkpoint-500").mkdir(parents=True)
+    (source / "artifacts" / "checkpoint-500" / "weights").write_text("trained")
+    (source / "artifacts" / "final_model").symlink_to("checkpoint-500")
+    write_result(
+        source.parent, ResultEnvelope(task_id="t-up", result=BaseExecutorResult())
+    )
+    staged = inputs_module.stage_inputs_locally(
+        [
+            ResolvedSSHInput(
+                "up",
+                "t-up",
+                source,
+                "/mnt/flowmesh/references/t-up",
+                artifact_paths=["final_model"],
+            )
+        ],
+        "ssn-1",
+    )
+    model = staged / "t-up" / "artifacts" / "final_model"
+    assert model.is_symlink()
+    assert (model / "weights").read_text() == "trained"

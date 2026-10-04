@@ -182,7 +182,7 @@ class SessionExecutor(Executor):
         for entry in task.artifact_inputs.get(task.task_id, []):
             local = (
                 (self._config.results_dir / entry.task_id / "artifacts" / entry.path)
-                .resolve()
+                .absolute()
                 .as_posix()
             )
             replacements[local] = (

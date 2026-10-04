@@ -8,8 +8,8 @@ import tarfile
 import tempfile
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from pathlib import Path
-from typing import Any
+from pathlib import Path, PurePosixPath
+from typing import Any, BinaryIO
 
 from pydantic import BaseModel
 
@@ -125,8 +125,12 @@ def make_receipt(
     roots = (
         [Path("artifacts")]
         if paths is None
-        else [Path("artifacts") / safe_relative(p) for p in paths]
+        else [
+            Path("artifacts") / safe_relative(p)
+            for p in selection_roots(base_dir, paths)
+        ]
     )
+    directories: set[str] = set()
     for root in roots:
         target = base_dir / root
         if paths is None:
@@ -146,11 +150,52 @@ def make_receipt(
             if entry.is_symlink():
                 receipt.symlinks[name] = os.readlink(entry)
             elif entry.is_dir():
-                receipt.directories.append(name)
-            elif entry.is_file():
+                directories.add(name)
+            elif entry.is_file() and name not in receipt.files:
                 receipt.files[name] = describe_file(entry)
             # Sockets and FIFOs cannot be transferred and are left out.
+    receipt.directories = sorted(directories)
     return receipt
+
+
+def selection_roots(base_dir: Path, paths: list[str]) -> list[str]:
+    """Return ``paths`` plus the in-artifacts targets of the links they contain.
+
+    A link travels as a link, so its target has to travel with it for the link to
+    resolve on the receiving side. Links are followed one hop at a time, so a
+    chain of links brings every intermediate link along.
+    """
+    artifacts_root = (base_dir / "artifacts").absolute()
+    roots: list[str] = []
+    pending = list(paths)
+    while pending:
+        selection = pending.pop(0)
+        if selection in roots:
+            continue
+        roots.append(selection)
+        target = base_dir / "artifacts" / safe_relative(selection)
+        entries = (
+            [target, *target.rglob("*")]
+            if target.is_dir() and not target.is_symlink()
+            else [target]
+        )
+        for entry in entries:
+            if not entry.is_symlink():
+                continue
+            hop = Path(os.path.normpath(entry.parent.absolute() / os.readlink(entry)))
+            try:
+                linked = hop.relative_to(artifacts_root)
+            except ValueError:
+                continue
+            if linked.parts:
+                pending.append(linked.as_posix())
+    return [
+        root
+        for root in roots
+        if not any(
+            other != root and Path(other) in Path(root).parents for other in roots
+        )
+    ]
 
 
 def read_receipt(base_dir: Path) -> ResultDeliveryReceipt | None:
@@ -315,7 +360,9 @@ def add_receipt(
     archive.addfile(info, io.BytesIO(content))
 
 
-def extract_delivery_bundle(bundle: Path, destination: Path, task_id: str) -> Path:
+def extract_delivery_bundle(
+    bundle: Path | BinaryIO, destination: Path, task_id: str
+) -> Path:
     """Extract a delivery bundle under ``destination`` and verify its receipt.
 
     Symlinks are recreated as links after every other member is written, and no
@@ -324,14 +371,19 @@ def extract_delivery_bundle(bundle: Path, destination: Path, task_id: str) -> Pa
     safe_relative(task_id)
     if len(Path(task_id).parts) != 1:
         raise ValueError("Invalid task ID")
-    with tarfile.open(bundle, "r:*") as archive:
+    with (
+        tarfile.open(bundle, "r:*")
+        if isinstance(bundle, Path)
+        else tarfile.open(fileobj=bundle, mode="r:*")
+    ) as archive:
         members = archive.getmembers()
         names: set[str] = set()
         links: dict[str, str] = {}
         for member in members:
             relative = safe_relative(member.name)
             if (
-                relative.parts[0] != task_id
+                member.name != PurePosixPath(member.name).as_posix()
+                or relative.parts[0] != task_id
                 or member.name in names
                 or not (member.isfile() or member.isdir() or member.issym())
             ):
@@ -345,8 +397,10 @@ def extract_delivery_bundle(bundle: Path, destination: Path, task_id: str) -> Pa
         for member in members:
             if not member.issym():
                 archive.extract(member, destination, filter="data")
+    root = destination.resolve()
     for name, link in links.items():
         path = destination / name
+        path.parent.resolve().relative_to(root)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.symlink_to(link)
     base_dir = destination / task_id
@@ -382,10 +436,15 @@ def commit_delivery(
     task_id: str,
     validate_current: Callable[[ResultEnvelope], None] | None = None,
 ) -> None:
+    """Install a snapshot unpacked by ``extract_delivery_bundle`` at ``destination``.
+
+    The extraction already verified the staged content, so it is matched here by
+    size only.
+    """
     receipt = read_receipt(staging)
     if receipt is None:
         raise ValueError("Result bundle has no delivery receipt")
-    validate_receipt(staging, receipt, task_id)
+    validate_receipt(staging, receipt, task_id, verify_content=False)
     with delivery_lock(destination):
         if validate_current is not None:
             validate_current(

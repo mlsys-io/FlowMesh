@@ -22,7 +22,11 @@ from shared.schemas.worker import SSHBackendName
 from shared.tasks.worker_message import WorkerHardware
 from shared.utils import parse_float_env
 from shared.utils.manifest import ARTIFACTS_DIR
-from shared.utils.result_delivery import artifacts_ready, safe_relative
+from shared.utils.result_delivery import (
+    artifacts_ready,
+    safe_relative,
+    selection_roots,
+)
 from worker.config import WorkerConfig
 from worker.executors.utils.docker import (
     DockerUnavailableError,
@@ -557,6 +561,7 @@ class DockerSessionBackend(SSHSessionBackend):
                 resolved.task_id,
                 resolved.artifact_paths,
                 resolved.generation,
+                verify_content=False,
             ):
                 hydrate_result(
                     resolved.task_id,
@@ -572,7 +577,9 @@ class DockerSessionBackend(SSHSessionBackend):
                     commands.append(f"cp -a {src}/. {dst}/")
                 else:
                     commands.append(f"cp {src}/results.json {dst}/results.json")
-                    for name in resolved.artifact_paths:
+                    for name in selection_roots(
+                        resolved.source_path, resolved.artifact_paths
+                    ):
                         relative = Path("artifacts") / safe_relative(name)
                         target_parent = shlex.quote(
                             f"/dst/{resolved.task_id}/{relative.parent.as_posix()}"

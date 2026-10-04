@@ -8,21 +8,18 @@ then exposed to the session is backend-specific.
 
 import os
 import shutil
-import tarfile
 import tempfile
 from pathlib import Path
-from urllib.parse import urlencode
-
-import requests
 
 from shared.tasks.worker_message import WorkerTaskMessage
-from shared.utils.http import auth_headers
 from shared.utils.result_delivery import (
     artifacts_ready,
     make_receipt,
     safe_relative,
+    selection_roots,
     write_receipt,
 )
+from worker.result_delivery import hydrate_result
 
 from ..base_executor import ExecutionError
 from .config import (
@@ -31,8 +28,6 @@ from .config import (
     SSHConfig,
     normalize_mount_path,
 )
-
-RESULT_BUNDLE_TIMEOUT_SEC = 300.0
 
 
 def resolve_inputs(
@@ -87,129 +82,44 @@ def stage_inputs_locally(
         tempfile.mkdtemp(prefix=f"flowmesh-ssh-inputs-{session_id[:8]}-")
     )
     for resolved in resolved_inputs:
-        destination = staging_dir / resolved.task_id
-        if artifacts_ready(
+        if not artifacts_ready(
             resolved.source_path,
             resolved.task_id,
             resolved.artifact_paths,
             resolved.generation,
+            verify_content=False,
         ):
-            # Links are copied as links: an upstream session's output could
-            # otherwise point the copy at the worker's own files.
-            if resolved.artifact_paths is None:
-                shutil.copytree(
-                    resolved.source_path, destination, symlinks=True, dirs_exist_ok=True
-                )
-            else:
-                destination.mkdir(parents=True, exist_ok=True)
-                shutil.copyfile(
-                    resolved.source_path / "results.json", destination / "results.json"
-                )
-                for name in resolved.artifact_paths:
-                    source = resolved.source_path / "artifacts" / safe_relative(name)
-                    target = destination / "artifacts" / safe_relative(name)
-                    target.parent.mkdir(parents=True, exist_ok=True)
-                    if source.is_symlink():
-                        target.symlink_to(os.readlink(source))
-                    elif source.is_dir():
-                        shutil.copytree(
-                            source, target, symlinks=True, dirs_exist_ok=True
-                        )
-                    else:
-                        shutil.copyfile(source, target)
-                write_receipt(
-                    destination,
-                    make_receipt(
-                        destination, resolved.task_id, resolved.artifact_paths
-                    ),
-                )
+            hydrate_result(
+                resolved.task_id,
+                resolved.source_path.parent,
+                resolved.artifact_paths,
+                resolved.generation,
+            )
+        destination = staging_dir / resolved.task_id
+        # Links are copied as links: an upstream session's output could
+        # otherwise point the copy at the worker's own files.
+        if resolved.artifact_paths is None:
+            shutil.copytree(
+                resolved.source_path, destination, symlinks=True, dirs_exist_ok=True
+            )
             continue
-        download_result_bundle(
-            resolved.task_id, staging_dir, resolved.artifact_paths, resolved.generation
+        destination.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(
+            resolved.source_path / "results.json", destination / "results.json"
         )
-        if not artifacts_ready(
-            destination, resolved.task_id, resolved.artifact_paths, resolved.generation
-        ):
-            raise ExecutionError(
-                f"Incomplete SSH input result bundle for {resolved.task_id}"
-            )
-        if not destination.exists():
-            raise ExecutionError(
-                "Downloaded SSH input bundle did not create expected directory "
-                f"{destination} for upstream task {resolved.task_id}"
-            )
+        for name in selection_roots(resolved.source_path, resolved.artifact_paths):
+            source = resolved.source_path / "artifacts" / safe_relative(name)
+            target = destination / "artifacts" / safe_relative(name)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if source.is_symlink():
+                if not target.is_symlink():
+                    target.symlink_to(os.readlink(source))
+            elif source.is_dir():
+                shutil.copytree(source, target, symlinks=True, dirs_exist_ok=True)
+            else:
+                shutil.copyfile(source, target)
+        write_receipt(
+            destination,
+            make_receipt(destination, resolved.task_id, resolved.artifact_paths),
+        )
     return staging_dir
-
-
-def result_bundle_url(
-    task_id: str, paths: list[str] | None = None, generation: str | None = None
-) -> str:
-    base_url = os.getenv("FLOWMESH_BASE_URL", "").strip()
-    if not base_url:
-        raise ExecutionError(
-            "SSH input result hydration requires FLOWMESH_BASE_URL when "
-            "upstream results are not available locally"
-        )
-    query = [("include", "results"), ("include", "artifacts")]
-    query.extend(("artifact_path", path) for path in paths or [])
-    if generation:
-        query.append(("generation", generation))
-    return f"{base_url.rstrip('/')}/api/v1/results/{task_id}/bundle?{urlencode(query)}"
-
-
-def download_result_bundle(
-    task_id: str,
-    destination_dir: Path,
-    paths: list[str] | None = None,
-    generation: str | None = None,
-) -> None:
-    tmp_fd, tmp_str = tempfile.mkstemp(prefix="ssh_bundle_", suffix=".tar.gz")
-    os.close(tmp_fd)
-    tmp_path = Path(tmp_str)
-    try:
-        with requests.get(
-            result_bundle_url(task_id, paths, generation),
-            headers=auth_headers(),
-            stream=True,
-            timeout=RESULT_BUNDLE_TIMEOUT_SEC,
-        ) as response:
-            response.raise_for_status()
-            with tmp_path.open("wb") as sink:
-                for chunk in response.iter_content(chunk_size=64 * 1024):
-                    if chunk:
-                        sink.write(chunk)
-        with tempfile.TemporaryDirectory(prefix="ssh-bundle-stage-") as temporary:
-            stage_root = Path(temporary)
-            extract_result_bundle(tmp_path, stage_root)
-            staged = stage_root / task_id
-            if not artifacts_ready(staged, task_id, paths, generation):
-                raise ExecutionError(
-                    f"Incomplete SSH input result bundle for {task_id}"
-                )
-            shutil.copytree(staged, destination_dir / task_id, dirs_exist_ok=True)
-    except requests.RequestException as exc:
-        raise ExecutionError(
-            f"Failed to download SSH input result bundle for {task_id}: {exc}",
-            retryable=True,
-        ) from exc
-    except tarfile.TarError as exc:
-        raise ExecutionError(
-            f"Failed to unpack SSH input result bundle for {task_id}: {exc}"
-        ) from exc
-    finally:
-        tmp_path.unlink(missing_ok=True)
-
-
-def extract_result_bundle(bundle_path: Path, destination_dir: Path) -> None:
-    destination_dir.mkdir(parents=True, exist_ok=True)
-    dest_root = destination_dir.resolve()
-    with tarfile.open(bundle_path, mode="r:*") as archive:
-        for member in archive:
-            member_path = (dest_root / member.name).resolve()
-            try:
-                member_path.relative_to(dest_root)
-            except ValueError as exc:
-                raise ExecutionError(
-                    f"Unsafe path in SSH input result bundle: {member.name}"
-                ) from exc
-            archive.extract(member, dest_root, filter="data")
