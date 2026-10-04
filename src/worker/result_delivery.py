@@ -104,6 +104,7 @@ def hydrate_result(
         query.extend(("artifact_path", path) for path in paths)
     if generation:
         query.append(("generation", generation))
+    timeout = _transfer_timeout()
     with tempfile.TemporaryDirectory(prefix="flowmesh-hydrate-") as temporary:
         root = Path(temporary)
         bundle = root / "bundle.tar"
@@ -112,7 +113,7 @@ def hydrate_result(
                 f"{base_url.rstrip('/')}/api/v1/results/{task_id}/bundle?{urlencode(query)}",
                 headers=auth_headers(),
                 stream=True,
-                timeout=_transfer_timeout(),
+                timeout=timeout,
             ) as response:
                 response.raise_for_status()
                 with bundle.open("wb") as sink:
