@@ -250,7 +250,7 @@ class APIResult(StrictExecutorResult):
     """HTTP request output. ``response_json``/``usage``/``headers`` are the
     upstream API's own payloads and stay open mappings; ``usage_summary`` is
     the task's summed token/call accounting. ``items`` carries one entry per
-    row."""
+    row or one APIGroupItem per table for dataframe data."""
 
     task_type: Literal[TaskType.API] = TaskType.API
     executor: str

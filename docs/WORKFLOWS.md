@@ -109,12 +109,11 @@ spec:
 
 Each row's prompt replaces `{{prompt}}` in the request body; a value that is
 exactly `{{prompt}}` takes the prompt as-is, so a message-list row fills
-`messages`. An embedded `{{prompt}}` inside a longer string keeps string
-substitution: a string prompt is inserted verbatim, and any other prompt value
-is rendered as JSON. `spec.api.concurrency` (default and maximum 8) bounds
-in-flight requests. Any failed row fails the task. Cancelling the task skips
-rows that have not started and marks it cancelled once in-flight requests
-return.
+`messages`. An embedded `{{prompt}}` inside a longer string is replaced as text:
+a string prompt verbatim, any other value as JSON. `spec.api.concurrency`
+(default and maximum 8) bounds in-flight requests. Any failed row fails the
+task. Cancelling the task skips rows that have not started and marks it
+cancelled once in-flight requests return.
 
 ### Grouped results
 

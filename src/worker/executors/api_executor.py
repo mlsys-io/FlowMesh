@@ -712,23 +712,11 @@ class APIExecutor(DataMixin, Executor):
                 failed.set()
                 raise
 
+            _record_call(idx, attempts, resp.status_code, start, item.response_json)
+
             if self._cancel_event.is_set():
-                _record_call(
-                    idx,
-                    attempts,
-                    resp.status_code,
-                    start,
-                    item.response_json,
-                )
                 raise TaskCancelledError("API task cancelled")
 
-            _record_call(
-                idx,
-                attempts,
-                resp.status_code,
-                start,
-                item.response_json,
-            )
             return item
 
         results: dict[int, APIItem] = {}
