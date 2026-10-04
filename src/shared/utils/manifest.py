@@ -120,7 +120,12 @@ def _describe_path(base_dir: Path, rel_path: Path, *, required: bool) -> dict[st
         "required": required,
     }
 
-    if target.exists():
+    if target.is_symlink():
+        # Stats would describe whatever the link points at, possibly outside the
+        # task's directory.
+        entry["status"] = "present"
+        entry["updated_at"] = now_iso()
+    elif target.exists():
         entry["status"] = "present"
         entry["updated_at"] = now_iso()
         if target.is_file():
@@ -157,7 +162,7 @@ def _directory_stats(path: Path) -> tuple[int, int]:
     total_size = 0
     file_count = 0
     for item in path.rglob("*"):
-        if item.is_file():
+        if item.is_file() and not item.is_symlink():
             stat = item.stat()
             total_size += stat.st_size
             file_count += 1

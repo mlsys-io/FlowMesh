@@ -9,12 +9,13 @@ import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
-from server.app_state import get_results_dir, get_runtime
+from server.app_state import get_event_monitor, get_results_dir, get_runtime
 from server.routers.v1.results import _create_result_bundle_archive, router
 from server.services.monitoring import EventMonitor
 from server.task.models import TaskStatus
 from server.task.runtime import TaskRuntime
 from shared.schemas.result import BaseExecutorResult, ResultEnvelope
+from shared.utils.manifest import sync_manifest
 from shared.utils.result_delivery import (
     artifacts_ready,
     create_delivery_bundle,
@@ -153,3 +154,49 @@ def test_independent_missing_child_never_inherits_parent_result(tmp_path: Path) 
     monitor.mirror_task_results("tsk-parent", ["tsk-child"])
     assert (parent / "results.json").is_file()
     assert not (tmp_path / "tsk-child" / "results.json").exists()
+
+
+def test_result_published_through_its_own_destination_bundles_completely(
+    tmp_path: Path,
+) -> None:
+    server = tmp_path / "server"
+    monitor = Mock()
+    monitor.pop_pending_clones.return_value = []
+    app = FastAPI()
+    app.state.logger = logging.getLogger("test-delivery")
+    app.include_router(router, prefix="/api/v1")
+    app.dependency_overrides[get_results_dir] = lambda: server
+    app.dependency_overrides[get_runtime] = lambda: SimpleNamespace(
+        get_record=lambda _: None
+    )
+    app.dependency_overrides[get_event_monitor] = lambda: monitor
+    envelope = ResultEnvelope(
+        task_id="tsk-leaf",
+        result=BaseExecutorResult(),
+        metadata={"independent_results": True, "result_dispatch": "d1"},
+    )
+    with TestClient(app) as client:
+        uploaded = client.post(
+            "/api/v1/results/tsk-leaf/files",
+            files={"file": ("out/answer.txt", b"42")},
+        )
+        assert uploaded.status_code == 200, uploaded.text
+        posted = client.post(
+            "/api/v1/results", json=envelope.model_dump(mode="json", by_alias=True)
+        )
+        assert posted.status_code == 200, posted.text
+        bundle = client.get("/api/v1/results/tsk-leaf/bundle")
+    assert bundle.status_code == 200, bundle.text
+    assert artifacts_ready(server / "tsk-leaf", "tsk-leaf")
+
+
+def test_manifest_does_not_describe_a_link_target(tmp_path: Path) -> None:
+    secret = tmp_path / "secret"
+    secret.write_text("hunter2")
+    base = tmp_path / "tsk-up"
+    base.mkdir()
+    (base / "leak").symlink_to(secret)
+    manifest = sync_manifest(base, "tsk-up", ["leak"])
+    [entry] = [item for item in manifest["entries"] if item["path"] == "leak"]
+    assert entry["status"] == "present"
+    assert "sha256" not in entry and "size" not in entry

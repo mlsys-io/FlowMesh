@@ -45,6 +45,7 @@ from shared.utils.result_delivery import (
     read_receipt,
     result_generation,
     safe_relative,
+    write_receipt,
 )
 
 from ...app_state import (
@@ -144,27 +145,9 @@ async def ingest_delivery(
     try:
         if safe_relative(task_id).name != task_id:
             raise ValueError("Invalid task ID")
-        with tempfile.TemporaryDirectory(prefix="flowmesh-ingest-") as temporary:
-            root = Path(temporary)
-            bundle = root / "delivery.tar"
-            with bundle.open("wb") as sink:
-                while chunk := await file.read(64 * 1024):
-                    sink.write(chunk)
-            staging = await run_in_threadpool(
-                extract_delivery_bundle, bundle, root / "staging", task_id
-            )
-            envelope = ResultEnvelope.model_validate_json(
-                (staging / RESULTS_NAME).read_text()
-            )
-            _require_current_dispatch(runtime, task_id, envelope)
-            destination = result_file_path(results_dir, task_id).parent
-            await run_in_threadpool(
-                commit_delivery,
-                staging,
-                destination,
-                task_id,
-                partial(_require_current_dispatch, runtime, task_id),
-            )
+        destination = await run_in_threadpool(
+            _ingest_delivery, file.file, results_dir, task_id, runtime
+        )
         return PathResponse(ok=True, path=destination.as_posix())
     except (OSError, ValueError, tarfile.TarError) as exc:
         raise HTTPException(
@@ -389,8 +372,8 @@ async def download_result_bundle(
             task_id,
             base_dir,
             sections,
-            artifact_path if isinstance(artifact_path, list) else [],
-            generation if isinstance(generation, str) else None,
+            artifact_path,
+            generation,
             record.result_dispatch if record is not None else None,
         )
     except HTTPException:
@@ -576,9 +559,35 @@ def _store_result(results_dir: Path, envelope: ResultEnvelope) -> Path:
     with delivery_lock(base_dir):
         previous = read_receipt(base_dir)
         path = write_result(results_dir, envelope)
-        if previous is not None and previous.generation != result_generation(base_dir):
+        if previous is None or previous.generation != result_generation(base_dir):
+            # A result published through its own output destination uploads its
+            # artifacts before its envelope, so describe the files already here.
             (base_dir / RECEIPT_NAME).unlink(missing_ok=True)
+            try:
+                write_receipt(base_dir, make_receipt(base_dir, envelope.task_id, None))
+            except (OSError, ValueError):
+                pass
     return path
+
+
+def _ingest_delivery(
+    upload: BinaryIO, results_dir: Path, task_id: str, runtime: TaskRuntime
+) -> Path:
+    upload.seek(0)
+    with tempfile.TemporaryDirectory(prefix="flowmesh-ingest-") as temporary:
+        staging = extract_delivery_bundle(upload, Path(temporary), task_id)
+        envelope = ResultEnvelope.model_validate_json(
+            (staging / RESULTS_NAME).read_text()
+        )
+        _require_current_dispatch(runtime, task_id, envelope)
+        destination = result_file_path(results_dir, task_id).parent
+        commit_delivery(
+            staging,
+            destination,
+            task_id,
+            partial(_require_current_dispatch, runtime, task_id),
+        )
+    return destination
 
 
 def _read_result_locked(results_dir: Path, task_id: str) -> str:
@@ -605,7 +614,14 @@ def _open_current_file(
         if envelope_path.is_file():
             envelope = ResultEnvelope.model_validate_json(envelope_path.read_text())
             _require_current_dispatch(runtime, task_id, envelope)
-        return target.open("rb")
+        resolved = target.resolve()
+        try:
+            resolved.relative_to(base_dir.resolve())
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail="invalid filename"
+            )
+        return resolved.open("rb")
 
 
 def _iter_file(handle: BinaryIO) -> Iterator[bytes]:
