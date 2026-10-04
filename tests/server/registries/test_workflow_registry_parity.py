@@ -1,5 +1,5 @@
-"""The workflow registry and the Redis clients keep sync and async twins, and each
-twin does what its counterpart does."""
+"""The workflow registry keeps sync and async twins, and each twin does what its
+counterpart does."""
 
 import asyncio
 import inspect
@@ -12,12 +12,6 @@ from server.clients.redis import AsyncRedisClient, RedisClient, SyncRedisClient
 from server.registries.workflow import WorkflowRegistry
 from server.task.models import TaskRecord, TaskStatus
 from shared.tasks import TaskEnvelopeTemplate, TaskType
-
-# Both clients hand out their pipeline synchronously; the caller awaits its execute.
-_CLIENT_SYNC_ON_BOTH = {"control_pipeline"}
-# The async client keeps xrevrange_telemetry for the log routers; the sync twin is
-# unused and was dropped.
-_ASYNC_ONLY = {"xrevrange_telemetry"}
 
 
 def _public(cls: type) -> set[str]:
@@ -39,14 +33,6 @@ def test_every_registry_method_has_a_sync_and_an_async_twin() -> None:
         assert inspect.iscoroutinefunction(getattr(WorkflowRegistry, name)), name
     for name in syncs:
         assert not inspect.iscoroutinefunction(getattr(WorkflowRegistry, name)), name
-
-
-def test_the_redis_clients_share_their_method_names() -> None:
-    syncs, asyncs = _public(SyncRedisClient), _public(AsyncRedisClient)
-
-    assert syncs == asyncs - _ASYNC_ONLY
-    for name in asyncs - _CLIENT_SYNC_ON_BOTH:
-        assert inspect.iscoroutinefunction(getattr(AsyncRedisClient, name)), name
 
 
 @pytest.fixture

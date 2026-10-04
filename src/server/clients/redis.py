@@ -410,6 +410,12 @@ class SyncRedisClient:
         result = self._telemetry.xrange(key, min=min_id, max=max_id, count=count)
         return list(_sync(result))
 
+    def xrevrange_telemetry(
+        self, key: str, max_id: str = "+", min_id: str = "-", count: int | None = None
+    ) -> list[tuple[str, dict[str, Any]]]:
+        result = self._telemetry.xrevrange(key, max=max_id, min=min_id, count=count)
+        return list(_sync(result))
+
     def xread_telemetry(
         self,
         streams: dict[bytes | str | memoryview, int | bytes | str | memoryview],
