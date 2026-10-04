@@ -20,6 +20,8 @@ from shared.utils.result_delivery import (
     artifacts_ready,
     create_delivery_bundle,
     extract_delivery_bundle,
+    make_receipt,
+    write_receipt,
 )
 from tests.shared.test_result_delivery import populate
 from worker.result_delivery import hydrate_result
@@ -200,3 +202,18 @@ def test_manifest_does_not_describe_a_link_target(tmp_path: Path) -> None:
     [entry] = [item for item in manifest["entries"] if item["path"] == "leak"]
     assert entry["status"] == "present"
     assert "sha256" not in entry and "size" not in entry
+
+
+def test_selected_bundle_carries_the_target_of_a_selected_link(tmp_path: Path) -> None:
+    base = populate(tmp_path / "server")
+    (base / "artifacts" / "latest").symlink_to("model")
+    write_receipt(base, make_receipt(base, "tsk-up", None))
+    bundle = _create_result_bundle_archive(
+        "tsk-up", base, ("results", "artifacts"), ["latest"], None, None
+    )
+    try:
+        cache = extract_delivery_bundle(bundle, tmp_path / "cache", "tsk-up")
+    finally:
+        bundle.unlink()
+    assert artifacts_ready(cache, "tsk-up", ["latest"])
+    assert (cache / "artifacts" / "latest" / "weights").read_bytes() == b"model"

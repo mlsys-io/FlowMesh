@@ -45,6 +45,7 @@ from shared.utils.result_delivery import (
     read_receipt,
     result_generation,
     safe_relative,
+    selection_roots,
 )
 
 from ...app_state import (
@@ -502,7 +503,7 @@ def _create_result_bundle_archive(
                         archive.add(
                             candidate, arcname=f"{task_id}/artifacts", recursive=False
                         )
-                        for name in paths:
+                        for name in selection_roots(base_dir, paths):
                             selected = candidate / safe_relative(name)
                             archive.add(
                                 selected,
