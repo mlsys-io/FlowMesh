@@ -133,6 +133,10 @@ def task_log_archive_last_id_key(task_id: str) -> str:
     return f"task:{task_id}:logs:archived_last_id"
 
 
+def task_log_archived_key(task_id: str) -> str:
+    return f"task:{task_id}:logs:archived"
+
+
 def task_log_closed_key(task_id: str) -> str:
     return f"task:{task_id}:logs:closed"
 
@@ -408,6 +412,12 @@ class SyncRedisClient:
         self, key: str, min_id: str = "-", max_id: str = "+", count: int | None = None
     ) -> list[tuple[str, dict[str, Any]]]:
         result = self._telemetry.xrange(key, min=min_id, max=max_id, count=count)
+        return list(_sync(result))
+
+    def xrevrange_telemetry(
+        self, key: str, max_id: str = "+", min_id: str = "-", count: int | None = None
+    ) -> list[tuple[str, dict[str, Any]]]:
+        result = self._telemetry.xrevrange(key, max=max_id, min=min_id, count=count)
         return list(_sync(result))
 
     def xread_telemetry(
