@@ -1,10 +1,11 @@
 """Result resource operations."""
 
 import json
+import shutil
 import tarfile
 import tempfile
 from collections.abc import AsyncIterable, Iterable
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Literal
 
 from pydantic import TypeAdapter
@@ -210,18 +211,53 @@ def _extract_bundle(
                     f"Result bundle for {task_id} is missing "
                     f"requested section '{section}'"
                 )
+        links = _bundle_links(members, task_id)
         for member in members:
-            member_path = (dest_root / member.name).resolve()
+            member_path = dest_root / member.name
             try:
-                member_path.relative_to(dest_root)
+                member_path.parent.resolve().relative_to(dest_root)
             except ValueError as exc:
                 raise ValueError(
                     f"Unsafe member path in result bundle: {member.name}"
                 ) from exc
+            if member.issym():
+                continue
             archive.extract(member, dest_root, filter="data")
             if member.isfile():
-                extracted.append(member_path)
+                extracted.append(member_path.resolve())
+    for name, target in links.items():
+        link_path = dest_root / name
+        link_path.parent.resolve().relative_to(dest_root)
+        link_path.parent.mkdir(parents=True, exist_ok=True)
+        if link_path.is_symlink() or link_path.is_file():
+            link_path.unlink()
+        elif link_path.is_dir():
+            shutil.rmtree(link_path)
+        link_path.symlink_to(target)
     return extracted
+
+
+def _bundle_links(members: list[tarfile.TarInfo], task_id: str) -> dict[str, str]:
+    """Return the bundle's artifact links, rejecting any that could redirect a write.
+
+    Links are created after every other member, only under the task's
+    ``artifacts`` directory, and no member may sit beneath one.
+    """
+    links: dict[str, str] = {}
+    for member in members:
+        name = PurePosixPath(member.name)
+        if member.name != name.as_posix() or name.is_absolute() or ".." in name.parts:
+            raise ValueError(f"Unsafe member path in result bundle: {member.name}")
+        if member.issym():
+            if name.parts[:2] != (task_id, "artifacts") or len(name.parts) < 3:
+                raise ValueError(f"Unsafe link in result bundle: {member.name}")
+            links[member.name] = member.linkname
+    for member in members:
+        if any(
+            parent.as_posix() in links for parent in PurePosixPath(member.name).parents
+        ):
+            raise ValueError(f"Unsafe member path in result bundle: {member.name}")
+    return links
 
 
 def _finalize_materialize(
