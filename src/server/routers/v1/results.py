@@ -1,11 +1,15 @@
 import gzip
 import json
 import logging
-import shutil
+import mimetypes
+import os
 import tarfile
 import tempfile
+from collections.abc import Iterator
 from functools import partial
 from pathlib import Path
+from typing import BinaryIO
+from urllib.parse import quote
 
 from fastapi import (
     APIRouter,
@@ -17,7 +21,7 @@ from fastapi import (
     UploadFile,
     status,
 )
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import ValidationError
 from starlette.background import BackgroundTask
 from starlette.concurrency import run_in_threadpool
@@ -107,14 +111,7 @@ async def ingest_result(
     _require_current_dispatch(runtime, task_id, envelope)
 
     try:
-        base_dir = result_file_path(results_dir, envelope.task_id).parent
-        with delivery_lock(base_dir):
-            previous = read_receipt(base_dir)
-            path = write_result(results_dir, envelope)
-            if previous is not None and previous.generation != result_generation(
-                base_dir
-            ):
-                (base_dir / RECEIPT_NAME).unlink(missing_ok=True)
+        path = await run_in_threadpool(_store_result, results_dir, envelope)
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -198,8 +195,7 @@ async def get_result(
     )
     _require_terminal_result(runtime, task_id)
     try:
-        with delivery_lock(result_file_path(results_dir, task_id).parent):
-            raw = read_result(results_dir, task_id)
+        raw = await run_in_threadpool(_read_result_locked, results_dir, task_id)
     except FileNotFoundError:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="result not found"
@@ -265,9 +261,9 @@ async def upload_result_file(
                 while chunk := await file.read(64 * 1024):
                     out.write(chunk)
                 out.close()
-                with delivery_lock(base_dir):
-                    (base_dir / RECEIPT_NAME).unlink(missing_ok=True)
-                    temporary_path.replace(target_path)
+                await run_in_threadpool(
+                    _install_upload, base_dir, temporary_path, target_path
+                )
             finally:
                 temporary_path.unlink(missing_ok=True)
     except Exception as exc:
@@ -289,7 +285,7 @@ async def upload_result_file(
     summary="Download a result artifact",
     description="Download an artifact file for a task result.",
     response_description="Result file",
-    response_class=FileResponse,
+    response_class=StreamingResponse,
 )
 async def download_result_file(
     task_id: str,
@@ -298,7 +294,7 @@ async def download_result_file(
     results_dir: Path = Depends(get_results_dir),
     runtime: TaskRuntime = Depends(get_runtime),
     logger: logging.Logger = Depends(get_logger),
-) -> FileResponse:
+) -> StreamingResponse:
     await require_permission(
         principal, ResourceKind.RESULT, task_id, ResourceAction.READ, logger
     )
@@ -333,24 +329,18 @@ async def download_result_file(
             )
         target_path = fallback
 
-    with delivery_lock(base_dir):
-        envelope_path = base_dir / RESULTS_NAME
-        if envelope_path.is_file():
-            envelope = ResultEnvelope.model_validate_json(envelope_path.read_text())
-            _require_current_dispatch(runtime, task_id, envelope)
-        with tempfile.NamedTemporaryFile(
-            prefix="flowmesh-file-", delete=False
-        ) as snapshot:
-            snapshot_path = Path(snapshot.name)
-        try:
-            shutil.copyfile(target_path, snapshot_path)
-        except Exception:
-            snapshot_path.unlink(missing_ok=True)
-            raise
-    return FileResponse(
-        snapshot_path,
-        filename=sanitized.name,
-        background=BackgroundTask(_cleanup_bundle_file, snapshot_path),
+    handle = await run_in_threadpool(
+        _open_current_file, runtime, task_id, base_dir, target_path
+    )
+    return StreamingResponse(
+        _iter_file(handle),
+        media_type=mimetypes.guess_type(sanitized.name)[0]
+        or "application/octet-stream",
+        headers={
+            "Content-Length": str(os.fstat(handle.fileno()).st_size),
+            "Content-Disposition": _attachment(sanitized.name),
+        },
+        background=BackgroundTask(handle.close),
     )
 
 
@@ -508,7 +498,7 @@ def _create_result_bundle_archive(
             paths = artifact_paths or None
             receipt = read_receipt(base_dir)
             if "artifacts" in sections and not artifacts_ready(
-                base_dir, task_id, paths, generation
+                base_dir, task_id, paths, generation, verify_content=False
             ):
                 # Older local results have no delivery receipt.
                 if (
@@ -535,9 +525,17 @@ def _create_result_bundle_archive(
                         )
                         for name in paths:
                             selected = candidate / safe_relative(name)
-                            archive.add(selected, arcname=f"{task_id}/artifacts/{name}")
+                            archive.add(
+                                selected,
+                                arcname=f"{task_id}/artifacts/{name}",
+                                filter=_transferable,
+                            )
                     else:
-                        archive.add(candidate, arcname=f"{task_id}/{candidate.name}")
+                        archive.add(
+                            candidate,
+                            arcname=f"{task_id}/{candidate.name}",
+                            filter=_transferable,
+                        )
                 if "results" in sections and "artifacts" in sections:
                     add_receipt(
                         archive, task_id, make_receipt(base_dir, task_id, paths)
@@ -552,8 +550,6 @@ def _create_result_bundle_archive(
 def _require_current_dispatch(
     runtime: TaskRuntime, task_id: str, envelope: ResultEnvelope
 ) -> None:
-    if not isinstance(runtime, TaskRuntime):
-        return
     record = runtime.get_record(task_id)
     metadata = envelope.metadata or {}
     if (
@@ -567,14 +563,65 @@ def _require_current_dispatch(
 
 
 def _require_terminal_result(runtime: TaskRuntime, task_id: str) -> None:
-    if not isinstance(runtime, TaskRuntime):
-        return
     record = runtime.get_record(task_id)
     if record is not None and record.status not in TERMINAL_TASK_STATUSES:
         raise HTTPException(
             status_code=409,
             detail=f"Task {task_id} is not terminal; result unavailable",
         )
+
+
+def _store_result(results_dir: Path, envelope: ResultEnvelope) -> Path:
+    base_dir = result_file_path(results_dir, envelope.task_id).parent
+    with delivery_lock(base_dir):
+        previous = read_receipt(base_dir)
+        path = write_result(results_dir, envelope)
+        if previous is not None and previous.generation != result_generation(base_dir):
+            (base_dir / RECEIPT_NAME).unlink(missing_ok=True)
+    return path
+
+
+def _read_result_locked(results_dir: Path, task_id: str) -> str:
+    with delivery_lock(result_file_path(results_dir, task_id).parent):
+        return read_result(results_dir, task_id)
+
+
+def _install_upload(base_dir: Path, upload: Path, target: Path) -> None:
+    with delivery_lock(base_dir):
+        (base_dir / RECEIPT_NAME).unlink(missing_ok=True)
+        upload.replace(target)
+
+
+def _open_current_file(
+    runtime: TaskRuntime, task_id: str, base_dir: Path, target: Path
+) -> BinaryIO:
+    """Open ``target`` while the task's snapshot is locked.
+
+    Deliveries replace files by rename, so the open handle keeps serving the
+    snapshot that was current when it was opened.
+    """
+    with delivery_lock(base_dir):
+        envelope_path = base_dir / RESULTS_NAME
+        if envelope_path.is_file():
+            envelope = ResultEnvelope.model_validate_json(envelope_path.read_text())
+            _require_current_dispatch(runtime, task_id, envelope)
+        return target.open("rb")
+
+
+def _iter_file(handle: BinaryIO) -> Iterator[bytes]:
+    while chunk := handle.read(64 * 1024):
+        yield chunk
+
+
+def _attachment(filename: str) -> str:
+    quoted = quote(filename)
+    if quoted != filename:
+        return f"attachment; filename*=utf-8''{quoted}"
+    return f'attachment; filename="{filename}"'
+
+
+def _transferable(member: tarfile.TarInfo) -> tarfile.TarInfo | None:
+    return member if member.isfile() or member.isdir() or member.issym() else None
 
 
 def _independent_result(base_dir: Path) -> bool:

@@ -1,17 +1,22 @@
+import asyncio
 import logging
+import threading
 from collections.abc import Iterator
 from pathlib import Path
 from typing import cast
+from unittest.mock import Mock
 
 import pytest
 from fastapi import HTTPException, status
-from fastapi.responses import FileResponse
+from fastapi.responses import StreamingResponse
 from fastapi.routing import APIRoute
 from lumid_hooks import PrincipalContext, ResourceRef
 
 from server.hooks import PERMISSION_CHECKERS
 from server.routers.v1 import results as results_router
-from shared.schemas.result import BaseExecutorResult, ResultEnvelope
+from server.task.runtime import TaskRuntime
+from shared.schemas.result import BaseExecutorResult, ResultEnvelope, write_result
+from shared.utils.result_delivery import delivery_lock
 
 
 @pytest.fixture
@@ -60,6 +65,17 @@ def deny_all_permissions() -> Iterator[None]:
         PERMISSION_CHECKERS.clear()
 
 
+def _runtime_without_records() -> TaskRuntime:
+    runtime = Mock(spec=TaskRuntime)
+    runtime.get_record.return_value = None
+    return cast(TaskRuntime, runtime)
+
+
+async def _body(response: StreamingResponse) -> bytes:
+    chunks = [chunk async for chunk in response.body_iterator]
+    return b"".join(c.encode() if isinstance(c, str) else bytes(c) for c in chunks)
+
+
 def test_download_result_file_route_uses_path_converter() -> None:
     route = next(
         route
@@ -85,11 +101,12 @@ async def test_download_result_file_resolves_flat_name_under_artifacts(
         task_id="task-1",
         filename="result.json",
         results_dir=tmp_path,
+        runtime=_runtime_without_records(),
     )
 
-    assert isinstance(response, FileResponse)
-    assert Path(response.path).read_bytes() == artifact_path.read_bytes()
-    Path(response.path).unlink()
+    assert isinstance(response, StreamingResponse)
+    assert await _body(response) == artifact_path.read_bytes()
+    assert response.headers["content-length"] == str(artifact_path.stat().st_size)
 
 
 @pytest.mark.anyio
@@ -105,11 +122,12 @@ async def test_download_result_file_falls_back_to_task_root_for_flat_filename(
         task_id="task-1",
         filename="result.json",
         results_dir=tmp_path,
+        runtime=_runtime_without_records(),
     )
 
-    assert isinstance(response, FileResponse)
-    assert Path(response.path).read_bytes() == root_file.read_bytes()
-    Path(response.path).unlink()
+    assert isinstance(response, StreamingResponse)
+    assert await _body(response) == root_file.read_bytes()
+    assert response.headers["content-length"] == str(root_file.stat().st_size)
 
 
 def test_resolve_artifact_relative_path_scopes_nested_paths_to_artifacts() -> None:
@@ -153,3 +171,36 @@ async def test_upload_result_file_denied_without_permission(
             task_id="t-1", principal=_principal(), logger=logger
         )
     assert exc.value.status_code == status.HTTP_403_FORBIDDEN
+
+
+@pytest.mark.anyio
+async def test_get_result_waits_for_the_snapshot_lock_off_the_event_loop(
+    tmp_path: Path, logger: logging.Logger
+) -> None:
+    write_result(tmp_path, ResultEnvelope(task_id="t-1", result=BaseExecutorResult()))
+    held, release = threading.Event(), threading.Event()
+
+    def hold_lock() -> None:
+        with delivery_lock(tmp_path / "t-1"):
+            held.set()
+            release.wait(5)
+
+    holder = threading.Thread(target=hold_lock)
+    holder.start()
+    held.wait(5)
+    try:
+        pending = asyncio.ensure_future(
+            results_router.get_result(
+                task_id="t-1",
+                principal=_principal(),
+                results_dir=tmp_path,
+                runtime=_runtime_without_records(),
+                logger=logger,
+            )
+        )
+        await asyncio.sleep(0.05)
+        assert not pending.done()
+    finally:
+        release.set()
+        holder.join()
+    assert isinstance(await pending, BaseExecutorResult)
