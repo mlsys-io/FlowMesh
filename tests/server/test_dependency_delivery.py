@@ -187,7 +187,7 @@ def test_result_published_through_its_own_destination_bundles_completely(
         assert posted.status_code == 200, posted.text
         bundle = client.get("/api/v1/results/tsk-leaf/bundle")
     assert bundle.status_code == 200, bundle.text
-    assert artifacts_ready(server / "tsk-leaf", "tsk-leaf")
+    assert not artifacts_ready(server / "tsk-leaf", "tsk-leaf")
 
 
 def test_manifest_does_not_describe_a_link_target(tmp_path: Path) -> None:

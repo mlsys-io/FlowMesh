@@ -45,7 +45,6 @@ from shared.utils.result_delivery import (
     read_receipt,
     result_generation,
     safe_relative,
-    write_receipt,
 )
 
 from ...app_state import (
@@ -483,13 +482,10 @@ def _create_result_bundle_archive(
             if "artifacts" in sections and not artifacts_ready(
                 base_dir, task_id, paths, generation, verify_content=False
             ):
-                # Older local results have no delivery receipt.
-                if (
-                    receipt is not None
-                    or paths is not None
-                    or generation is not None
-                    or _independent_result(base_dir)
-                ):
+                # Without a receipt, a client's full bundle carries what is
+                # stored, as for a result published through its own destination;
+                # dependents always ask for a receipted selection or generation.
+                if receipt is not None or paths is not None or generation is not None:
                     raise HTTPException(
                         status_code=404,
                         detail="Requested artifacts have not been completely delivered",
@@ -559,14 +555,8 @@ def _store_result(results_dir: Path, envelope: ResultEnvelope) -> Path:
     with delivery_lock(base_dir):
         previous = read_receipt(base_dir)
         path = write_result(results_dir, envelope)
-        if previous is None or previous.generation != result_generation(base_dir):
-            # A result published through its own output destination uploads its
-            # artifacts before its envelope, so describe the files already here.
+        if previous is not None and previous.generation != result_generation(base_dir):
             (base_dir / RECEIPT_NAME).unlink(missing_ok=True)
-            try:
-                write_receipt(base_dir, make_receipt(base_dir, envelope.task_id, None))
-            except (OSError, ValueError):
-                pass
     return path
 
 
@@ -638,16 +628,6 @@ def _attachment(filename: str) -> str:
 
 def _transferable(member: tarfile.TarInfo) -> tarfile.TarInfo | None:
     return member if member.isfile() or member.isdir() or member.issym() else None
-
-
-def _independent_result(base_dir: Path) -> bool:
-    try:
-        envelope = ResultEnvelope.model_validate_json(
-            (base_dir / RESULTS_NAME).read_text()
-        )
-        return bool((envelope.metadata or {}).get("independent_results"))
-    except (OSError, ValueError):
-        return False
 
 
 def _bundle_section_path(base_dir: Path, section: str) -> Path | None:
