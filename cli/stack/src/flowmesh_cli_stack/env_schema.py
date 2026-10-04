@@ -634,6 +634,12 @@ STACK_ENV_SCHEMA = EnvSchema(
                 ),
                 EnvVar("WORKER_UPLOAD_RESULTS", "false", var_type=EnvVarType.BOOL),
                 EnvVar(
+                    "WORKER_RESULT_TRANSFER_TIMEOUT_SEC",
+                    "1800",
+                    var_type=EnvVarType.FLOAT,
+                    min_value=1,
+                ),
+                EnvVar(
                     "WORKER_EXECUTOR_IDLE_CLEANUP_SEC",
                     "60",
                     var_type=EnvVarType.FLOAT,

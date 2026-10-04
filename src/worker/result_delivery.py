@@ -14,6 +14,7 @@ from shared.schemas.result_delivery import ArtifactInput, ResultDeliveryRequest
 from shared.tasks.placeholders import placeholder_fields
 from shared.tasks.worker_message import WorkerTaskMessage
 from shared.utils.http import auth_headers
+from shared.utils.parsing import parse_float_env
 from shared.utils.result_delivery import (
     artifact_path,
     artifacts_ready,
@@ -26,7 +27,9 @@ from shared.utils.result_delivery import (
 
 from .executors.base_executor import ExecutionError
 
-DELIVERY_TIMEOUT_SEC = 300.0
+
+def _transfer_timeout() -> float:
+    return parse_float_env("WORKER_RESULT_TRANSFER_TIMEOUT_SEC", 1800)
 
 
 def publish_result(
@@ -61,7 +64,7 @@ def publish_result(
         size = bundle.stat().st_size
         with (
             bundle.open("rb") as source,
-            httpx.Client(timeout=DELIVERY_TIMEOUT_SEC) as client,
+            httpx.Client(timeout=_transfer_timeout()) as client,
         ):
             response = client.post(
                 f"{base_url.rstrip('/')}/api/v1/results/{task_id}/delivery",
@@ -109,7 +112,7 @@ def hydrate_result(
                 f"{base_url.rstrip('/')}/api/v1/results/{task_id}/bundle?{urlencode(query)}",
                 headers=auth_headers(),
                 stream=True,
-                timeout=DELIVERY_TIMEOUT_SEC,
+                timeout=_transfer_timeout(),
             ) as response:
                 response.raise_for_status()
                 with bundle.open("wb") as sink:

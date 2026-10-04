@@ -308,3 +308,34 @@ def test_delivery_wire_round_trip() -> None:
     restored = WorkerTaskMessage.model_validate_json(message.model_dump_json())
     assert restored.result_delivery == message.result_delivery
     assert restored.artifact_inputs == message.artifact_inputs
+
+
+def test_transfers_wait_as_long_as_the_configured_timeout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("FLOWMESH_BASE_URL", "http://server")
+    monkeypatch.setenv("WORKER_RESULT_TRANSFER_TIMEOUT_SEC", "4321")
+    producer = populate(tmp_path / "producer")
+    timeouts: list[Any] = []
+    client_class = httpx.Client
+
+    def capture_client(**kwargs: Any) -> httpx.Client:
+        timeouts.append(kwargs["timeout"])
+        return client_class(
+            transport=httpx.MockTransport(lambda _: httpx.Response(200))
+        )
+
+    monkeypatch.setattr(result_delivery.httpx, "Client", capture_client)
+    assert result_delivery.publish_result(
+        producer, "tsk-up", ResultDeliveryRequest(), logging.getLogger("test")
+    )
+
+    def capture_get(url: str, **kwargs: Any) -> Any:
+        timeouts.append(kwargs["timeout"])
+        raise result_delivery.requests.ConnectionError("stop")
+
+    monkeypatch.setattr(result_delivery.requests, "get", capture_get)
+    with pytest.raises(result_delivery.ExecutionError):
+        result_delivery.hydrate_result("tsk-up", tmp_path / "consumer")
+
+    assert timeouts == [4321.0, 4321.0]

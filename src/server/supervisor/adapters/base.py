@@ -73,6 +73,9 @@ class WorkerConfig(BaseModel):
     upload_results: bool = env.WORKER_UPLOAD_RESULTS
     """Whether to always upload results to the server if spec.output.destination
     is unspecified."""
+    result_transfer_timeout_sec: float = env.WORKER_RESULT_TRANSFER_TIMEOUT_SEC
+    """Seconds a worker waits on the server while publishing or fetching a
+    result"""
     executor_idle_cleanup_sec: float = env.WORKER_EXECUTOR_IDLE_CLEANUP_SEC
     """Seconds an executor may sit idle before the worker unloads it"""
     foreign_gpu_gate: bool = env.WORKER_FOREIGN_GPU_GATE
@@ -180,6 +183,9 @@ class WorkerAdapter(ABC):
                 config.network_bandwidth
             ),
             "WORKER_UPLOAD_RESULTS": to_env_str(config.upload_results),
+            "WORKER_RESULT_TRANSFER_TIMEOUT_SEC": to_env_str(
+                config.result_transfer_timeout_sec
+            ),
             "WORKER_EXECUTOR_IDLE_CLEANUP_SEC": to_env_str(
                 config.executor_idle_cleanup_sec
             ),
