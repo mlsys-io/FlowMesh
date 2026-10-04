@@ -133,10 +133,6 @@ def task_log_archive_last_id_key(task_id: str) -> str:
     return f"task:{task_id}:logs:archived_last_id"
 
 
-def task_log_archived_key(task_id: str) -> str:
-    return f"task:{task_id}:logs:archived"
-
-
 def task_log_closed_key(task_id: str) -> str:
     return f"task:{task_id}:logs:closed"
 

@@ -1,7 +1,6 @@
 import json
 import logging
 import os
-import stat
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -15,7 +14,6 @@ from ..clients.redis import (
     TASK_LOGS_STREAM_PREFIX,
     SyncRedisClient,
     task_log_archive_last_id_key,
-    task_log_archived_key,
     task_log_stream_key,
 )
 from ..task.models import TaskStatus
@@ -42,6 +40,7 @@ class _TaskArchiveState:
     last_id: str
     last_flush_ts: float
     done: bool
+    checkpointed: bool = False
     failures: int = 0
     first_failure_ts: float | None = None
     next_attempt_ts: float = 0.0
@@ -177,9 +176,13 @@ class TaskLogArchiver:
     def _ensure_task(self, task_id: str, now: float) -> None:
         if task_id in self._states:
             return
-        last_id = self._load_checkpoint(task_id) or "0-0"
+        checkpoint = self._load_checkpoint(task_id)
+        last_id = checkpoint or "0-0"
         self._states[task_id] = _TaskArchiveState(
-            last_id=last_id, last_flush_ts=now, done=False
+            last_id=last_id,
+            last_flush_ts=now,
+            done=False,
+            checkpointed=checkpoint is not None,
         )
         self._buffers.setdefault(task_id, [])
 
@@ -196,23 +199,20 @@ class TaskLogArchiver:
         return self._task_logs_dir(task_id) / "logs.jsonl"
 
     def _archived(self, task_id: str) -> bool | None:
-        """Whether a finished task's logs need no archiving: it was finalized, or,
-        finalized before that was recorded, its log file holds lines or something
-        other than a file stands where it or a directory holding it belongs. None
-        when its log file could not be checked."""
-        checkpoint = self._redis.get(task_log_archived_key(task_id))
-        if checkpoint:
-            return True
+        """Whether a finished task's logs need no archiving. A checkpoint present
+        means archiving is in progress; no checkpoint and something at the log path
+        means the task was finalized; no checkpoint and nothing there means it is not
+        archived yet. None when the log file could not be checked."""
         if self._redis.get(task_log_archive_last_id_key(task_id)):
             return False
         try:
-            st = os.stat(self._logs_path(task_id), follow_symlinks=False)
+            os.stat(self._logs_path(task_id), follow_symlinks=False)
         except FileNotFoundError:
             return False
         except OSError as exc:
             self._logger.debug("Could not check %s's log file: %s", task_id, exc)
             return None
-        return not stat.S_ISREG(st.st_mode) or st.st_size > 0
+        return True
 
     def _load_checkpoint(self, task_id: str) -> str | None:
         return self._redis.get(task_log_archive_last_id_key(task_id)) or None
@@ -251,6 +251,9 @@ class TaskLogArchiver:
                 wrapper = {"message": payload, "level": "INFO", "stream": "system"}
                 lines.append(json.dumps(wrapper, ensure_ascii=False))
         data = "".join(f"{line}\n" for line in lines).encode("utf-8")
+        if not state.checkpointed:
+            self._save_checkpoint(task_id, "0-0")
+            state.checkpointed = True
         try:
             self._append(task_id, data)
         except _TornWrite as exc:
@@ -352,9 +355,8 @@ class TaskLogArchiver:
         except Exception as exc:
             self._logger.debug("Failed to sync manifest for %s: %s", task_id, exc)
         try:
-            self._redis.set_value(task_log_archived_key(task_id), "1")
             self._redis.delete(task_log_archive_last_id_key(task_id))
         except Exception as exc:
             self._logger.debug(
-                "Failed to record %s's logs as archived: %s", task_id, exc
+                "Failed to clear %s's archive checkpoint: %s", task_id, exc
             )

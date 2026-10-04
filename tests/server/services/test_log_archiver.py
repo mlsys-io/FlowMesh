@@ -13,7 +13,6 @@ import pytest
 
 from server.clients.redis import (
     task_log_archive_last_id_key,
-    task_log_archived_key,
     task_log_stream_key,
 )
 from server.services import log_archiver
@@ -215,10 +214,11 @@ def test_a_restart_while_retrying_still_archives_the_lines(
     _ticks(restarted, clock, 3, 1.0)
 
     assert _lines(restarted, "tsk-1") == ['{"m": "kept"}']
-    assert streams.checkpoints[task_log_archived_key("tsk-1")]
+    assert task_log_archive_last_id_key("tsk-1") not in streams.checkpoints
+    assert restarted._archived("tsk-1")
 
 
-def test_finalizing_records_the_task_archived_apart_from_its_stream_checkpoint(
+def test_finalizing_clears_the_stream_checkpoint_and_a_restart_reads_the_task_archived(
     tmp_path: Path,
 ) -> None:
     archiver, streams = _streaming_archiver(tmp_path, {"tsk-1": TaskStatus.DISPATCHED})
@@ -235,7 +235,6 @@ def test_finalizing_records_the_task_archived_apart_from_its_stream_checkpoint(
 
     # Older code reads the stream checkpoint as a stream id.
     assert task_log_archive_last_id_key("tsk-1") not in streams.checkpoints
-    assert streams.checkpoints[task_log_archived_key("tsk-1")]
     restarted, _ = _streaming_archiver(
         tmp_path, {"tsk-1": TaskStatus.DONE}, streams=streams
     )
@@ -270,7 +269,7 @@ def test_a_tick_with_only_retrying_tasks_waits_for_the_earliest_retry(
     archiver, streams = _streaming_archiver(
         tmp_path, {"tsk-1": TaskStatus.DISPATCHED, "tsk-old": TaskStatus.DONE}
     )
-    streams.checkpoints[task_log_archived_key("tsk-old")] = "1"
+    archiver._logs_path("tsk-old").touch()
     read = streams.redis.xread_telemetry.side_effect
 
     def _blocking_read(requested: dict[str, str], **kwargs: Any) -> list[Any]:
@@ -365,7 +364,7 @@ def test_each_archived_task_is_probed_once(tmp_path: Path) -> None:
     finished = {f"tsk-{n}": TaskStatus.DONE for n in range(50)}
     archiver, streams = _streaming_archiver(tmp_path, finished)
     for task_id in finished:
-        streams.checkpoints[task_log_archived_key(task_id)] = "1"
+        archiver._logs_path(task_id).touch()
 
     with patch.object(log_archiver.time, "sleep"):
         for _ in range(20):
@@ -396,3 +395,53 @@ def test_a_transient_error_probing_a_finished_task_still_archives_it(
             archiver._tick()
 
     assert _lines(archiver, "tsk-1") == ['{"m": "kept"}']
+
+
+def test_a_finalized_task_with_no_lines_is_archived_after_a_restart(
+    tmp_path: Path,
+) -> None:
+    archiver, streams = _streaming_archiver(
+        tmp_path, {"tsk-1": TaskStatus.DONE}, flush_max_entries=100
+    )
+    with patch.object(log_archiver.time, "sleep"):
+        archiver._tick()
+    assert archiver._archived("tsk-1")
+
+    restarted, _ = _streaming_archiver(
+        tmp_path, {"tsk-1": TaskStatus.DONE}, streams=streams
+    )
+    with patch.object(log_archiver, "sync_manifest") as sync:
+        with patch.object(log_archiver.time, "sleep"):
+            restarted._tick()
+    sync.assert_not_called()
+
+
+def test_the_starting_checkpoint_is_saved_before_the_first_append(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    archiver, streams = _streaming_archiver(tmp_path, {"tsk-1": TaskStatus.DISPATCHED})
+
+    def _full(fd: int, data: Any) -> int:
+        raise OSError(errno.ENOSPC, "No space left on device")
+
+    monkeypatch.setattr(log_archiver.os, "write", _full)
+    streams.publish("tsk-1", "held")
+    with patch.object(log_archiver.time, "sleep"):
+        archiver._tick()
+
+    assert streams.checkpoints[task_log_archive_last_id_key("tsk-1")] == "0-0"
+
+
+def test_no_archiver_key_outlives_finalizing(tmp_path: Path) -> None:
+    archiver, streams = _streaming_archiver(tmp_path, {"tsk-1": TaskStatus.DISPATCHED})
+    streams.publish("tsk-1", "one")
+    with patch.object(log_archiver.time, "sleep"):
+        archiver._tick()
+    archiver._runtime.task_statuses.return_value = {  # type: ignore[attr-defined]
+        "tsk-1": TaskStatus.DONE
+    }
+    with patch.object(log_archiver.time, "sleep"):
+        archiver._tick()
+
+    keys = [key for key in streams.checkpoints if key.startswith("task:tsk-1:logs:")]
+    assert keys == []
