@@ -52,18 +52,13 @@ self-authenticate the same way, sending `FLOWMESH_API_KEY` as the bearer.
 | GET | `/api/v1/results/{task_id}/files/{filename}` | Download artifact. |
 | GET | `/api/v1/results/{task_id}/logs` | Download archived `logs.jsonl`. |
 
-Bundle sections use repeated query parameters, such as
-`?include=results&include=artifacts`. Missing requested sections return 404;
-nonterminal tasks return 409. A full artifact bundle requires complete artifact
-publication. Repeated `artifact_path` parameters request selected artifact files
-or subtrees; `generation` can require a specific result snapshot. Selected bundles
-carry completeness information for consumer caches. A completed task whose
-result remains worker-local also returns 404 from result retrieval.
-
-System delivery is independent of user output destinations. With
-`WORKER_UPLOAD_RESULTS=false`, only downstream-required data is published;
-`true` requests every result and artifact. Logs use the telemetry/archive path,
-and archived log downloads return 404 until the archive exists.
+Result reads return 409 while the task is still running and 404 for a result
+that was never published to the server (see `WORKER_UPLOAD_RESULTS` in
+[`ENV.md`](ENV.md)). Bundle sections are repeated query parameters, such as
+`?include=results&include=artifacts`; a requested section that is missing or
+incompletely published returns 404. Repeated `artifact_path` parameters limit
+the bundle to those artifact files or subtrees, and `generation` requires a
+specific result snapshot. Archived logs return 404 until the archive exists.
 
 ## Traces
 

@@ -85,13 +85,12 @@ Spark), set `DOCKER_GPU_RUNTIME=` in the stack env.
 | `SERVE_DEFAULT_TTL_SEC` | `3600` | Default vLLM serve session TTL when `spec.ttlSeconds` is unset |
 | `SERVE_MAX_TTL_SEC` | `86400` | Upper bound on vLLM serve session TTL, regardless of `spec.ttlSeconds` |
 
-With `WORKER_UPLOAD_RESULTS=false`, workers publish envelopes and artifact
-selections required by downstream tasks. With `true`, they also publish leaves
-and unused artifacts. System publication is best-effort; connectivity failures
-leave results on the worker and missing dependency data fails after
-`TASK_STAGE_RESULT_GRACE_SEC`. `FLOWMESH_BASE_URL` and worker authentication
-must reach the server. `MODEL_CLEANUP_AFTER_UPLOAD` retains training artifacts
-when system delivery is requested, preserving dependency reuse.
+Workers always publish what dependent stages need to the server at
+`FLOWMESH_BASE_URL`. `WORKER_UPLOAD_RESULTS=true` also publishes every other
+result and artifact, so clients can retrieve leaf results from a worker that
+does not share the server's results directory. Publishing is best-effort: a
+failed transfer leaves the result on the worker. `MODEL_CLEANUP_AFTER_UPLOAD`
+keeps training artifacts that are being published.
 
 ## Supervisor
 

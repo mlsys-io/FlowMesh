@@ -48,15 +48,13 @@ the permissive base.
 
 Artifact-bearing fields use `ArtifactRef` (`{"path": rel_path}`);
 relative paths resolve against the producer's `_artifacts` context via
-`artifact_to_source` / `_render_artifact_ref`. Downstream named references
-hydrate the selected file or directory on the consumer worker and resolve to a
-local path, including `checkpoint.load.type: local`. Python/SSH input mounts
-hydrate the complete upstream artifact directory. System delivery preserves
-artifact contexts from declared output destinations. Training cleanup retains
-artifacts when system publication is requested.
-Training generates model archives for blanket publication, explicit HTTP output,
-or a downstream archive reference. HTTP checkpoint references can unpack a
-hydrated local archive without downloading it again.
+`artifact_to_source` / `_render_artifact_ref`. A downstream named reference
+resolves to a local copy on the consuming worker, so `checkpoint.load.type:
+local` works across hosts, and an `http` checkpoint reference to an upstream
+archive unpacks that local copy. Training executors build a model archive when
+the task has an HTTP destination, `WORKER_UPLOAD_RESULTS` is set, or a
+dependent references `final_model_archive`, and keep their artifacts while a
+dependent still needs them.
 
 ## Agent executor (utu / youtu-agent)
 

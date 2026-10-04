@@ -73,28 +73,6 @@ reached; the terminal error is the executor's own message. Controlled
 executor errors are not retried. A task that no worker can satisfy fails
 after `TASK_NO_WORKER_GRACE_SEC`.
 
-The dispatcher requests result envelopes needed by downstream stage contexts.
-Python and SSH input mounts request complete upstream artifact directories;
-named artifact references request only the selected file or directory subtree.
-Workers publish these selections independently of user output destinations,
-even with `WORKER_UPLOAD_RESULTS=false`. With `WORKER_UPLOAD_RESULTS=true`,
-workers publish every result and artifact, including leaf tasks.
-
-System publication is best-effort and preserves computed task success on a
-transfer failure. A dependent waits for complete required data and fails after
-`TASK_STAGE_RESULT_GRACE_SEC` from upstream completion if delivery remains
-incomplete. Consumers hydrate missing artifacts into local caches, so local
-checkpoint paths work across workers. Complete snapshots identify cache
-contents and prevent partial transfers from unblocking consumers. Merged children
-publish their own results and fail individually when a dependency expires.
-Deploy updated workers before relying on dependency delivery instructions.
-
-User HTTP destinations retain their own delivery and error behavior. Result
-availability to clients depends on what reached the server; worker-only leaf
-results return 404. Logs travel through supervisor telemetry and the server's
-log archive independently of result publication.
-Terminal tasks flush buffered log entries before finalizing their archives.
-
 ## Directory map
 
 ```
@@ -154,6 +132,19 @@ scripts/dev/            compile_protos, sync_requirements, check_env_examples
   to the worker that produced it, falling back to normal selection when
   unavailable or stale. Mostly relevant for training pipelines reusing
   on-disk checkpoints.
+- **Dependency delivery.** A dependent reads its upstream stages through the
+  server, so a worker publishes what its dependents need there: the result
+  envelope, the whole artifact directory for a python or SSH input mount, or
+  just the referenced file or subtree for a named artifact reference such as
+  `${train.final_model}`. The consumer's worker copies that data into its local
+  results directory and runs against local paths, so a local checkpoint reference
+  works across hosts. Publishing is separate from the task's own output
+  destination and best-effort: a failed transfer leaves the producer succeeded,
+  and the dependent fails once `TASK_STAGE_RESULT_GRACE_SEC` has passed since
+  the upstream finished without the complete data arriving. Each published
+  snapshot carries a receipt of its files, so a partial transfer or a stale
+  attempt's result never satisfies a dependent. What is not published stays on
+  the worker; see `WORKER_UPLOAD_RESULTS` in [`ENV.md`](ENV.md).
 - **Context reuse.** Workers report cached models/datasets in their
   `WorkerHardware`. The dispatcher's `_cached_worker_candidates` filters
   to workers whose cache covers the task's references; entries older

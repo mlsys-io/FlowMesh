@@ -170,12 +170,9 @@ spec:
 
 See `examples/templates/python_two_stage.yaml` for a runnable workflow.
 
-Named artifact stage references, such as `${train.final_model}`, publish only
-the selected file or directory subtree and hydrate it locally on the receiving
-worker. Python and SSH input mounts publish the full upstream artifact directory.
-Scalars and stage context require result envelopes. These dependency transfers
-work with `WORKER_UPLOAD_RESULTS=false`; leaves and unused artifacts require
-blanket publication or an explicit output destination for client retrieval.
+A named artifact reference such as `${train.final_model}` resolves to a local
+path on the consuming worker, wherever the upstream stage ran. Python and SSH
+input mounts receive the upstream's whole artifact directory.
 
 ### Reading upstream stages
 

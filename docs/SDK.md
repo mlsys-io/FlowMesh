@@ -58,13 +58,9 @@ async with AsyncFlowMesh(base_url="...", api_key="...") as client:
   summary.
 - **Cancel** — `client.workflows.cancel(wf_id)`.
 
-Client retrieval reads data published to the server. With
-`WORKER_UPLOAD_RESULTS=false`, leaf results and unused artifacts can remain
-worker-local and return `NotFoundError`. With `true`, workers attempt complete
-publication independently of external output destinations. Missing requested
-bundle sections raise an error; an existing extraction directory cannot hide
-an incomplete download. Task success and publication availability are separate.
-Logs remain available through telemetry and the server's archive.
+Results are read from the server, so a result that was never published there
+raises `NotFoundError` (see `WORKER_UPLOAD_RESULTS` in [`ENV.md`](ENV.md)). A
+bundle missing a requested section raises `FlowMeshError`.
 
 ## Cursor pagination
 
