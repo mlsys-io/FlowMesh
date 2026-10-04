@@ -1331,6 +1331,8 @@ class Dispatcher:
         return inputs
 
     def _result_delivery_request(self, task_id: str) -> ResultDeliveryRequest | None:
+        record = self._runtime.get_record(task_id)
+        names = set(self._stage_context_keys(record)) if record is not None else set()
         pending = [task_id]
         visited: set[str] = set()
         request: ResultDeliveryRequest | None = None
@@ -1346,12 +1348,6 @@ class Dispatcher:
                 if dependent is None or not self._needs_stage_context(dependent):
                     continue
                 request = request or ResultDeliveryRequest()
-                context = self._build_stage_context(dependent)
-                names = {
-                    name
-                    for name, upstream in context.items()
-                    if upstream.task_id == task_id
-                }
                 spec = dependent.task.spec
                 if (
                     isinstance(spec, (PythonSpecStrict, PythonSpecTemplate))
