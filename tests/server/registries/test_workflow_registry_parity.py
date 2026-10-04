@@ -15,6 +15,9 @@ from shared.tasks import TaskEnvelopeTemplate, TaskType
 
 # Both clients hand out their pipeline synchronously; the caller awaits its execute.
 _CLIENT_SYNC_ON_BOTH = {"control_pipeline"}
+# The async client keeps xrevrange_telemetry for the log routers; the sync twin is
+# unused and was dropped.
+_ASYNC_ONLY = {"xrevrange_telemetry"}
 
 
 def _public(cls: type) -> set[str]:
@@ -41,7 +44,7 @@ def test_every_registry_method_has_a_sync_and_an_async_twin() -> None:
 def test_the_redis_clients_share_their_method_names() -> None:
     syncs, asyncs = _public(SyncRedisClient), _public(AsyncRedisClient)
 
-    assert syncs == asyncs
+    assert syncs == asyncs - _ASYNC_ONLY
     for name in asyncs - _CLIENT_SYNC_ON_BOTH:
         assert inspect.iscoroutinefunction(getattr(AsyncRedisClient, name)), name
 
