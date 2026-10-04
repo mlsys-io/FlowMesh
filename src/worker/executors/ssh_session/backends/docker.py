@@ -24,6 +24,7 @@ from shared.utils import parse_float_env
 from shared.utils.manifest import ARTIFACTS_DIR
 from shared.utils.result_delivery import (
     artifacts_ready,
+    relocated_links,
     safe_relative,
     selection_roots,
 )
@@ -593,6 +594,11 @@ class DockerSessionBackend(SSHSessionBackend):
                         commands.extend(
                             [f"mkdir -p {target_parent}", f"cp -a {source} {target}"]
                         )
+                for name, link in relocated_links(
+                    resolved.source_path, resolved.artifact_paths
+                ).items():
+                    target = shlex.quote(f"/dst/{resolved.task_id}/{name}")
+                    commands.append(f"ln -sfn {shlex.quote(link)} {target}")
                 continue
             raise ExecutionError(f"Missing hydrated input {resolved.task_id}")
         command = " && ".join(commands)

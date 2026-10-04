@@ -1,4 +1,5 @@
 import logging
+import tarfile
 import threading
 from pathlib import Path
 from types import SimpleNamespace
@@ -232,3 +233,14 @@ def test_server_bundle_makes_links_into_own_artifacts_portable(tmp_path: Path) -
         bundle.unlink()
     assert (cache / "artifacts" / "latest").readlink() == Path("model")
     assert (cache / "artifacts" / "latest" / "weights").read_bytes() == b"model"
+
+
+def test_server_bundle_drops_links_outside_artifacts(tmp_path: Path) -> None:
+    base = populate(tmp_path / "server")
+    (base / "logs" / "planted").symlink_to(tmp_path)
+    bundle = _create_result_bundle_archive("tsk-up", base, ("logs",))
+    try:
+        with tarfile.open(bundle) as archive:
+            assert "tsk-up/logs/planted" not in archive.getnames()
+    finally:
+        bundle.unlink()

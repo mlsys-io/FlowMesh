@@ -15,6 +15,7 @@ from shared.tasks.worker_message import WorkerTaskMessage
 from shared.utils.result_delivery import (
     artifacts_ready,
     make_receipt,
+    relocated_links,
     safe_relative,
     selection_roots,
     write_receipt,
@@ -102,6 +103,7 @@ def stage_inputs_locally(
             shutil.copytree(
                 resolved.source_path, destination, symlinks=True, dirs_exist_ok=True
             )
+            _relocate_links(resolved, destination)
             continue
         destination.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(
@@ -118,8 +120,18 @@ def stage_inputs_locally(
                 shutil.copytree(source, target, symlinks=True, dirs_exist_ok=True)
             else:
                 shutil.copyfile(source, target)
+        _relocate_links(resolved, destination)
         write_receipt(
             destination,
             make_receipt(destination, resolved.task_id, resolved.artifact_paths),
         )
     return staging_dir
+
+
+def _relocate_links(resolved: ResolvedSSHInput, destination: Path) -> None:
+    for name, link in relocated_links(
+        resolved.source_path, resolved.artifact_paths
+    ).items():
+        target = destination / name
+        target.unlink()
+        target.symlink_to(link)

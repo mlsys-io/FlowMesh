@@ -630,7 +630,10 @@ def _attachment(filename: str) -> str:
 
 def _transferable(base_dir: Path, member: tarfile.TarInfo) -> tarfile.TarInfo | None:
     if member.issym():
-        link_path = base_dir.joinpath(*PurePosixPath(member.name).parts[1:])
+        parts = PurePosixPath(member.name).parts[1:]
+        if parts[:1] != ("artifacts",):
+            return None
+        link_path = base_dir.joinpath(*parts)
         member.linkname = portable_link(link_path, base_dir)
         return member
     return member if member.isfile() or member.isdir() else None

@@ -183,6 +183,36 @@ def portable_link(link_path: Path, base_dir: Path) -> str:
     return target
 
 
+def relocated_links(base_dir: Path, paths: list[str] | None) -> dict[str, str]:
+    """Return the links in a selection whose target changes when it is copied.
+
+    Keys are paths relative to ``base_dir``; values are the portable targets a
+    copy has to carry instead of the stored ones.
+    """
+    roots = (
+        [base_dir / "artifacts"]
+        if paths is None
+        else [
+            base_dir / "artifacts" / safe_relative(p)
+            for p in selection_roots(base_dir, paths)
+        ]
+    )
+    changes: dict[str, str] = {}
+    for root in roots:
+        entries = (
+            [root, *root.rglob("*")]
+            if root.is_dir() and not root.is_symlink()
+            else [root]
+        )
+        for entry in entries:
+            if not entry.is_symlink():
+                continue
+            link = portable_link(entry, base_dir)
+            if link != os.readlink(entry):
+                changes[entry.relative_to(base_dir).as_posix()] = link
+    return changes
+
+
 def selection_roots(base_dir: Path, paths: list[str]) -> list[str]:
     """Return ``paths`` plus the in-artifacts targets of the links they contain.
 
@@ -318,7 +348,7 @@ def artifacts_ready(
                 if paths is None
                 else [base_dir / "artifacts" / safe_relative(p) for p in paths]
             )
-            return all(path.exists() for path in roots)
+            return all(path.exists() or path.is_symlink() for path in roots)
         except (OSError, ValueError):
             return False
     try:

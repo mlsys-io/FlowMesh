@@ -331,3 +331,55 @@ def test_selected_input_staging_brings_in_artifact_link_targets(tmp_path: Path) 
     model = staged / "t-up" / "artifacts" / "final_model"
     assert model.is_symlink()
     assert (model / "weights").read_text() == "trained"
+
+
+@pytest.mark.parametrize("selection", [None, ["latest"]])
+def test_local_input_staging_makes_links_into_own_artifacts_portable(
+    tmp_path: Path, selection: list[str] | None
+) -> None:
+    source = tmp_path / "results" / "t-up"
+    (source / "artifacts" / "model").mkdir(parents=True)
+    (source / "artifacts" / "model" / "weights").write_text("trained")
+    (source / "artifacts" / "latest").symlink_to("/worker-results/t-up/artifacts/model")
+    write_result(
+        source.parent, ResultEnvelope(task_id="t-up", result=BaseExecutorResult())
+    )
+    staged = inputs_module.stage_inputs_locally(
+        [
+            ResolvedSSHInput(
+                "up",
+                "t-up",
+                source,
+                "/mnt/flowmesh/inputs/up",
+                artifact_paths=selection,
+            )
+        ],
+        "ssn-1",
+    )
+    link = staged / "t-up" / "artifacts" / "latest"
+    assert link.readlink() == Path("model")
+    assert (link / "weights").read_text() == "trained"
+
+
+def test_volume_staging_makes_links_into_own_artifacts_portable(
+    tmp_path: Path,
+) -> None:
+    backend = DockerSessionBackend(
+        _worker_config(tmp_path, network_mode="container:flowmesh-worker-1")
+    )
+    source = tmp_path / "results" / "t-up"
+    (source / "artifacts" / "model").mkdir(parents=True)
+    (source / "artifacts" / "latest").symlink_to("/worker-results/t-up/artifacts/model")
+    write_result(
+        source.parent, ResultEnvelope(task_id="t-up", result=BaseExecutorResult())
+    )
+    client = MagicMock()
+    backend._stage_inputs_in_volume(
+        client,
+        [ResolvedSSHInput("up", "t-up", source, "/mnt/flowmesh/inputs/up")],
+        "flowmesh-results",
+        "session-1",
+        "worker-1",
+    )
+    command = client.containers.run.call_args.kwargs["command"][2]
+    assert "ln -sfn model /dst/t-up/artifacts/latest" in command
