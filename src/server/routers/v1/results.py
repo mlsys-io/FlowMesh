@@ -102,7 +102,7 @@ async def ingest_result(
     envelope.task_id = task_id
 
     try:
-        path = write_result(results_dir, envelope)
+        path = await asyncio.to_thread(write_result, results_dir, envelope)
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -113,10 +113,12 @@ async def ingest_result(
     record = runtime.get_record(task_id)
     if record:
         expected_artifacts = record.task.spec.get_artifacts()
-    sync_manifest(path.parent, task_id, expected_artifacts)
+    await asyncio.to_thread(sync_manifest, path.parent, task_id, expected_artifacts)
     pending_children = event_monitor.pop_pending_clones(task_id)
     if pending_children:
-        event_monitor.mirror_task_results(task_id, pending_children)
+        await asyncio.to_thread(
+            event_monitor.mirror_task_results, task_id, pending_children
+        )
     return PathResponse(ok=True, path=str(path))
 
 

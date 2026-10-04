@@ -149,6 +149,51 @@ async def test_ingest_result_denied_without_permission(
 
 
 @pytest.mark.anyio
+async def test_ingest_result_runs_io_off_the_event_loop(
+    tmp_path: Path, logger: logging.Logger, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    threads: list[int] = []
+    write = results_router.write_result
+    sync = results_router.sync_manifest
+    monitor = SimpleNamespace(
+        pop_pending_clones=lambda _task_id: ["c-1"],
+        mirror_task_results=lambda _task_id, _children: None,
+    )
+    mirror = monitor.mirror_task_results
+
+    def _recording_write(*args: Any, **kwargs: Any) -> Path:
+        threads.append(threading.get_ident())
+        return write(*args, **kwargs)
+
+    def _recording_sync(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        threads.append(threading.get_ident())
+        return sync(*args, **kwargs)
+
+    def _recording_mirror(*args: Any, **kwargs: Any) -> None:
+        threads.append(threading.get_ident())
+        return mirror(*args, **kwargs)
+
+    monkeypatch.setattr(results_router, "write_result", _recording_write)
+    monkeypatch.setattr(results_router, "sync_manifest", _recording_sync)
+    monkeypatch.setattr(monitor, "mirror_task_results", _recording_mirror)
+
+    envelope = ResultEnvelope(task_id="t-1", result=BaseExecutorResult())
+    response = await results_router.ingest_result(
+        envelope=envelope,
+        principal=_principal(),
+        runtime=cast(Any, SimpleNamespace(get_record=lambda _task_id: None)),
+        event_monitor=cast(Any, monitor),
+        results_dir=tmp_path,
+        logger=logger,
+    )
+
+    assert len(threads) == 3
+    assert all(thread != threading.get_ident() for thread in threads)
+    assert response.ok is True
+    assert response.path == str(tmp_path / "t-1" / "results.json")
+
+
+@pytest.mark.anyio
 async def test_upload_result_file_denied_without_permission(
     deny_all_permissions: None, logger: logging.Logger
 ) -> None:
