@@ -2,11 +2,14 @@
 
 import hashlib
 import json
+import threading
+import weakref
 from collections.abc import Iterable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .atomic import atomic_write_text
+from .atomic import atomic_write_text, is_atomic_temp
 from .time import now_iso
 
 MANIFEST_NAME = "manifest.json"
@@ -16,6 +19,17 @@ ARTIFACTS_DIR = "artifacts"
 SCRATCH_DIR = "scratch"
 
 _SHARED_DIR_MODE = 0o0777
+# The most bytes one manifest sync reads to digest its files; a file that does not
+# fit what is left is listed with its size and no digest.
+_HASH_BUDGET_BYTES = 256 << 20
+_HASH_CHUNK_BYTES = 1 << 20
+# A manifest is a rescan of its directory; serializing a directory's rescans makes
+# the last one written see every file written before it. A directory's lock lives
+# only while a sync holds it.
+_MANIFEST_LOCKS: weakref.WeakValueDictionary[Path, threading.Lock] = (
+    weakref.WeakValueDictionary()
+)
+_MANIFEST_LOCKS_GUARD = threading.Lock()
 
 
 def _ensure_shared_dir(path: Path) -> None:
@@ -57,25 +71,43 @@ def sync_manifest(
     """
     Build a manifest by reconciling expected versus actual files.
     """
+    with _manifest_lock(base_dir):
+        return _sync_manifest(base_dir, task_id, expected)
+
+
+def _manifest_lock(base_dir: Path) -> threading.Lock:
+    key = base_dir.resolve()
+    with _MANIFEST_LOCKS_GUARD:
+        if (lock := _MANIFEST_LOCKS.get(key)) is None:
+            lock = _MANIFEST_LOCKS[key] = threading.Lock()
+        return lock
+
+
+def _sync_manifest(
+    base_dir: Path, task_id: str, expected: Iterable[str]
+) -> dict[str, Any]:
     prepare_output_dir(base_dir)
     expected_set = {_normalize_artifact_name(item) for item in expected or [] if item}
     expected_set.update({RESULTS_NAME, LOGS_DIR, ARTIFACTS_DIR})
 
     entries: list[dict[str, Any]] = []
     added: set[str] = set()
+    budget = _HashBudget(_HASH_BUDGET_BYTES)
 
     for name in sorted(expected_set):
         rel_path = Path(name)
-        entry = _describe_path(base_dir, rel_path, required=True)
+        entry = _describe_path(base_dir, rel_path, budget, required=True)
         entries.append(entry)
         added.add(rel_path.as_posix())
 
     # Capture additional files/directories that exist but were not declared.
-    for item in base_dir.iterdir():
+    for item in sorted(base_dir.iterdir(), key=lambda p: p.name):
         key = item.relative_to(base_dir).as_posix()
-        if key in added or item.name == MANIFEST_NAME:
+        if key in added or item.name == MANIFEST_NAME or is_atomic_temp(item.name):
             continue
-        entry = _describe_path(base_dir, item.relative_to(base_dir), required=False)
+        entry = _describe_path(
+            base_dir, item.relative_to(base_dir), budget, required=False
+        )
         entries.append(entry)
 
     manifest = {
@@ -110,7 +142,16 @@ def _infer_type(rel_path: Path) -> str:
     return "directory"
 
 
-def _describe_path(base_dir: Path, rel_path: Path, *, required: bool) -> dict[str, Any]:
+@dataclass
+class _HashBudget:
+    """The bytes a manifest sync may still read to digest its files."""
+
+    remaining: int
+
+
+def _describe_path(
+    base_dir: Path, rel_path: Path, budget: _HashBudget, *, required: bool
+) -> dict[str, Any]:
     target = base_dir / rel_path
     entry_type = _infer_type(rel_path)
     entry: dict[str, Any] = {
@@ -120,20 +161,32 @@ def _describe_path(base_dir: Path, rel_path: Path, *, required: bool) -> dict[st
         "required": required,
     }
 
-    if target.exists():
-        entry["status"] = "present"
-        entry["updated_at"] = now_iso()
+    stats: dict[str, Any]
+    try:
         if target.is_file():
-            stat = target.stat()
-            entry["size"] = stat.st_size
-            entry["sha256"] = _sha256_file(target)
-        else:
+            stats = _file_stats(target, budget)
+        elif target.exists():
             size, count = _directory_stats(target)
-            entry["size"] = size
-            entry["file_count"] = count
-    else:
+            stats = {"size": size, "file_count": count}
+        else:
+            raise FileNotFoundError(target)
+    except FileNotFoundError:
         entry["status"] = "missing"
+        return entry
+    entry["status"] = "present"
+    entry["updated_at"] = now_iso()
+    entry.update(stats)
     return entry
+
+
+def _file_stats(path: Path, budget: _HashBudget) -> dict[str, Any]:
+    """The size and digest of ``path``, or just its size when it does not fit what
+    is left of ``budget``."""
+    size = path.stat().st_size
+    if size > budget.remaining:
+        return {"size": size}
+    budget.remaining -= size
+    return {"size": size, "sha256": _sha256_file(path, size)}
 
 
 def _normalize_artifact_name(name: str) -> str:
@@ -145,11 +198,13 @@ def _normalize_artifact_name(name: str) -> str:
     return value or name
 
 
-def _sha256_file(path: Path) -> str:
+def _sha256_file(path: Path, size: int) -> str:
+    """The digest of the first ``size`` bytes of ``path``."""
     hasher = hashlib.sha256()
     with path.open("rb") as fh:
-        for chunk in iter(lambda: fh.read(8192), b""):
+        while size > 0 and (chunk := fh.read(min(_HASH_CHUNK_BYTES, size))):
             hasher.update(chunk)
+            size -= len(chunk)
     return hasher.hexdigest()
 
 
@@ -157,8 +212,12 @@ def _directory_stats(path: Path) -> tuple[int, int]:
     total_size = 0
     file_count = 0
     for item in path.rglob("*"):
-        if item.is_file():
-            stat = item.stat()
-            total_size += stat.st_size
-            file_count += 1
+        if is_atomic_temp(item.name):
+            continue
+        try:
+            if item.is_file():
+                total_size += item.stat().st_size
+                file_count += 1
+        except FileNotFoundError:
+            continue
     return total_size, file_count

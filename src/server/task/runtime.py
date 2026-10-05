@@ -1,3 +1,4 @@
+import asyncio
 import copy
 import heapq
 import json
@@ -5,11 +6,13 @@ import logging
 import threading
 import time
 from collections import defaultdict, deque
+from collections.abc import Collection
 from typing import Any
 
 from shared.schemas.command import InterruptMessage
 from shared.tasks import TaskEnvelopeTemplate
 from shared.utils import new_workflow_id
+from shared.utils.redact import redact_raw_yaml
 
 from ..hooks import SUPPLIER_RESOLVERS
 from ..registries.worker import Worker, WorkerRegistry
@@ -107,9 +110,9 @@ class TaskRuntime:
     async def register(
         self, owner_id: str, org_id: str, payload: str, format: str = "native"
     ) -> tuple[str, list[TaskParsingResult]]:
-        parsed_workflow = parse_workflow(payload, format)
+        parsed_workflow = await asyncio.to_thread(parse_workflow, payload, format)
         specs = parsed_workflow.tasks
-        source_text = payload
+        source_text = await asyncio.to_thread(redact_raw_yaml, payload)
         results: list[TaskParsingResult] = []
         workflow_id = new_workflow_id()
         task_records: list[TaskRecord] = []
@@ -1355,12 +1358,22 @@ class TaskRuntime:
                 return None
             return self._build_task_info_locked(task_id, record)
 
-    def list_tasks(self) -> list[TaskInfo]:
+    def list_tasks(
+        self,
+        workflow_ids: Collection[str] | None = None,
+        statuses: Collection[str] | None = None,
+    ) -> list[TaskInfo]:
         with self._lock:
             return [
                 self._build_task_info_locked(task_id, record)
                 for task_id, record in self._tasks.items()
+                if (workflow_ids is None or record.workflow_id in workflow_ids)
+                and (statuses is None or record.status in statuses)
             ]
+
+    def task_statuses(self) -> dict[str, str]:
+        with self._lock:
+            return {task_id: record.status for task_id, record in self._tasks.items()}
 
     # ------------------------------------------------------------------ #
     # Misc helpers
