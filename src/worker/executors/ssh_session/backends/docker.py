@@ -87,6 +87,9 @@ _EXEC_ENVIRONMENT = {
     "LD_LIBRARY_PATH": "",
 }
 _CONTAINER_RESULTS_SOURCE_ROOT = "/root/.flowmesh/results-source"
+# The world-writable directories of a stock Debian/Ubuntu image (/var/lock is a
+# symlink to /run/lock), mounted as tmpfs in a hardened session.
+_HARDENED_SCRATCH_DIRS = ("/tmp", "/var/tmp", "/run/lock")  # nosec B108
 _SSH_RUN_ENTRYPOINT_PATH = "/flowmesh-ssh-run.sh"
 _SSH_RUN_SCRIPT_SOURCE = (
     Path(worker.__file__).resolve().parent / "docker" / "ssh-run.sh"
@@ -328,14 +331,17 @@ class DockerSessionBackend(SSHSessionBackend):
             # effective set is empty anyway.
             kwargs["cap_drop"] = ["ALL"]
             kwargs["cap_add"] = ["CHOWN", "DAC_OVERRIDE", "FOWNER", "SETUID", "SETGID"]
-            # tmpfs pages are charged to the container's memory, so the memory
-            # limit is the scratch space's only bound.
+            # Every world-writable directory of a stock image is a tmpfs, so
+            # scratch is charged to the container's memory and the memory limit
+            # bounds it. The root stays writable: what the task writes anywhere
+            # else lands in the container layer, which SSH_MAX_DISK bounds.
+            # (/dev/shm is already a 64 MiB tmpfs.)
             tmp_opts = "rw,exec,nosuid,nodev"
             if cfg.memory_limit_bytes is not None:
                 tmp_opts += f",size={cfg.memory_limit_bytes}"
             kwargs["tmpfs"] = {
-                "/tmp": tmp_opts
-            }  # nosec B108 - a fresh per-container tmpfs, not the host /tmp
+                path: tmp_opts for path in _HARDENED_SCRATCH_DIRS
+            }  # nosec B108 - fresh per-container tmpfs, not the host's
         return kwargs
 
     def _resolve_noninteractive_command(
