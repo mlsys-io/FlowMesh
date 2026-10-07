@@ -342,3 +342,29 @@ def test_transfers_wait_as_long_as_the_configured_timeout(
         result_delivery.hydrate_result("tsk-up", tmp_path / "consumer")
 
     assert timeouts == [4321.0, 4321.0]
+
+
+def test_an_unreachable_server_gets_no_bundle_packed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("FLOWMESH_BASE_URL", "http://server")
+    producer = populate(tmp_path / "producer")
+    client_class = httpx.Client
+
+    def refuse(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("refused", request=request)
+
+    monkeypatch.setattr(
+        result_delivery.httpx,
+        "Client",
+        lambda **_: client_class(transport=httpx.MockTransport(refuse)),
+    )
+    packed = Mock(side_effect=AssertionError("packed a bundle"))
+    monkeypatch.setattr(result_delivery, "create_delivery_bundle", packed)
+
+    size = result_delivery.publish_result(
+        producer, "tsk-up", ResultDeliveryRequest(), logging.getLogger("test")
+    )
+
+    assert size == 0
+    packed.assert_not_called()

@@ -101,8 +101,9 @@ def _server_holds(
 ) -> bool:
     """Whether the server already holds this exact snapshot selection.
 
-    Any failure, including a server that predates the check, means "not known
-    to be held", so the upload is attempted as before.
+    Any reply but 204, including one from a server without this check, means the
+    snapshot is not held. A server that cannot be reached raises, so nothing is
+    packed for an upload that would fail the same way.
     """
     query: list[tuple[str, str | int | float | bool | None]] = [
         ("generation", generation)
@@ -111,14 +112,11 @@ def _server_holds(
         query.append(("all_artifacts", "true"))
     else:
         query.extend(("artifact_path", path) for path in paths)
-    try:
-        response = client.get(
-            f"{base_url.rstrip('/')}/api/v1/results/{task_id}/delivery",
-            params=query,
-            headers=auth_headers(),
-        )
-    except httpx.HTTPError:
-        return False
+    response = client.get(
+        f"{base_url.rstrip('/')}/api/v1/results/{task_id}/delivery",
+        params=query,
+        headers=auth_headers(),
+    )
     return response.status_code == 204
 
 
