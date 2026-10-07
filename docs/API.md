@@ -46,6 +46,7 @@ self-authenticate the same way, sending `FLOWMESH_API_KEY` as the bearer.
 |--------|------|-------------|
 | POST | `/api/v1/results` | Submit task result (worker → server). |
 | POST | `/api/v1/results/{task_id}/delivery` | Publish a complete envelope and artifact selection (multipart tar snapshot). |
+| GET | `/api/v1/results/{task_id}/delivery` | `204` when the server already holds the snapshot `generation` with the given `artifact_path` selection (or `all_artifacts=true`), else `404`. Workers call it before publishing. |
 | GET | `/api/v1/results/{task_id}` | Get task result JSON. |
 | GET | `/api/v1/results/{task_id}/bundle` | Download tar.gz bundle (`?include=results,artifacts,logs,all`). |
 | POST | `/api/v1/results/{task_id}/files` | Upload artifact (multipart). |

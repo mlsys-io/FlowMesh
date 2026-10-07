@@ -22,6 +22,7 @@ from shared.utils.result_delivery import (
     create_delivery_bundle,
     extract_delivery_bundle,
     result_field,
+    result_generation,
     safe_relative,
 )
 
@@ -58,20 +59,26 @@ def publish_result(
                 }
             )
         )
-        bundle = create_delivery_bundle(
-            base_dir, task_id, paths, include_traces=request.all_artifacts
-        )
-        size = bundle.stat().st_size
-        with (
-            bundle.open("rb") as source,
-            httpx.Client(timeout=_transfer_timeout()) as client,
-        ):
-            response = client.post(
-                f"{base_url.rstrip('/')}/api/v1/results/{task_id}/delivery",
-                files={"file": ("delivery.tar", source, "application/x-tar")},
-                headers=auth_headers(),
+        with httpx.Client(timeout=_transfer_timeout()) as client:
+            if _server_holds(
+                client, base_url, task_id, paths, result_generation(base_dir)
+            ):
+                # The server shares this worker's results volume, or already
+                # received this snapshot; uploading it again would only copy
+                # the same files over themselves.
+                logger.debug("Task %s result already held by the server", task_id)
+                return 0
+            bundle = create_delivery_bundle(
+                base_dir, task_id, paths, include_traces=request.all_artifacts
             )
-            response.raise_for_status()
+            size = bundle.stat().st_size
+            with bundle.open("rb") as source:
+                response = client.post(
+                    f"{base_url.rstrip('/')}/api/v1/results/{task_id}/delivery",
+                    files={"file": ("delivery.tar", source, "application/x-tar")},
+                    headers=auth_headers(),
+                )
+                response.raise_for_status()
         return size
     except Exception as exc:
         logger.warning(
@@ -83,6 +90,36 @@ def publish_result(
     finally:
         if bundle is not None:
             bundle.unlink(missing_ok=True)
+
+
+def _server_holds(
+    client: httpx.Client,
+    base_url: str,
+    task_id: str,
+    paths: list[str] | None,
+    generation: str,
+) -> bool:
+    """Whether the server already holds this exact snapshot selection.
+
+    Any failure, including a server that predates the check, means "not known
+    to be held", so the upload is attempted as before.
+    """
+    query: list[tuple[str, str | int | float | bool | None]] = [
+        ("generation", generation)
+    ]
+    if paths is None:
+        query.append(("all_artifacts", "true"))
+    else:
+        query.extend(("artifact_path", path) for path in paths)
+    try:
+        response = client.get(
+            f"{base_url.rstrip('/')}/api/v1/results/{task_id}/delivery",
+            params=query,
+            headers=auth_headers(),
+        )
+    except httpx.HTTPError:
+        return False
+    return response.status_code == 204
 
 
 def hydrate_result(

@@ -43,6 +43,9 @@ def test_system_publication_is_independent_and_streams_selected_data(
     sent: list[bytes] = []
 
     def accept(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            # The server does not hold the snapshot yet.
+            return httpx.Response(404)
         assert request.url == "http://server/api/v1/results/tsk-up/delivery"
         assert request.headers["Authorization"] == "Bearer test-key"
         assert isinstance(request.stream, httpx.SyncByteStream)

@@ -143,8 +143,11 @@ scripts/dev/            compile_protos, sync_requirements, check_env_examples
   and the dependent fails once `TASK_STAGE_RESULT_GRACE_SEC` has passed since
   the upstream finished without the complete data arriving. Each published
   snapshot carries a receipt of its files, so a partial transfer or a stale
-  attempt's result never satisfies a dependent. What is not published stays on
-  the worker; see `WORKER_UPLOAD_RESULTS` in [`ENV.md`](ENV.md).
+  attempt's result never satisfies a dependent. Before uploading, the worker
+  asks the server whether it already holds that exact snapshot; a worker that
+  shares the server's results volume finds its own and uploads nothing. What is
+  not published stays on the worker; see `WORKER_UPLOAD_RESULTS` in
+  [`ENV.md`](ENV.md).
 - **Context reuse.** Workers report cached models/datasets in their
   `WorkerHardware`. The dispatcher's `_cached_worker_candidates` filters
   to workers whose cache covers the task's references; entries older

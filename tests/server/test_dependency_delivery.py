@@ -22,6 +22,7 @@ from shared.utils.result_delivery import (
     create_delivery_bundle,
     extract_delivery_bundle,
     make_receipt,
+    result_generation,
     write_receipt,
 )
 from tests.shared.test_result_delivery import populate
@@ -244,3 +245,44 @@ def test_server_bundle_drops_links_outside_artifacts(tmp_path: Path) -> None:
             assert "tsk-up/logs/planted" not in archive.getnames()
     finally:
         bundle.unlink()
+
+
+def _check_client(results_dir: Path) -> TestClient:
+    app = FastAPI()
+    app.state.logger = logging.getLogger("test-delivery-check")
+    app.include_router(router, prefix="/api/v1")
+    app.dependency_overrides[get_results_dir] = lambda: results_dir
+    return TestClient(app)
+
+
+def test_delivery_check_reports_a_held_snapshot_without_creating_one(
+    tmp_path: Path,
+) -> None:
+    base = populate(tmp_path / "shared", task_id="tsk-up")
+    generation = result_generation(base)
+    with _check_client(tmp_path / "shared") as client:
+        url = "/api/v1/results/tsk-up/delivery"
+        held = client.get(url, params={"generation": generation, "all_artifacts": 1})
+        assert held.status_code == 204, held.text
+        selected = client.get(
+            url, params={"generation": generation, "artifact_path": "model"}
+        )
+        assert selected.status_code == 204
+        stale = client.get(url, params={"generation": "0" * 64, "all_artifacts": 1})
+        assert stale.status_code == 404
+        absent = client.get(
+            url, params={"generation": generation, "artifact_path": "nothing"}
+        )
+        assert absent.status_code == 404
+        assert client.get(url).status_code == 422
+        bad = client.get(
+            url, params={"generation": generation, "artifact_path": "../x"}
+        )
+        assert bad.status_code == 400
+    with _check_client(tmp_path / "empty") as client:
+        missing = client.get(
+            "/api/v1/results/tsk-up/delivery",
+            params={"generation": generation, "all_artifacts": 1},
+        )
+        assert missing.status_code == 404
+    assert not (tmp_path / "empty" / "tsk-up").exists()

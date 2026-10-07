@@ -23,7 +23,7 @@ from fastapi import (
     UploadFile,
     status,
 )
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import ValidationError
 from starlette.background import BackgroundTask
 from starlette.concurrency import run_in_threadpool
@@ -167,6 +167,47 @@ async def ingest_delivery(
         raise HTTPException(
             status_code=400, detail=f"Invalid result delivery: {exc}"
         ) from exc
+
+
+@router.get(
+    "/{task_id}/delivery",
+    summary="Check whether a result selection is already held",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+)
+async def check_delivery(
+    task_id: str,
+    generation: str = Query(...),
+    artifact_path: list[str] = Query(default_factory=list),
+    all_artifacts: bool = Query(default=False),
+    principal: PrincipalContext = Depends(authenticate_connection),
+    results_dir: Path = Depends(get_results_dir),
+    logger: logging.Logger = Depends(get_logger),
+) -> Response:
+    """Answer 204 when this server already holds the complete snapshot a worker is
+    about to publish, and 404 otherwise.
+
+    A worker that shares the results volume with the server finds its own
+    snapshot here and skips the upload.
+    """
+    await require_permission(
+        principal, ResourceKind.RESULT, None, ResourceAction.WRITE, logger
+    )
+    try:
+        if safe_relative(task_id).name != task_id:
+            raise ValueError("Invalid task ID")
+        for path in artifact_path:
+            safe_relative(path)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    paths = None if all_artifacts else artifact_path
+    if not await asyncio.to_thread(
+        _holds_delivery, results_dir, task_id, paths, generation
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="selection not held"
+        )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get(
@@ -595,6 +636,19 @@ def _ingest_delivery(
             partial(_require_current_dispatch, runtime, task_id),
         )
     return destination
+
+
+def _holds_delivery(
+    results_dir: Path, task_id: str, paths: list[str] | None, generation: str
+) -> bool:
+    base_dir = result_file_path(results_dir, task_id).parent
+    if not base_dir.is_dir():
+        # The lock would create the directory; nothing is held there anyway.
+        return False
+    with delivery_lock(base_dir):
+        return artifacts_ready(
+            base_dir, task_id, paths, generation, verify_content=False
+        )
 
 
 def _read_result_locked(results_dir: Path, task_id: str) -> str:
