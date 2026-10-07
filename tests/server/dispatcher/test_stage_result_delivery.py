@@ -400,3 +400,72 @@ def test_dispatch_checks_each_artifact_reference_once_without_hashing(
     assert registry.publish_task.called
     assert ready.call_count == 1
     assert ready.call_args.kwargs["verify_content"] is False
+
+
+def test_merged_children_each_carry_their_own_delivery_request(
+    tmp_path: Path,
+) -> None:
+    # A merged batch spans workflows: each child whose dependent reads it gets a
+    # request of its own, and a child without such a dependent gets none.
+    runtime, _ = build_runtime("merged-delivery-requests")
+    batch = """
+apiVersion: flowmesh/v1
+kind: Workflow
+metadata:
+  name: batch
+spec:
+  graph:
+    nodes:
+      - name: task
+        spec:
+          taskType: inference
+          model:
+            source:
+              identifier: llama
+"""
+    reader = batch + """
+      - name: use
+        dependsOn: [task]
+        spec:
+          taskType: python
+          inputs: []
+          env:
+            ANSWER: '${task.answer}'
+          code: |
+            def main():
+                return 1
+"""
+    _, first = register(runtime, reader)
+    _, second = register(runtime, reader)
+    _, third = register(runtime, batch)
+    parent, reading_child, leaf_child = first["task"], second["task"], third["task"]
+    _, registry = _dispatcher(runtime, tmp_path)
+    disp = _RecordingDispatcher(
+        runtime=runtime,
+        worker_registry=registry,
+        results_dir=tmp_path,
+        logger=logging.getLogger("merged-requests"),
+        worker_selection_strategy="first_fit",
+        enable_context_reuse=False,
+        enable_task_merge=True,
+        task_merge_max_batch_size=3,
+    )
+
+    assert disp.dispatch_once(parent) is True
+
+    message = registry.publish_task.call_args.args[1]
+    assert {child.task_id for child in message.merged_children} == {
+        reading_child,
+        leaf_child,
+    }
+    assert set(message.result_delivery) == {parent, reading_child}
+    for identifier in (parent, reading_child):
+        request = message.result_delivery[identifier]
+        assert request.all_artifacts is False
+        assert request.artifact_fields == ["answer"]
+        record = runtime.get_record(identifier)
+        assert record is not None
+        assert record.result_dispatch == message.result_dispatch
+    # The declared output is untouched; nothing turns on the HTTP destination.
+    assert message.task.spec.output is None
+    assert all(child.spec.output is None for child in message.merged_children)
