@@ -190,8 +190,11 @@ A `StageInput` is path-like and exposes the stage's `output`, `result`,
 
 ### Isolation
 
-The code runs as an unprivileged user with `/tmp` as its writable scratch
-space; `/tmp` is held in memory and counts against the task's memory limit. It
+The code runs as an unprivileged user. Its scratch space -- `/tmp`, `/var/tmp`,
+`/run/lock` and `/dev/shm` -- is held in memory and counts against the task's
+memory limit. Anything it writes elsewhere, `$FLOWMESH_OUTPUT` included, lands
+on the worker's disk in the container's own layer; a worker that sets
+`SSH_MAX_DISK` stops the task once that layer passes the limit. It
 has no network unless `network: bridge` is set, which `requirements`
 need to install; `bridge` is the worker's isolated session network, and a worker
 without one does not run the task. The code sees GPUs only when

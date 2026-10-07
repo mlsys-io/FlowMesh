@@ -1,12 +1,15 @@
 """Tests for SSH session TTL and idle reaping."""
 
+from dataclasses import replace
 from pathlib import Path
 from typing import cast
 
 import pytest
 
+from shared.schemas.worker import SSHLimits
 from shared.tasks.specs import SSHSpecStrict
 from tests.worker.factories import DEFAULT_WORKER_CONFIG, make_live_worker_config
+from worker.executors import session_executor as session_executor_module
 from worker.executors.base_executor import ExecutionError, TaskCancelledError
 from worker.executors.session_executor import SessionEnd
 from worker.executors.ssh_executor import SSHExecutor
@@ -27,10 +30,14 @@ class _FakeSession(SSHSession):
         connections: int | None = 0,
         exit_code: int | None = None,
         output_size: int | None = None,
+        disk_usage: list[int | None] | None = None,
     ) -> None:
         self.connections = connections
         self.exit_code = exit_code
         self.output_size = output_size
+        # Successive disk_usage_bytes() readings; the last one repeats.
+        self.disk_usage = list(disk_usage or [None])
+        self.disk_reads = 0
         self.stopped_with: float | None = None
         self.cleaned = False
 
@@ -51,6 +58,12 @@ class _FakeSession(SSHSession):
 
     def output_size_bytes(self) -> int | None:
         return self.output_size
+
+    def disk_usage_bytes(self) -> int | None:
+        self.disk_reads += 1
+        if len(self.disk_usage) > 1:
+            return self.disk_usage.pop(0)
+        return self.disk_usage[0]
 
     def collect_output(self, destination: Path) -> None:
         return None
@@ -169,6 +182,77 @@ class TestSessionLoop:
         with pytest.raises(ExecutionError, match="exceeded maxBytes"):
             executor._wait_for_session(session, cfg)
         assert session.stopped_with == 1
+
+
+class TestDiskLimit:
+    """SSH_MAX_DISK: the container layer is watched for SSH and python alike."""
+
+    def test_a_layer_past_the_limit_fails_the_task(self, tmp_path: Path) -> None:
+        executor = _executor(tmp_path)
+        cfg = _fast_poll(_cfg(ttlSeconds=600), idle_sec=600)
+        cfg.disk_limit_bytes = 100
+        session = _FakeSession(connections=1, disk_usage=[10, 50, 101])
+
+        with pytest.raises(ExecutionError, match="disk usage exceeded"):
+            executor._wait_for_session(session, cfg)
+        assert session.stopped_with == 1
+        assert session.disk_reads == 3
+
+    def test_noninteractive_sessions_are_watched_too(self, tmp_path: Path) -> None:
+        executor = _executor(tmp_path)
+        cfg = _fast_poll(_cfg(ttlSeconds=600, interactive=False), idle_sec=600)
+        cfg.disk_limit_bytes = 100
+        session = _FakeSession(disk_usage=[101])
+
+        with pytest.raises(ExecutionError, match="disk usage exceeded"):
+            executor._wait_for_session(session, cfg)
+
+    def test_unobservable_usage_never_fails(self, tmp_path: Path) -> None:
+        """The process backend cannot measure a layer; None is not a breach."""
+        executor = _executor(tmp_path)
+        cfg = _fast_poll(_cfg(ttlSeconds=600), idle_sec=600)
+        cfg.disk_limit_bytes = 1
+        cfg.ttl_sec = 0.1
+        session = _FakeSession(connections=1, disk_usage=[None])
+
+        assert executor._wait_for_session(session, cfg) == SessionEnd("ttl")
+        assert session.disk_reads > 0
+
+    def test_no_limit_means_no_probe(self, tmp_path: Path) -> None:
+        executor = _executor(tmp_path)
+        cfg = _fast_poll(_cfg(ttlSeconds=600), idle_sec=600)
+        session = _FakeSession(connections=1, exit_code=0, disk_usage=[1 << 40])
+
+        assert executor._wait_for_session(session, cfg) == SessionEnd("exited", 0)
+        assert session.disk_reads == 0
+
+    def test_a_slow_probe_is_spaced_out(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The next check waits ten times as long as the last one took."""
+        clock = iter([100.0, 102.0, 102.0])
+        monkeypatch.setattr(
+            session_executor_module.time, "monotonic", lambda: next(clock)
+        )
+        session = _FakeSession(disk_usage=[5])
+        next_at = SSHExecutor._enforce_disk_limit(session, 100)
+        assert next_at == 102.0 + 10 * 2.0
+
+    def test_the_worker_cap_reaches_the_session_config(self) -> None:
+        worker = replace(
+            DEFAULT_WORKER_CONFIG, ssh_limits=SSHLimits(max_disk_bytes=1 << 30)
+        )
+        cfg = SSHConfig.from_spec(
+            cast(
+                SSHSpecStrict,
+                SSHSpecStrict.model_validate(
+                    {"taskType": "ssh", "authorizedKeys": ["ssh-ed25519 AAAA..."]}
+                ),
+            ),
+            worker,
+        )
+        assert cfg.disk_limit_bytes == 1 << 30
+        assert _cfg().disk_limit_bytes is None
 
 
 class TestIdleClamping:

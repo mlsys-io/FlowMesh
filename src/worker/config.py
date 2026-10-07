@@ -146,17 +146,28 @@ class WorkerConfig:
         ssh_max_pids = parse_int_env("SSH_MAX_PIDS")
         if ssh_max_pids is not None and ssh_max_pids <= 0:
             raise SystemExit("SSH_MAX_PIDS must be positive")
+        ssh_max_disk_raw = os.getenv("SSH_MAX_DISK", "").strip() or None
+        ssh_max_disk_bytes: int | None = None
+        if ssh_max_disk_raw is not None:
+            ssh_max_disk_bytes = parse_mem_to_bytes(ssh_max_disk_raw)
+            if ssh_max_disk_bytes is None or ssh_max_disk_bytes <= 0:
+                raise SystemExit(
+                    f"SSH_MAX_DISK value {ssh_max_disk_raw!r} is not a valid "
+                    "size string (e.g. '20Gi', '512Mi', or a positive byte count)"
+                )
         ssh_limits = (
             None
             if (
                 ssh_max_cpu is None
                 and ssh_max_memory_bytes is None
                 and ssh_max_pids is None
+                and ssh_max_disk_bytes is None
             )
             else SSHLimits(
                 max_cpu_cores=ssh_max_cpu,
                 max_memory_bytes=ssh_max_memory_bytes,
                 max_pids=ssh_max_pids,
+                max_disk_bytes=ssh_max_disk_bytes,
             )
         )
         enable_ssh_gpu_limit = parse_bool_env("ENABLE_SSH_GPU_LIMIT", True)

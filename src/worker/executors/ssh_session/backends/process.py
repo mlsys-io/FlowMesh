@@ -9,7 +9,8 @@ enforced here rather than assumed:
 * **One session per worker.** Sessions sharing a worker would share its
   filesystem and process namespace, so a second concurrent session is refused.
 * **No worker-side resource cap.** ``SSH_MAX_CPU`` / ``SSH_MAX_MEMORY`` /
-  ``SSH_MAX_PIDS`` need cgroup control the worker does not have over itself;
+  ``SSH_MAX_PIDS`` need cgroup control the worker does not have over itself,
+  and ``SSH_MAX_DISK`` a container layer to measure;
   the size of the rented box is the cap.
 * **Isolation depends on the worker's own privileges.** A root worker gives
   each session its own account, so the session cannot reach the worker's

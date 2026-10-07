@@ -98,6 +98,14 @@ class SSHSession(ABC):
     def cleanup(self) -> None:
         """Release everything the session allocated."""
 
+    def disk_usage_bytes(self) -> int | None:
+        """Bytes the session has written to its own writable filesystem layer.
+
+        ``None`` when the backend cannot observe it, which leaves a disk limit
+        unenforced rather than tripping it.
+        """
+        return None
+
     def drain_logs(self) -> None:
         """Forward session output to the worker log until the stream closes."""
         return None

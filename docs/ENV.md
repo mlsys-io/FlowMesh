@@ -123,7 +123,7 @@ reachability.
 Only a root worker can give a session its own account, so `process` is
 unavailable on any other worker unless `ENABLE_UNISOLATED_SSH_SESSION` is set —
 without an account of its own a session runs as the worker and can read its
-environment and credentials. `SSH_MAX_CPU` / `SSH_MAX_MEMORY` / `SSH_MAX_PIDS`,
+environment and credentials. `SSH_MAX_CPU` / `SSH_MAX_MEMORY` / `SSH_MAX_PIDS` / `SSH_MAX_DISK`,
 the `ENABLE_SSH_GPU_LIMIT` subset, and `ssh -L` forwarding have no effect in
 `process` mode.
 
@@ -139,6 +139,7 @@ Unset values mean unbounded (host-wide access).
 | `SSH_MAX_CPU` | – | Max CPU cores per session container (float, e.g. `4` or `2.5`). Sets Docker `nano_cpus`. |
 | `SSH_MAX_MEMORY` | – | Max memory per session container (e.g. `8Gi`, `512Mi`, or a byte count). Sets Docker `mem_limit`. |
 | `SSH_MAX_PIDS` | – | Max PIDs per session container. Sets Docker `pids_limit`. Admin-only — not user-overridable. |
+| `SSH_MAX_DISK` | – | Max bytes a session container may write to its own layer (e.g. `20Gi`), checked against Docker's `SizeRw` every poll; the session is stopped and fails past it. Covers every path outside a mount or tmpfs, including a python task's `$FLOWMESH_OUTPUT`. A polling check: a task can overshoot by what it writes in one `SSH_POLL_INTERVAL_SEC`. Works on any storage driver, unlike `--storage-opt size`. |
 | `ENABLE_SSH_GPU_LIMIT` | `true` | When `true`, expose only the GPU subset matching the spec (`count` / `type` / `memory`); otherwise expose all worker GPUs. |
 
 The effective CPU/memory limit is `min(spec.resources.hardware, worker

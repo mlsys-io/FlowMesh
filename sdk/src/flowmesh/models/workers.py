@@ -81,6 +81,7 @@ class SSHLimits(BaseModel):
     max_cpu_cores: float | None = None
     max_memory_bytes: int | None = None
     max_pids: int | None = None
+    max_disk_bytes: int | None = None
 
 
 class WorkerCapabilities(BaseModel):

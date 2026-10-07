@@ -747,6 +747,26 @@ class DockerSession(SSHSession):
             return self._container_path_size(plan.copy_output_path)
         return None
 
+    def disk_usage_bytes(self) -> int | None:
+        """The container layer's size (``SizeRw``), every path the task wrote
+        outside a mount -- the output directory of a copied-out session included.
+
+        Read through a listing filtered to this container: docker-py's inspect
+        cannot ask for the size, and the daemon sizes only what the filter
+        keeps. Docker computes it by walking the layer, so its cost grows with
+        the number of files written (about 2 microseconds a file, measured on
+        overlayfs).
+        """
+        try:
+            rows = self._client.api.containers(
+                all=True, size=True, filters={"id": self._container.id}
+            )
+        except Exception:
+            logger.debug("Failed to read the session container's size", exc_info=True)
+            return None
+        size = rows[0].get("SizeRw") if len(rows) == 1 else None
+        return int(size) if isinstance(size, int) and size >= 0 else None
+
     def collect_output(self, destination: Path) -> None:
         source_path = self._mount_plan.copy_output_path
         if source_path is None:

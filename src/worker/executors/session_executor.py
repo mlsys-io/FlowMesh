@@ -318,6 +318,7 @@ class SessionExecutor(Executor):
         idle_enabled = cfg.interactive and cfg.idle_sec > 0
         last_active = time.time()
         idle_unobservable_logged = False
+        disk_check_at = 0.0
         while time.time() < deadline:
             if self._cancel_event.is_set():
                 raise TaskCancelledError("Session cancelled")
@@ -328,6 +329,8 @@ class SessionExecutor(Executor):
                 session.stop(1)
                 return SessionEnd("finished")
             self._enforce_output_limit(session, cfg.output)
+            if cfg.disk_limit_bytes is not None and time.monotonic() >= disk_check_at:
+                disk_check_at = self._enforce_disk_limit(session, cfg.disk_limit_bytes)
             try:
                 exit_code = session.poll()
             except Exception as exc:
@@ -385,6 +388,30 @@ class SessionExecutor(Executor):
         raise ExecutionError(
             f"Session output exceeded maxBytes ({current_size} > {max_bytes})"
         )
+
+    @staticmethod
+    def _enforce_disk_limit(session: SSHSession, max_bytes: int) -> float:
+        """Stop the session once its writable layer passes ``max_bytes``.
+
+        Returns the monotonic time of the next check. Docker sizes the layer by
+        walking it, so a session that has written many files is measured less
+        often: the next check waits at least ten times as long as this one took,
+        which keeps the probe under a tenth of the daemon's time.
+        """
+        started = time.monotonic()
+        current = session.disk_usage_bytes()
+        elapsed = time.monotonic() - started
+        if current is not None and current > max_bytes:
+            logger.warning(
+                "Session disk usage exceeded SSH_MAX_DISK (%d > %d)", current, max_bytes
+            )
+            session.stop(1)
+            raise ExecutionError(
+                f"Session disk usage exceeded the worker's limit "
+                f"({current} > {max_bytes} bytes written to the container "
+                f"filesystem, SSH_MAX_DISK)"
+            )
+        return time.monotonic() + 10 * elapsed
 
     @staticmethod
     def _iso_offset(seconds: float) -> str:

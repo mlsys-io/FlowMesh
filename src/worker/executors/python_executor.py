@@ -8,7 +8,8 @@ set on the resolved config:
 * no network (``network: none``, the default) — or the isolated SSH bridge
   when the spec asks for ``bridge`` (needed to pip-install ``requirements``);
 * all capabilities dropped but the few the bootstrap needs before it switches
-  to an unprivileged uid, and ``/tmp`` as the only writable scratch;
+  to an unprivileged uid, with ``/tmp``, ``/var/tmp`` and ``/run/lock`` as
+  in-memory scratch (anything else it writes is bounded by ``SSH_MAX_DISK``);
 * the caller's code and the bootstrap arrive as files, not environment;
 * the task succeeds only when its process exits 0: a timeout, a finish request
   or a lost container is a failure.
