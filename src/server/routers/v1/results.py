@@ -172,6 +172,8 @@ async def ingest_delivery(
 @router.get(
     "/{task_id}/delivery",
     summary="Check whether a result selection is already held",
+    description="Check whether a result snapshot selection is held.",
+    response_description="Selection held (204); not held (404)",
     status_code=status.HTTP_204_NO_CONTENT,
     response_class=Response,
 )
@@ -184,12 +186,8 @@ async def check_delivery(
     results_dir: Path = Depends(get_results_dir),
     logger: logging.Logger = Depends(get_logger),
 ) -> Response:
-    """Answer 204 when this server already holds the complete snapshot a worker is
-    about to publish, and 404 otherwise.
-
-    A worker that shares the results volume with the server finds its own
-    snapshot here and skips the upload.
-    """
+    # A worker that shares the results volume finds its own snapshot here and
+    # skips the upload.
     await require_permission(
         principal, ResourceKind.RESULT, None, ResourceAction.WRITE, logger
     )
@@ -198,6 +196,8 @@ async def check_delivery(
             raise ValueError("Invalid task ID")
         for path in artifact_path:
             safe_relative(path)
+        if all_artifacts and artifact_path:
+            raise ValueError("Pass either artifact_path or all_artifacts, not both")
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     paths = None if all_artifacts else artifact_path

@@ -279,6 +279,15 @@ def test_delivery_check_reports_a_held_snapshot_without_creating_one(
             url, params={"generation": generation, "artifact_path": "../x"}
         )
         assert bad.status_code == 400
+        both = client.get(
+            url,
+            params={
+                "generation": generation,
+                "artifact_path": "model",
+                "all_artifacts": 1,
+            },
+        )
+        assert both.status_code == 400
     with _check_client(tmp_path / "empty") as client:
         missing = client.get(
             "/api/v1/results/tsk-up/delivery",
