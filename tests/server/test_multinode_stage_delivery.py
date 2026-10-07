@@ -115,7 +115,7 @@ def _produce(
     """Dispatch ``prep`` and run it on a worker writing into ``worker_dir``."""
     assert disp.dispatch_once(prep) is True
     message: WorkerTaskMessage = registry.publish_task.call_args.args[1]
-    request = message.result_delivery[prep]
+    request = message.result_delivery[prep] if message.result_delivery_enabled else None
     out_dir = worker_dir / prep
     (out_dir / "artifacts" / "model").mkdir(parents=True)
     (out_dir / "artifacts" / "model" / "weights").write_bytes(b"trained")
@@ -229,6 +229,28 @@ def test_single_host_keeps_the_shared_result_without_uploading_it(
     )
     with hydrate:
         result_delivery.hydrate_task(message, shared)
+    weights = shared / nodes["prep"] / "artifacts" / "model" / "weights"
+    assert weights.read_bytes() == b"trained"
+
+
+def test_shared_results_dir_serves_dependents_with_delivery_disabled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, server_env: None
+) -> None:
+    runtime, _ = build_runtime("shared-delivery-off")
+    _, nodes = register(runtime, _payload("python"))
+    shared = tmp_path / "results"
+    server = _Server(runtime, shared)
+    _route_workers_to(server, monkeypatch)
+    disp, registry = _dispatcher(runtime, shared, result_delivery_enabled=False)
+
+    _produce(runtime, disp, registry, nodes["prep"], shared)
+
+    assert server.requests == []
+    assert disp.dispatch_once(nodes["score"]) is True
+    assert disp.failed == []
+    message: WorkerTaskMessage = registry.publish_task.call_args.args[1]
+    result_delivery.hydrate_task(message, shared)
+    assert server.requests == []
     weights = shared / nodes["prep"] / "artifacts" / "model" / "weights"
     assert weights.read_bytes() == b"trained"
 

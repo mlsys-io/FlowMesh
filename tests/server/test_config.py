@@ -2,7 +2,7 @@
 
 import pytest
 
-from server.config import PortForwardConfig
+from server.config import DispatchConfig, PortForwardConfig
 
 
 def test_port_forward_config_enables_capabilities_by_default(
@@ -45,3 +45,15 @@ def test_port_forward_config_reads_proxy_capabilities_independently(
 
     assert config.ssh_proxy_enabled is (ssh_proxy == "true")
     assert config.serve_proxy_enabled is (serve_proxy == "true")
+
+
+@pytest.mark.parametrize(("value", "expected"), [(None, True), ("false", False)])
+def test_dispatch_config_reads_result_delivery(
+    monkeypatch: pytest.MonkeyPatch, value: str | None, expected: bool
+) -> None:
+    if value is None:
+        monkeypatch.delenv("TASK_RESULT_DELIVERY", raising=False)
+    else:
+        monkeypatch.setenv("TASK_RESULT_DELIVERY", value)
+
+    assert DispatchConfig.from_env().result_delivery_enabled is expected

@@ -75,7 +75,10 @@ def register(runtime: Any, payload: str) -> tuple[str, dict[str, str]]:
 
 
 def _dispatcher(
-    runtime: Any, results_dir: Path, grace_sec: int = 120
+    runtime: Any,
+    results_dir: Path,
+    grace_sec: int = 120,
+    result_delivery_enabled: bool = True,
 ) -> tuple[CapturingDispatcher, mock.Mock]:
     worker = SimpleNamespace(id="w-1", node_id="nde-1")
     registry = mock.Mock()
@@ -90,6 +93,7 @@ def _dispatcher(
         worker_selection_strategy="first_fit",
         enable_context_reuse=False,
         stage_result_grace_sec=grace_sec,
+        result_delivery_enabled=result_delivery_enabled,
     )
     return disp, registry
 
@@ -114,6 +118,21 @@ def test_a_stage_with_a_reading_dependent_uploads_its_result(
     request = message.result_delivery[nodes["prep"]]
     assert request.all_artifacts is (score_type == "python")
     assert request.artifact_fields == []
+    assert message.result_delivery_enabled is True
+
+
+def test_disabled_delivery_still_describes_what_dependents_need(
+    tmp_path: Path,
+) -> None:
+    runtime, _ = build_runtime("stage-result-delivery-off")
+    _, nodes = register(runtime, _payload("python"))
+    disp, registry = _dispatcher(runtime, tmp_path, result_delivery_enabled=False)
+
+    assert disp.dispatch_once(nodes["prep"]) is True
+
+    message = registry.publish_task.call_args.args[1]
+    assert message.result_delivery_enabled is False
+    assert message.result_delivery[nodes["prep"]].all_artifacts is True
 
 
 def test_a_declared_destination_is_kept(tmp_path: Path) -> None:
@@ -177,6 +196,27 @@ def test_a_result_that_never_arrives_fails_the_dependent(
     assert task_id == nodes["score"]
     assert f"Result of task {nodes['prep']} has not reached the server" in error
     assert "FLOWMESH_BASE_URL" in error
+
+
+def test_a_missing_result_with_delivery_disabled_names_the_setting(
+    tmp_path: Path,
+) -> None:
+    runtime, _ = build_runtime("stage-result-lost-delivery-off")
+    _, nodes = register(runtime, _payload())
+    prep = runtime._tasks[nodes["prep"]]
+    prep.status = TaskStatus.DONE
+    prep.finished_ts = time.time() - 300
+    disp, registry = _dispatcher(
+        runtime, tmp_path, grace_sec=120, result_delivery_enabled=False
+    )
+
+    assert disp.dispatch_once(nodes["score"]) is True
+
+    registry.publish_task.assert_not_called()
+    [(task_id, error, _)] = disp.failed
+    assert task_id == nodes["score"]
+    assert "TASK_RESULT_DELIVERY=false" in error
+    assert "share the server's results directory" in error
 
 
 def test_named_reference_requests_only_selected_artifact_and_hydration_descriptor(

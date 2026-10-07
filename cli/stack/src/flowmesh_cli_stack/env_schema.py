@@ -473,6 +473,7 @@ STACK_ENV_SCHEMA = EnvSchema(
                     var_type=EnvVarType.INT,
                     min_value=0,
                 ),
+                EnvVar("TASK_RESULT_DELIVERY", "true", var_type=EnvVarType.BOOL),
                 EnvVar("ENABLE_WORKER_WATCHDOG", "true", var_type=EnvVarType.BOOL),
                 EnvVar(
                     "WORKER_DEATH_CHECK_INTERVAL",

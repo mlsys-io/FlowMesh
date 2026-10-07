@@ -11,6 +11,7 @@ from shared.schemas.result import BaseExecutorResult
 from shared.schemas.result_delivery import ArtifactInput, ResultDeliveryRequest
 from shared.tasks import TaskType
 from shared.tasks.components.output import OutputSpec
+from shared.tasks.merged import MergedChildTaskStrict
 from shared.tasks.specs import EchoSpecStrict, PythonSpecStrict, SFTSpecStrict
 from shared.tasks.worker_message import WorkerTaskMessage
 from shared.utils.result_delivery import make_receipt, read_receipt, write_receipt
@@ -135,6 +136,75 @@ def test_system_delivery_failure_keeps_producer_successful(
     lifecycle.set_failed.assert_not_called()
     assert (tmp_path / "tsk-test" / "results.json").is_file()
     assert "current-dispatch" in (tmp_path / "tsk-test" / "results.json").read_text()
+
+
+@pytest.mark.parametrize("upload_all", [False, True])
+def test_disabled_delivery_publishes_only_when_the_worker_uploads_everything(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, upload_all: bool
+) -> None:
+    monkeypatch.setenv("FLOWMESH_BASE_URL", "http://server")
+    monkeypatch.setenv("WORKER_UPLOAD_RESULTS", str(int(upload_all)))
+    requests: list[httpx.Request] = []
+
+    def record(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(404 if request.method == "GET" else 200)
+
+    client_class = httpx.Client
+    monkeypatch.setattr(
+        result_delivery.httpx,
+        "Client",
+        lambda **kwargs: client_class(transport=httpx.MockTransport(record), **kwargs),
+    )
+    spec = EchoSpecStrict(taskType=TaskType.ECHO, data={"type": "list", "items": ["x"]})
+    message = make_worker_task_message(
+        spec,
+        merged_children=[
+            MergedChildTaskStrict(
+                task_id="tsk-child",
+                owner_id="usr-test",
+                workflow_id="wfl-test",
+                spec=spec,
+            )
+        ],
+        result_delivery={
+            "tsk-test": ResultDeliveryRequest(),
+            "tsk-child": ResultDeliveryRequest(),
+        },
+        result_delivery_enabled=False,
+        result_dispatch="current-dispatch",
+    )
+    lifecycle = Mock(worker_id="wrk-test", cost_per_hour=0.0)
+    executor = Mock()
+    executor.run.return_value = BaseExecutorResult.model_validate(
+        {"value": "parent", "children": {"tsk-child": {"value": "child"}}}
+    )
+    runner = Runner(
+        cast(Any, lifecycle),
+        [message],
+        tmp_path,
+        make_worker_hardware(),
+        {"echo": executor},
+        executor,
+        logging.getLogger("test-disabled-publication"),
+    )
+    monkeypatch.setattr(runner, "_start_interrupt_monitor", lambda: None)
+    monkeypatch.setattr(
+        runner, "_create_task_logger", lambda *args: (None, False, None)
+    )
+    runner.start()
+
+    lifecycle.set_succeeded.assert_called_once()
+    assert (tmp_path / "tsk-test" / "results.json").is_file()
+    assert (tmp_path / "tsk-child" / "results.json").is_file()
+    posted = {request.url.path for request in requests if request.method == "POST"}
+    if upload_all:
+        assert posted == {
+            "/api/v1/results/tsk-test/delivery",
+            "/api/v1/results/tsk-child/delivery",
+        }
+    else:
+        assert requests == []
 
 
 def test_named_directory_hydrates_over_partial_cache_and_keeps_code_literal(

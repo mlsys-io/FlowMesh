@@ -147,7 +147,9 @@ scripts/dev/            compile_protos, sync_requirements, check_env_examples
   asks the server whether it already holds that exact snapshot; a worker that
   shares the server's results volume finds its own and uploads nothing. What is
   not published stays on the worker; see `WORKER_UPLOAD_RESULTS` in
-  [`ENV.md`](ENV.md).
+  [`ENV.md`](ENV.md). `TASK_RESULT_DELIVERY=false` stops workers publishing for
+  dependents, for a cluster whose workers all share the server's results
+  directory.
 - **Context reuse.** Workers report cached models/datasets in their
   `WorkerHardware`. The dispatcher's `_cached_worker_candidates` filters
   to workers whose cache covers the task's references; entries older

@@ -647,7 +647,7 @@ class Runner:
                         merged_children,
                         out_dir,
                         out,
-                        msg.result_delivery,
+                        msg.result_delivery if msg.result_delivery_enabled else None,
                         msg.result_dispatch,
                     )
                     metadata = self._build_task_metadata(

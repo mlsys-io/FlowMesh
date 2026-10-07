@@ -87,6 +87,7 @@ class Dispatcher:
         enable_stage_weight_stickiness: bool = False,
         no_worker_grace_sec: int = 60,
         stage_result_grace_sec: int = 120,
+        result_delivery_enabled: bool = True,
         metrics_recorder: MetricsRecorder | None = None,
     ) -> None:
         self._runtime = runtime
@@ -103,6 +104,7 @@ class Dispatcher:
         self._stage_weight_stickiness_enabled = enable_stage_weight_stickiness
         self._no_worker_grace_sec = max(0, no_worker_grace_sec)
         self._stage_result_grace_sec = max(0, stage_result_grace_sec)
+        self._result_delivery_enabled = result_delivery_enabled
         self._metrics = metrics_recorder
         self._weight_reference_hints: tuple[str, ...] = (
             "checkpoint",
@@ -575,6 +577,7 @@ class Dispatcher:
                 ]
                 if (request := self._result_delivery_request(identifier)) is not None
             },
+            result_delivery_enabled=self._result_delivery_enabled,
             artifact_inputs={
                 identifier: artifact_inputs[identifier]
                 for identifier in [
@@ -1254,9 +1257,10 @@ class Dispatcher:
     def _raise_if_result_missing(self, stage_task_id: str, path: Path) -> None:
         """Stop waiting for a finished stage whose result has not arrived.
 
-        A worker on another host delivers a result only by uploading it, so a
-        result still absent ``stage_result_grace_sec`` after the stage finished
-        is not coming.
+        A result reaches the server's results directory either through a
+        worker's delivery upload or because the worker shares that directory,
+        so a result still absent ``stage_result_grace_sec`` after the stage
+        finished is not coming.
         """
         record = self._runtime.get_record(stage_task_id)
         finished = record.finished_ts if record is not None else None
@@ -1265,6 +1269,14 @@ class Dispatcher:
         waited = time.time() - finished
         if waited < self._stage_result_grace_sec:
             return
+        if not self._result_delivery_enabled:
+            raise StageResultMissing(
+                f"Result of task {stage_task_id} has not reached the server's "
+                f"results directory {waited:.0f}s after it finished (expected at "
+                f"{path}). Automatic result delivery is disabled "
+                "(TASK_RESULT_DELIVERY=false), so the worker that ran it must "
+                "share the server's results directory"
+            )
         raise StageResultMissing(
             f"Result of task {stage_task_id} has not reached the server "
             f"{waited:.0f}s after it finished (expected at {path}). Its worker "

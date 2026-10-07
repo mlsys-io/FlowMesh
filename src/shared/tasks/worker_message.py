@@ -43,6 +43,10 @@ class WorkerTaskMessage(BaseModel):
         description="Optional mapping from upstream stage name to resolved task ID.",
     )
     result_delivery: dict[str, ResultDeliveryRequest] = Field(default_factory=dict)
+    result_delivery_enabled: bool = Field(
+        default=True,
+        description="Whether the worker publishes its result_delivery selections.",
+    )
     result_dispatch: str | None = None
     artifact_inputs: dict[str, list[ArtifactInput]] = Field(default_factory=dict)
     upstream_result_generations: dict[str, str] = Field(default_factory=dict)

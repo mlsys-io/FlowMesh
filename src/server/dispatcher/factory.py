@@ -59,5 +59,6 @@ def create_dispatcher(
         enable_stage_weight_stickiness=config.enable_stage_weight_stickiness,
         no_worker_grace_sec=config.no_worker_grace_sec,
         stage_result_grace_sec=config.stage_result_grace_sec,
+        result_delivery_enabled=config.result_delivery_enabled,
         metrics_recorder=metrics_recorder,
     )
