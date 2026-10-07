@@ -4,12 +4,15 @@ import json
 from typing import Any
 
 import pytest
-from pydantic import Field, ValidationError
+from pydantic import Field, TypeAdapter, ValidationError
 
 from shared.schemas.artifact import ArtifactContext, ArtifactRef
 from shared.schemas.result import (
+    AnyExecutorResult,
+    APIGroupItem,
     APIItem,
     APIResult,
+    APIUsage,
     BaseExecutorResult,
     DataRetrievalItem,
     DataRetrievalResult,
@@ -107,13 +110,11 @@ def test_open_passthrough_nulls_are_preserved() -> None:
             "url": "http://h",
             "status_code": 200,
             "json": {"present": None, "value": 1},
-            "usage": {"cost": None},
             "text": None,
         }
     )
     dumped = result.model_dump(by_alias=True)
     assert dumped["json"] == {"present": None, "value": 1}
-    assert dumped["usage"] == {"cost": None}
     assert "text" not in dumped
 
 
@@ -216,3 +217,103 @@ def test_api_item_round_trip_construct_serialize_validate() -> None:
         {"index": 1, "url": "u", "status_code": 200, "json": {"a": 1}}
     )
     assert by_alias.response_json == {"a": 1}
+
+
+def test_api_result_payload_uses_wire_alias_json() -> None:
+    """A plain model_dump emits ``json`` (the wire alias), never ``response_json``."""
+    result = APIResult.model_validate(
+        {
+            "executor": "api",
+            "method": "POST",
+            "url": "http://example.com/v1/chat/completions",
+            "status_code": 200,
+            "items": [
+                {
+                    "index": 0,
+                    "url": "http://example.com/v1/chat/completions",
+                    "status_code": 200,
+                    "json": {"choices": [{"message": {"content": "hello"}}]},
+                    "text": "hello",
+                },
+                {
+                    "index": 1,
+                    "rows": [
+                        {
+                            "index": 0,
+                            "url": "http://example.com/v1/chat/completions",
+                            "status_code": 200,
+                            "json": {"choices": [{"message": {"content": "grouped"}}]},
+                        }
+                    ],
+                },
+            ],
+        }
+    )
+
+    payload = result.model_dump()
+
+    assert "response_json" not in payload
+    assert payload["items"][0]["json"] == {
+        "choices": [{"message": {"content": "hello"}}]
+    }
+    assert payload["items"][1]["rows"][0]["json"] == {
+        "choices": [{"message": {"content": "grouped"}}]
+    }
+
+    # The server-side result model validates the aliased payload back.
+    reloaded = APIResult.model_validate(payload)
+    first = reloaded.items[0]
+    assert isinstance(first, APIItem)
+    assert first.response_json["choices"][0]["message"]["content"] == "hello"
+    grouped = reloaded.items[1]
+    assert isinstance(grouped, APIGroupItem)
+    assert grouped.rows[0].response_json["choices"][0]["message"]["content"] == (
+        "grouped"
+    )
+
+
+def test_api_result_accepts_upstream_usage_dict() -> None:
+    """Enforces that an APIResult whose top-level ``usage`` is the upstream
+    usage dict validates through the shared AnyExecutorResult as-is, leaving
+    ``usage_summary`` unset."""
+    payload = {
+        "task_type": "api",
+        "executor": "api",
+        "method": "POST",
+        "url": "http://example.com/v1/chat/completions",
+        "status_code": 200,
+        "usage": {"prompt_tokens": 3, "completion_tokens": 5, "total_tokens": 8},
+    }
+    result: APIResult = TypeAdapter(AnyExecutorResult).validate_python(payload)
+    assert isinstance(result, APIResult)
+    assert result.usage == {
+        "prompt_tokens": 3,
+        "completion_tokens": 5,
+        "total_tokens": 8,
+    }
+    assert result.usage_summary is None
+
+
+def test_api_result_usage_summary_carries_summed_fields() -> None:
+    """A fresh APIResult carries the summed per-task accounting in
+    ``usage_summary``, distinct from the upstream ``usage`` payload."""
+    result = APIResult(
+        ok=True,
+        executor="api",
+        method="POST",
+        url="http://example.com/v1/chat/completions",
+        status_code=200,
+        usage_summary=APIUsage(
+            prompt_tokens=3,
+            completion_tokens=5,
+            reasoning_tokens=0,
+            calls=1,
+            retries=0,
+            truncated_calls=0,
+            wall_sec=1.5,
+        ),
+    )
+    assert result.usage_summary is not None
+    assert result.usage_summary.prompt_tokens == 3
+    assert result.usage_summary.completion_tokens == 5
+    assert result.usage_summary.calls == 1

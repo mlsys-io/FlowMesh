@@ -2,8 +2,10 @@
 
 import enum
 import os
+import re
+import types
 from contextlib import contextmanager
-from typing import Any
+from typing import Any, Union, get_args, get_origin
 from unittest.mock import patch
 
 import pytest
@@ -70,6 +72,45 @@ def assert_fields_match(
                 f"optional in server API response (default=None) "
                 f"but required in SDK"
             )
+
+
+def _type_shape(annotation: Any) -> Any:
+    """A comparable shape of a field annotation, naming classes rather than
+    holding them, since each side defines its own same-named models. Union
+    members are unordered, and object addresses in metadata reprs (e.g. a
+    ``Discriminator`` function) are dropped."""
+    origin = get_origin(annotation)
+    if origin is None:
+        if isinstance(annotation, type):
+            return annotation.__name__
+        return re.sub(r" at 0x[0-9a-f]+", "", repr(annotation))
+    args = get_args(annotation)
+    if origin in (Union, types.UnionType):
+        return ("Union", frozenset(_type_shape(arg) for arg in args))
+    return (
+        origin.__name__ if isinstance(origin, type) else repr(origin),
+        tuple(_type_shape(arg) for arg in args),
+    )
+
+
+def assert_field_types_match(
+    server_model: type[BaseModel],
+    sdk_model: type[BaseModel],
+) -> None:
+    """Assert every field the two models share has the same annotation shape.
+
+    The field-name check alone misses a type drift, e.g. an SDK-only
+    ``list[APIItem]`` where the server has ``list[APIItem | APIGroupItem]``.
+    """
+    server_fields = server_model.model_fields
+    sdk_fields = sdk_model.model_fields
+    for name in server_fields.keys() & sdk_fields.keys():
+        server_shape = _type_shape(server_fields[name].annotation)
+        sdk_shape = _type_shape(sdk_fields[name].annotation)
+        assert server_shape == sdk_shape, (
+            f"{sdk_model.__name__}.{name}: type mismatch "
+            f"(server={server_shape!r}, sdk={sdk_shape!r})"
+        )
 
 
 def assert_field_aliases_match(

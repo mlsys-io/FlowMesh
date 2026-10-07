@@ -1,10 +1,14 @@
 from collections import defaultdict
 from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Any
 
 from pydantic import BaseModel
 
 _MISSING = object()
+_NULLS = frozenset({"", "null", "None"})
+_TRUTHY = frozenset({"1", "true", "yes", "on"})
+_FALSY = frozenset({"0", "false", "no", "off"})
 
 
 def _query_items(queries: Mapping) -> list[tuple[str, str]]:
@@ -12,6 +16,35 @@ def _query_items(queries: Mapping) -> list[tuple[str, str]]:
     if callable(multi_items):
         return list(multi_items())  # type: ignore
     return list(queries.items())
+
+
+@dataclass(frozen=True)
+class _Accepted:
+    """The values one key accepts, in every form a field's value is compared as."""
+
+    strings: frozenset[str]
+    bools: frozenset[bool]
+    null: bool
+
+    @classmethod
+    def of(cls, values: frozenset[str]) -> "_Accepted":
+        spellings = {value.strip().lower() for value in values}
+        bools = {True} if spellings & _TRUTHY else set()
+        if spellings & _FALSY:
+            bools.add(False)
+        return cls(values, frozenset(bools), bool(values & _NULLS))
+
+    def matches(self, value: Any, key: str) -> bool:
+        if value is None:
+            return self.null
+        if isinstance(value, bool):
+            return value in self.bools
+        if isinstance(value, (list, tuple, set, frozenset)):
+            return any(str(member) in self.strings for member in value)
+        if key == "tags" and isinstance(value, str):
+            tags = (tag.strip() for tag in value.split(","))
+            return any(tag in self.strings for tag in tags if tag)
+        return str(value) in self.strings
 
 
 def _get_nested_value(data: Any, key: str) -> Any:
@@ -22,30 +55,6 @@ def _get_nested_value(data: Any, key: str) -> Any:
         else:
             return _MISSING
     return current
-
-
-def _matches_query(model_value: Any, key: str, query_values: list[str]) -> bool:
-    if model_value is None:
-        return any(v in ("", "null", "None") for v in query_values)
-
-    if isinstance(model_value, bool):
-        normalized_model = "true" if model_value else "false"
-        normalized_queries = {v.strip().lower() for v in query_values}
-        truthy = {"1", "true", "yes", "on"}
-        falsy = {"0", "false", "no", "off"}
-        if normalized_model == "true":
-            return bool(normalized_queries & truthy)
-        return bool(normalized_queries & falsy)
-
-    if isinstance(model_value, (list, tuple, set)):
-        value_set = {str(v) for v in model_value}
-        return any(v in value_set for v in query_values)
-
-    if key == "tags" and isinstance(model_value, str):
-        tag_set = {t.strip() for t in model_value.split(",") if t.strip()}
-        return any(v in tag_set for v in query_values)
-
-    return any(str(model_value) == v for v in query_values)
 
 
 def filter_models_by_queries[T: BaseModel](
@@ -95,19 +104,25 @@ def filter_models_by_queries[T: BaseModel](
     - List all node-managed workers (``NodeWorkerInfo``) by provider/status:
       ``/nodes/workers?provider=docker&status=IDLE``
     """
-    query_map: dict[str, list[str]] = defaultdict(list)
+    query_map: dict[str, set[str]] = defaultdict(set)
     for key, value in _query_items(queries):
-        query_map[str(key)].append(str(value))
+        query_map[str(key)].add(str(value))
+    accepted = {
+        key: _Accepted.of(frozenset(values)) for key, values in query_map.items()
+    }
+
+    if not accepted:
+        return models
 
     filtered = []
     for model in models:
         model_dict = model.model_dump()
         match = True
-        for key, values in query_map.items():
+        for key, values in accepted.items():
             model_value = _get_nested_value(model_dict, key)
             if model_value is _MISSING:
                 continue
-            if not _matches_query(model_value, key, values):
+            if not values.matches(model_value, key):
                 match = False
                 break
         if match:

@@ -1,3 +1,5 @@
+import asyncio
+import contextlib
 import gzip
 import json
 import logging
@@ -5,7 +7,7 @@ import mimetypes
 import os
 import tarfile
 import tempfile
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from functools import partial
 from pathlib import Path, PurePosixPath
 from typing import BinaryIO
@@ -33,7 +35,14 @@ from shared.schemas.result import (
     result_file_path,
     write_result,
 )
-from shared.utils.manifest import ARTIFACTS_DIR, LOGS_DIR, RESULTS_NAME, sync_manifest
+from shared.utils.atomic import atomic_write_stream, is_atomic_temp
+from shared.utils.manifest import (
+    ARTIFACTS_DIR,
+    LOGS_DIR,
+    RESULTS_NAME,
+    prepare_output_dir,
+    sync_manifest,
+)
 from shared.utils.result_delivery import (
     RECEIPT_NAME,
     add_receipt,
@@ -70,6 +79,8 @@ from ...task.runtime import TaskRuntime
 _BUNDLE_SECTIONS_CONCRETE = ("results", "artifacts", "logs")
 _BUNDLE_SECTIONS_ACCEPTED = (*_BUNDLE_SECTIONS_CONCRETE, "all")
 _BUNDLE_SECTIONS_DEFAULT = ("results", "artifacts")
+# The deepest a results-tree walk descends; a deeper tree is left unarchived below it.
+_MAX_WALK_DEPTH = 128
 
 router = APIRouter(prefix="/results", tags=["Results"])
 
@@ -113,7 +124,7 @@ async def ingest_result(
     _require_current_dispatch(runtime, task_id, envelope)
 
     try:
-        path = await run_in_threadpool(_store_result, results_dir, envelope)
+        path = await asyncio.to_thread(_store_result, results_dir, envelope)
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -124,10 +135,12 @@ async def ingest_result(
     record = runtime.get_record(task_id)
     if record:
         expected_artifacts = record.task.spec.get_artifacts()
-    sync_manifest(path.parent, task_id, expected_artifacts)
+    await asyncio.to_thread(sync_manifest, path.parent, task_id, expected_artifacts)
     pending_children = event_monitor.pop_pending_clones(task_id)
     if pending_children:
-        event_monitor.mirror_task_results(task_id, pending_children)
+        await asyncio.to_thread(
+            event_monitor.mirror_task_results, task_id, pending_children
+        )
     return PathResponse(ok=True, path=str(path))
 
 
@@ -235,33 +248,33 @@ async def upload_result_file(
             status_code=status.HTTP_400_BAD_REQUEST, detail="invalid filename"
         )
 
-    target_path.parent.mkdir(parents=True, exist_ok=True)
+    record = runtime.get_record(task_id)
+    expected_artifacts = record.task.spec.get_artifacts() if record else []
     try:
-        with tempfile.NamedTemporaryFile(
-            dir=target_path.parent, prefix=".upload-", delete=False
-        ) as out:
-            temporary_path = Path(out.name)
-            try:
-                while chunk := await file.read(64 * 1024):
-                    out.write(chunk)
-                out.close()
-                await run_in_threadpool(
-                    _install_upload, base_dir, temporary_path, target_path
-                )
-            finally:
-                temporary_path.unlink(missing_ok=True)
+        await asyncio.to_thread(_store_artifact, file, base_dir, target_path)
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to store artifact: {exc}",
         ) from exc
-
-    record = runtime.get_record(task_id)
-    expected_artifacts: list[str] = []
-    if record:
-        expected_artifacts = record.task.spec.get_artifacts()
-    sync_manifest(base_dir, task_id, expected_artifacts)
+    await asyncio.to_thread(sync_manifest, base_dir, task_id, expected_artifacts)
     return PathResponse(ok=True, path=str(target_path))
+
+
+def _store_artifact(file: UploadFile, base_dir: Path, target_path: Path) -> None:
+    prepare_output_dir(base_dir)
+    atomic_write_stream(
+        target_path, file.file, commit=partial(_invalidating_receipt, base_dir)
+    )
+
+
+@contextlib.contextmanager
+def _invalidating_receipt(base_dir: Path) -> Iterator[None]:
+    """Hold the task's snapshot lock while an upload is installed, dropping the
+    delivery receipt the changed artifacts no longer match."""
+    with delivery_lock(base_dir):
+        (base_dir / RECEIPT_NAME).unlink(missing_ok=True)
+        yield
 
 
 @router.get(
@@ -368,7 +381,7 @@ async def download_result_bundle(
         )
 
     try:
-        bundle_path = await run_in_threadpool(
+        bundle_path = await asyncio.to_thread(
             _create_result_bundle_archive,
             task_id,
             base_dir,
@@ -492,6 +505,7 @@ def _create_result_bundle_archive(
                         status_code=404,
                         detail="Requested artifacts have not been completely delivered",
                     )
+            transferable = partial(_transferable, base_dir)
             with (
                 gzip.open(bundle_path, mode="wb") as fileobj,
                 tarfile.open(fileobj=fileobj, mode="w") as archive,
@@ -505,17 +519,18 @@ def _create_result_bundle_archive(
                             candidate, arcname=f"{task_id}/artifacts", recursive=False
                         )
                         for name in selection_roots(base_dir, paths):
-                            selected = candidate / safe_relative(name)
-                            archive.add(
-                                selected,
-                                arcname=f"{task_id}/artifacts/{name}",
-                                filter=partial(_transferable, base_dir),
+                            _add_tree(
+                                archive,
+                                candidate / safe_relative(name),
+                                f"{task_id}/artifacts/{name}",
+                                transferable,
                             )
                     else:
-                        archive.add(
+                        _add_tree(
+                            archive,
                             candidate,
-                            arcname=f"{task_id}/{candidate.name}",
-                            filter=partial(_transferable, base_dir),
+                            f"{task_id}/{candidate.name}",
+                            transferable,
                         )
                 if "results" in sections and "artifacts" in sections:
                     add_receipt(
@@ -587,12 +602,6 @@ def _read_result_locked(results_dir: Path, task_id: str) -> str:
         return read_result(results_dir, task_id)
 
 
-def _install_upload(base_dir: Path, upload: Path, target: Path) -> None:
-    with delivery_lock(base_dir):
-        (base_dir / RECEIPT_NAME).unlink(missing_ok=True)
-        upload.replace(target)
-
-
 def _open_current_file(
     runtime: TaskRuntime, task_id: str, base_dir: Path, target: Path
 ) -> BinaryIO:
@@ -637,6 +646,48 @@ def _transferable(base_dir: Path, member: tarfile.TarInfo) -> tarfile.TarInfo | 
         member.linkname = portable_link(link_path, base_dir)
         return member
     return member if member.isfile() or member.isdir() else None
+
+
+def _add_tree(
+    archive: tarfile.TarFile,
+    root: Path,
+    arcname: str,
+    member_filter: Callable[[tarfile.TarInfo], tarfile.TarInfo | None] | None = None,
+) -> None:
+    """Add ``root`` and everything under it, leaving out in-flight atomic writes and
+    any file removed while the archive is built. A link is added as a link and
+    never descended into."""
+    archive.add(root, arcname=arcname, recursive=False, filter=member_filter)
+    if root.is_symlink():
+        return
+    for path in _bounded_walk(root):
+        if is_atomic_temp(path.name):
+            continue
+        with contextlib.suppress(FileNotFoundError):
+            archive.add(
+                path,
+                arcname=f"{arcname}/{path.relative_to(root).as_posix()}",
+                recursive=False,
+                filter=member_filter,
+            )
+
+
+def _bounded_walk(root: Path) -> Iterator[Path]:
+    """Yield every path under ``root``, descending no deeper than
+    ``_MAX_WALK_DEPTH`` so a pathological tree cannot be walked unbounded."""
+    stack: list[tuple[Path, int]] = [(root, 0)]
+    while stack:
+        current, depth = stack.pop()
+        if depth >= _MAX_WALK_DEPTH:
+            continue
+        try:
+            children = sorted(current.iterdir())
+        except OSError:
+            continue
+        for child in children:
+            yield child
+            if child.is_dir() and not child.is_symlink():
+                stack.append((child, depth + 1))
 
 
 def _bundle_section_path(base_dir: Path, section: str) -> Path | None:

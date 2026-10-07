@@ -236,13 +236,16 @@ scripts/dev/            compile_protos, sync_requirements, check_env_examples
 - **Cursor pagination.** List endpoints accept `limit` and `before` /
   `after` cursors. The cursor is an opaque base64 of `(timestamp, id)`;
   do not parse client-side.
-- **Redis channels.** The runtime uses three namespaces:
-  - `flowmesh:control:*` — control plane (task assignments,
-    cancellations, worker lifecycle).
-  - `flowmesh:telemetry:*` — telemetry (heartbeats, status updates).
-  - `flowmesh:logs:task:{task_id}` and
-    `flowmesh:logs:workflow:{wfl_id}` — log streams, bounded by
-    `LOG_STREAM_MAXLEN_TASK` / `LOG_STREAM_MAXLEN_WORKFLOW` and
+- **Redis channels.** The runtime uses two Redis endpoints (separate instances in the
+  stack):
+  - control (`REDIS_CONTROL_URL`) — durable state and the control plane's
+    pub/sub: `node:{node_id}:dispatch` (task assignments, interrupts and other
+    frames for a node's workers), `node:{node_id}:cmds` and `nodes:responses`
+    (node commands).
+  - telemetry (`REDIS_TELEMETRY_URL`) — `workers:events` and `nodes:events`
+    (heartbeats, status updates), the `tasks:events:stream` task-event stream,
+    and the log streams `logs:task:{task_id}` and `logs:workflow:{wfl_id}`,
+    bounded by `LOG_STREAM_MAXLEN_TASK` / `LOG_STREAM_MAXLEN_WORKFLOW` and
     expired `LOG_STREAM_TTL_SEC` after close.
 
 ## Service restarts

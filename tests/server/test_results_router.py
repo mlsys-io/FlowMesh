@@ -1,14 +1,18 @@
 import asyncio
+import io
 import logging
+import tarfile
+import tempfile
 import threading
 from collections.abc import Iterator
 from pathlib import Path
-from typing import cast
+from types import SimpleNamespace
+from typing import Any, cast
 from unittest.mock import Mock
 
 import pytest
-from fastapi import HTTPException, status
-from fastapi.responses import StreamingResponse
+from fastapi import BackgroundTasks, HTTPException, UploadFile, status
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.routing import APIRoute
 from lumid_hooks import PrincipalContext, ResourceRef
 
@@ -16,6 +20,7 @@ from server.hooks import PERMISSION_CHECKERS
 from server.routers.v1 import results as results_router
 from server.task.runtime import TaskRuntime
 from shared.schemas.result import BaseExecutorResult, ResultEnvelope, write_result
+from shared.utils import atomic
 from shared.utils.result_delivery import delivery_lock
 
 
@@ -163,6 +168,51 @@ async def test_ingest_result_denied_without_permission(
 
 
 @pytest.mark.anyio
+async def test_ingest_result_runs_io_off_the_event_loop(
+    tmp_path: Path, logger: logging.Logger, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    threads: list[int] = []
+    write = results_router.write_result
+    sync = results_router.sync_manifest
+    monitor = SimpleNamespace(
+        pop_pending_clones=lambda _task_id: ["c-1"],
+        mirror_task_results=lambda _task_id, _children: None,
+    )
+    mirror = monitor.mirror_task_results
+
+    def _recording_write(*args: Any, **kwargs: Any) -> Path:
+        threads.append(threading.get_ident())
+        return write(*args, **kwargs)
+
+    def _recording_sync(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        threads.append(threading.get_ident())
+        return sync(*args, **kwargs)
+
+    def _recording_mirror(*args: Any, **kwargs: Any) -> None:
+        threads.append(threading.get_ident())
+        return mirror(*args, **kwargs)
+
+    monkeypatch.setattr(results_router, "write_result", _recording_write)
+    monkeypatch.setattr(results_router, "sync_manifest", _recording_sync)
+    monkeypatch.setattr(monitor, "mirror_task_results", _recording_mirror)
+
+    envelope = ResultEnvelope(task_id="t-1", result=BaseExecutorResult())
+    response = await results_router.ingest_result(
+        envelope=envelope,
+        principal=_principal(),
+        runtime=cast(Any, SimpleNamespace(get_record=lambda _task_id: None)),
+        event_monitor=cast(Any, monitor),
+        results_dir=tmp_path,
+        logger=logger,
+    )
+
+    assert len(threads) == 3
+    assert all(thread != threading.get_ident() for thread in threads)
+    assert response.ok is True
+    assert response.path == str(tmp_path / "t-1" / "results.json")
+
+
+@pytest.mark.anyio
 async def test_upload_result_file_denied_without_permission(
     deny_all_permissions: None, logger: logging.Logger
 ) -> None:
@@ -204,3 +254,139 @@ async def test_get_result_waits_for_the_snapshot_lock_off_the_event_loop(
         release.set()
         holder.join()
     assert isinstance(await pending, BaseExecutorResult)
+
+
+@pytest.mark.anyio
+async def test_upload_result_file_copies_in_chunks_off_the_event_loop(
+    tmp_path: Path, logger: logging.Logger, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    copies: list[tuple[int, int]] = []
+    copy = atomic.shutil.copyfileobj
+
+    def _recording(source: Any, target: Any, length: int = 0) -> None:
+        copies.append((threading.get_ident(), length))
+        copy(source, target, length)
+
+    async def _whole_read(*args: Any) -> bytes:
+        raise AssertionError("the upload was read whole")
+
+    monkeypatch.setattr(atomic.shutil, "copyfileobj", _recording)
+    upload = UploadFile(file=io.BytesIO(b"x" * 10), filename="out.bin")
+    monkeypatch.setattr(upload, "read", _whole_read)
+
+    await results_router.upload_result_file(
+        task_id="task-1",
+        file=upload,
+        runtime=cast(Any, SimpleNamespace(get_record=lambda _task_id: None)),
+        principal=_principal(),
+        results_dir=tmp_path,
+        logger=logger,
+    )
+
+    assert copies == [(copies[0][0], 1 << 20)]
+    assert copies[0][0] != threading.get_ident()
+    assert (tmp_path / "task-1" / "artifacts" / "out.bin").read_bytes() == b"x" * 10
+
+
+@pytest.mark.anyio
+async def test_download_result_bundle_builds_off_the_event_loop(
+    tmp_path: Path, logger: logging.Logger, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    threads: list[int] = []
+    build = results_router._create_result_bundle_archive
+
+    def _recording(*args: Any, **kwargs: Any) -> Path:
+        threads.append(threading.get_ident())
+        return build(*args, **kwargs)
+
+    monkeypatch.setattr(results_router, "_create_result_bundle_archive", _recording)
+    stub = SimpleNamespace(
+        get_record=lambda _task_id: None,
+        read_result_bytes=lambda _task_id: b"{}",
+    )
+    # A missing requested section is a 404, so the default bundle needs both.
+    write_result(tmp_path, ResultEnvelope(task_id="t-1", result=BaseExecutorResult()))
+    (tmp_path / "t-1" / "artifacts").mkdir(parents=True, exist_ok=True)
+
+    response = await results_router.download_result_bundle(
+        task_id="t-1",
+        background_tasks=BackgroundTasks(),
+        include=[],
+        artifact_path=[],
+        generation=None,
+        principal=_principal(),
+        runtime=cast(Any, stub),
+        results_dir=tmp_path,
+        logger=logger,
+    )
+
+    assert isinstance(response, FileResponse)
+    assert threads and threads[0] != threading.get_ident()
+    Path(response.path).unlink()
+
+
+def test_a_bundle_leaves_out_in_flight_writes_and_files_removed_under_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    artifacts = tmp_path / "artifacts"
+    (artifacts / "nested").mkdir(parents=True)
+    (artifacts / "nested" / "kept.bin").write_bytes(b"x")
+    in_flight = Path(tempfile.mkstemp(prefix=".fm-tmp-", dir=artifacts)[1])
+    assert atomic.is_atomic_temp(in_flight.name)
+    walk = results_router._bounded_walk
+
+    def _with_removed(root: Path) -> Iterator[Path]:
+        yield from walk(root)
+        yield root / "gone.bin"
+
+    monkeypatch.setattr(results_router, "_bounded_walk", _with_removed)
+
+    bundle = results_router._create_result_bundle_archive(
+        "t-1", tmp_path, ("artifacts",)
+    )
+    try:
+        with tarfile.open(bundle, mode="r:gz") as archive:
+            names = archive.getnames()
+    finally:
+        bundle.unlink()
+
+    assert names == [
+        "t-1/artifacts",
+        "t-1/artifacts/nested",
+        "t-1/artifacts/nested/kept.bin",
+    ]
+
+
+def test_a_bundle_walk_descends_no_deeper_than_the_bound(tmp_path: Path) -> None:
+    artifacts = tmp_path / "artifacts"
+    deep = artifacts
+    for _ in range(results_router._MAX_WALK_DEPTH + 5):
+        deep = deep / "d"
+    deep.mkdir(parents=True)
+    (deep / "leaf.bin").write_bytes(b"x")
+
+    walked = list(results_router._bounded_walk(artifacts))
+
+    # The walk stops at the depth bound rather than descending the whole tree.
+    assert len(walked) <= results_router._MAX_WALK_DEPTH
+
+
+def test_a_bundle_walk_does_not_follow_symlinked_directories(
+    tmp_path: Path,
+) -> None:
+    artifacts = tmp_path / "artifacts"
+    (artifacts / "sub").mkdir(parents=True)
+    (artifacts / "sub" / "f.bin").write_bytes(b"x")
+    (artifacts / "link").symlink_to(artifacts / "sub", target_is_directory=True)
+    (artifacts / "sub" / "loop").symlink_to(artifacts, target_is_directory=True)
+
+    walked = list(results_router._bounded_walk(artifacts))
+
+    # A symlinked directory is yielded once but never descended, so a loop cannot
+    # blow the walk up; this matches what root.rglob yielded before the bound.
+    assert walked == [
+        artifacts / "link",
+        artifacts / "sub",
+        artifacts / "sub" / "f.bin",
+        artifacts / "sub" / "loop",
+    ]

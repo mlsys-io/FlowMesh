@@ -16,7 +16,7 @@ from pydantic import BaseModel
 from shared.schemas.artifact import ArtifactRef
 from shared.schemas.result import ResultEnvelope
 from shared.schemas.result_delivery import DeliveredFile, ResultDeliveryReceipt
-from shared.utils.atomic import atomic_write_text
+from shared.utils.atomic import atomic_write_text, is_atomic_temp
 from shared.utils.manifest import prepare_output_dir
 
 RECEIPT_NAME = ".delivery.json"
@@ -146,6 +146,9 @@ def make_receipt(
             else [target]
         )
         for entry in entries:
+            if is_atomic_temp(entry.name):
+                # An upload still being written is not part of the snapshot.
+                continue
             name = entry.relative_to(base_dir).as_posix()
             if entry.is_symlink():
                 receipt.symlinks[name] = portable_link(entry, base_dir)

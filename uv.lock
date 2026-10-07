@@ -1879,7 +1879,7 @@ wheels = [
 
 [[package]]
 name = "flowmesh"
-version = "0.1.10"
+version = "0.1.11"
 source = { editable = "." }
 
 [package.optional-dependencies]
@@ -1979,6 +1979,7 @@ ci = [
     { name = "ruff" },
     { name = "sqlalchemy" },
     { name = "sqlmodel" },
+    { name = "tabulate" },
     { name = "tiktoken" },
     { name = "toml" },
     { name = "torch" },
@@ -2062,6 +2063,7 @@ runtime-analytics = [
     { name = "pandas" },
     { name = "psycopg", extra = ["binary"] },
     { name = "sqlalchemy" },
+    { name = "tabulate" },
 ]
 runtime-inference = [
     { name = "accelerate" },
@@ -2182,6 +2184,7 @@ runtime-worker-cpu = [
     { name = "rich" },
     { name = "sqlalchemy" },
     { name = "sqlmodel" },
+    { name = "tabulate" },
     { name = "tiktoken" },
     { name = "toml" },
     { name = "torch" },
@@ -2290,6 +2293,7 @@ ci = [
     { name = "ruff", specifier = ">=0.14.10" },
     { name = "sqlalchemy", specifier = ">=2.0.44" },
     { name = "sqlmodel", specifier = ">=0.0.27" },
+    { name = "tabulate", specifier = ">=0.9.0" },
     { name = "tiktoken", specifier = ">=0.12.0" },
     { name = "toml", specifier = ">=0.10.2" },
     { name = "torch", specifier = ">=2.11.0" },
@@ -2372,6 +2376,7 @@ runtime-analytics = [
     { name = "pandas", specifier = ">=2.3.3" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2.12" },
     { name = "sqlalchemy", specifier = ">=2.0.44" },
+    { name = "tabulate", specifier = ">=0.9.0" },
 ]
 runtime-inference = [
     { name = "accelerate", specifier = ">=1.12.0" },
@@ -2490,6 +2495,7 @@ runtime-worker-cpu = [
     { name = "rich", specifier = ">=14.2.0" },
     { name = "sqlalchemy", specifier = ">=2.0.44" },
     { name = "sqlmodel", specifier = ">=0.0.27" },
+    { name = "tabulate", specifier = ">=0.9.0" },
     { name = "tiktoken", specifier = ">=0.12.0" },
     { name = "toml", specifier = ">=0.10.2" },
     { name = "torch", specifier = ">=2.11.0" },
@@ -2509,7 +2515,7 @@ runtime-worker-gpu = [
 
 [[package]]
 name = "flowmesh-cli"
-version = "0.1.10"
+version = "0.1.11"
 source = { editable = "cli" }
 dependencies = [
     { name = "flowmesh-sdk" },
@@ -2537,7 +2543,7 @@ provides-extras = ["stack"]
 
 [[package]]
 name = "flowmesh-cli-stack"
-version = "0.1.10"
+version = "0.1.11"
 source = { editable = "cli/stack" }
 dependencies = [
     { name = "docker" },
@@ -2550,15 +2556,15 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "docker", specifier = ">=7.1.0" },
-    { name = "flowmesh-cli", specifier = "==0.1.10" },
-    { name = "flowmesh-sdk-stack", specifier = "==0.1.10" },
+    { name = "flowmesh-cli", specifier = "==0.1.11" },
+    { name = "flowmesh-sdk-stack", specifier = "==0.1.11" },
     { name = "packaging", specifier = ">=24" },
     { name = "pyyaml", specifier = ">=6.0.2" },
 ]
 
 [[package]]
 name = "flowmesh-hook"
-version = "0.1.10"
+version = "0.1.11"
 source = { editable = "hook" }
 dependencies = [
     { name = "lumid-hooks" },
@@ -2569,7 +2575,7 @@ requires-dist = [{ name = "lumid-hooks", specifier = ">=0.2.0" }]
 
 [[package]]
 name = "flowmesh-sdk"
-version = "0.1.10"
+version = "0.1.11"
 source = { editable = "sdk" }
 dependencies = [
     { name = "httpx" },
@@ -2588,7 +2594,7 @@ requires-dist = [
 
 [[package]]
 name = "flowmesh-sdk-stack"
-version = "0.1.10"
+version = "0.1.11"
 source = { editable = "sdk/stack" }
 dependencies = [
     { name = "docker" },
@@ -2600,7 +2606,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "docker", specifier = ">=7.1.0" },
-    { name = "flowmesh-sdk", specifier = "==0.1.10" },
+    { name = "flowmesh-sdk", specifier = "==0.1.11" },
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "pyyaml", specifier = ">=6.0.0" },
 ]

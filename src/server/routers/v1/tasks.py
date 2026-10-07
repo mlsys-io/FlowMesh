@@ -5,8 +5,10 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException
 from fastapi import Path as ApiPath
-from fastapi import Query, Request, status
+from fastapi import Query, Request, Response, status
 from fastapi.responses import StreamingResponse
+from pydantic import TypeAdapter
+from starlette.datastructures import QueryParams
 
 from shared.schemas.command import StopMessage
 from shared.tasks import TaskType
@@ -33,9 +35,31 @@ from ...utils.misc import filter_models_by_queries
 
 router = APIRouter(prefix="/tasks", tags=["Tasks"])
 
+_TASK_LIST = TypeAdapter(list[TaskInfo])
+
 
 def _strip_private_fields(data: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in data.items() if not key.startswith("_")}
+
+
+def _pushed_down_queries(
+    query_params: QueryParams,
+) -> tuple[list[str], list[str], QueryParams]:
+    """Split workflow_id/status out of the query for pre-filtering.
+
+    Returns (workflow_ids, statuses, remaining). ``workflow_id`` and ``status``
+    are matched by membership in ``TaskRuntime.list_tasks`` before any TaskInfo
+    is built, so a query that only filters on them never dumps a model. The
+    remaining params still go through ``filter_models_by_queries``.
+    """
+    workflow_ids = query_params.getlist("workflow_id")
+    statuses = query_params.getlist("status")
+    remaining = [
+        (key, value)
+        for key, value in query_params.multi_items()
+        if key not in ("workflow_id", "status")
+    ]
+    return workflow_ids, statuses, QueryParams(remaining)
 
 
 def _sanitize_latest_update(info: TaskInfo) -> None:
@@ -57,22 +81,33 @@ def _sanitize_latest_update(info: TaskInfo) -> None:
     summary="List tasks",
     description="List all tasks.",
     response_description="List of task details.",
+    response_model=list[TaskInfo],
 )
 async def list_tasks(
     request: Request,
     principal: PrincipalContext = Depends(authenticate_connection),
     runtime: TaskRuntime = Depends(get_runtime),
     logger: logging.Logger = Depends(get_logger),
-) -> list[TaskInfo]:
-    tasks = runtime.list_tasks()
+) -> Response:
+    workflow_ids, statuses, remaining = _pushed_down_queries(request.query_params)
     allowed = await resolve_accessible_ids(
         principal, ResourceKind.TASK, ResourceAction.READ, logger
     )
-    if allowed is not None:
-        tasks = [task for task in tasks if task.task_id in allowed]
-    for task in tasks:
-        _sanitize_latest_update(task)
-    return filter_models_by_queries(tasks, request.query_params)
+
+    def _list_tasks_json() -> bytes:
+        tasks = runtime.list_tasks(
+            workflow_ids=workflow_ids or None, statuses=statuses or None
+        )
+        tasks = filter_models_by_queries(tasks, remaining)
+        if allowed is not None:
+            tasks = [task for task in tasks if task.task_id in allowed]
+        for task in tasks:
+            _sanitize_latest_update(task)
+        return _TASK_LIST.dump_json(tasks, by_alias=True)
+
+    return Response(
+        await asyncio.to_thread(_list_tasks_json), media_type="application/json"
+    )
 
 
 @router.get(

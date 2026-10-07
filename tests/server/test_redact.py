@@ -311,13 +311,20 @@ class TestTaskRecordSerializer:
         dumped = json.loads(rec.model_dump_json())
         assert dumped["task"]["spec"]["api"]["headers"]["Authorization"] == REDACTED
 
-    def test_source_redacted_in_dump(self) -> None:
+    def test_source_is_redacted_before_storage(self) -> None:
+        # ``source`` is redacted once at registration; the serializer no longer
+        # redacts it, so a record's stored source must already be clean.
         rec = _record(
             {"headers": {"Authorization": "Bearer SECRET"}},
-            source="api:\n  headers:\n    Authorization: Bearer SECRET\n",
+            source=redact_raw_yaml(
+                "api:\n  headers:\n    Authorization: Bearer SECRET\n"
+            ),
         )
         dumped = rec.model_dump()
         assert "SECRET" not in dumped["source"]
+        assert dumped["source"] == redact_raw_yaml(
+            "api:\n  headers:\n    Authorization: Bearer SECRET\n"
+        )
 
     def test_in_memory_keeps_real_credential(self) -> None:
         rec = _record({"headers": {"Authorization": "Bearer SECRET"}})
@@ -398,24 +405,6 @@ class TestTaskRecordSerializer:
         assert dumped["task"]["spec"]["api"]["url"] == "http://x"
         assert dumped["task"]["spec"]["api"]["json"] == {"model": "gpt"}
         assert dumped["task"]["spec"]["api"]["headers"] is None
-
-    def test_redaction_cached_across_dumps(self) -> None:
-        rec = _record(
-            {"headers": {"Authorization": "Bearer SECRET"}},
-            source="api:\n  headers:\n    Authorization: Bearer SECRET\n",
-        )
-        with mock.patch(
-            "server.task.models.redact_raw_yaml",
-            wraps=redact_raw_yaml,
-        ) as spy:
-            for _ in range(3):
-                dumped = rec.model_dump()
-                assert dumped["source"] != "SECRET"
-                assert (
-                    dumped["task"]["spec"]["api"]["headers"]["Authorization"]
-                    == REDACTED
-                )
-        assert spy.call_count == 1
 
 
 class TestSourceFieldAlias:
