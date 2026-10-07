@@ -9,6 +9,7 @@ the three differ; on a single host the producer's directory is the server's.
 import logging
 import time
 from collections.abc import Iterator
+from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -83,7 +84,10 @@ def server_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _route_workers_to(server: _Server, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(result_delivery.httpx, "Client", lambda **_: server.client)
+    # A ``with`` on the returned client must not exit the shared one.
+    monkeypatch.setattr(
+        result_delivery.httpx, "Client", lambda **_: nullcontext(server.client)
+    )
     monkeypatch.setattr(
         result_delivery.requests,
         "get",
@@ -168,9 +172,8 @@ def test_multinode_dependent_reads_the_delivered_result(
 def test_multinode_without_delivery_stalls_then_fails_clearly(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, server_env: None
 ) -> None:
-    # Issue #175: the server's RESULTS_DIR never receives results.json. Before
-    # this change the dependent was requeued forever; now it waits out the grace
-    # and fails with an error naming the missing delivery.
+    # The server's results directory never receives results.json: the dependent
+    # waits out the grace, then fails with an error naming the missing delivery.
     runtime, _ = build_runtime("multinode-lost")
     _, nodes = register(runtime, _payload("python"))
     server_dir = tmp_path / "server"
@@ -204,14 +207,11 @@ def test_single_host_keeps_the_shared_result_without_uploading_it(
     _route_workers_to(server, monkeypatch)
     if not server_reachable:
         # A server restart while the producer finishes.
+        def refuse(request: httpx.Request) -> httpx.Response:
+            raise httpx.ConnectError("refused", request=request)
+
         def unreachable(**_: Any) -> httpx.Client:
-            return httpx.Client(
-                transport=httpx.MockTransport(
-                    lambda request: (_ for _ in ()).throw(
-                        httpx.ConnectError("refused", request=request)
-                    )
-                )
-            )
+            return httpx.Client(transport=httpx.MockTransport(refuse))
 
         monkeypatch.setattr(result_delivery.httpx, "Client", unreachable)
     disp, registry = _dispatcher(runtime, shared)
