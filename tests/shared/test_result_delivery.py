@@ -11,6 +11,8 @@ import pytest
 
 from shared.schemas.artifact import ArtifactContext
 from shared.schemas.result import BaseExecutorResult, ResultEnvelope, write_result
+from shared.schemas.result_delivery import DeliveredFile
+from shared.utils import result_delivery
 from shared.utils.result_delivery import (
     RECEIPT_NAME,
     artifacts_ready,
@@ -20,6 +22,7 @@ from shared.utils.result_delivery import (
     extract_delivery_bundle,
     make_receipt,
     read_receipt,
+    validate_receipt,
     write_receipt,
 )
 
@@ -198,6 +201,49 @@ def test_symlinked_selection_parent_cannot_escape_artifacts(tmp_path: Path) -> N
     (base / "artifacts" / "link").symlink_to(outside)
     with pytest.raises(ValueError):
         create_delivery_bundle(base, "tsk-up", ["link/secret"])
+
+
+@pytest.mark.parametrize("verify_content", [True, False])
+def test_a_receipt_entry_under_an_outward_link_is_rejected_unread(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, verify_content: bool
+) -> None:
+    base = populate(tmp_path / "producer")
+    receipt = make_receipt(base, "tsk-up", None)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret").write_bytes(b"secret")
+    (base / "artifacts" / "link").symlink_to(outside)
+    receipt.files["artifacts/link/secret"] = DeliveredFile(size=6, sha256="0" * 64)
+    describe_file = result_delivery.describe_file
+
+    def describe_inside(path: Path) -> DeliveredFile:
+        if outside in path.resolve().parents:
+            pytest.fail(f"read {path} before confining it")
+        return describe_file(path)
+
+    monkeypatch.setattr(result_delivery, "describe_file", describe_inside)
+    with pytest.raises(ValueError):
+        validate_receipt(base, receipt, "tsk-up", verify_content=verify_content)
+
+
+def test_a_listed_directory_replaced_by_an_outward_link_is_incomplete(
+    tmp_path: Path,
+) -> None:
+    base = populate(tmp_path / "producer")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    empty = base / "artifacts" / "model" / "empty"
+    empty.rmdir()
+    empty.symlink_to(outside)
+    assert not artifacts_ready(base, "tsk-up", verify_content=False)
+
+
+def test_a_listed_file_replaced_by_a_link_is_incomplete(tmp_path: Path) -> None:
+    base = populate(tmp_path)
+    weights = base / "artifacts" / "model" / "weights"
+    weights.unlink()
+    weights.symlink_to("empty")
+    assert not artifacts_ready(base, "tsk-up", verify_content=False)
 
 
 def test_complete_receipt_does_not_cover_absent_selections(tmp_path: Path) -> None:

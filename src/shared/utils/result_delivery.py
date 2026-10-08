@@ -1,15 +1,18 @@
+import errno
 import fcntl
 import hashlib
 import io
 import json
 import os
 import shutil
+import stat
 import tarfile
 import tempfile
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import Any, BinaryIO
+from typing import Any, BinaryIO, Self
 
 from pydantic import BaseModel
 
@@ -20,6 +23,7 @@ from shared.utils.atomic import atomic_write_text, is_atomic_temp
 from shared.utils.manifest import prepare_output_dir
 
 RECEIPT_NAME = ".delivery.json"
+_MISSING_ERRNOS = {errno.ENOENT, errno.ENOTDIR, errno.EBADF, errno.ELOOP}
 _MISSING = object()
 
 
@@ -285,26 +289,39 @@ def validate_receipt(
         or (generation is not None and generation != receipt.generation)
     ):
         raise ValueError(f"Result snapshot mismatch for {task_id}")
-    # Every listed entry must sit under artifacts/ and exist as recorded.
+    # Every listed entry must sit under artifacts/ and exist as recorded. Each
+    # entry's type is checked before its parent is confined, and its parent is
+    # confined before any file is opened.
     root = base_dir.resolve()
+    confined: set[Path] = set()
+
+    def confine(path: Path) -> None:
+        # A listed entry that is not itself a link resolves inside its parent, so
+        # confining each parent once confines every entry beneath it.
+        if path.parent not in confined:
+            path.parent.resolve().relative_to(root)
+            confined.add(path.parent)
+
     for name in receipt.directories:
         if not name.startswith("artifacts/") and name != "artifacts":
             raise ValueError(f"Invalid artifact directory: {name}")
         path = base_dir / safe_relative(name)
-        path.resolve().relative_to(root)
-        if path.is_symlink() or not path.is_dir():
+        info = _lstat(path)
+        if info is None or not stat.S_ISDIR(info.st_mode):
             raise ValueError(f"Missing artifact directory: {name}")
+        confine(path)
     for name, expected in receipt.files.items():
         if not name.startswith("artifacts/"):
             raise ValueError(f"Invalid artifact file: {name}")
         path = base_dir / safe_relative(name)
-        path.resolve().relative_to(root)
-        if path.is_symlink() or not path.is_file():
+        info = _lstat(path)
+        if info is None or not stat.S_ISREG(info.st_mode):
             raise ValueError(f"Incomplete artifact: {name}")
+        confine(path)
         actual = (
             describe_file(path)
             if verify_content
-            else DeliveredFile(size=path.stat().st_size, sha256=expected.sha256)
+            else DeliveredFile(size=info.st_size, sha256=expected.sha256)
         )
         if actual != expected:
             raise ValueError(f"Incomplete artifact: {name}")
@@ -312,8 +329,11 @@ def validate_receipt(
         if not name.startswith("artifacts/"):
             raise ValueError(f"Invalid artifact link: {name}")
         path = base_dir / safe_relative(name)
-        path.parent.resolve().relative_to(root)
-        if not path.is_symlink() or portable_link(path, base_dir) != link:
+        info = _lstat(path)
+        if info is None or not stat.S_ISLNK(info.st_mode):
+            raise ValueError(f"Incomplete artifact: {name}")
+        confine(path)
+        if portable_link(path, base_dir) != link:
             raise ValueError(f"Incomplete artifact: {name}")
     # The listed entries must cover every selection the snapshot claims.
     for name in receipt.artifact_paths:
@@ -323,6 +343,98 @@ def validate_receipt(
         raise ValueError("Missing complete artifacts directory")
 
 
+def _lstat(path: Path) -> os.stat_result | None:
+    try:
+        return path.lstat()
+    except OSError as exc:
+        if exc.errno in _MISSING_ERRNOS:
+            return None
+        raise
+
+
+@dataclass(frozen=True)
+class SnapshotCoverage:
+    """The artifact selections a validated snapshot can serve."""
+
+    generation: str
+    all_artifacts: bool
+    artifact_paths: tuple[str, ...]
+    names: frozenset[str]
+
+    @classmethod
+    def of(cls, receipt: ResultDeliveryReceipt) -> Self:
+        return cls(
+            generation=receipt.generation,
+            all_artifacts=receipt.all_artifacts,
+            artifact_paths=tuple(receipt.artifact_paths),
+            names=frozenset([*receipt.directories, *receipt.files, *receipt.symlinks]),
+        )
+
+    def covers(self, paths: list[str] | None) -> bool:
+        """Whether the snapshot holds every selection in ``paths``, or all
+        artifacts when ``paths`` is ``None``."""
+        if paths is None:
+            return self.all_artifacts
+        return all(
+            PurePosixPath("artifacts", selection).as_posix() in self.names
+            and (
+                self.all_artifacts
+                or any(
+                    Path(selection) == Path(root)
+                    or Path(root) in Path(selection).parents
+                    for root in self.artifact_paths
+                )
+            )
+            for selection in paths
+        )
+
+
+# Device, inode, mtime_ns and size of one file.
+type _FileIdentity = tuple[int, int, int, int]
+# The envelope's and the receipt's file identities; compare for equality only.
+type SnapshotIdentity = tuple[_FileIdentity, _FileIdentity]
+
+
+def snapshot_identity(base_dir: Path) -> SnapshotIdentity | None:
+    """Identify the envelope and receipt files in ``base_dir``; ``None`` when either
+    is missing. Any change to either file changes the identity."""
+    try:
+        envelope = os.stat(base_dir / "results.json")
+        receipt = os.stat(base_dir / RECEIPT_NAME)
+    except OSError:
+        return None
+    return _file_identity(envelope), _file_identity(receipt)
+
+
+def _file_identity(info: os.stat_result) -> _FileIdentity:
+    return (info.st_dev, info.st_ino, info.st_mtime_ns, info.st_size)
+
+
+def validated_snapshot(
+    base_dir: Path,
+    task_id: str,
+    generation: str | None = None,
+    verify_content: bool = True,
+) -> tuple[ResultDeliveryReceipt, SnapshotIdentity] | None:
+    """Validate the snapshot in ``base_dir`` against its receipt.
+
+    Returns the receipt with the ``snapshot_identity`` of the files it was read
+    from, ``None`` when there is no readable receipt, and raises ``ValueError`` or
+    ``OSError`` when the snapshot does not match it.
+    """
+    try:
+        with (base_dir / RECEIPT_NAME).open("rb") as source:
+            receipt_info = os.fstat(source.fileno())
+            receipt = ResultDeliveryReceipt.model_validate_json(source.read())
+    except (OSError, ValueError):
+        return None
+    # Taken before validation reads the envelope, so a concurrent rewrite leaves an
+    # identity that no later stat matches.
+    envelope_info = os.stat(base_dir / "results.json")
+    validate_receipt(base_dir, receipt, task_id, generation, verify_content)
+    return receipt, (_file_identity(envelope_info), _file_identity(receipt_info))
+
+
 def artifacts_ready(
     base_dir: Path,
     task_id: str,
@@ -330,8 +442,11 @@ def artifacts_ready(
     generation: str | None = None,
     verify_content: bool = True,
 ) -> bool:
-    receipt = read_receipt(base_dir)
-    if receipt is None:
+    try:
+        snapshot = validated_snapshot(base_dir, task_id, generation, verify_content)
+    except (OSError, ValueError):
+        return False
+    if snapshot is None:
         try:
             envelope = ResultEnvelope.from_file(base_dir / "results.json")
             if (envelope.metadata or {}).get("independent_results") or generation:
@@ -344,22 +459,7 @@ def artifacts_ready(
             return all(path.exists() or path.is_symlink() for path in roots)
         except (OSError, ValueError):
             return False
-    try:
-        validate_receipt(base_dir, receipt, task_id, generation, verify_content)
-        if paths is None:
-            return receipt.all_artifacts
-        if not all(receipt.has_artifact(selection) for selection in paths):
-            return False
-        return all(
-            receipt.all_artifacts
-            or any(
-                Path(p) == Path(root) or Path(root) in Path(p).parents
-                for root in receipt.artifact_paths
-            )
-            for p in paths
-        )
-    except (OSError, ValueError):
-        return False
+    return SnapshotCoverage.of(snapshot[0]).covers(paths)
 
 
 def write_receipt(base_dir: Path, receipt: ResultDeliveryReceipt) -> None:
