@@ -89,7 +89,7 @@ _EXEC_ENVIRONMENT = {
 _CONTAINER_RESULTS_SOURCE_ROOT = "/root/.flowmesh/results-source"
 # The world-writable directories of a stock Debian/Ubuntu image (/var/lock is a
 # symlink to /run/lock), mounted as tmpfs in a hardened session.
-_HARDENED_SCRATCH_DIRS = ("/tmp", "/var/tmp", "/run/lock")  # nosec B108
+_SCRATCH_TMPFS_DIRS = ("/tmp", "/var/tmp", "/run/lock")  # nosec B108 - container tmpfs
 _SSH_RUN_ENTRYPOINT_PATH = "/flowmesh-ssh-run.sh"
 _SSH_RUN_SCRIPT_SOURCE = (
     Path(worker.__file__).resolve().parent / "docker" / "ssh-run.sh"
@@ -331,17 +331,12 @@ class DockerSessionBackend(SSHSessionBackend):
             # effective set is empty anyway.
             kwargs["cap_drop"] = ["ALL"]
             kwargs["cap_add"] = ["CHOWN", "DAC_OVERRIDE", "FOWNER", "SETUID", "SETGID"]
-            # Every world-writable directory of a stock image is a tmpfs, so
-            # scratch is charged to the container's memory and the memory limit
-            # bounds it. The root stays writable: what the task writes anywhere
-            # else lands in the container layer, which SSH_MAX_DISK bounds.
-            # (/dev/shm is already a 64 MiB tmpfs.)
+            # tmpfs pages are charged to the container's memory, so the memory
+            # limit bounds the scratch space. /dev/shm is already a tmpfs.
             tmp_opts = "rw,exec,nosuid,nodev"
             if cfg.memory_limit_bytes is not None:
                 tmp_opts += f",size={cfg.memory_limit_bytes}"
-            kwargs["tmpfs"] = {
-                path: tmp_opts for path in _HARDENED_SCRATCH_DIRS
-            }  # nosec B108 - fresh per-container tmpfs, not the host's
+            kwargs["tmpfs"] = {path: tmp_opts for path in _SCRATCH_TMPFS_DIRS}
         return kwargs
 
     def _resolve_noninteractive_command(
@@ -748,14 +743,12 @@ class DockerSession(SSHSession):
         return None
 
     def disk_usage_bytes(self) -> int | None:
-        """The container layer's size (``SizeRw``), every path the task wrote
-        outside a mount -- the output directory of a copied-out session included.
+        """The container layer's size (``SizeRw``): every path the task wrote
+        outside a mount, the output directory of a copied-out session included.
 
         Read through a listing filtered to this container: docker-py's inspect
         cannot ask for the size, and the daemon sizes only what the filter
-        keeps. Docker computes it by walking the layer, so its cost grows with
-        the number of files written (about 2 microseconds a file, measured on
-        overlayfs).
+        keeps.
         """
         try:
             rows = self._client.api.containers(

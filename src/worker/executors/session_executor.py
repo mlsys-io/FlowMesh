@@ -402,9 +402,9 @@ class SessionExecutor(Executor):
         """Stop the session once its writable layer passes ``max_bytes``.
 
         Returns the monotonic time of the next check. Docker sizes the layer by
-        walking it, so a session that has written many files is measured less
-        often: the next check waits at least ten times as long as this one took,
-        which keeps the probe under a tenth of the daemon's time.
+        walking it, so a layer with many files is slow to measure: the next
+        check waits ten times as long as this one took, which keeps measuring
+        to at most a tenth of the session's time.
         """
         started = time.monotonic()
         current = session.disk_usage_bytes()
@@ -415,9 +415,8 @@ class SessionExecutor(Executor):
             )
             session.stop(1)
             raise ExecutionError(
-                f"Session disk usage exceeded the worker's limit "
-                f"({current} > {max_bytes} bytes written to the container "
-                f"filesystem, SSH_MAX_DISK)"
+                f"Session disk usage exceeded SSH_MAX_DISK "
+                f"({current} > {max_bytes} bytes)"
             )
         return time.monotonic() + 10 * elapsed
 
