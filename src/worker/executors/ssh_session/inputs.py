@@ -105,8 +105,8 @@ def staged_size_bytes(resolved: ResolvedSSHInput) -> int:
             continue
         if stat.S_ISDIR(info.st_mode):
             pending.extend(path.iterdir())
-        elif (info.st_dev, info.st_ino) not in seen:
-            seen.add((info.st_dev, info.st_ino))
+        elif (inode := (info.st_dev, info.st_ino)) not in seen:
+            seen.add(inode)
             total += info.st_size
     return total
 

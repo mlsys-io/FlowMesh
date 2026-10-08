@@ -43,6 +43,7 @@ from .base_executor import (
 logger = logging.getLogger(__name__)
 
 _SESSION_READY_TIMEOUT_SEC = 30.0
+_DISK_CHECK_BACKOFF_FACTOR = 10
 
 type SessionEndReason = Literal["exited", "ttl", "idle", "finished", "lost"]
 
@@ -403,8 +404,8 @@ class SessionExecutor(Executor):
 
         Returns the monotonic time of the next check. Docker sizes the layer by
         walking it, so a layer with many files is slow to measure: the next
-        check waits ten times as long as this one took, which keeps measuring
-        to at most a tenth of the session's time.
+        check waits ``_DISK_CHECK_BACKOFF_FACTOR`` times as long as this one
+        took, which keeps measuring to under that fraction of the session's time.
         """
         started = time.monotonic()
         current = session.disk_usage_bytes()
@@ -418,7 +419,7 @@ class SessionExecutor(Executor):
                 f"Session disk usage exceeded SSH_MAX_DISK "
                 f"({current} > {max_bytes} bytes)"
             )
-        return time.monotonic() + 10 * elapsed
+        return time.monotonic() + _DISK_CHECK_BACKOFF_FACTOR * elapsed
 
     @staticmethod
     def _iso_offset(seconds: float) -> str:
