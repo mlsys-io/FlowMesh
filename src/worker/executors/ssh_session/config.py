@@ -94,11 +94,15 @@ class SSHConfig:
     memory_limit_bytes: int | None
     pids_limit: int | None
     gpu_device_ids: list[str]
+    # Bytes the session may write to its container's writable layer (Docker
+    # SizeRw) before it is stopped; None means unbounded. Not observable, and
+    # so not enforced, on the process backend.
+    disk_limit_bytes: int | None = None
     # No network at all, not even the isolated SSH bridge.
     network_disabled: bool = False
-    # A minimal capability set with a private tmpfs /tmp as the writable scratch,
-    # output copied out of the container, and network access only through the
-    # isolated session network.
+    # A minimal capability set, private tmpfs scratch (/tmp, /var/tmp and
+    # /run/lock), output copied out of the container, and network access only
+    # through the isolated session network.
     hardened: bool = False
     # Files written into the container before it starts, keyed by absolute path.
     extra_files: dict[str, bytes] = field(default_factory=dict)
@@ -155,6 +159,9 @@ class SSHConfig:
             memory_limit_bytes=memory_limit_bytes,
             pids_limit=pids_limit,
             gpu_device_ids=gpu_device_ids,
+            disk_limit_bytes=(
+                worker_cfg.ssh_limits.max_disk_bytes if worker_cfg.ssh_limits else None
+            ),
         )
 
 

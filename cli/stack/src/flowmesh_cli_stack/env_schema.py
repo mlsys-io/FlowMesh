@@ -353,6 +353,7 @@ STACK_ENV_SCHEMA = EnvSchema(
                 ),
                 EnvVar("SSH_MAX_MEMORY"),
                 EnvVar("SSH_MAX_PIDS", var_type=EnvVarType.INT, min_value=1),
+                EnvVar("SSH_MAX_DISK"),
                 EnvVar(
                     "ENABLE_SSH_GPU_LIMIT",
                     "true",

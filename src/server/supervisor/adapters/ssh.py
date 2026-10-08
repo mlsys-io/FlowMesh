@@ -32,6 +32,9 @@ class SSHConfig(BaseModel):
     """Maximum memory accessible to an SSH session container (e.g. "8Gi")"""
     max_pids: int | None = env.SSH_MAX_PIDS
     """Maximum number of PIDs inside an SSH session container"""
+    max_disk: str | None = env.SSH_MAX_DISK
+    """Maximum bytes a session may write to its container's writable layer
+    (e.g. "20Gi"); the session is stopped past it"""
     enable_gpu_limit: bool = env.ENABLE_SSH_GPU_LIMIT
     """Whether to apply requested GPU limits to SSH sessions.
 
@@ -69,6 +72,7 @@ class SSHConfig(BaseModel):
             "SSH_MAX_CPU": self.max_cpu,
             "SSH_MAX_MEMORY": self.max_memory,
             "SSH_MAX_PIDS": self.max_pids,
+            "SSH_MAX_DISK": self.max_disk,
             "ENABLE_SSH_GPU_LIMIT": self.enable_gpu_limit,
             "SSH_SESSION_BACKEND": self.session_backend,
             "ENABLE_UNISOLATED_SSH_SESSION": self.enable_unisolated_session,
@@ -86,10 +90,24 @@ class SSHConfig(BaseModel):
                     f"SSH_MAX_MEMORY value {self.max_memory!r} is not a valid "
                     "memory string (e.g. '8Gi', '512Mi', or a byte count)"
                 )
-        if self.max_cpu is None and memory_bytes is None and self.max_pids is None:
+        disk_bytes: int | None = None
+        if self.max_disk is not None:
+            disk_bytes = parse_mem_to_bytes(self.max_disk)
+            if disk_bytes is None:
+                raise ValueError(
+                    f"SSH_MAX_DISK value {self.max_disk!r} is not a valid "
+                    "size string (e.g. '20Gi', '512Mi', or a byte count)"
+                )
+        if (
+            self.max_cpu is None
+            and memory_bytes is None
+            and self.max_pids is None
+            and disk_bytes is None
+        ):
             return None
         return SSHLimits(
             max_cpu_cores=self.max_cpu,
             max_memory_bytes=memory_bytes,
             max_pids=self.max_pids,
+            max_disk_bytes=disk_bytes,
         )

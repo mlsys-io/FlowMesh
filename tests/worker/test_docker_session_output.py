@@ -3,7 +3,7 @@
 import io
 import tarfile
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from unittest.mock import MagicMock
 
 import pytest
@@ -127,3 +127,35 @@ class TestCollectOutput:
     def test_output_within_max_bytes_is_kept(self, tmp_path: Path) -> None:
         out = self._collect(tmp_path, _archive({"a.bin": b"a" * 600}), max_bytes=600)
         assert (out / "a.bin").stat().st_size == 600
+
+
+class TestDiskUsage:
+    def test_reads_the_container_layer_size(self) -> None:
+        container = MagicMock(id="cid")
+        session = _session(container)
+        api = cast(MagicMock, session._client).api
+        api.containers.return_value = [{"SizeRw": 4096, "SizeRootFs": 1 << 30}]
+
+        assert session.disk_usage_bytes() == 4096
+        api.containers.assert_called_once_with(
+            all=True, size=True, filters={"id": "cid"}
+        )
+
+    def test_staged_inputs_are_not_charged(self) -> None:
+        session = _session(MagicMock(id="cid"))
+        session._mount_plan.staged_input_bytes = 1000
+        api = cast(MagicMock, session._client).api
+        api.containers.return_value = [{"SizeRw": 4096}]
+        assert session.disk_usage_bytes() == 3096
+        api.containers.return_value = [{"SizeRw": 10}]
+        assert session.disk_usage_bytes() == 0
+
+    def test_unreadable_size_is_unknown_not_zero(self) -> None:
+        session = _session(MagicMock(id="cid"))
+        api = cast(MagicMock, session._client).api
+        api.containers.return_value = []
+        assert session.disk_usage_bytes() is None
+        api.containers.return_value = [{"Id": "cid"}]
+        assert session.disk_usage_bytes() is None
+        api.containers.side_effect = RuntimeError("daemon gone")
+        assert session.disk_usage_bytes() is None

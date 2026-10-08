@@ -35,3 +35,17 @@ def test_managed_token_without_alias_exits(monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.setenv("WORKER_TOKEN", uuid.uuid4().hex)
     with pytest.raises(SystemExit, match="WORKER_ALIAS is required"):
         WorkerConfig.from_env()
+
+
+def test_ssh_max_disk_becomes_a_session_cap(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("WORKER_TOKEN", _external_token("gpu-box.lab"))
+    monkeypatch.setenv("SSH_MAX_DISK", "20Gi")
+    limits = WorkerConfig.from_env().ssh_limits
+    assert limits is not None and limits.max_disk_bytes == 20 * 1024**3
+
+
+def test_invalid_ssh_max_disk_exits(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("WORKER_TOKEN", _external_token("gpu-box.lab"))
+    monkeypatch.setenv("SSH_MAX_DISK", "lots")
+    with pytest.raises(SystemExit, match="SSH_MAX_DISK"):
+        WorkerConfig.from_env()

@@ -43,6 +43,7 @@ from .base_executor import (
 logger = logging.getLogger(__name__)
 
 _SESSION_READY_TIMEOUT_SEC = 30.0
+_DISK_CHECK_BACKOFF_FACTOR = 10
 
 type SessionEndReason = Literal["exited", "ttl", "idle", "finished", "lost"]
 
@@ -309,6 +310,14 @@ class SessionExecutor(Executor):
         }
 
     def _wait_for_session(self, session: SSHSession, cfg: SSHConfig) -> SessionEnd:
+        """Block until the session ends, then fail it if its disk use is past
+        the limit: the polling check may not have run since its last write."""
+        end = self._poll_session(session, cfg)
+        if cfg.disk_limit_bytes is not None:
+            self._enforce_disk_limit(session, cfg.disk_limit_bytes)
+        return end
+
+    def _poll_session(self, session: SSHSession, cfg: SSHConfig) -> SessionEnd:
         """Block until the session exits or its TTL/idle timeout fires.
 
         The idle clock starts when the session does, so a session nobody ever
@@ -318,6 +327,7 @@ class SessionExecutor(Executor):
         idle_enabled = cfg.interactive and cfg.idle_sec > 0
         last_active = time.time()
         idle_unobservable_logged = False
+        disk_check_at = 0.0
         while time.time() < deadline:
             if self._cancel_event.is_set():
                 raise TaskCancelledError("Session cancelled")
@@ -328,6 +338,8 @@ class SessionExecutor(Executor):
                 session.stop(1)
                 return SessionEnd("finished")
             self._enforce_output_limit(session, cfg.output)
+            if cfg.disk_limit_bytes is not None and time.monotonic() >= disk_check_at:
+                disk_check_at = self._enforce_disk_limit(session, cfg.disk_limit_bytes)
             try:
                 exit_code = session.poll()
             except Exception as exc:
@@ -385,6 +397,29 @@ class SessionExecutor(Executor):
         raise ExecutionError(
             f"Session output exceeded maxBytes ({current_size} > {max_bytes})"
         )
+
+    @staticmethod
+    def _enforce_disk_limit(session: SSHSession, max_bytes: int) -> float:
+        """Stop the session once its writable layer passes ``max_bytes``.
+
+        Returns the monotonic time of the next check. Docker sizes the layer by
+        walking it, so a layer with many files is slow to measure: the next
+        check waits ``_DISK_CHECK_BACKOFF_FACTOR`` times as long as this one
+        took, which keeps measuring to under that fraction of the session's time.
+        """
+        started = time.monotonic()
+        current = session.disk_usage_bytes()
+        elapsed = time.monotonic() - started
+        if current is not None and current > max_bytes:
+            logger.warning(
+                "Session disk usage exceeded SSH_MAX_DISK (%d > %d)", current, max_bytes
+            )
+            session.stop(1)
+            raise ExecutionError(
+                f"Session disk usage exceeded SSH_MAX_DISK "
+                f"({current} > {max_bytes} bytes)"
+            )
+        return time.monotonic() + _DISK_CHECK_BACKOFF_FACTOR * elapsed
 
     @staticmethod
     def _iso_offset(seconds: float) -> str:

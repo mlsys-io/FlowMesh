@@ -11,12 +11,16 @@ class TestSSHConfigToEnv:
         assert "SSH_MAX_CPU" not in env
         assert "SSH_MAX_MEMORY" not in env
         assert "SSH_MAX_PIDS" not in env
+        assert "SSH_MAX_DISK" not in env
 
     def test_emits_set_limits(self) -> None:
         env = SSHConfig(max_cpu=4.0, max_memory="8Gi", max_pids=512).to_env()
         assert env["SSH_MAX_CPU"] == "4.0"
         assert env["SSH_MAX_MEMORY"] == "8Gi"
         assert env["SSH_MAX_PIDS"] == "512"
+
+    def test_emits_disk_limit(self) -> None:
+        assert SSHConfig(max_disk="20Gi").to_env()["SSH_MAX_DISK"] == "20Gi"
 
 
 class TestSSHConfigToLimits:
@@ -40,3 +44,13 @@ class TestSSHConfigToLimits:
         assert limits.max_cpu_cores == 1.5
         assert limits.max_memory_bytes is None
         assert limits.max_pids is None
+
+    def test_disk_limit_alone_is_a_cap(self) -> None:
+        limits = SSHConfig(max_disk="20Gi").to_limits()
+        assert limits is not None
+        assert limits.max_disk_bytes == 20 * 1024**3
+        assert limits.max_cpu_cores is None
+
+    def test_invalid_disk_raises(self) -> None:
+        with pytest.raises(ValueError, match="SSH_MAX_DISK"):
+            SSHConfig(max_disk="lots").to_limits()

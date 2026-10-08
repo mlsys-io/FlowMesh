@@ -207,14 +207,18 @@ class TestDockerHardening:
         assert "network" not in kwargs
         assert kwargs["cap_drop"] == ["ALL"]
         assert "NET_RAW" not in cast(list[str], kwargs["cap_add"])
-        assert kwargs["tmpfs"] == {"/tmp": "rw,exec,nosuid,nodev"}
+        opts = "rw,exec,nosuid,nodev"
+        assert kwargs["tmpfs"] == {"/tmp": opts, "/var/tmp": opts, "/run/lock": opts}
+        # The root stays writable: SSH_MAX_DISK bounds the layer instead.
+        assert "read_only" not in kwargs
 
     def test_scratch_space_is_bounded_by_the_memory_limit(self, tmp_path: Path) -> None:
         cfg = _base_cfg()
         cfg.hardened = True
         cfg.memory_limit_bytes = 2 * 1024**3
         kwargs = self._kwargs(tmp_path, cfg)
-        assert kwargs["tmpfs"] == {"/tmp": f"rw,exec,nosuid,nodev,size={2 * 1024**3}"}
+        opts = f"rw,exec,nosuid,nodev,size={2 * 1024**3}"
+        assert kwargs["tmpfs"] == {"/tmp": opts, "/var/tmp": opts, "/run/lock": opts}
 
     def test_output_is_copied_out_not_bind_mounted(self, tmp_path: Path) -> None:
         cfg = _executor(tmp_path)._python_config(_spec())

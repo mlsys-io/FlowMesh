@@ -92,6 +92,7 @@ SSH_STOP_TIMEOUT_SEC: float | None = parse_float_env("SSH_STOP_TIMEOUT_SEC")
 SSH_MAX_CPU: float | None = parse_float_env("SSH_MAX_CPU")
 SSH_MAX_MEMORY: str | None = os.getenv("SSH_MAX_MEMORY", "").strip() or None
 SSH_MAX_PIDS: int | None = parse_int_env("SSH_MAX_PIDS")
+SSH_MAX_DISK: str | None = os.getenv("SSH_MAX_DISK", "").strip() or None
 ENABLE_SSH_GPU_LIMIT: bool = parse_bool_env("ENABLE_SSH_GPU_LIMIT", True)
 ENABLE_UNISOLATED_SSH_SESSION: bool = parse_bool_env(
     "ENABLE_UNISOLATED_SSH_SESSION", False

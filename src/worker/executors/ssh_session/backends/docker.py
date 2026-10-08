@@ -58,7 +58,7 @@ from ..config import (
     normalize_mount_path,
     reserve_mount_path,
 )
-from ..inputs import stage_inputs_locally
+from ..inputs import stage_inputs_locally, staged_size_bytes
 
 try:
     from docker import DockerClient
@@ -87,6 +87,9 @@ _EXEC_ENVIRONMENT = {
     "LD_LIBRARY_PATH": "",
 }
 _CONTAINER_RESULTS_SOURCE_ROOT = "/root/.flowmesh/results-source"
+# The world-writable directories of a stock Debian/Ubuntu image (/var/lock is a
+# symlink to /run/lock), mounted as tmpfs in a hardened session.
+_SCRATCH_TMPFS_DIRS = ("/tmp", "/var/tmp", "/run/lock")  # nosec B108 - container tmpfs
 _SSH_RUN_ENTRYPOINT_PATH = "/flowmesh-ssh-run.sh"
 _SSH_RUN_SCRIPT_SOURCE = (
     Path(worker.__file__).resolve().parent / "docker" / "ssh-run.sh"
@@ -104,6 +107,8 @@ class SSHMountPlan:
     copy_output_path: str | None
     staged_inputs_dir: Path | None
     staged_inputs_volume: str | None
+    # Bytes of input the entrypoint copies into the container layer.
+    staged_input_bytes: int = 0
 
 
 class DockerSessionBackend(SSHSessionBackend):
@@ -329,13 +334,11 @@ class DockerSessionBackend(SSHSessionBackend):
             kwargs["cap_drop"] = ["ALL"]
             kwargs["cap_add"] = ["CHOWN", "DAC_OVERRIDE", "FOWNER", "SETUID", "SETGID"]
             # tmpfs pages are charged to the container's memory, so the memory
-            # limit is the scratch space's only bound.
+            # limit bounds the scratch space. /dev/shm is already a tmpfs.
             tmp_opts = "rw,exec,nosuid,nodev"
             if cfg.memory_limit_bytes is not None:
                 tmp_opts += f",size={cfg.memory_limit_bytes}"
-            kwargs["tmpfs"] = {
-                "/tmp": tmp_opts
-            }  # nosec B108 - a fresh per-container tmpfs, not the host /tmp
+            kwargs["tmpfs"] = {path: tmp_opts for path in _SCRATCH_TMPFS_DIRS}
         return kwargs
 
     def _resolve_noninteractive_command(
@@ -485,11 +488,13 @@ class DockerSessionBackend(SSHSessionBackend):
         results_source = self._config.results_mount_source
         staged_inputs_dir: Path | None = None
         staged_inputs_volume: str | None = None
+        staged_input_bytes = 0
 
         if results_source and resolved_inputs:
             staged_inputs_volume = self._stage_inputs_in_volume(
                 client, resolved_inputs, results_source, session_id, owner
             )
+            staged_input_bytes = sum(staged_size_bytes(r) for r in resolved_inputs)
             volumes.append(
                 f"{staged_inputs_volume}:{_CONTAINER_RESULTS_SOURCE_ROOT}:ro"
             )
@@ -536,6 +541,7 @@ class DockerSessionBackend(SSHSessionBackend):
             copy_output_path=copy_output_path,
             staged_inputs_dir=staged_inputs_dir,
             staged_inputs_volume=staged_inputs_volume,
+            staged_input_bytes=staged_input_bytes,
         )
 
     def _stage_inputs_in_volume(
@@ -740,6 +746,27 @@ class DockerSession(SSHSession):
         if plan.copy_output_path is not None:
             return self._container_path_size(plan.copy_output_path)
         return None
+
+    def disk_usage_bytes(self) -> int | None:
+        """The container layer's size (``SizeRw``) less the inputs staged into
+        it: every path the task wrote outside a mount, the output directory of a
+        copied-out session included.
+
+        Read through a listing filtered to this container: docker-py's inspect
+        cannot ask for the size, and the daemon sizes only what the filter
+        keeps.
+        """
+        try:
+            rows = self._client.api.containers(
+                all=True, size=True, filters={"id": self._container.id}
+            )
+        except Exception:
+            logger.debug("Failed to read the session container's size", exc_info=True)
+            return None
+        size = rows[0].get("SizeRw") if len(rows) == 1 else None
+        if not isinstance(size, int) or size < 0:
+            return None
+        return max(size - self._mount_plan.staged_input_bytes, 0)
 
     def collect_output(self, destination: Path) -> None:
         source_path = self._mount_plan.copy_output_path
