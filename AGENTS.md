@@ -30,8 +30,8 @@ and artifacts.
 - **[`docs/CLI.md`](docs/CLI.md)** — `flowmesh ...` command groups,
   common workflows (submit/watch/logs), local stack lifecycle, SSH tasks.
 - **[`docs/EXECUTORS.md`](docs/EXECUTORS.md)** — `taskType → Executor`
-  registry table, helper utilities, and the `AgentExecutor` env
-  requirements (`UTU_LLM_*`, `SERPER_API_KEY`, `JINA_API_KEY`).
+  registry table, helper utilities, and executor-specific requirements
+  and behavior.
 - **[`docs/WORKFLOWS.md`](docs/WORKFLOWS.md)** — workflow YAML format
   hierarchy: single task, multi-stage DAG (`spec.stages`), graph DAG
   (`taskType: graph_template`), and schedule hints (`epoch_groups`,

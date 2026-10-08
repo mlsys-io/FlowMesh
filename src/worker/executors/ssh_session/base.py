@@ -12,8 +12,9 @@ import logging
 import os
 import socket
 from abc import ABC, abstractmethod
+from collections.abc import Iterator
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import ClassVar
 
 import psutil
@@ -22,6 +23,7 @@ from shared.schemas.worker import SSHBackendName
 from shared.tasks.worker_message import WorkerHardware
 from worker.config import WorkerConfig
 
+from ..base_executor import ExecutionError
 from .config import FINISH_SENTINEL_PATH, ResolvedSSHInput, SSHConfig
 
 logger = logging.getLogger(__name__)
@@ -36,6 +38,8 @@ NETWORK_SCOPE = "network"
 TAILNET_NETWORK = ipaddress.ip_network("100.64.0.0/10")
 
 _TCP_STATE_ESTABLISHED = "01"
+_DIR_OPEN_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+_MAX_TREE_DEPTH = 64
 
 
 @dataclass(slots=True)
@@ -238,13 +242,71 @@ def is_ssh_ready(host: str, port: int) -> bool:
         return False
 
 
+class TreeTooDeepError(OSError):
+    """A tree is nested deeper than :func:`iter_tree` descends."""
+
+
+def iter_tree(root: Path) -> Iterator[tuple[PurePosixPath, os.DirEntry[str], int]]:
+    """Walk ``root`` without following a link anywhere, at any time.
+
+    Yields ``(relative path, entry, parent directory fd)`` for every entry,
+    parents before children; the fd stays open until the walk resumes. Each
+    directory is opened relative to its parent with ``O_NOFOLLOW``, so a
+    component swapped for a link mid-walk is skipped rather than followed, which
+    keeps the walk safe over a tree someone else is still writing. A missing or
+    linked ``root`` yields nothing; a tree deeper than the walk will go raises
+    :class:`TreeTooDeepError` rather than being partly skipped.
+    """
+    try:
+        fd = os.open(root, _DIR_OPEN_FLAGS)
+    except OSError:
+        return
+    try:
+        yield from _iter_dir(fd, PurePosixPath(), 0)
+    finally:
+        os.close(fd)
+
+
+def _iter_dir(
+    dir_fd: int, relative: PurePosixPath, depth: int
+) -> Iterator[tuple[PurePosixPath, os.DirEntry[str], int]]:
+    if depth >= _MAX_TREE_DEPTH:
+        raise TreeTooDeepError(
+            f"{relative.as_posix()} is nested deeper than {_MAX_TREE_DEPTH} levels"
+        )
+    with os.scandir(dir_fd) as scanner:
+        entries = list(scanner)
+    for entry in entries:
+        entry_path = relative / entry.name
+        yield entry_path, entry, dir_fd
+        if not entry.is_dir(follow_symlinks=False):
+            continue
+        try:
+            child_fd = os.open(entry.name, _DIR_OPEN_FLAGS, dir_fd=dir_fd)
+        except OSError:
+            continue
+        try:
+            yield from _iter_dir(child_fd, entry_path, depth + 1)
+        finally:
+            os.close(child_fd)
+
+
 def path_size_bytes(path: Path) -> int:
-    if not path.exists():
-        return 0
+    """Total size of the regular files under ``path``, never following a link.
+
+    Raises rather than under-report: a size that skipped part of the tree
+    would let the output outgrow its limit unnoticed.
+    """
     total = 0
-    for item in path.rglob("*"):
-        if item.is_file():
-            total += item.stat().st_size
+    try:
+        for _, entry, _ in iter_tree(path):
+            try:
+                if entry.is_file(follow_symlinks=False):
+                    total += entry.stat(follow_symlinks=False).st_size
+            except FileNotFoundError:
+                continue
+    except OSError as exc:
+        raise ExecutionError(f"Cannot measure session output: {exc}") from exc
     return total
 
 
