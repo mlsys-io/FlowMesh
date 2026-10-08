@@ -14,6 +14,7 @@ from server.registries.worker import WorkerRegistry
 from server.task.models import TaskRecord, TaskStatus
 from server.task.parser import parse_workflow
 from server.task.runtime import TaskRuntime
+from shared.schemas.result import BaseExecutorResult, ResultEnvelope, write_result
 from shared.tasks import TaskEnvelopeTemplate, TaskType
 from shared.tasks.specs import SSHSpecStrict
 
@@ -71,7 +72,9 @@ def test_parse_workflow_preserves_stage_local_names_for_ssh_inputs() -> None:
     assert [task.local_name for task in parsed.tasks] == ["preprocess", "annotate"]
 
 
-def test_dispatcher_resolves_ssh_input_stage_names_from_local_stage_names() -> None:
+def test_dispatcher_resolves_ssh_input_stage_names_from_local_stage_names(
+    tmp_path: Path,
+) -> None:
     upstream = TaskRecord(
         task_id="task-pre",
         workflow_id="wf-1",
@@ -107,10 +110,13 @@ def test_dispatcher_resolves_ssh_input_stage_names_from_local_stage_names() -> N
             ),
         ),
         worker_registry=cast(WorkerRegistry, object()),
-        results_dir=Path("/tmp"),
+        results_dir=tmp_path,
         logger=logging.getLogger("test-ssh-phase2"),
     )
 
+    write_result(
+        tmp_path, ResultEnvelope(task_id=upstream.task_id, result=BaseExecutorResult())
+    )
     spec = SSHSpecStrict.model_validate(current.task.spec.model_dump())
     resolved = dispatcher._resolve_upstream_task_ids(current, spec)
 

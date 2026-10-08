@@ -3,10 +3,15 @@ import contextlib
 import gzip
 import json
 import logging
+import mimetypes
+import os
 import tarfile
 import tempfile
-from collections.abc import Iterator
-from pathlib import Path
+from collections.abc import Callable, Iterator
+from functools import partial
+from pathlib import Path, PurePosixPath
+from typing import BinaryIO
+from urllib.parse import quote
 
 from fastapi import (
     APIRouter,
@@ -18,8 +23,10 @@ from fastapi import (
     UploadFile,
     status,
 )
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import ValidationError
+from starlette.background import BackgroundTask
+from starlette.concurrency import run_in_threadpool
 
 from shared.schemas.result import (
     AnyExecutorResult,
@@ -35,6 +42,20 @@ from shared.utils.manifest import (
     RESULTS_NAME,
     prepare_output_dir,
     sync_manifest,
+)
+from shared.utils.result_delivery import (
+    RECEIPT_NAME,
+    add_receipt,
+    artifacts_ready,
+    commit_delivery,
+    delivery_lock,
+    extract_delivery_bundle,
+    make_receipt,
+    portable_link,
+    read_receipt,
+    result_generation,
+    safe_relative,
+    selection_roots,
 )
 
 from ...app_state import (
@@ -100,9 +121,10 @@ async def ingest_result(
             status_code=status.HTTP_400_BAD_REQUEST, detail="task_id is required"
         )
     envelope.task_id = task_id
+    _require_current_dispatch(runtime, task_id, envelope)
 
     try:
-        path = await asyncio.to_thread(write_result, results_dir, envelope)
+        path = await asyncio.to_thread(_store_result, results_dir, envelope)
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -122,6 +144,72 @@ async def ingest_result(
     return PathResponse(ok=True, path=str(path))
 
 
+@router.post("/{task_id}/delivery", summary="Publish a complete result selection")
+async def ingest_delivery(
+    task_id: str,
+    file: UploadFile = File(...),
+    principal: PrincipalContext = Depends(authenticate_connection),
+    results_dir: Path = Depends(get_results_dir),
+    runtime: TaskRuntime = Depends(get_runtime),
+    logger: logging.Logger = Depends(get_logger),
+) -> PathResponse:
+    await require_permission(
+        principal, ResourceKind.RESULT, None, ResourceAction.WRITE, logger
+    )
+    try:
+        if safe_relative(task_id).name != task_id:
+            raise ValueError("Invalid task ID")
+        destination = await run_in_threadpool(
+            _ingest_delivery, file.file, results_dir, task_id, runtime
+        )
+        return PathResponse(ok=True, path=destination.as_posix())
+    except (OSError, ValueError, tarfile.TarError) as exc:
+        raise HTTPException(
+            status_code=400, detail=f"Invalid result delivery: {exc}"
+        ) from exc
+
+
+@router.get(
+    "/{task_id}/delivery",
+    summary="Check whether a result selection is already held",
+    description="Check whether a result snapshot selection is held.",
+    response_description="Selection held (204); not held (404)",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+)
+async def check_delivery(
+    task_id: str,
+    generation: str = Query(...),
+    artifact_path: list[str] = Query(default_factory=list),
+    all_artifacts: bool = Query(default=False),
+    principal: PrincipalContext = Depends(authenticate_connection),
+    results_dir: Path = Depends(get_results_dir),
+    logger: logging.Logger = Depends(get_logger),
+) -> Response:
+    # A worker that shares the results volume finds its own snapshot here and
+    # skips the upload.
+    await require_permission(
+        principal, ResourceKind.RESULT, None, ResourceAction.WRITE, logger
+    )
+    try:
+        if safe_relative(task_id).name != task_id:
+            raise ValueError("Invalid task ID")
+        for path in artifact_path:
+            safe_relative(path)
+        if all_artifacts and artifact_path:
+            raise ValueError("Pass either artifact_path or all_artifacts, not both")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    paths = None if all_artifacts else artifact_path
+    if not await asyncio.to_thread(
+        _holds_delivery, results_dir, task_id, paths, generation
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="selection not held"
+        )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
 @router.get(
     "/{task_id}",
     summary="Get a result",
@@ -132,6 +220,7 @@ async def get_result(
     task_id: str,
     principal: PrincipalContext = Depends(authenticate_connection),
     results_dir: Path = Depends(get_results_dir),
+    runtime: TaskRuntime = Depends(get_runtime),
     logger: logging.Logger = Depends(get_logger),
 ) -> AnyExecutorResult:
     task_id = (task_id or "").strip()
@@ -142,8 +231,9 @@ async def get_result(
     await require_permission(
         principal, ResourceKind.RESULT, task_id, ResourceAction.READ, logger
     )
+    _require_terminal_result(runtime, task_id)
     try:
-        raw = read_result(results_dir, task_id)
+        raw = await run_in_threadpool(_read_result_locked, results_dir, task_id)
     except FileNotFoundError:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="result not found"
@@ -161,7 +251,9 @@ async def get_result(
             detail=f"Result file is not valid JSON: {exc}",
         ) from exc
     try:
-        return ResultEnvelope.model_validate(content).result
+        envelope = ResultEnvelope.model_validate(content)
+        _require_current_dispatch(runtime, task_id, envelope)
+        return envelope.result
     except ValidationError as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -212,7 +304,18 @@ async def upload_result_file(
 
 def _store_artifact(file: UploadFile, base_dir: Path, target_path: Path) -> None:
     prepare_output_dir(base_dir)
-    atomic_write_stream(target_path, file.file)
+    atomic_write_stream(
+        target_path, file.file, commit=partial(_invalidating_receipt, base_dir)
+    )
+
+
+@contextlib.contextmanager
+def _invalidating_receipt(base_dir: Path) -> Iterator[None]:
+    """Hold the task's snapshot lock while an upload is installed, dropping the
+    delivery receipt the changed artifacts no longer match."""
+    with delivery_lock(base_dir):
+        (base_dir / RECEIPT_NAME).unlink(missing_ok=True)
+        yield
 
 
 @router.get(
@@ -220,18 +323,20 @@ def _store_artifact(file: UploadFile, base_dir: Path, target_path: Path) -> None
     summary="Download a result artifact",
     description="Download an artifact file for a task result.",
     response_description="Result file",
-    response_class=FileResponse,
+    response_class=StreamingResponse,
 )
 async def download_result_file(
     task_id: str,
     filename: str,
     principal: PrincipalContext = Depends(authenticate_connection),
     results_dir: Path = Depends(get_results_dir),
+    runtime: TaskRuntime = Depends(get_runtime),
     logger: logging.Logger = Depends(get_logger),
-) -> FileResponse:
+) -> StreamingResponse:
     await require_permission(
         principal, ResourceKind.RESULT, task_id, ResourceAction.READ, logger
     )
+    _require_terminal_result(runtime, task_id)
     sanitized = Path(filename)
     base_dir = result_file_path(results_dir, task_id).parent
     relative_path = _resolve_artifact_path(filename)
@@ -262,7 +367,19 @@ async def download_result_file(
             )
         target_path = fallback
 
-    return FileResponse(target_path)
+    handle = await run_in_threadpool(
+        _open_current_file, runtime, task_id, base_dir, target_path
+    )
+    return StreamingResponse(
+        _iter_file(handle),
+        media_type=mimetypes.guess_type(sanitized.name)[0]
+        or "application/octet-stream",
+        headers={
+            "Content-Length": str(os.fstat(handle.fileno()).st_size),
+            "Content-Disposition": _attachment(sanitized.name),
+        },
+        background=BackgroundTask(handle.close),
+    )
 
 
 @router.get(
@@ -276,6 +393,8 @@ async def download_result_bundle(
     task_id: str,
     background_tasks: BackgroundTasks,
     include: list[str] = Query(default_factory=list),
+    artifact_path: list[str] = Query(default_factory=list),
+    generation: str | None = Query(default=None),
     principal: PrincipalContext = Depends(authenticate_connection),
     runtime: TaskRuntime = Depends(get_runtime),
     results_dir: Path = Depends(get_results_dir),
@@ -304,8 +423,16 @@ async def download_result_bundle(
 
     try:
         bundle_path = await asyncio.to_thread(
-            _create_result_bundle_archive, task_id, base_dir, sections=sections
+            _create_result_bundle_archive,
+            task_id,
+            base_dir,
+            sections,
+            artifact_path,
+            generation,
+            record.result_dispatch if record is not None else None,
         )
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -375,6 +502,9 @@ def _create_result_bundle_archive(
     task_id: str,
     base_dir: Path,
     sections: tuple[str, ...] = _BUNDLE_SECTIONS_DEFAULT,
+    artifact_paths: list[str] | None = None,
+    generation: str | None = None,
+    dispatch_id: str | None = None,
 ) -> Path:
     with tempfile.NamedTemporaryFile(
         prefix=f"flowmesh-result-{task_id}-",
@@ -384,15 +514,67 @@ def _create_result_bundle_archive(
         bundle_path = Path(tmp.name)
 
     try:
-        with (
-            gzip.open(bundle_path, mode="wb") as fileobj,
-            tarfile.open(fileobj=fileobj, mode="w") as archive,
-        ):
+        with delivery_lock(base_dir):
+            if dispatch_id is not None and (base_dir / RESULTS_NAME).is_file():
+                envelope = ResultEnvelope.from_file(base_dir / RESULTS_NAME)
+                if (envelope.metadata or {}).get("independent_results") and (
+                    envelope.metadata or {}
+                ).get("result_dispatch") != dispatch_id:
+                    raise HTTPException(
+                        status_code=404,
+                        detail="Result belongs to an earlier task attempt",
+                    )
             for section in sections:
                 candidate = _bundle_section_path(base_dir, section)
                 if candidate is None or not candidate.exists():
-                    continue
-                _add_tree(archive, candidate, f"{task_id}/{candidate.name}")
+                    raise HTTPException(
+                        status_code=404,
+                        detail=f"Requested result section unavailable: {section}",
+                    )
+            paths = artifact_paths or None
+            receipt = read_receipt(base_dir)
+            if "artifacts" in sections and not artifacts_ready(
+                base_dir, task_id, paths, generation, verify_content=False
+            ):
+                # Without a receipt, a client's full bundle carries what is
+                # stored, as for a result published through its own destination;
+                # dependents always ask for a receipted selection or generation.
+                if receipt is not None or paths is not None or generation is not None:
+                    raise HTTPException(
+                        status_code=404,
+                        detail="Requested artifacts have not been completely delivered",
+                    )
+            transferable = partial(_transferable, base_dir)
+            with (
+                gzip.open(bundle_path, mode="wb") as fileobj,
+                tarfile.open(fileobj=fileobj, mode="w") as archive,
+            ):
+                for section in sections:
+                    candidate = _bundle_section_path(base_dir, section)
+                    if candidate is None:
+                        continue
+                    if section == "artifacts" and paths is not None:
+                        archive.add(
+                            candidate, arcname=f"{task_id}/artifacts", recursive=False
+                        )
+                        for name in selection_roots(base_dir, paths):
+                            _add_tree(
+                                archive,
+                                candidate / safe_relative(name),
+                                f"{task_id}/artifacts/{name}",
+                                transferable,
+                            )
+                    else:
+                        _add_tree(
+                            archive,
+                            candidate,
+                            f"{task_id}/{candidate.name}",
+                            transferable,
+                        )
+                if "results" in sections and "artifacts" in sections:
+                    add_receipt(
+                        archive, task_id, make_receipt(base_dir, task_id, paths)
+                    )
     except Exception:
         bundle_path.unlink(missing_ok=True)
         raise
@@ -400,10 +582,134 @@ def _create_result_bundle_archive(
     return bundle_path
 
 
-def _add_tree(archive: tarfile.TarFile, root: Path, arcname: str) -> None:
+def _require_current_dispatch(
+    runtime: TaskRuntime, task_id: str, envelope: ResultEnvelope
+) -> None:
+    record = runtime.get_record(task_id)
+    metadata = envelope.metadata or {}
+    if (
+        record is not None
+        and metadata.get("independent_results")
+        and metadata.get("result_dispatch") != record.result_dispatch
+    ):
+        raise HTTPException(
+            status_code=404, detail="Result belongs to an earlier task attempt"
+        )
+
+
+def _require_terminal_result(runtime: TaskRuntime, task_id: str) -> None:
+    record = runtime.get_record(task_id)
+    if record is not None and record.status not in TERMINAL_TASK_STATUSES:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Task {task_id} is not terminal; result unavailable",
+        )
+
+
+def _store_result(results_dir: Path, envelope: ResultEnvelope) -> Path:
+    base_dir = result_file_path(results_dir, envelope.task_id).parent
+    with delivery_lock(base_dir):
+        previous = read_receipt(base_dir)
+        path = write_result(results_dir, envelope)
+        if previous is not None and previous.generation != result_generation(base_dir):
+            (base_dir / RECEIPT_NAME).unlink(missing_ok=True)
+    return path
+
+
+def _ingest_delivery(
+    upload: BinaryIO, results_dir: Path, task_id: str, runtime: TaskRuntime
+) -> Path:
+    upload.seek(0)
+    with tempfile.TemporaryDirectory(prefix="flowmesh-ingest-") as temporary:
+        staging = extract_delivery_bundle(upload, Path(temporary), task_id)
+        envelope = ResultEnvelope.from_file(staging / RESULTS_NAME)
+        _require_current_dispatch(runtime, task_id, envelope)
+        destination = result_file_path(results_dir, task_id).parent
+        commit_delivery(
+            staging,
+            destination,
+            task_id,
+            partial(_require_current_dispatch, runtime, task_id),
+        )
+    return destination
+
+
+def _holds_delivery(
+    results_dir: Path, task_id: str, paths: list[str] | None, generation: str
+) -> bool:
+    base_dir = result_file_path(results_dir, task_id).parent
+    if not base_dir.is_dir():
+        # The lock would create the directory; nothing is held there anyway.
+        return False
+    with delivery_lock(base_dir):
+        return artifacts_ready(
+            base_dir, task_id, paths, generation, verify_content=False
+        )
+
+
+def _read_result_locked(results_dir: Path, task_id: str) -> str:
+    with delivery_lock(result_file_path(results_dir, task_id).parent):
+        return read_result(results_dir, task_id)
+
+
+def _open_current_file(
+    runtime: TaskRuntime, task_id: str, base_dir: Path, target: Path
+) -> BinaryIO:
+    """Open ``target`` while the task's snapshot is locked.
+
+    Deliveries replace files by rename, so the open handle keeps serving the
+    snapshot that was current when it was opened.
+    """
+    with delivery_lock(base_dir):
+        envelope_path = base_dir / RESULTS_NAME
+        if envelope_path.is_file():
+            envelope = ResultEnvelope.from_file(envelope_path)
+            _require_current_dispatch(runtime, task_id, envelope)
+        resolved = target.resolve()
+        try:
+            resolved.relative_to(base_dir.resolve())
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail="invalid filename"
+            )
+        return resolved.open("rb")
+
+
+def _iter_file(handle: BinaryIO) -> Iterator[bytes]:
+    while chunk := handle.read(64 * 1024):
+        yield chunk
+
+
+def _attachment(filename: str) -> str:
+    quoted = quote(filename)
+    if quoted != filename:
+        return f"attachment; filename*=utf-8''{quoted}"
+    return f'attachment; filename="{filename}"'
+
+
+def _transferable(base_dir: Path, member: tarfile.TarInfo) -> tarfile.TarInfo | None:
+    if member.issym():
+        parts = PurePosixPath(member.name).parts[1:]
+        if parts[:1] != ("artifacts",):
+            return None
+        link_path = base_dir.joinpath(*parts)
+        member.linkname = portable_link(link_path, base_dir)
+        return member
+    return member if member.isfile() or member.isdir() else None
+
+
+def _add_tree(
+    archive: tarfile.TarFile,
+    root: Path,
+    arcname: str,
+    member_filter: Callable[[tarfile.TarInfo], tarfile.TarInfo | None] | None = None,
+) -> None:
     """Add ``root`` and everything under it, leaving out in-flight atomic writes and
-    any file removed while the archive is built."""
-    archive.add(root, arcname=arcname, recursive=False)
+    any file removed while the archive is built. A link is added as a link and
+    never descended into."""
+    archive.add(root, arcname=arcname, recursive=False, filter=member_filter)
+    if root.is_symlink():
+        return
     for path in _bounded_walk(root):
         if is_atomic_temp(path.name):
             continue
@@ -412,6 +718,7 @@ def _add_tree(archive: tarfile.TarFile, root: Path, arcname: str) -> None:
                 path,
                 arcname=f"{arcname}/{path.relative_to(root).as_posix()}",
                 recursive=False,
+                filter=member_filter,
             )
 
 

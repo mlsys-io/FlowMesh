@@ -1,12 +1,12 @@
 """SSH session input staging and result mounting tests."""
 
-import tarfile
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 from unittest.mock import MagicMock
 
 import pytest
 
+from shared.schemas.result import BaseExecutorResult, ResultEnvelope, write_result
 from shared.tasks.specs import SSHSpecStrict
 from shared.tasks.worker_message import WorkerTaskMessage
 from tests.worker.factories import DEFAULT_WORKER_CONFIG, make_live_worker_config
@@ -159,12 +159,15 @@ def test_stage_inputs_locally_downloads_missing_upstream_results(
     monkeypatch.setenv("RESULTS_DIR", str(tmp_path / "results"))
     resolved_inputs = inputs_module.resolve_inputs(task, cfg, worker_cfg.results_dir)
 
-    def _download(task_id: str, destination_dir: Path) -> None:
-        staged = destination_dir / task_id
-        staged.mkdir(parents=True)
-        (staged / "results.json").write_text("{}", encoding="utf-8")
+    def _hydrate(
+        task_id: str,
+        root: Path,
+        paths: list[str] | None = None,
+        generation: str | None = None,
+    ) -> None:
+        write_result(root, ResultEnvelope(task_id=task_id, result=BaseExecutorResult()))
 
-    monkeypatch.setattr(inputs_module, "download_result_bundle", _download)
+    monkeypatch.setattr(inputs_module, "hydrate_result", _hydrate)
 
     staging_dir = inputs_module.stage_inputs_locally(resolved_inputs, "session-remote")
 
@@ -181,7 +184,22 @@ def test_stage_inputs_in_volume_downloads_missing_upstream_results(
         _worker_config(tmp_path, network_mode="container:flowmesh-worker-1")
     )
     local_source = tmp_path / "results" / "task-local"
-    local_source.mkdir(parents=True)
+    write_result(
+        local_source.parent,
+        ResultEnvelope(task_id="task-local", result=BaseExecutorResult()),
+    )
+
+    def hydrate(
+        task_id: str,
+        root: Path,
+        paths: list[str] | None = None,
+        generation: str | None = None,
+    ) -> None:
+        write_result(root, ResultEnvelope(task_id=task_id, result=BaseExecutorResult()))
+
+    monkeypatch.setattr(
+        "worker.executors.ssh_session.backends.docker.hydrate_result", hydrate
+    )
     resolved_inputs = [
         ResolvedSSHInput(
             stage="local",
@@ -238,22 +256,7 @@ def test_stage_inputs_in_volume_downloads_missing_upstream_results(
         fake_client.containers.kwargs["network_mode"] == "container:flowmesh-worker-1"
     )
     assert "cp -a /src/task-local/. /dst/task-local/" in command
-    assert (
-        "wget -qO- -T 300 -t 1 --header 'Authorization: Bearer secret-token' "
-        "'http://flowmesh.example/api/v1/results/task-remote/bundle"
-        "?include=results&include=artifacts' | tar -xz -C /dst" in command
-    )
-
-
-def test_extract_result_bundle_rejects_path_traversal(tmp_path: Path) -> None:
-    bundle = tmp_path / "bundle.tar"
-    with tarfile.open(bundle, mode="w") as archive:
-        payload = tmp_path / "payload.txt"
-        payload.write_text("x", encoding="utf-8")
-        archive.add(payload, arcname="../escape.txt")
-
-    with pytest.raises(Exception, match="Unsafe path"):
-        inputs_module.extract_result_bundle(bundle, tmp_path / "dest")
+    assert "cp -a /src/task-remote/. /dst/task-remote/" in command
 
 
 def test_local_input_staging_keeps_links_as_links(tmp_path: Path) -> None:
@@ -261,6 +264,9 @@ def test_local_input_staging_keeps_links_as_links(tmp_path: Path) -> None:
     secret.write_text("hunter2")
     source = tmp_path / "results" / "t-up"
     (source / "artifacts").mkdir(parents=True)
+    write_result(
+        source.parent, ResultEnvelope(task_id="t-up", result=BaseExecutorResult())
+    )
     (source / "artifacts" / "leak").symlink_to(secret)
     staged = inputs_module.stage_inputs_locally(
         [ResolvedSSHInput("up", "t-up", source, "/mnt/flowmesh/inputs/up")], "ssn-1"
@@ -268,3 +274,112 @@ def test_local_input_staging_keeps_links_as_links(tmp_path: Path) -> None:
     link = staged / "t-up" / "artifacts" / "leak"
     assert link.is_symlink()
     assert link.readlink() == secret
+
+
+@pytest.mark.parametrize("selection", ["leak", "nested"])
+def test_selected_input_staging_keeps_links_as_links(
+    tmp_path: Path, selection: str
+) -> None:
+    secret = tmp_path / "worker-secret"
+    secret.write_text("hunter2")
+    source = tmp_path / "results" / "t-up"
+    (source / "artifacts" / "nested").mkdir(parents=True)
+    write_result(
+        source.parent, ResultEnvelope(task_id="t-up", result=BaseExecutorResult())
+    )
+    (source / "artifacts" / "leak").symlink_to(secret)
+    (source / "artifacts" / "nested" / "leak").symlink_to(secret)
+    staged = inputs_module.stage_inputs_locally(
+        [
+            ResolvedSSHInput(
+                "up",
+                "t-up",
+                source,
+                "/mnt/flowmesh/references/t-up",
+                artifact_paths=[selection],
+            )
+        ],
+        "ssn-1",
+    )
+    link = staged / "t-up" / "artifacts" / selection
+    if selection == "nested":
+        link = link / "leak"
+    assert link.is_symlink()
+    assert link.readlink() == secret
+
+
+def test_selected_input_staging_brings_in_artifact_link_targets(tmp_path: Path) -> None:
+    source = tmp_path / "results" / "t-up"
+    (source / "artifacts" / "checkpoint-500").mkdir(parents=True)
+    (source / "artifacts" / "checkpoint-500" / "weights").write_text("trained")
+    (source / "artifacts" / "final_model").symlink_to("checkpoint-500")
+    write_result(
+        source.parent, ResultEnvelope(task_id="t-up", result=BaseExecutorResult())
+    )
+    staged = inputs_module.stage_inputs_locally(
+        [
+            ResolvedSSHInput(
+                "up",
+                "t-up",
+                source,
+                "/mnt/flowmesh/references/t-up",
+                artifact_paths=["final_model"],
+            )
+        ],
+        "ssn-1",
+    )
+    model = staged / "t-up" / "artifacts" / "final_model"
+    assert model.is_symlink()
+    assert (model / "weights").read_text() == "trained"
+
+
+@pytest.mark.parametrize("selection", [None, ["latest"]])
+def test_local_input_staging_makes_links_into_own_artifacts_portable(
+    tmp_path: Path, selection: list[str] | None
+) -> None:
+    source = tmp_path / "results" / "t-up"
+    (source / "artifacts" / "model").mkdir(parents=True)
+    (source / "artifacts" / "model" / "weights").write_text("trained")
+    (source / "artifacts" / "latest").symlink_to("/worker-results/t-up/artifacts/model")
+    write_result(
+        source.parent, ResultEnvelope(task_id="t-up", result=BaseExecutorResult())
+    )
+    staged = inputs_module.stage_inputs_locally(
+        [
+            ResolvedSSHInput(
+                "up",
+                "t-up",
+                source,
+                "/mnt/flowmesh/inputs/up",
+                artifact_paths=selection,
+            )
+        ],
+        "ssn-1",
+    )
+    link = staged / "t-up" / "artifacts" / "latest"
+    assert link.readlink() == Path("model")
+    assert (link / "weights").read_text() == "trained"
+
+
+def test_volume_staging_makes_links_into_own_artifacts_portable(
+    tmp_path: Path,
+) -> None:
+    backend = DockerSessionBackend(
+        _worker_config(tmp_path, network_mode="container:flowmesh-worker-1")
+    )
+    source = tmp_path / "results" / "t-up"
+    (source / "artifacts" / "model").mkdir(parents=True)
+    (source / "artifacts" / "latest").symlink_to("/worker-results/t-up/artifacts/model")
+    write_result(
+        source.parent, ResultEnvelope(task_id="t-up", result=BaseExecutorResult())
+    )
+    client = MagicMock()
+    backend._stage_inputs_in_volume(
+        client,
+        [ResolvedSSHInput("up", "t-up", source, "/mnt/flowmesh/inputs/up")],
+        "flowmesh-results",
+        "session-1",
+        "worker-1",
+    )
+    command = client.containers.run.call_args.kwargs["command"][2]
+    assert "ln -sfn model /dst/t-up/artifacts/latest" in command

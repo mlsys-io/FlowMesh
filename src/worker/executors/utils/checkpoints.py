@@ -16,7 +16,6 @@ from shared.schemas.result import BaseExecutorResult, ResultEnvelope
 from shared.tasks.specs import TaskSpecStrictBase
 from shared.utils.atomic import atomic_write_text
 from shared.utils.http import add_auth_headers
-from shared.utils.parsing import parse_bool_env
 
 from ..base_executor import ExecutionError, TaskReference
 from .artifacts import is_flowmesh_origin_url
@@ -151,7 +150,19 @@ def download_and_unpack(load_cfg: dict[str, Any], out_dir: Path) -> Path:
     dest_root.mkdir(parents=True, exist_ok=True)
 
     parsed = urlparse(url)
-    if parsed.scheme not in {"http", "https"}:
+    local_source = Path(str(url)) if not parsed.scheme else None
+    if (
+        local_source is not None
+        and local_source.is_absolute()
+        and local_source.is_dir()
+    ):
+        return local_source
+    is_local = (
+        local_source is not None
+        and local_source.is_absolute()
+        and local_source.is_file()
+    )
+    if not is_local and parsed.scheme not in {"http", "https"}:
         raise ExecutionError(
             f"Unsupported checkpoint URL scheme '{parsed.scheme}'; "
             "only http and https are allowed"
@@ -165,17 +176,22 @@ def download_and_unpack(load_cfg: dict[str, Any], out_dir: Path) -> Path:
         temp_name = parsed_name or "checkpoint"
 
     temp_path = (dest_root / temp_name).resolve()
-    try:
-        with requests.get(url, headers=headers, stream=True, timeout=timeout) as resp:
-            resp.raise_for_status()
-            with temp_path.open("wb") as fh:
-                for chunk in resp.iter_content(chunk_size=64 * 1024):
-                    if chunk:
-                        fh.write(chunk)
-    except requests.RequestException as exc:
-        raise ExecutionError(
-            f"Failed to download checkpoint from {url}: {exc}", retryable=True
-        ) from exc
+    if is_local and local_source is not None:
+        temp_path = local_source
+    else:
+        try:
+            with requests.get(
+                url, headers=headers, stream=True, timeout=timeout
+            ) as resp:
+                resp.raise_for_status()
+                with temp_path.open("wb") as fh:
+                    for chunk in resp.iter_content(chunk_size=64 * 1024):
+                        if chunk:
+                            fh.write(chunk)
+        except requests.RequestException as exc:
+            raise ExecutionError(
+                f"Failed to download checkpoint from {url}: {exc}", retryable=True
+            ) from exc
 
     archive_format = str(load_cfg.get("archive_format", "auto")).lower()
     if archive_format == "auto":
@@ -347,8 +363,6 @@ def get_http_destination(spec: TaskSpecStrictBase) -> HTTPDestination | None:
             headers = dest.headers.copy()
         if dest.timeoutSec is not None:
             timeout = dest.timeoutSec
-    elif parse_bool_env("WORKER_UPLOAD_RESULTS", False):
-        ignore_error = True
     else:
         return None
     if not url:
@@ -413,12 +427,19 @@ def build_artifact_context(spec: TaskSpecStrictBase, out_dir: Path) -> ArtifactC
 
 
 def write_executor_result(
-    path: Path, task_id: str, spec: TaskSpecStrictBase, result: BaseExecutorResult
+    path: Path,
+    task_id: str,
+    spec: TaskSpecStrictBase,
+    result: BaseExecutorResult,
+    worker_id: str | None = None,
+    metadata: dict[str, Any] | None = None,
 ) -> None:
     """Stamp ``_artifacts`` onto ``result`` and persist the envelope."""
     path.parent.mkdir(parents=True, exist_ok=True)
     result.artifacts_ = build_artifact_context(spec, path.parent)
-    envelope = ResultEnvelope(task_id=task_id, result=result)
+    envelope = ResultEnvelope(
+        task_id=task_id, result=result, worker_id=worker_id, metadata=metadata
+    )
     atomic_write_text(path, envelope.model_dump_json(indent=2))
 
 

@@ -172,6 +172,8 @@ class DispatchConfig:
     worker_cache_ttl_sec: int = 3600
     enable_stage_weight_stickiness: bool = False
     no_worker_grace_sec: int = 60
+    stage_result_grace_sec: int = 120
+    result_delivery_enabled: bool = True
 
     @classmethod
     def from_env(cls) -> "DispatchConfig":
@@ -192,6 +194,10 @@ class DispatchConfig:
                 "ENABLE_STAGE_WEIGHT_STICKINESS", False
             ),
             no_worker_grace_sec=max(0, parse_int_env("TASK_NO_WORKER_GRACE_SEC", 60)),
+            stage_result_grace_sec=max(
+                0, parse_int_env("TASK_STAGE_RESULT_GRACE_SEC", 120)
+            ),
+            result_delivery_enabled=parse_bool_env("TASK_RESULT_DELIVERY", True),
         )
 
 

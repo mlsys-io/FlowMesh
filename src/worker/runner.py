@@ -11,6 +11,7 @@ from typing import Any
 import requests
 
 from shared.schemas.result import BaseExecutorResult
+from shared.schemas.result_delivery import ResultDeliveryRequest
 from shared.tasks import MergedChildTaskStrict
 from shared.tasks.components.resources import GPURequirements
 from shared.tasks.envelope import TaskSpecStrict
@@ -26,12 +27,16 @@ from shared.utils.hardware import (
     select_matching_gpu_indices,
 )
 from shared.utils.manifest import prepare_output_dir, sync_manifest
+from shared.utils.parsing import parse_bool_env
+from shared.utils.result_delivery import delivery_lock, make_receipt, write_receipt
 from shared.utils.time import now_iso
 
 from .executors.base_executor import ExecutionError, Executor, TaskCancelledError
+from .executors.utils.artifacts import is_flowmesh_origin_url
 from .executors.utils.checkpoints import get_http_destination, write_executor_result
 from .lifecycle import Lifecycle
 from .utils.logging import TaskLogEmitter
+from .utils.result_delivery import hydrate_task, publish_result
 
 
 def _declared_gpu_req(spec: TaskSpecStrict) -> GPURequirements | None:
@@ -207,10 +212,14 @@ class Runner:
         merged_children: list[MergedChildTaskStrict],
         out_dir: Path,
         result: BaseExecutorResult | None,
+        delivery: dict[str, ResultDeliveryRequest] | None = None,
+        dispatch_id: str | None = None,
     ):
         if result is None:
             return
-        self._write_single_result(task_id, spec, out_dir, result)
+        self._write_single_result(
+            task_id, spec, out_dir, result, (delivery or {}).get(task_id), dispatch_id
+        )
 
         child_lookup = {entry.task_id: entry for entry in merged_children}
         for child_id, child_result in result.children.items():
@@ -219,7 +228,12 @@ class Runner:
                 continue
             child_out_dir = self._resolve_output_dir(child_id)
             self._write_single_result(
-                child_id, child_info.spec, child_out_dir, child_result
+                child_id,
+                child_info.spec,
+                child_out_dir,
+                child_result,
+                (delivery or {}).get(child_id),
+                dispatch_id,
             )
 
     def _write_single_result(
@@ -228,12 +242,33 @@ class Runner:
         spec: TaskSpecStrictBase,
         out_dir: Path,
         payload: BaseExecutorResult | None,
+        delivery: ResultDeliveryRequest | None = None,
+        dispatch_id: str | None = None,
     ):
         if payload is None:
             return
         out_dir.mkdir(parents=True, exist_ok=True)
-        write_executor_result(out_dir / "results.json", task_id, spec, payload)
+        with delivery_lock(out_dir):
+            write_executor_result(
+                out_dir / "results.json",
+                task_id,
+                spec,
+                payload,
+                worker_id=self.lifecycle.worker_id,
+                metadata={"independent_results": True, "result_dispatch": dispatch_id},
+            )
+            try:
+                write_receipt(out_dir, make_receipt(out_dir, task_id, None))
+            except (OSError, ValueError) as exc:
+                self.logger.warning(
+                    "Task %s local artifact receipt unavailable: %s", task_id, exc
+                )
         sync_manifest(out_dir, task_id, spec.get_artifacts())
+        if parse_bool_env("WORKER_UPLOAD_RESULTS", False):
+            delivery = ResultDeliveryRequest(all_artifacts=True)
+        if delivery is not None:
+            size = publish_result(out_dir, task_id, delivery, self.logger)
+            self._simulate_bandwidth_delay(size, "FlowMesh system results")
         self._maybe_emit_http(task_id, spec, payload)
 
     def _simulate_bandwidth_delay(self, payload_bytes: int, destination: str) -> None:
@@ -269,6 +304,10 @@ class Runner:
             "result": result.model_dump(),
             "worker_id": self.lifecycle.worker_id,
         }
+        if is_flowmesh_origin_url(url) and url.rstrip("/").endswith("/api/v1/results"):
+            stored = self.results_dir / task_id / "results.json"
+            if stored.is_file():
+                payload = json.loads(stored.read_text())
         payload_size = len(json.dumps(payload, ensure_ascii=False).encode("utf-8"))
         self._simulate_bandwidth_delay(payload_size, destination=url)
 
@@ -533,6 +572,9 @@ class Runner:
                         raise TaskCancelledError(
                             f"Task {task_id} was cancelled before execution"
                         )
+                    msg = hydrate_task(msg, self.results_dir)
+                    spec = msg.spec
+                    merged_children = msg.merged_children or []
                     self._current_task_id = task_id
                     self._refuse_if_gpu_is_held(spec)
                     if task_type == "inference":
@@ -594,7 +636,15 @@ class Runner:
                         if stop_before_start:
                             executor_to_run.stop(task_id)
                     out = executor_to_run.run(msg, out_dir)
-                    self._write_results(task_id, spec, merged_children, out_dir, out)
+                    self._write_results(
+                        task_id,
+                        spec,
+                        merged_children,
+                        out_dir,
+                        out,
+                        msg.result_delivery if msg.result_delivery_enabled else None,
+                        msg.result_dispatch,
+                    )
                     metadata = self._build_task_metadata(
                         task_type,
                         dispatched_at,

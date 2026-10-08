@@ -61,6 +61,8 @@ spec:
 schedules each stage once all of its dependencies are `DONE`.
 Substitutions like `{{extract.output}}` are resolved against the
 upstream stage's result.
+A named artifact reference such as `${train.final_model}` resolves to a local
+path on the consuming worker, wherever the upstream stage ran.
 
 ## Graph DAG
 
@@ -183,7 +185,8 @@ def main(train, evaluate, inputs):
 
 A `StageInput` is path-like and exposes the stage's `output`, `result`,
 `metadata`, `skipped`, `task_type` and `artifacts` directory, plus
-`artifact(ref)` to resolve an artifact reference under `artifacts`.
+`artifact(ref)` to resolve an artifact reference under `artifacts`. The
+`artifacts` directory holds the stage's whole artifact output, wherever it ran.
 
 ### Isolation
 

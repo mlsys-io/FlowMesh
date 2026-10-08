@@ -16,6 +16,7 @@ from shared.schemas.result import (
     result_file_path,
     write_result,
 )
+from shared.schemas.result_delivery import ArtifactInput, ResultDeliveryRequest
 from shared.tasks import (
     MergedChildTaskStrict,
     TaskEnvelope,
@@ -32,6 +33,7 @@ from shared.tasks.specs import (
     SSHSpecTemplate,
 )
 from shared.tasks.worker_message import WorkerStatus, WorkerTaskMessage
+from shared.utils.result_delivery import artifact_path, dig_result_path, result_field
 
 from ..clients.redis import REDIS_CONN_ERRORS
 from ..registries.worker import Worker, WorkerRegistry
@@ -40,9 +42,8 @@ from ..task.metadata import extract_model_dataset_names
 from ..task.models import TaskRecord, TaskStatus
 from ..task.runtime import TaskRuntime
 from ..utils.time import now_iso
+from .snapshots import SnapshotCache
 from .worker_selector import DEFAULT_WORKER_SELECTION, select_worker
-
-_SENTINEL: Any = object()
 
 _NO_WORKER_BACKOFF_SEC = 0.5
 _ERROR_BACKOFF_SEC = 1.0
@@ -56,6 +57,10 @@ _CREDENTIAL_NOT_RETAINED_MESSAGE = (
 
 class StageReferenceNotReady(Exception):
     """Raised when a task references a stage whose artifacts are not yet available."""
+
+
+class StageResultMissing(Exception):
+    """Raised when a finished stage's result has not reached the server in time."""
 
 
 class Dispatcher:
@@ -76,6 +81,8 @@ class Dispatcher:
         selection_jitter_epsilon: float = 1e-3,
         enable_stage_weight_stickiness: bool = False,
         no_worker_grace_sec: int = 60,
+        stage_result_grace_sec: int = 120,
+        result_delivery_enabled: bool = True,
         metrics_recorder: MetricsRecorder | None = None,
     ) -> None:
         self._runtime = runtime
@@ -91,6 +98,11 @@ class Dispatcher:
         self._selection_jitter = max(0.0, selection_jitter_epsilon)
         self._stage_weight_stickiness_enabled = enable_stage_weight_stickiness
         self._no_worker_grace_sec = max(0, no_worker_grace_sec)
+        self._stage_result_grace_sec = max(0, stage_result_grace_sec)
+        self._result_delivery_enabled = result_delivery_enabled
+        self._snapshots = SnapshotCache(self._results_dir)
+        # Upstream envelopes read during the current dispatch_once call.
+        self._attempt_results: dict[str, ResultEnvelope] | None = None
         self._metrics = metrics_recorder
         self._weight_reference_hints: tuple[str, ...] = (
             "checkpoint",
@@ -194,6 +206,13 @@ class Dispatcher:
 
     def dispatch_once(self, task_id: str) -> bool:
         """Dispatch a single task if possible; requeue when no worker."""
+        self._attempt_results = {}
+        try:
+            return self._dispatch_attempt(task_id)
+        finally:
+            self._attempt_results = None
+
+    def _dispatch_attempt(self, task_id: str) -> bool:
         record = self._runtime.get_record(task_id)
         if not record:
             return True
@@ -369,6 +388,7 @@ class Dispatcher:
         # 6. Resolve stage references
         try:
             rendered_task = self._resolve_stage_references(task_id, task, record)
+            artifact_inputs = {task_id: self._artifact_inputs(record)}
             upstream_task_ids = self._resolve_upstream_task_ids(
                 record, rendered_task.spec
             )
@@ -422,7 +442,7 @@ class Dispatcher:
         if record.merged_children:
             rendered_children = []
             redacted_children: list[str] = []
-            for child_id in record.merged_children:
+            for child_id in list(record.merged_children):
                 if not child_id:
                     self._runtime.release_merge(task_id)
                     self.fail_task(
@@ -444,6 +464,7 @@ class Dispatcher:
                     resolved_child_task = self._resolve_stage_references(
                         child_id, child_record.task, child_record
                     )
+                    artifact_inputs[child_id] = self._artifact_inputs(child_record)
                 except StageReferenceNotReady as exc:
                     self._logger.debug(
                         "Merged child %s waiting on stage artifacts: %s",
@@ -455,6 +476,26 @@ class Dispatcher:
                         task_id, reason="stage_reference_pending", count_retry=False
                     )
                     return False
+                except StageResultMissing as exc:
+                    failed, impacted = self._runtime.fail_merged_children(
+                        task_id, [child_id], str(exc)
+                    )
+                    for failed_id in failed:
+                        self._emit_task_event(
+                            "TASK_FAILED",
+                            failed_id,
+                            payload={"error": str(exc), "is_child_task": True},
+                            error=str(exc),
+                            is_child=True,
+                        )
+                    for dep_id, reason in impacted:
+                        self._emit_task_event(
+                            "TASK_FAILED",
+                            dep_id,
+                            payload={"error": reason},
+                            error=reason,
+                        )
+                    continue
                 except Exception as exc:
                     self._logger.error(
                         "Failed to resolve stage references for merged child %s: %s",
@@ -518,6 +559,7 @@ class Dispatcher:
                 rendered_children = None
 
         # 7. Build WorkerTaskMessage
+        dispatched_at = now_iso()
         message = WorkerTaskMessage(
             task_id=task_id,
             workflow_id=record.workflow_id,
@@ -525,16 +567,43 @@ class Dispatcher:
             task=rendered_task,
             task_type=record.task_type,
             assigned_worker=worker.id,
-            dispatched_at=now_iso(),
+            dispatched_at=dispatched_at,
+            result_dispatch=dispatched_at,
             parent_task_id=None,
             shard_index=record.shard_index,
             shard_total=record.shard_total,
             merged_children=rendered_children,
             upstream_task_ids=upstream_task_ids,
+            result_delivery={
+                identifier: request
+                for identifier in [
+                    task_id,
+                    *[child.task_id for child in rendered_children or []],
+                ]
+                if (request := self._result_delivery_request(identifier)) is not None
+            },
+            result_delivery_enabled=self._result_delivery_enabled,
+            artifact_inputs={
+                identifier: artifact_inputs[identifier]
+                for identifier in [
+                    task_id,
+                    *[child.task_id for child in rendered_children or []],
+                ]
+            },
+            upstream_result_generations={
+                identifier: generation
+                for identifier in (upstream_task_ids or {}).values()
+                if (generation := self._snapshots.generation(identifier)) is not None
+            },
         )
 
         # 8. Publish task
         try:
+            self._runtime.prepare_result_dispatch(
+                task_id,
+                [child.task_id for child in rendered_children or []],
+                dispatched_at,
+            )
             receivers = self._worker_registry.publish_task(worker, message)
         except Exception as exc:
             self._logger.warning(
@@ -1051,7 +1120,7 @@ class Dispatcher:
         if stage_record.status != "DONE":
             raise StageReferenceNotReady(f"Stage '{stage_name}' has not completed")
         envelope = self._load_stage_result(stage_record.task_id)
-        value = self._dig_result_path(envelope.result, path.split("."))
+        value = dig_result_path(envelope.result, path.split("."))
         if value is None:
             raise ValueError(f"Missing value for reference '{expr}'")
         # If the referenced value is an artifact ref (an ``ArtifactRef`` or a
@@ -1095,8 +1164,8 @@ class Dispatcher:
                 continue
             try:
                 envelope = self._load_stage_result(record.task_id)
-            except StageReferenceNotReady as exc:
-                raise exc
+            except (StageReferenceNotReady, StageResultMissing):
+                raise
             except Exception as exc:
                 self._logger.debug(
                     "Failed to load upstream result for %s (%s): %s",
@@ -1115,7 +1184,10 @@ class Dispatcher:
             if spec.inputs is None:
                 # Without ``inputs``, a python task reads each of its direct
                 # dependencies; ``inputs: []`` reads none.
-                return self._direct_dependency_stages(record) or None
+                direct = self._direct_dependency_stages(record)
+                for identifier in direct.values():
+                    self._require_artifacts(identifier, None)
+                return direct or None
             stages = [entry.stage for entry in spec.inputs]
         elif isinstance(spec, SSHSpecStrict) and spec.inputs:
             stages = [entry.stage for entry in spec.inputs]
@@ -1141,6 +1213,7 @@ class Dispatcher:
                 raise StageReferenceNotReady(
                     f"Stage '{stage_name}' has not completed for input mount"
                 )
+            self._require_artifacts(upstream.task_id, None)
             resolved[stage_name] = upstream.task_id
         return resolved or None
 
@@ -1160,43 +1233,157 @@ class Dispatcher:
         return resolved
 
     def _load_stage_result(self, stage_task_id: str) -> ResultEnvelope:
+        if (
+            self._attempt_results is not None
+            and (cached := self._attempt_results.get(stage_task_id)) is not None
+        ):
+            return cached
         path = result_file_path(self._results_dir, stage_task_id)
         if not path.exists():
+            self._raise_if_result_missing(stage_task_id)
             raise StageReferenceNotReady(
                 f"Result for task {stage_task_id} not found at {path}"
             )
         content = json.loads(path.read_text(encoding="utf-8"))
-        return ResultEnvelope.model_validate(content)
+        envelope = ResultEnvelope.model_validate(content)
+        record = self._runtime.get_record(stage_task_id)
+        metadata = envelope.metadata or {}
+        if (
+            metadata.get("independent_results")
+            and record is not None
+            and metadata.get("result_dispatch") != record.result_dispatch
+        ):
+            self._raise_if_result_missing(stage_task_id)
+            raise StageReferenceNotReady(
+                f"Result for task {stage_task_id} belongs to an earlier attempt"
+            )
+        if self._attempt_results is not None:
+            self._attempt_results[stage_task_id] = envelope
+        return envelope
 
-    def _dig_result_path(self, result: BaseExecutorResult, parts: list[str]) -> Any:
-        current: Any = result
-        for part in parts:
-            part = part.strip()
-            if part == "":
+    def _raise_if_result_missing(
+        self, stage_task_id: str, subject: str = "Result"
+    ) -> None:
+        """Stop waiting for a finished stage whose result has not arrived.
+
+        A result reaches the server's results directory either through a
+        worker's delivery upload or because the worker shares that directory,
+        so a result still absent ``stage_result_grace_sec`` after the stage
+        finished is not coming.
+        """
+        record = self._runtime.get_record(stage_task_id)
+        finished = record.finished_ts if record is not None else None
+        if finished is None:
+            return
+        waited = time.time() - finished
+        if waited < self._stage_result_grace_sec:
+            return
+        message = (
+            f"{subject} of task {stage_task_id} has not reached the server "
+            f"{waited:.0f}s after the task finished"
+        )
+        if not self._result_delivery_enabled:
+            message += "; result delivery is disabled (TASK_RESULT_DELIVERY=false)"
+        raise StageResultMissing(message)
+
+    def _require_artifacts(self, task_id: str, paths: list[str] | None) -> None:
+        self._load_stage_result(task_id)
+        if self._snapshots.artifacts_ready(task_id, paths):
+            return
+        self._raise_if_result_missing(task_id, "Artifact selection")
+        raise StageReferenceNotReady(f"Artifacts for task {task_id} are incomplete")
+
+    def _placeholder_expressions(self, value: Any) -> list[str]:
+        if isinstance(value, str):
+            return [
+                match.group(1).strip() for match in PLACEHOLDER_PATTERN.finditer(value)
+            ]
+        if isinstance(value, BaseModel):
+            values = [item for _, item in placeholder_fields(value)]
+        elif isinstance(value, dict):
+            values = list(value.values())
+        elif isinstance(value, (list, tuple)):
+            values = list(value)
+        else:
+            return []
+        return [
+            expression
+            for item in values
+            for expression in self._placeholder_expressions(item)
+        ]
+
+    def _artifact_inputs(self, record: TaskRecord) -> list[ArtifactInput]:
+        context = self._build_stage_context(record)
+        inputs: list[ArtifactInput] = []
+        for expression in self._placeholder_expressions(record.task):
+            stage, separator, selector = expression.partition(".")
+            upstream = context.get(stage)
+            if not separator or upstream is None or selector == "task_id":
                 continue
-            if isinstance(current, dict):
-                if part not in current:
-                    return None
-                current = current[part]
+            if upstream.status != TaskStatus.DONE:
+                raise StageReferenceNotReady(f"Stage '{stage}' has not completed")
+            envelope = self._load_stage_result(upstream.task_id)
+            value = result_field(envelope.result, selector)
+            path = artifact_path(value)
+            source = self._render_artifact_ref(value, envelope)
+            if path is None or source is None:
                 continue
-            if isinstance(current, list):
-                try:
-                    idx = int(part)
-                except ValueError as exc:
-                    raise ValueError(
-                        f"List index must be integer in reference path, got '{part}'"
-                    ) from exc
-                if idx < 0 or idx >= len(current):
-                    return None
-                current = current[idx]
+            self._require_artifacts(upstream.task_id, [path])
+            inputs.append(
+                ArtifactInput(
+                    task_id=upstream.task_id,
+                    path=path,
+                    source=source,
+                    generation=self._snapshots.generation(upstream.task_id),
+                )
+            )
+        return inputs
+
+    def _result_delivery_request(self, task_id: str) -> ResultDeliveryRequest | None:
+        record = self._runtime.get_record(task_id)
+        names = set(self._stage_context_keys(record)) if record is not None else set()
+        pending = [task_id]
+        visited: set[str] = set()
+        request: ResultDeliveryRequest | None = None
+        while pending:
+            current = pending.pop()
+            if current in visited:
                 continue
-            if isinstance(current, BaseModel):
-                current = getattr(current, part, _SENTINEL)
-                if current is _SENTINEL:
-                    return None
-                continue
-            return None
-        return current
+            visited.add(current)
+            info = self._runtime.describe_task(current)
+            for identifier in [] if info is None else info.dependents:
+                pending.append(identifier)
+                dependent = self._runtime.get_record(identifier)
+                if dependent is None or not self._needs_stage_context(dependent):
+                    continue
+                request = request or ResultDeliveryRequest()
+                spec = dependent.task.spec
+                if (
+                    isinstance(spec, (PythonSpecStrict, PythonSpecTemplate))
+                    and spec.inputs is None
+                ):
+                    request.all_artifacts |= task_id in self._task_dependencies(
+                        identifier
+                    )
+                elif isinstance(
+                    spec,
+                    (
+                        PythonSpecStrict,
+                        PythonSpecTemplate,
+                        SSHSpecStrict,
+                        SSHSpecTemplate,
+                    ),
+                ):
+                    request.all_artifacts |= any(
+                        entry.stage in names for entry in spec.inputs or []
+                    )
+                for expression in self._placeholder_expressions(dependent.task):
+                    stage, separator, selector = expression.partition(".")
+                    if separator and stage in names and selector != "task_id":
+                        request.artifact_fields.append(selector)
+        if request is not None:
+            request.artifact_fields = sorted(set(request.artifact_fields))
+        return request
 
     def _evaluate_condition_skip(
         self,
@@ -1227,7 +1414,7 @@ class Dispatcher:
                     f"(status={upstream_record.status})"
                 )
             upstream_result = self._load_stage_result(upstream_record.task_id)
-            actual_value = self._dig_result_path(
+            actual_value = dig_result_path(
                 upstream_result.result, condition.field.split(".")
             )
             if str(actual_value) == condition.equals:

@@ -467,6 +467,13 @@ STACK_ENV_SCHEMA = EnvSchema(
                     var_type=EnvVarType.INT,
                     min_value=0,
                 ),
+                EnvVar(
+                    "TASK_STAGE_RESULT_GRACE_SEC",
+                    "120",
+                    var_type=EnvVarType.INT,
+                    min_value=0,
+                ),
+                EnvVar("TASK_RESULT_DELIVERY", "true", var_type=EnvVarType.BOOL),
                 EnvVar("ENABLE_WORKER_WATCHDOG", "true", var_type=EnvVarType.BOOL),
                 EnvVar(
                     "WORKER_DEATH_CHECK_INTERVAL",
@@ -627,6 +634,12 @@ STACK_ENV_SCHEMA = EnvSchema(
                     min_value=0,
                 ),
                 EnvVar("WORKER_UPLOAD_RESULTS", "false", var_type=EnvVarType.BOOL),
+                EnvVar(
+                    "WORKER_RESULT_TRANSFER_TIMEOUT_SEC",
+                    "1800",
+                    var_type=EnvVarType.FLOAT,
+                    min_value=1,
+                ),
                 EnvVar(
                     "WORKER_EXECUTOR_IDLE_CLEANUP_SEC",
                     "60",

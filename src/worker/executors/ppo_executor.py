@@ -43,12 +43,7 @@ from shared.utils.parsing import safe_float, safe_int, to_bool
 from ..utils.logging import configure_hf_library_logging
 from .base_executor import ExecutionError, Executor, ExecutorTask
 from .mixins.training import TrainingMixin
-from .utils.checkpoints import (
-    archive_model_dir,
-    get_http_destination,
-    maybe_upload_artifacts,
-    write_executor_result,
-)
+from .utils.checkpoints import maybe_upload_artifacts, write_executor_result
 from .utils.data_utils import resolve_jsonl_path
 from .utils.distributed import run_torchrun
 from .utils.huggingface import build_hf_load_kwargs, pick_torch_dtype
@@ -727,18 +722,17 @@ class PPOExecutor(TrainingMixin, Executor):
                     ppo_trainer.save_model(model_save_path.as_posix())
                     logger.info("Model saved to: %s", model_save_path)
                     final_model_path = model_save_path
-                    destination = get_http_destination(task.spec)
-                    if destination:
-                        try:
-                            final_archive_path = archive_model_dir(model_save_path)
+                    try:
+                        final_archive_path = self._archive_model(task, model_save_path)
+                        if final_archive_path:
                             logger.info(
-                                "Archived PPO model to %s for HTTP delivery",
+                                "Archived PPO model to %s for delivery",
                                 final_archive_path,
                             )
-                        except Exception as arch_exc:
-                            logger.warning(
-                                "Failed to archive PPO model for upload: %s", arch_exc
-                            )
+                    except Exception as arch_exc:
+                        logger.warning(
+                            "Failed to archive PPO model for delivery: %s", arch_exc
+                        )
                 except Exception as exc:
                     logger.warning("Failed to save model: %s", exc)
 

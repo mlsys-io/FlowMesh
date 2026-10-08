@@ -163,7 +163,11 @@ def _describe_path(
 
     stats: dict[str, Any]
     try:
-        if target.is_file():
+        if target.is_symlink():
+            # Stats would describe whatever the link points at, possibly outside
+            # the task's directory.
+            stats = {}
+        elif target.is_file():
             stats = _file_stats(target, budget)
         elif target.exists():
             size, count = _directory_stats(target)
@@ -215,7 +219,7 @@ def _directory_stats(path: Path) -> tuple[int, int]:
         if is_atomic_temp(item.name):
             continue
         try:
-            if item.is_file():
+            if item.is_file() and not item.is_symlink():
                 total_size += item.stat().st_size
                 file_count += 1
         except FileNotFoundError:

@@ -33,6 +33,8 @@ listed here is in `.env.example`.
 | `WORKER_CACHE_TTL_SEC` | `3600` | Cache metadata TTL |
 | `ENABLE_STAGE_WEIGHT_STICKINESS` | `false` | Pin stages to checkpoint-producing workers |
 | `TASK_NO_WORKER_GRACE_SEC` | `60` | Grace before failing a task no worker can satisfy |
+| `TASK_STAGE_RESULT_GRACE_SEC` | `120` | Grace after an upstream stage finishes for its result to reach the server before a dependent that reads it fails |
+| `TASK_RESULT_DELIVERY` | `true` | Have workers publish what dependent stages need to the server; set `false` only when every worker shares the server's results directory |
 | `ENABLE_WORKER_WATCHDOG` | `true` | Worker death detection |
 | `WORKER_DEATH_GRACE_SEC` | `60` | Grace period before marking dead |
 | `WORKER_REHYDRATION_GRACE_SEC` | `120` | Extra grace for a worker's rehydrated in-flight tasks after the root restarts, before the watchdog may reclaim them |
@@ -51,12 +53,12 @@ listed here is in `.env.example`.
 **Notes:**
 - In Docker deployments, `SERVER_RESULTS_DIR` and `WORKER_RESULTS_DIR`
 are the host directories or Docker volumes mounted into the server and
-worker containers for storing and reading task results. For workflows
-with a local output destination (`spec.output.destination.type="local"`)
-that have downstream tasks, both variables must point to the same shared
-directory or volume so the server can access the worker's task results.
-Otherwise, downstream tasks that depend on upstream outputs will stall
-in the dispatching loop indefinitely.
+worker containers for storing and reading task results. When workers share
+the server's results directory, both variables point to the same directory or
+volume, and workers upload nothing for dependent stages.
+With `TASK_RESULT_DELIVERY=false`, sharing that directory is the only way an
+upstream result reaches the server; a dependent fails once
+`TASK_STAGE_RESULT_GRACE_SEC` has passed without it.
 - When multiple deployments share one host, you can set `FLOWMESH_STACK_SUFFIX`
 in `.env` to differentiate the deployments so that FlowMesh stack CLI does
 not interfere with each other.
@@ -73,7 +75,8 @@ Spark), set `DOCKER_GPU_RUNTIME=` in the stack env.
 | `RESULTS_DIR` | `./results` | Task output directory |
 | `WORKER_TAGS` | `` | Scheduler hints |
 | `WORKER_COST_PER_HOUR` | `1.0` | Cost metadata |
-| `WORKER_UPLOAD_RESULTS` | `false` | Upload results when no destination set |
+| `WORKER_UPLOAD_RESULTS` | `false` | Publish every result and artifact to FlowMesh, independently of user output destinations |
+| `WORKER_RESULT_TRANSFER_TIMEOUT_SEC` | `1800` | Seconds a worker waits for the server while publishing a result or fetching an upstream one, including the time the server spends packing a large bundle |
 | `WORKER_EXECUTOR_IDLE_CLEANUP_SEC` | `60` | Seconds a worker waits before unloading an idle executor to release the resources it holds; higher values avoid reload thrash between tasks but keep those resources reserved while idle |
 | `WORKER_FOREIGN_GPU_GATE` | `true` | Report a GPU as unavailable while a process outside FlowMesh is using it |
 | `WORKER_FOREIGN_GPU_MEM_MIB` | `1024` | Foreign GPU-memory threshold in MiB |
@@ -83,6 +86,13 @@ Spark), set `DOCKER_GPU_RUNTIME=` in the stack env.
 | `HEARTBEAT_INTERVAL_SEC` | `30` | Heartbeat cadence |
 | `SERVE_DEFAULT_TTL_SEC` | `3600` | Default vLLM serve session TTL when `spec.ttlSeconds` is unset |
 | `SERVE_MAX_TTL_SEC` | `86400` | Upper bound on vLLM serve session TTL, regardless of `spec.ttlSeconds` |
+
+Workers publish what dependent stages need to the server at
+`FLOWMESH_BASE_URL` unless the server sets `TASK_RESULT_DELIVERY=false`.
+`WORKER_UPLOAD_RESULTS=true` publishes every result and artifact regardless, so clients can retrieve leaf results from a worker that
+does not share the server's results directory. Publishing is best-effort: a
+failed transfer leaves the result on the worker. `MODEL_CLEANUP_AFTER_UPLOAD`
+keeps training artifacts that dependent stages need.
 
 ## Supervisor
 

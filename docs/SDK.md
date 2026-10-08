@@ -49,13 +49,18 @@ async with AsyncFlowMesh(base_url="...", api_key="...") as client:
 - **Stream logs** — `client.workflows.stream_logs(wf_id)` and
   `client.tasks.stream_logs(task_id)` yield server-sent events; the
   iterator stops when the source closes.
-- **Pull artifacts** — `client.results.get(task_id)` for the result
-  payload, `client.results.download_bundle(task_id, include="all")`
-  for the tar.gz.
+- **Pull artifacts** — `client.results.retrieve(task_id)` for the result
+  payload, `client.results.get_bundle(task_id, output_path, include=["all"])`
+  for the tar.gz. `client.results.materialize(task_id, output_dir)` validates
+  requested archive sections before extracting results and artifacts.
 - **Fetch and analyze traces** — `client.traces.fetch(wf_id, "spans")`
   yields JSONL rows; `client.traces.analyze(wf_id)` returns a profile
   summary.
 - **Cancel** — `client.workflows.cancel(wf_id)`.
+
+Results are read from the server, so a result that was never published there
+raises `NotFoundError` (see `WORKER_UPLOAD_RESULTS` in [`ENV.md`](ENV.md)). A
+bundle missing a requested section raises `FlowMeshError`.
 
 ## Cursor pagination
 

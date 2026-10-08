@@ -45,11 +45,21 @@ self-authenticate the same way, sending `FLOWMESH_API_KEY` as the bearer.
 | Method | Path | Description |
 |--------|------|-------------|
 | POST | `/api/v1/results` | Submit task result (worker → server). |
+| POST | `/api/v1/results/{task_id}/delivery` | Publish a complete envelope and artifact selection (multipart tar snapshot). |
+| GET | `/api/v1/results/{task_id}/delivery` | `204` when the server already holds the snapshot `generation` with the given `artifact_path` selection (or `all_artifacts=true`), else `404`. Workers call it before publishing. |
 | GET | `/api/v1/results/{task_id}` | Get task result JSON. |
 | GET | `/api/v1/results/{task_id}/bundle` | Download tar.gz bundle (`?include=results,artifacts,logs,all`). |
 | POST | `/api/v1/results/{task_id}/files` | Upload artifact (multipart). |
 | GET | `/api/v1/results/{task_id}/files/{filename}` | Download artifact. |
 | GET | `/api/v1/results/{task_id}/logs` | Download archived `logs.jsonl`. |
+
+Result reads return 409 while the task is still running and 404 for a result
+that was never published to the server (see `WORKER_UPLOAD_RESULTS` in
+[`ENV.md`](ENV.md)). Bundle sections are repeated query parameters, such as
+`?include=results&include=artifacts`; a requested section that is missing or
+incompletely published returns 404. Repeated `artifact_path` parameters limit
+the bundle to those artifact files or subtrees, and `generation` requires a
+specific result snapshot. Archived logs return 404 until the archive exists.
 
 ## Traces
 

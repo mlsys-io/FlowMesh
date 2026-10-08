@@ -1,8 +1,12 @@
 import logging
 from pathlib import Path
 
+from shared.tasks.worker_message import WorkerTaskMessage
+from shared.utils.parsing import parse_bool_env
+
 from ..base_executor import TaskReference
 from ..utils.checkpoints import (
+    archive_model_dir,
     cleanup_artifact_path,
     get_http_destination,
     is_cleanup_enabled,
@@ -18,6 +22,24 @@ class TrainingMixin:
 
     name = "training_mixin"
 
+    def _archive_model(self, task: TaskReference, model_path: Path) -> Path | None:
+        request = (
+            task.result_delivery.get(task.task_id)
+            if isinstance(task, WorkerTaskMessage)
+            else None
+        )
+        required = request is not None and any(
+            field.split(".")[0] == "final_model_archive"
+            for field in request.artifact_fields
+        )
+        if (
+            get_http_destination(task.spec)
+            or parse_bool_env("WORKER_UPLOAD_RESULTS", False)
+            or required
+        ):
+            return archive_model_dir(model_path)
+        return None
+
     def _cleanup_local_artifacts(
         self,
         task: TaskReference,
@@ -32,6 +54,14 @@ class TrainingMixin:
                 self.name,
                 task.task_id,
             )
+            return
+        if parse_bool_env("WORKER_UPLOAD_RESULTS", False) or (
+            isinstance(task, WorkerTaskMessage)
+            and any(
+                request.all_artifacts or request.artifact_fields
+                for request in task.result_delivery.values()
+            )
+        ):
             return
         if not get_http_destination(task.spec):
             return

@@ -29,7 +29,7 @@ uv sync --group runtime-worker-core --group runtime-inference
 ```bash
 export SUPERVISOR_GRPC_TARGET="localhost:50051" # supervisor gRPC host:port
 export RESULTS_DIR=./results
-export FLOWMESH_BASE_URL="http://localhost:8000"  # required for HTTP artifact uploads
+export FLOWMESH_BASE_URL="http://localhost:8000"  # where results are published and fetched
 uv run python worker/main.py
 ```
 At startup the worker:
@@ -56,7 +56,7 @@ At startup the worker:
 | `WORKER_TAGS` | empty | Comma-separated tags used by the scheduler. |
 | `LOG_LEVEL` | `INFO` | Worker log level. |
 | `WORKER_COST_PER_HOUR` | `1.0` | Hourly cost in USD; reported with heartbeats. |
-| `FLOWMESH_BASE_URL` | `http://localhost:8000` | Server URL used to build artifact download links and to hydrate cross-node SSH input bundles. |
+| `FLOWMESH_BASE_URL` | `http://localhost:8000` | Server URL the worker publishes results to, fetches upstream results and artifacts from for dependent tasks, and uses to build artifact download links. |
 | `MODEL_ARCHIVE_USE_PIGZ` | `1` | Enable multithreaded `pigz` compression (set `0`/`false` to disable). |
 | `MODEL_ARCHIVE_COMPRESSION_LEVEL` | `6` | Gzip compression level (`0-9`). |
 | `MODEL_ARCHIVE_PIGZ_THREADS` | – | Force a specific thread count for `pigz`; defaults to all CPUs. |
@@ -64,7 +64,8 @@ At startup the worker:
 | `MODEL_ARCHIVE_TAR_BIN` | `tar` | Tar executable used before compression. |
 | `WORKER_NETWORK_BANDWIDTH_BYTES_PER_SEC` | empty | Throttle HTTP uploads to emulate limited bandwidth. |
 | `WORKER_HB_FILE` | – | Full path to the worker heartbeat file. |
-| `WORKER_UPLOAD_RESULTS` | `false` | Whether the worker should always upload results to the server if spec.output.destination is unspecified. |
+| `WORKER_UPLOAD_RESULTS` | `false` | Publish every result and artifact to FlowMesh through the system delivery endpoint, independently of user output destinations. |
+| `WORKER_RESULT_TRANSFER_TIMEOUT_SEC` | `1800` | Seconds the worker waits for the server while publishing a result or fetching an upstream one, including the time the server spends packing a large bundle. |
 | `WORKER_EXECUTOR_IDLE_CLEANUP_SEC` | `60` | Seconds a worker waits before unloading an idle executor to release the resources it holds; higher values avoid reload thrash between tasks but keep those resources reserved while idle. |
 
 > The heartbeat TTL is computed automatically as `max(HEARTBEAT_INTERVAL_SEC * 4, 120)`.

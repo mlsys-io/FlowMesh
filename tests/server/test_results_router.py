@@ -1,3 +1,4 @@
+import asyncio
 import io
 import logging
 import tarfile
@@ -7,17 +8,20 @@ from collections.abc import Iterator
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
+from unittest.mock import Mock
 
 import pytest
 from fastapi import BackgroundTasks, HTTPException, UploadFile, status
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.routing import APIRoute
 from lumid_hooks import PrincipalContext, ResourceRef
 
 from server.hooks import PERMISSION_CHECKERS
 from server.routers.v1 import results as results_router
-from shared.schemas.result import BaseExecutorResult, ResultEnvelope
+from server.task.runtime import TaskRuntime
+from shared.schemas.result import BaseExecutorResult, ResultEnvelope, write_result
 from shared.utils import atomic
+from shared.utils.result_delivery import delivery_lock
 
 
 @pytest.fixture
@@ -66,6 +70,17 @@ def deny_all_permissions() -> Iterator[None]:
         PERMISSION_CHECKERS.clear()
 
 
+def _runtime_without_records() -> TaskRuntime:
+    runtime = Mock(spec=TaskRuntime)
+    runtime.get_record.return_value = None
+    return cast(TaskRuntime, runtime)
+
+
+async def _body(response: StreamingResponse) -> bytes:
+    chunks = [chunk async for chunk in response.body_iterator]
+    return b"".join(c.encode() if isinstance(c, str) else bytes(c) for c in chunks)
+
+
 def test_download_result_file_route_uses_path_converter() -> None:
     route = next(
         route
@@ -91,10 +106,12 @@ async def test_download_result_file_resolves_flat_name_under_artifacts(
         task_id="task-1",
         filename="result.json",
         results_dir=tmp_path,
+        runtime=_runtime_without_records(),
     )
 
-    assert isinstance(response, FileResponse)
-    assert Path(response.path) == artifact_path
+    assert isinstance(response, StreamingResponse)
+    assert await _body(response) == artifact_path.read_bytes()
+    assert response.headers["content-length"] == str(artifact_path.stat().st_size)
 
 
 @pytest.mark.anyio
@@ -110,10 +127,12 @@ async def test_download_result_file_falls_back_to_task_root_for_flat_filename(
         task_id="task-1",
         filename="result.json",
         results_dir=tmp_path,
+        runtime=_runtime_without_records(),
     )
 
-    assert isinstance(response, FileResponse)
-    assert Path(response.path) == root_file
+    assert isinstance(response, StreamingResponse)
+    assert await _body(response) == root_file.read_bytes()
+    assert response.headers["content-length"] == str(root_file.stat().st_size)
 
 
 def test_resolve_artifact_relative_path_scopes_nested_paths_to_artifacts() -> None:
@@ -205,6 +224,39 @@ async def test_upload_result_file_denied_without_permission(
 
 
 @pytest.mark.anyio
+async def test_get_result_waits_for_the_snapshot_lock_off_the_event_loop(
+    tmp_path: Path, logger: logging.Logger
+) -> None:
+    write_result(tmp_path, ResultEnvelope(task_id="t-1", result=BaseExecutorResult()))
+    held, release = threading.Event(), threading.Event()
+
+    def hold_lock() -> None:
+        with delivery_lock(tmp_path / "t-1"):
+            held.set()
+            release.wait(5)
+
+    holder = threading.Thread(target=hold_lock)
+    holder.start()
+    held.wait(5)
+    try:
+        pending = asyncio.ensure_future(
+            results_router.get_result(
+                task_id="t-1",
+                principal=_principal(),
+                results_dir=tmp_path,
+                runtime=_runtime_without_records(),
+                logger=logger,
+            )
+        )
+        await asyncio.sleep(0.05)
+        assert not pending.done()
+    finally:
+        release.set()
+        holder.join()
+    assert isinstance(await pending, BaseExecutorResult)
+
+
+@pytest.mark.anyio
 async def test_upload_result_file_copies_in_chunks_off_the_event_loop(
     tmp_path: Path, logger: logging.Logger, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -252,12 +304,16 @@ async def test_download_result_bundle_builds_off_the_event_loop(
         get_record=lambda _task_id: None,
         read_result_bytes=lambda _task_id: b"{}",
     )
-    (tmp_path / "t-1").mkdir(parents=True, exist_ok=True)
+    # A missing requested section is a 404, so the default bundle needs both.
+    write_result(tmp_path, ResultEnvelope(task_id="t-1", result=BaseExecutorResult()))
+    (tmp_path / "t-1" / "artifacts").mkdir(parents=True, exist_ok=True)
 
     response = await results_router.download_result_bundle(
         task_id="t-1",
         background_tasks=BackgroundTasks(),
         include=[],
+        artifact_path=[],
+        generation=None,
         principal=_principal(),
         runtime=cast(Any, stub),
         results_dir=tmp_path,

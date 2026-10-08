@@ -959,6 +959,16 @@ class TaskRuntime:
     # State updates (dispatch & events)
     # ------------------------------------------------------------------ #
 
+    def prepare_result_dispatch(
+        self, task_id: str, child_ids: list[str], dispatch_id: str
+    ) -> None:
+        with self._cv:
+            identifiers = [*child_ids, task_id]
+            for identifier in identifiers:
+                if record := self._tasks.get(identifier):
+                    record.result_dispatch = dispatch_id
+            self._persist_locked(*identifiers)
+
     def mark_dispatched(self, task_id: str, worker: Worker) -> None:
         supplier_id = ""
         for resolver in SUPPLIER_RESOLVERS:

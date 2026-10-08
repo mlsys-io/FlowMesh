@@ -31,6 +31,7 @@ from worker.executors.ssh_session import (
 from worker.executors.ssh_session.inputs import resolve_inputs
 from worker.executors.utils.checkpoints import maybe_upload_artifacts
 from worker.gpu_availability import DeviceAvailability
+from worker.utils.result_delivery import rewrite_artifact_inputs
 
 from .base_executor import (
     ExecutionError,
@@ -177,6 +178,19 @@ class SessionExecutor(Executor):
 
         prepare_output_dir(out_dir)  # Ensure output dir exists before mounting
         resolved_inputs = resolve_inputs(task, cfg, self._config.results_dir)
+        replacements = {}
+        for entry in task.artifact_inputs.get(task.task_id, []):
+            local = (
+                (self._config.results_dir / entry.task_id / "artifacts" / entry.path)
+                .absolute()
+                .as_posix()
+            )
+            replacements[local] = (
+                f"/mnt/flowmesh/references/{entry.task_id}/artifacts/{entry.path}"
+            )
+        cfg.extra_env = rewrite_artifact_inputs(cfg.extra_env, replacements)
+        cfg.command = rewrite_artifact_inputs(cfg.command, replacements)
+        cfg.entrypoint = rewrite_artifact_inputs(cfg.entrypoint, replacements)
         request = SessionRequest(
             task_id=task.task_id,
             session_id=session_id,
