@@ -74,8 +74,7 @@ class WorkerConfig(BaseModel):
     """Whether to always upload results to the server if spec.output.destination
     is unspecified."""
     result_transfer_timeout_sec: float = env.WORKER_RESULT_TRANSFER_TIMEOUT_SEC
-    """Seconds a worker waits on the server while publishing or fetching a
-    result"""
+    """Seconds a worker waits on the server while publishing or fetching a result"""
     executor_idle_cleanup_sec: float = env.WORKER_EXECUTOR_IDLE_CLEANUP_SEC
     """Seconds an executor may sit idle before the worker unloads it"""
     foreign_gpu_gate: bool = env.WORKER_FOREIGN_GPU_GATE

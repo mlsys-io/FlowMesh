@@ -43,10 +43,7 @@ from shared.utils.parsing import safe_float, safe_int, to_bool
 from ..utils.logging import configure_hf_library_logging
 from .base_executor import ExecutionError, Executor, ExecutorTask
 from .mixins.training import TrainingMixin
-from .utils.checkpoints import (
-    maybe_upload_artifacts,
-    write_executor_result,
-)
+from .utils.checkpoints import maybe_upload_artifacts, write_executor_result
 from .utils.data_utils import resolve_jsonl_path
 from .utils.distributed import run_torchrun
 from .utils.huggingface import build_hf_load_kwargs, pick_torch_dtype
