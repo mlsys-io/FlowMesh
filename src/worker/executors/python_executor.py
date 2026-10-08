@@ -12,8 +12,8 @@ set on the resolved config:
   in-memory scratch (anything else it writes is bounded by ``SSH_MAX_DISK``
   when set);
 * the caller's code and the bootstrap arrive as files, not environment;
-* the task succeeds only when its process exits 0: a timeout, a finish request
-  or a lost container is a failure.
+* the task succeeds only when its process exits 0: a timeout or a lost
+  container is a failure.
 
 There is deliberately no process-backend fallback: on a worker without Docker
 the executor reports itself unavailable, so the scheduler never places a python

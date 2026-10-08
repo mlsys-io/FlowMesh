@@ -12,8 +12,9 @@ import re
 import subprocess
 import sys
 import tarfile
+from collections.abc import Callable
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 from unittest.mock import MagicMock
 
 import pytest
@@ -22,7 +23,11 @@ from shared.schemas.result import PythonResult, SSHResult
 from shared.tasks.specs import PythonSpecStrict, SSHSpecStrict
 from tests.worker.factories import DEFAULT_WORKER_CONFIG, make_live_worker_config
 from worker.executors import python_executor as python_executor_module
-from worker.executors.base_executor import ExecutionError, RunControl
+from worker.executors.base_executor import (
+    ExecutionError,
+    RunControl,
+    TaskCancelledError,
+)
 from worker.executors.python_executor import (
     BOOTSTRAP_PATH,
     CODE_PATH,
@@ -486,6 +491,97 @@ class TestSSHEnding:
             ExecutionError, match="Non-interactive session exited with code 3"
         ):
             self._run(tmp_path, _outcome("exited", 3))
+
+
+class _SignalledSession(_Session):
+    """Exits 0 on its third poll."""
+
+    def __init__(self, on_poll: Callable[[], None] = lambda: None) -> None:
+        super().__init__()
+        self.on_poll = on_poll
+        self.polls = 0
+        self.stop_timeouts: list[float] = []
+
+    def poll(self) -> int | None:
+        self.polls += 1
+        if self.polls == 1:
+            self.on_poll()
+        return 0 if self.polls >= 3 else None
+
+    def collect_output(self, destination: Path) -> None:
+        destination.mkdir(parents=True, exist_ok=True)
+        (destination / "result.json").write_text("7")
+
+    def stop(self, timeout_sec: float) -> None:
+        self.stop_timeouts.append(timeout_sec)
+
+
+class _Backend:
+    def __init__(self, session: SSHSession) -> None:
+        self.session = session
+        self.started = 0
+
+    def prepare(self) -> None:
+        return None
+
+    def start_session(self, request: object) -> SSHSession:
+        self.started += 1
+        return self.session
+
+
+class TestSignals:
+    def _run(
+        self, tmp_path: Path, session: _SignalledSession, control: RunControl
+    ) -> tuple[_Backend, PythonResult]:
+        executor = _executor(tmp_path)
+        backend = _Backend(session)
+        executor._backend = cast(Any, backend)
+        python_config = executor._python_config
+
+        def _fast_config(spec: PythonSpecStrict) -> SSHConfig:
+            cfg = python_config(spec)
+            cfg.poll_interval_sec = 0.01
+            return cfg
+
+        executor._python_config = _fast_config  # type: ignore[method-assign]
+        executor.require_spec = MagicMock(return_value=_spec())  # type: ignore[method-assign]
+        result = executor.run(
+            MagicMock(upstream_task_ids=None, task_id="tsk-py", artifact_inputs={}),
+            tmp_path / "out",
+            control,
+        )
+        return backend, result
+
+    def test_stop_before_start_runs_to_completion(self, tmp_path: Path) -> None:
+        control = RunControl("tsk-py")
+        control.request_stop()
+        session = _SignalledSession()
+        backend, result = self._run(tmp_path, session, control)
+        assert backend.started == 1
+        assert result.value == 7
+
+    def test_stop_mid_run_leaves_the_session_running(self, tmp_path: Path) -> None:
+        control = RunControl("tsk-py")
+        session = _SignalledSession(on_poll=control.request_stop)
+        _, result = self._run(tmp_path, session, control)
+        assert result.value == 7
+        assert session.polls == 3
+        assert 1 not in session.stop_timeouts
+
+    def test_cancel_before_start_starts_no_session(self, tmp_path: Path) -> None:
+        control = RunControl("tsk-py")
+        control.request_cancel()
+        session = _SignalledSession()
+        with pytest.raises(TaskCancelledError):
+            self._run(tmp_path, session, control)
+        assert session.polls == 0
+
+    def test_cancel_mid_run_stops_the_session(self, tmp_path: Path) -> None:
+        control = RunControl("tsk-py")
+        session = _SignalledSession(on_poll=control.request_cancel)
+        with pytest.raises(TaskCancelledError):
+            self._run(tmp_path, session, control)
+        assert session.stop_timeouts[0] == 1
 
 
 # ------------------------------------------------------------------ #

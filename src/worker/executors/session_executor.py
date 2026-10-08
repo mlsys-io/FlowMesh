@@ -211,7 +211,8 @@ class SessionExecutor(Executor):
             )
 
         control.raise_if_cancelled(f"{session_kind} cancelled before start")
-        if control.stop_requested:
+        stoppable = cfg.honor_finish_request
+        if stoppable and control.stop_requested:
             logger.info(
                 "%s for task %s stopped before start", session_kind, task.task_id
             )
@@ -227,8 +228,10 @@ class SessionExecutor(Executor):
         unregister_cancel = control.on_cancel(
             lambda: self._stop_session(session, "cancellation")
         )
-        unregister_stop = control.on_stop(
-            lambda: self._stop_session(session, "graceful stop")
+        unregister_stop = (
+            control.on_stop(lambda: self._stop_session(session, "graceful stop"))
+            if stoppable
+            else lambda: None
         )
         log_thread: threading.Thread | None = None
         if not interactive:
@@ -249,7 +252,7 @@ class SessionExecutor(Executor):
                 # A signal stops the session, which fails the readiness wait.
                 if control.cancel_requested:
                     raise TaskCancelledError(f"{session_kind} cancelled") from exc
-                if not control.stop_requested:
+                if not (stoppable and control.stop_requested):
                     raise
                 ready_info = {}
             end = self._wait_for_session(session, cfg, control)
@@ -355,7 +358,7 @@ class SessionExecutor(Executor):
                 exit_code = session.poll()
             except Exception as exc:
                 logger.debug("Session poll error (may have exited): %s", exc)
-                if control.stop_requested:
+                if cfg.honor_finish_request and control.stop_requested:
                     return SessionEnd("finished")
                 return SessionEnd("lost")
             if exit_code is not None:
