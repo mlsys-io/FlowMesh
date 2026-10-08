@@ -139,7 +139,7 @@ Unset values mean unbounded (host-wide access).
 | `SSH_MAX_CPU` | – | Max CPU cores per session container (float, e.g. `4` or `2.5`). Sets Docker `nano_cpus`. |
 | `SSH_MAX_MEMORY` | – | Max memory per session container (e.g. `8Gi`, `512Mi`, or a byte count). Sets Docker `mem_limit`. |
 | `SSH_MAX_PIDS` | – | Max PIDs per session container. Sets Docker `pids_limit`. Admin-only — not user-overridable. |
-| `SSH_MAX_DISK` | – | Max bytes a session may write inside its container outside its tmpfs and bind mounts (e.g. `20Gi`); past it, the session is stopped and fails. Its inputs do not count. Its output directory does on a supervisor-launched worker, and always for a python task's `$FLOWMESH_OUTPUT`. Measured from Docker's `SizeRw` every `SSH_POLL_INTERVAL_SEC`, or less often for a container holding many files, so a session can overshoot by what it writes between checks. |
+| `SSH_MAX_DISK` | – | Max bytes a session may write inside its container outside its tmpfs and bind mounts (e.g. `20Gi`). |
 | `ENABLE_SSH_GPU_LIMIT` | `true` | When `true`, expose only the GPU subset matching the spec (`count` / `type` / `memory`); otherwise expose all worker GPUs. |
 
 The effective CPU/memory limit is `min(spec.resources.hardware, worker

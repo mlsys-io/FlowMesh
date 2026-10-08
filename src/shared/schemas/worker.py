@@ -47,11 +47,7 @@ class SSHLimits(BaseModel):
         default=None, description="Maximum number of PIDs inside an SSH session."
     )
     max_disk_bytes: int | None = Field(
-        default=None,
-        description=(
-            "Maximum bytes an SSH session may write to its container's writable "
-            "layer (Docker SizeRw); the session is stopped past it."
-        ),
+        default=None, description="Maximum bytes an SSH session may write to disk."
     )
 
 
