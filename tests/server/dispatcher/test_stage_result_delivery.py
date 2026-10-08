@@ -195,7 +195,7 @@ def test_a_result_that_never_arrives_fails_the_dependent(
     [(task_id, error, _)] = disp.failed
     assert task_id == nodes["score"]
     assert f"Result of task {nodes['prep']} has not reached the server" in error
-    assert "FLOWMESH_BASE_URL" in error
+    assert "TASK_RESULT_DELIVERY" not in error
 
 
 def test_a_missing_result_with_delivery_disabled_names_the_setting(
@@ -216,7 +216,6 @@ def test_a_missing_result_with_delivery_disabled_names_the_setting(
     [(task_id, error, _)] = disp.failed
     assert task_id == nodes["score"]
     assert "TASK_RESULT_DELIVERY=false" in error
-    assert "share the server's results directory" in error
 
 
 def test_named_reference_requests_only_selected_artifact_and_hydration_descriptor(

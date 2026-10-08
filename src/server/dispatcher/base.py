@@ -1235,7 +1235,7 @@ class Dispatcher:
     def _load_stage_result(self, stage_task_id: str) -> ResultEnvelope:
         path = result_file_path(self._results_dir, stage_task_id)
         if not path.exists():
-            self._raise_if_result_missing(stage_task_id, path)
+            self._raise_if_result_missing(stage_task_id)
             raise StageReferenceNotReady(
                 f"Result for task {stage_task_id} not found at {path}"
             )
@@ -1248,13 +1248,15 @@ class Dispatcher:
             and record is not None
             and metadata.get("result_dispatch") != record.result_dispatch
         ):
-            self._raise_if_result_missing(stage_task_id, path)
+            self._raise_if_result_missing(stage_task_id)
             raise StageReferenceNotReady(
                 f"Result for task {stage_task_id} belongs to an earlier attempt"
             )
         return envelope
 
-    def _raise_if_result_missing(self, stage_task_id: str, path: Path) -> None:
+    def _raise_if_result_missing(
+        self, stage_task_id: str, subject: str = "Result"
+    ) -> None:
         """Stop waiting for a finished stage whose result has not arrived.
 
         A result reaches the server's results directory either through a
@@ -1269,28 +1271,20 @@ class Dispatcher:
         waited = time.time() - finished
         if waited < self._stage_result_grace_sec:
             return
-        if not self._result_delivery_enabled:
-            raise StageResultMissing(
-                f"Result of task {stage_task_id} has not reached the server's "
-                f"results directory {waited:.0f}s after it finished (expected at "
-                f"{path}). Automatic result delivery is disabled "
-                "(TASK_RESULT_DELIVERY=false), so the worker that ran it must "
-                "share the server's results directory"
-            )
-        raise StageResultMissing(
-            f"Result of task {stage_task_id} has not reached the server "
-            f"{waited:.0f}s after it finished (expected at {path}). Its worker "
-            "did not deliver the required result or artifact selection. Check "
-            "worker/server connectivity, FLOWMESH_BASE_URL, authentication, and "
-            "that workers support system dependency delivery"
+        message = (
+            f"{subject} of task {stage_task_id} has not reached the server "
+            f"{waited:.0f}s after the task finished"
         )
+        if not self._result_delivery_enabled:
+            message += "; result delivery is disabled (TASK_RESULT_DELIVERY=false)"
+        raise StageResultMissing(message)
 
     def _require_artifacts(self, task_id: str, paths: list[str] | None) -> None:
         self._load_stage_result(task_id)
         base_dir = result_file_path(self._results_dir, task_id).parent
         if artifacts_ready(base_dir, task_id, paths, verify_content=False):
             return
-        self._raise_if_result_missing(task_id, base_dir / "artifacts")
+        self._raise_if_result_missing(task_id, "Artifact selection")
         raise StageReferenceNotReady(f"Artifacts for task {task_id} are incomplete")
 
     def _placeholder_expressions(self, value: Any) -> list[str]:
