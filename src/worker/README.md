@@ -64,7 +64,7 @@ At startup the worker:
 | `MODEL_ARCHIVE_TAR_BIN` | `tar` | Tar executable used before compression. |
 | `WORKER_NETWORK_BANDWIDTH_BYTES_PER_SEC` | empty | Throttle HTTP uploads to emulate limited bandwidth. |
 | `WORKER_HB_FILE` | – | Full path to the worker heartbeat file. |
-| `WORKER_UPLOAD_RESULTS` | `false` | Publish every result and artifact to FlowMesh through the system delivery endpoint, independently of user output destinations. Needs a server that serves `POST /api/v1/results/{task_id}/delivery`. |
+| `WORKER_UPLOAD_RESULTS` | `false` | Publish every result and artifact to FlowMesh through the system delivery endpoint, independently of user output destinations. |
 | `WORKER_RESULT_TRANSFER_TIMEOUT_SEC` | `1800` | Seconds the worker waits for the server while publishing a result or fetching an upstream one, including the time the server spends packing a large bundle. |
 | `WORKER_EXECUTOR_IDLE_CLEANUP_SEC` | `60` | Seconds a worker waits before unloading an idle executor to release the resources it holds; higher values avoid reload thrash between tasks but keep those resources reserved while idle. |
 

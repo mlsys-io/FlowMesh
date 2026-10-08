@@ -133,23 +133,17 @@ scripts/dev/            compile_protos, sync_requirements, check_env_examples
   unavailable or stale. Mostly relevant for training pipelines reusing
   on-disk checkpoints.
 - **Dependency delivery.** A dependent reads its upstream stages through the
-  server, so a worker publishes what its dependents need there: the result
-  envelope, the whole artifact directory for a python or SSH input mount, or
-  just the referenced file or subtree for a named artifact reference such as
-  `${train.final_model}`. The consumer's worker copies that data into its local
-  results directory and runs against local paths, so a local checkpoint reference
-  works across hosts. Publishing is separate from the task's own output
-  destination and best-effort: a failed transfer leaves the producer succeeded,
-  and the dependent fails once `TASK_STAGE_RESULT_GRACE_SEC` has passed since
-  the upstream finished without the complete data arriving. Each published
-  snapshot carries a receipt of its files, so a partial transfer or a stale
-  attempt's result never satisfies a dependent. Before uploading, the worker
-  asks the server whether it already holds that exact snapshot; a worker that
-  shares the server's results volume finds its own and uploads nothing. What is
-  not published stays on the worker; see `WORKER_UPLOAD_RESULTS` in
-  [`ENV.md`](ENV.md). `TASK_RESULT_DELIVERY=false` stops workers publishing for
-  dependents, for a cluster whose workers all share the server's results
-  directory.
+  server. The upstream's worker publishes what dependents need there: the
+  result, plus the whole artifact directory for a python or SSH input mount, or
+  only the referenced file or subtree for a named reference such as
+  `${train.final_model}`. The consumer's worker copies that data locally, so
+  references resolve to local paths wherever the upstream ran. Publishing is
+  separate from the task's output destination and best-effort: the dependent
+  fails if the data has not arrived `TASK_STAGE_RESULT_GRACE_SEC` after the
+  upstream finished. Each snapshot carries a receipt of its files, so a partial
+  or stale transfer never satisfies a dependent, and a worker that shares the
+  server's results volume uploads nothing. See `TASK_RESULT_DELIVERY` and
+  `WORKER_UPLOAD_RESULTS` in [`ENV.md`](ENV.md).
 - **Context reuse.** Workers report cached models/datasets in their
   `WorkerHardware`. The dispatcher's `_cached_worker_candidates` filters
   to workers whose cache covers the task's references; entries older
