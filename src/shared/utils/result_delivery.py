@@ -95,9 +95,7 @@ def result_field(value: Any, selector: str) -> Any:
 
 
 def result_generation(base_dir: Path) -> str:
-    envelope = ResultEnvelope.model_validate_json(
-        (base_dir / "results.json").read_text()
-    )
+    envelope = ResultEnvelope.from_file(base_dir / "results.json")
     canonical = json.dumps(
         envelope.model_dump(mode="json"), sort_keys=True, separators=(",", ":")
     )
@@ -278,9 +276,8 @@ def validate_receipt(
     With ``verify_content=False`` files are matched by size instead of hash, which
     is enough to tell a complete snapshot from an in-progress one.
     """
-    envelope = ResultEnvelope.model_validate_json(
-        (base_dir / "results.json").read_text()
-    )
+    envelope = ResultEnvelope.from_file(base_dir / "results.json")
+    # The receipt must describe this task's envelope as it is on disk now.
     if (
         envelope.task_id != task_id
         or receipt.task_id != task_id
@@ -288,6 +285,7 @@ def validate_receipt(
         or (generation is not None and generation != receipt.generation)
     ):
         raise ValueError(f"Result snapshot mismatch for {task_id}")
+    # Every listed entry must sit under artifacts/ and exist as recorded.
     root = base_dir.resolve()
     for name in receipt.directories:
         if not name.startswith("artifacts/") and name != "artifacts":
@@ -317,18 +315,12 @@ def validate_receipt(
         path.parent.resolve().relative_to(root)
         if not path.is_symlink() or portable_link(path, base_dir) != link:
             raise ValueError(f"Incomplete artifact: {name}")
+    # The listed entries must cover every selection the snapshot claims.
     for name in receipt.artifact_paths:
-        if not _receipt_has(receipt, name):
+        if not receipt.has_artifact(name):
             raise ValueError(f"Missing selection: {name}")
     if receipt.all_artifacts and "artifacts" not in receipt.directories:
         raise ValueError("Missing complete artifacts directory")
-
-
-def _receipt_has(receipt: ResultDeliveryReceipt, selection: str) -> bool:
-    name = (Path("artifacts") / safe_relative(selection)).as_posix()
-    return (
-        name in receipt.directories or name in receipt.files or name in receipt.symlinks
-    )
 
 
 def artifacts_ready(
@@ -341,9 +333,7 @@ def artifacts_ready(
     receipt = read_receipt(base_dir)
     if receipt is None:
         try:
-            envelope = ResultEnvelope.model_validate_json(
-                (base_dir / "results.json").read_text()
-            )
+            envelope = ResultEnvelope.from_file(base_dir / "results.json")
             if (envelope.metadata or {}).get("independent_results") or generation:
                 return False
             roots = (
@@ -358,7 +348,7 @@ def artifacts_ready(
         validate_receipt(base_dir, receipt, task_id, generation, verify_content)
         if paths is None:
             return receipt.all_artifacts
-        if not all(_receipt_has(receipt, selection) for selection in paths):
+        if not all(receipt.has_artifact(selection) for selection in paths):
             return False
         return all(
             receipt.all_artifacts
@@ -438,6 +428,8 @@ def extract_delivery_bundle(
         members = archive.getmembers()
         names: set[str] = set()
         links: dict[str, str] = {}
+        # Members are unique, normalized paths under the task directory; only
+        # entries under artifacts/ may be links.
         for member in members:
             relative = safe_relative(member.name)
             if (
@@ -452,12 +444,14 @@ def extract_delivery_bundle(
                 if relative.parts[1:2] != ("artifacts",) or len(relative.parts) < 3:
                     raise ValueError(f"Unsafe bundle member: {member.name}")
                 links[member.name] = member.linkname
+        # Nothing may be written through a link.
         for member in members:
             if any(parent.as_posix() in links for parent in Path(member.name).parents):
                 raise ValueError(f"Unsafe bundle member: {member.name}")
         for member in members:
             if not member.issym():
                 archive.extract(member, destination, filter="data")
+    # Links are created only after every other member is in place.
     root = destination.resolve()
     for name, link in links.items():
         path = destination / name
@@ -469,6 +463,8 @@ def extract_delivery_bundle(
     if receipt is None:
         raise ValueError("Result bundle has no delivery receipt")
     validate_receipt(base_dir, receipt, task_id)
+    # Reject any entry the receipt does not account for, other than the envelope,
+    # the receipt itself, trace logs, and the parents of listed entries.
     allowed = {
         "results.json",
         RECEIPT_NAME,
@@ -508,11 +504,9 @@ def commit_delivery(
     validate_receipt(staging, receipt, task_id, verify_content=False)
     with delivery_lock(destination):
         if validate_current is not None:
-            validate_current(
-                ResultEnvelope.model_validate_json(
-                    (staging / "results.json").read_text()
-                )
-            )
+            validate_current(ResultEnvelope.from_file(staging / "results.json"))
+        # An intact snapshot of the same generation is extended; anything else is
+        # replaced.
         existing = read_receipt(destination)
         if existing is not None and existing.generation == receipt.generation:
             try:
@@ -521,10 +515,12 @@ def commit_delivery(
                 existing = None
         else:
             existing = None
+        # Readers treat a missing receipt as incomplete while files change.
         (destination / RECEIPT_NAME).unlink(missing_ok=True)
         if existing is None:
             shutil.rmtree(destination / "artifacts", ignore_errors=True)
             prepare_output_dir(destination)
+        # Install each staged entry, skipping files the snapshot already holds.
         root = destination.resolve()
         for entry in staging.rglob("*"):
             name = entry.relative_to(staging)
@@ -546,6 +542,7 @@ def commit_delivery(
                     pass
             elif not _holds_same_file(existing, receipt, name.as_posix(), target):
                 _commit_file(entry, target, destination)
+        # The new receipt covers both the existing and the delivered selections.
         if existing is not None:
             receipt.all_artifacts |= existing.all_artifacts
             receipt.artifact_paths = sorted(

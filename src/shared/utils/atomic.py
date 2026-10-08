@@ -38,8 +38,8 @@ def atomic_write_stream(
     """Replace ``target`` with the rest of ``source`` atomically, copying it in
     bounded chunks; creates the parent directory when missing.
 
-    ``commit``, when given, is entered around the final rename only, so a lock it
-    takes is not held while the data is copied.
+    ``commit``, when given, is a context manager factory entered around the final
+    rename only, not while the data is copied.
     """
     target.parent.mkdir(parents=True, exist_ok=True)
     _atomic_replace(

@@ -1,3 +1,5 @@
+from pathlib import PurePosixPath
+
 from pydantic import BaseModel, Field
 
 
@@ -26,3 +28,7 @@ class ResultDeliveryReceipt(BaseModel):
     directories: list[str] = Field(default_factory=list)
     files: dict[str, DeliveredFile] = Field(default_factory=dict)
     symlinks: dict[str, str] = Field(default_factory=dict)
+
+    def has_artifact(self, selection: str) -> bool:
+        name = PurePosixPath("artifacts", selection).as_posix()
+        return name in self.directories or name in self.files or name in self.symlinks

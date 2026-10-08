@@ -1,7 +1,8 @@
 # Concrete per-task-type result models and the ``task_type`` union. Importing
 # ``TaskType`` re-enters the package through ``shared.tasks.specs.common``;
 # ``__init__`` binds ``_base`` first so ``BaseExecutorResult`` is available then.
-from typing import Annotated, Any, Literal
+from pathlib import Path
+from typing import Annotated, Any, Literal, Self
 
 from pydantic import (
     BaseModel,
@@ -380,3 +381,8 @@ class ResultEnvelope(BaseModel):
     received_at: str = Field(
         default_factory=now_iso, description="Result receipt timestamp."
     )
+
+    @classmethod
+    def from_file(cls, path: Path) -> Self:
+        """Read the envelope stored at ``path``."""
+        return cls.model_validate_json(path.read_text())

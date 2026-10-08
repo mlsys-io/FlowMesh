@@ -10,7 +10,7 @@ from typing import Any
 
 import requests
 
-from shared.schemas.result import BaseExecutorResult, ResultEnvelope
+from shared.schemas.result import BaseExecutorResult
 from shared.schemas.result_delivery import ResultDeliveryRequest
 from shared.tasks import MergedChildTaskStrict
 from shared.tasks.components.resources import GPURequirements
@@ -22,7 +22,6 @@ from shared.tasks.specs import (
     TaskSpecStrictBase,
 )
 from shared.tasks.worker_message import HardwareUsage, WorkerHardware, WorkerTaskMessage
-from shared.utils.atomic import atomic_write_text
 from shared.utils.hardware import (
     available_devices,
     select_matching_gpu_indices,
@@ -36,8 +35,8 @@ from .executors.base_executor import ExecutionError, Executor, TaskCancelledErro
 from .executors.utils.artifacts import is_flowmesh_origin_url
 from .executors.utils.checkpoints import get_http_destination, write_executor_result
 from .lifecycle import Lifecycle
-from .result_delivery import hydrate_task, publish_result
 from .utils.logging import TaskLogEmitter
+from .utils.result_delivery import hydrate_task, publish_result
 
 
 def _declared_gpu_req(spec: TaskSpecStrict) -> GPURequirements | None:
@@ -250,17 +249,13 @@ class Runner:
             return
         out_dir.mkdir(parents=True, exist_ok=True)
         with delivery_lock(out_dir):
-            write_executor_result(out_dir / "results.json", task_id, spec, payload)
-            envelope = ResultEnvelope.model_validate_json(
-                (out_dir / "results.json").read_text()
-            )
-            envelope.worker_id = self.lifecycle.worker_id
-            envelope.metadata = {
-                "independent_results": True,
-                "result_dispatch": dispatch_id,
-            }
-            atomic_write_text(
-                out_dir / "results.json", envelope.model_dump_json(indent=2)
+            write_executor_result(
+                out_dir / "results.json",
+                task_id,
+                spec,
+                payload,
+                worker_id=self.lifecycle.worker_id,
+                metadata={"independent_results": True, "result_dispatch": dispatch_id},
             )
             try:
                 write_receipt(out_dir, make_receipt(out_dir, task_id, None))

@@ -17,10 +17,10 @@ from shared.tasks.worker_message import WorkerTaskMessage
 from shared.utils.result_delivery import make_receipt, read_receipt, write_receipt
 from tests.shared.test_result_delivery import populate
 from tests.worker.factories import make_worker_hardware, make_worker_task_message
-from worker import result_delivery
 from worker.executors.mixins.training import TrainingMixin
 from worker.executors.utils.checkpoints import resolve_checkpoint_load
 from worker.runner import Runner
+from worker.utils import result_delivery
 
 
 @pytest.mark.parametrize("upload_all", [False, True])

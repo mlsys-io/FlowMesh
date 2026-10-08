@@ -20,7 +20,7 @@ from shared.utils.result_delivery import (
     selection_roots,
     write_receipt,
 )
-from worker.result_delivery import hydrate_result
+from worker.utils.result_delivery import hydrate_result
 
 from ..base_executor import ExecutionError
 from .config import (

@@ -516,9 +516,7 @@ def _create_result_bundle_archive(
     try:
         with delivery_lock(base_dir):
             if dispatch_id is not None and (base_dir / RESULTS_NAME).is_file():
-                envelope = ResultEnvelope.model_validate_json(
-                    (base_dir / RESULTS_NAME).read_text()
-                )
+                envelope = ResultEnvelope.from_file(base_dir / RESULTS_NAME)
                 if (envelope.metadata or {}).get("independent_results") and (
                     envelope.metadata or {}
                 ).get("result_dispatch") != dispatch_id:
@@ -624,9 +622,7 @@ def _ingest_delivery(
     upload.seek(0)
     with tempfile.TemporaryDirectory(prefix="flowmesh-ingest-") as temporary:
         staging = extract_delivery_bundle(upload, Path(temporary), task_id)
-        envelope = ResultEnvelope.model_validate_json(
-            (staging / RESULTS_NAME).read_text()
-        )
+        envelope = ResultEnvelope.from_file(staging / RESULTS_NAME)
         _require_current_dispatch(runtime, task_id, envelope)
         destination = result_file_path(results_dir, task_id).parent
         commit_delivery(
@@ -667,7 +663,7 @@ def _open_current_file(
     with delivery_lock(base_dir):
         envelope_path = base_dir / RESULTS_NAME
         if envelope_path.is_file():
-            envelope = ResultEnvelope.model_validate_json(envelope_path.read_text())
+            envelope = ResultEnvelope.from_file(envelope_path)
             _require_current_dispatch(runtime, task_id, envelope)
         resolved = target.resolve()
         try:

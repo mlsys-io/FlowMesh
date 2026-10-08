@@ -193,19 +193,17 @@ def _extract_bundle(
             if member.isfile() or member.isdir()
         }
         for section in required:
-            expected = (
-                f"{task_id}/results.json"
-                if section == "results"
-                else f"{task_id}/{section}"
-            )
-            present = (
-                any(member.name == expected and member.isfile() for member in members)
-                if section == "results"
-                else any(
+            if section == "results":
+                expected = f"{task_id}/results.json"
+                present = any(
+                    member.name == expected and member.isfile() for member in members
+                )
+            else:
+                expected = f"{task_id}/{section}"
+                present = any(
                     name == expected or name.startswith(expected + "/")
                     for name in names
                 )
-            )
             if not present:
                 raise FlowMeshError(
                     f"Result bundle for {task_id} is missing "

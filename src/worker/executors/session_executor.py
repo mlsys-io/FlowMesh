@@ -31,7 +31,7 @@ from worker.executors.ssh_session import (
 from worker.executors.ssh_session.inputs import resolve_inputs
 from worker.executors.utils.checkpoints import maybe_upload_artifacts
 from worker.gpu_availability import DeviceAvailability
-from worker.result_delivery import rewrite_artifact_inputs
+from worker.utils.result_delivery import rewrite_artifact_inputs
 
 from .base_executor import (
     ExecutionError,

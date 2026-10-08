@@ -260,7 +260,7 @@ class EventMonitor:
         parent_result = parent_dir / RESULTS_NAME
         if parent_result.is_file():
             try:
-                envelope = ResultEnvelope.model_validate_json(parent_result.read_text())
+                envelope = ResultEnvelope.from_file(parent_result)
                 if (envelope.metadata or {}).get("independent_results"):
                     with self._pending_lock:
                         self._pending_result_clones.pop(parent_task_id, None)

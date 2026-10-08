@@ -26,7 +26,7 @@ from shared.utils.result_delivery import (
     write_receipt,
 )
 from tests.shared.test_result_delivery import populate
-from worker.result_delivery import hydrate_result
+from worker.utils.result_delivery import hydrate_result
 
 
 def test_delivery_route_streams_and_rejects_incomplete_snapshot(tmp_path: Path) -> None:
@@ -103,7 +103,7 @@ def test_server_generated_skipped_result_can_hydrate_remotely(
     response.iter_content.return_value = [bundle.read_bytes()]
     monkeypatch.setenv("FLOWMESH_BASE_URL", "http://server")
     monkeypatch.setattr(
-        "worker.result_delivery.requests.get", Mock(return_value=response)
+        "worker.utils.result_delivery.requests.get", Mock(return_value=response)
     )
     try:
         hydrate_result("tsk-skipped", tmp_path / "consumer")

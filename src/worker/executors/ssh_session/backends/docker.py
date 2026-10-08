@@ -34,7 +34,7 @@ from worker.executors.utils.docker import (
     docker_available,
     docker_client,
 )
-from worker.result_delivery import hydrate_result
+from worker.utils.result_delivery import hydrate_result
 
 from ...base_executor import ExecutionError
 from ..base import (

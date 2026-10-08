@@ -26,7 +26,7 @@ from shared.utils.result_delivery import (
     safe_relative,
 )
 
-from .executors.base_executor import ExecutionError
+from ..executors.base_executor import ExecutionError
 
 
 def _transfer_timeout() -> float:
@@ -36,6 +36,11 @@ def _transfer_timeout() -> float:
 def publish_result(
     base_dir: Path, task_id: str, request: ResultDeliveryRequest, logger: logging.Logger
 ) -> int:
+    """Publish the ``request`` selection of the result in ``base_dir`` to the server.
+
+    Best-effort: a failure is logged and leaves the result local. Returns the
+    number of bytes uploaded, which is 0 when nothing was sent.
+    """
     base_url = os.getenv("FLOWMESH_BASE_URL", "").strip()
     if not base_url:
         logger.warning(
@@ -44,9 +49,7 @@ def publish_result(
         return 0
     bundle: Path | None = None
     try:
-        envelope = ResultEnvelope.model_validate_json(
-            (base_dir / "results.json").read_text()
-        )
+        envelope = ResultEnvelope.from_file(base_dir / "results.json")
         paths = (
             None
             if request.all_artifacts
@@ -126,6 +129,12 @@ def hydrate_result(
     paths: list[str] | None = None,
     generation: str | None = None,
 ) -> None:
+    """Make an upstream result available under ``destination_dir``.
+
+    Downloads the result with the ``paths`` artifact selection (all artifacts when
+    ``None``) from the server unless a complete local copy of that ``generation``
+    is already there. Raises ``ExecutionError``, retryable when the transfer fails.
+    """
     base_dir = destination_dir / task_id
     if artifacts_ready(base_dir, task_id, paths, generation, verify_content=False):
         return
@@ -168,6 +177,8 @@ def hydrate_result(
 
 
 def rewrite_artifact_inputs(value: Any, replacements: dict[str, str]) -> Any:
+    """Replace each rendered upstream artifact reference in ``value`` with its local
+    path, recursing through containers and placeholder-bearing models."""
     if isinstance(value, str):
         for source, destination in replacements.items():
             value = value.replace(source, destination)
@@ -204,6 +215,8 @@ def _hydrate_inputs(inputs: list[ArtifactInput], results_dir: Path) -> dict[str,
 
 
 def hydrate_task(task: WorkerTaskMessage, results_dir: Path) -> WorkerTaskMessage:
+    """Fetch the upstream results ``task`` reads into ``results_dir`` and return a
+    copy whose artifact references, merged children included, point at them."""
     for task_id in (task.upstream_task_ids or {}).values():
         hydrate_result(
             task_id,

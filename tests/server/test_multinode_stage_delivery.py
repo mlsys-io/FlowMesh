@@ -33,8 +33,8 @@ from tests.server.dispatcher.test_stage_result_delivery import (
 )
 from tests.server.task.merge_harness import build_runtime
 from tests.worker.factories import make_worker_hardware
-from worker import result_delivery
 from worker.runner import Runner
+from worker.utils import result_delivery
 
 
 class _Server:

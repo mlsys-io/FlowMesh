@@ -42,14 +42,26 @@ class WorkerTaskMessage(BaseModel):
         default=None,
         description="Optional mapping from upstream stage name to resolved task ID.",
     )
-    result_delivery: dict[str, ResultDeliveryRequest] = Field(default_factory=dict)
+    result_delivery: dict[str, ResultDeliveryRequest] = Field(
+        default_factory=dict,
+        description="Per task ID, the result data its dependent stages read.",
+    )
     result_delivery_enabled: bool = Field(
         default=True,
         description="Whether the worker publishes its result_delivery selections.",
     )
-    result_dispatch: str | None = None
-    artifact_inputs: dict[str, list[ArtifactInput]] = Field(default_factory=dict)
-    upstream_result_generations: dict[str, str] = Field(default_factory=dict)
+    result_dispatch: str | None = Field(
+        default=None,
+        description="Dispatch identity stamped on the results this dispatch writes.",
+    )
+    artifact_inputs: dict[str, list[ArtifactInput]] = Field(
+        default_factory=dict,
+        description="Per task ID, the upstream artifacts its inputs reference.",
+    )
+    upstream_result_generations: dict[str, str] = Field(
+        default_factory=dict,
+        description="Per upstream task ID, the result snapshot generation to fetch.",
+    )
 
     @property
     def spec(self) -> TaskSpecStrict:
