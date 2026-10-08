@@ -141,6 +141,15 @@ class TestDiskUsage:
             all=True, size=True, filters={"id": "cid"}
         )
 
+    def test_staged_inputs_are_not_charged(self) -> None:
+        session = _session(MagicMock(id="cid"))
+        session._mount_plan.staged_input_bytes = 1000
+        api = cast(MagicMock, session._client).api
+        api.containers.return_value = [{"SizeRw": 4096}]
+        assert session.disk_usage_bytes() == 3096
+        api.containers.return_value = [{"SizeRw": 10}]
+        assert session.disk_usage_bytes() == 0
+
     def test_unreadable_size_is_unknown_not_zero(self) -> None:
         session = _session(MagicMock(id="cid"))
         api = cast(MagicMock, session._client).api

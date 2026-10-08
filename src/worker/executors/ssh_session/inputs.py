@@ -8,6 +8,7 @@ then exposed to the session is backend-specific.
 
 import os
 import shutil
+import stat
 import tempfile
 from pathlib import Path
 
@@ -74,6 +75,40 @@ def resolve_inputs(
             )
         )
     return resolved
+
+
+def staged_size_bytes(resolved: ResolvedSSHInput) -> int:
+    """Apparent size of the files a session stages for ``resolved``.
+
+    Counts every entry but directories, links not followed and hard links once:
+    the way Docker sizes a container layer the copy lands in.
+    """
+    base = resolved.source_path
+    pending = (
+        [base]
+        if resolved.artifact_paths is None
+        else [
+            base / "results.json",
+            *(
+                base / "artifacts" / safe_relative(name)
+                for name in selection_roots(base, resolved.artifact_paths)
+            ),
+        ]
+    )
+    seen: set[tuple[int, int]] = set()
+    total = 0
+    while pending:
+        path = pending.pop()
+        try:
+            info = path.lstat()
+        except FileNotFoundError:
+            continue
+        if stat.S_ISDIR(info.st_mode):
+            pending.extend(path.iterdir())
+        elif (info.st_dev, info.st_ino) not in seen:
+            seen.add((info.st_dev, info.st_ino))
+            total += info.st_size
+    return total
 
 
 def stage_inputs_locally(

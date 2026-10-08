@@ -383,3 +383,45 @@ def test_volume_staging_makes_links_into_own_artifacts_portable(
     )
     command = client.containers.run.call_args.kwargs["command"][2]
     assert "ln -sfn model /dst/t-up/artifacts/latest" in command
+
+
+def test_staged_size_counts_files_once_without_following_links(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "results" / "t-up"
+    model = source / "artifacts" / "model"
+    model.mkdir(parents=True)
+    (model / "weights.bin").write_bytes(b"x" * 1000)
+    (model / "weights.alias").hardlink_to(model / "weights.bin")
+    (source / "artifacts" / "notes.txt").write_bytes(b"y" * 10)
+    outside = tmp_path / "outside.bin"
+    outside.write_bytes(b"z" * 5000)
+    (source / "artifacts" / "escape").symlink_to(outside)
+    (source / "results.json").write_bytes(b"{}")
+
+    every = ResolvedSSHInput("up", "t-up", source, "/mnt/in")
+    assert inputs_module.staged_size_bytes(every) == 1000 + 10 + len(str(outside)) + 2
+    selected = ResolvedSSHInput(
+        "up", "t-up", source, "/mnt/in", artifact_paths=["notes.txt"]
+    )
+    assert inputs_module.staged_size_bytes(selected) == 2 + 10
+
+
+def test_build_mount_plan_records_the_staged_input_size(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    task = _task_message()
+    cfg = SSHConfig.from_spec(cast(SSHSpecStrict, task.spec), DEFAULT_WORKER_CONFIG)
+    worker_cfg = _worker_config(tmp_path)
+    upstream = worker_cfg.results_dir / "task-pre"
+    upstream.mkdir(parents=True)
+    (upstream / "results.json").write_bytes(b"x" * 300)
+    backend = DockerSessionBackend(worker_cfg)
+    monkeypatch.setattr(backend, "_stage_inputs_in_volume", lambda *args: "vol")
+
+    resolved_inputs = inputs_module.resolve_inputs(task, cfg, worker_cfg.results_dir)
+    plan = backend._build_mount_plan(
+        MagicMock(), tmp_path / "out", resolved_inputs, cfg, "session-1", "worker-1"
+    )
+
+    assert plan.staged_input_bytes == 300

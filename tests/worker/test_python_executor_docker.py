@@ -10,10 +10,11 @@ SSH_MAX_DISK stops a python or SSH task whose container layer outgrows it.
 
 import os
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import pytest
 
+from shared.schemas.result import PythonResult
 from shared.schemas.worker import SSHLimits
 from shared.tasks.specs import PythonSpecStrict, SSHSpecStrict
 from shared.tasks.task_type import TaskType
@@ -224,9 +225,14 @@ def test_scratch_is_tmpfs_and_the_root_stays_writable(tmp_path: Path) -> None:
     assert value == {"scratch": ["tmpfs"] * 4, "root": "rw"}
 
 
-def _run_with_disk_cap(  # type: ignore[no-untyped-def]
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, code: str, cap: int
-):
+def _run_with_disk_cap(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    code: str,
+    cap: int,
+    upstream: dict[str, str] | None = None,
+    **worker: Any,
+) -> PythonResult:
     monkeypatch.setenv("SSH_POLL_INTERVAL_SEC", "0.5")
     task_spec = cast(
         PythonSpecStrict,
@@ -237,9 +243,12 @@ def _run_with_disk_cap(  # type: ignore[no-untyped-def]
             tmp_path,
             ssh_network_name="flowmesh_py_test",
             ssh_limits=SSHLimits(max_disk_bytes=cap),
+            **worker,
         )
     )
-    task = make_worker_task_message(task_spec, task_type=TaskType.PYTHON)
+    task = make_worker_task_message(
+        task_spec, task_type=TaskType.PYTHON, upstream_task_ids=upstream
+    )
     out = tmp_path / "out"
     out.mkdir()
     try:
@@ -276,6 +285,32 @@ def test_tmpfs_scratch_does_not_count_against_the_disk_cap(
     )
     result = _run_with_disk_cap(tmp_path, monkeypatch, code, cap=16 * 1024**2)
     assert result.value == "ok"
+
+
+def test_staged_inputs_do_not_count_against_the_disk_cap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A worker with a results volume copies inputs into the container layer."""
+    results = tmp_path / "worker-results"
+    upstream = results / "t-up"
+    (upstream / "artifacts").mkdir(parents=True)
+    (upstream / "artifacts" / "big.bin").write_bytes(b"x" * 32_000_000)
+    (upstream / "results.json").write_text('{"task_id": "t-up", "result": {}}')
+    code = (
+        "import os\n"
+        "def main(inputs):\n"
+        "    path = os.path.join(inputs['prep'], 'artifacts', 'big.bin')\n"
+        "    return os.path.getsize(path)\n"
+    )
+    result = _run_with_disk_cap(
+        tmp_path,
+        monkeypatch,
+        code,
+        cap=16 * 1024**2,
+        upstream={"prep": "t-up"},
+        results_mount_source=results.as_posix(),
+    )
+    assert result.value == 32_000_000
 
 
 def test_ssh_task_past_the_disk_cap_is_stopped(
