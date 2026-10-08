@@ -33,13 +33,7 @@ from shared.tasks.specs import (
     SSHSpecTemplate,
 )
 from shared.tasks.worker_message import WorkerStatus, WorkerTaskMessage
-from shared.utils.result_delivery import (
-    artifact_path,
-    artifacts_ready,
-    dig_result_path,
-    read_receipt,
-    result_field,
-)
+from shared.utils.result_delivery import artifact_path, dig_result_path, result_field
 
 from ..clients.redis import REDIS_CONN_ERRORS
 from ..registries.worker import Worker, WorkerRegistry
@@ -48,6 +42,7 @@ from ..task.metadata import extract_model_dataset_names
 from ..task.models import TaskRecord, TaskStatus
 from ..task.runtime import TaskRuntime
 from ..utils.time import now_iso
+from .snapshots import SnapshotCache
 from .worker_selector import DEFAULT_WORKER_SELECTION, select_worker
 
 _NO_WORKER_BACKOFF_SEC = 0.5
@@ -105,6 +100,9 @@ class Dispatcher:
         self._no_worker_grace_sec = max(0, no_worker_grace_sec)
         self._stage_result_grace_sec = max(0, stage_result_grace_sec)
         self._result_delivery_enabled = result_delivery_enabled
+        self._snapshots = SnapshotCache(self._results_dir)
+        # Upstream envelopes read during the current dispatch_once call.
+        self._attempt_results: dict[str, ResultEnvelope] | None = None
         self._metrics = metrics_recorder
         self._weight_reference_hints: tuple[str, ...] = (
             "checkpoint",
@@ -208,6 +206,13 @@ class Dispatcher:
 
     def dispatch_once(self, task_id: str) -> bool:
         """Dispatch a single task if possible; requeue when no worker."""
+        self._attempt_results = {}
+        try:
+            return self._dispatch_attempt(task_id)
+        finally:
+            self._attempt_results = None
+
+    def _dispatch_attempt(self, task_id: str) -> bool:
         record = self._runtime.get_record(task_id)
         if not record:
             return True
@@ -586,14 +591,9 @@ class Dispatcher:
                 ]
             },
             upstream_result_generations={
-                identifier: receipt.generation
+                identifier: generation
                 for identifier in (upstream_task_ids or {}).values()
-                if (
-                    receipt := read_receipt(
-                        result_file_path(self._results_dir, identifier).parent
-                    )
-                )
-                is not None
+                if (generation := self._snapshots.generation(identifier)) is not None
             },
         )
 
@@ -1233,6 +1233,11 @@ class Dispatcher:
         return resolved
 
     def _load_stage_result(self, stage_task_id: str) -> ResultEnvelope:
+        if (
+            self._attempt_results is not None
+            and (cached := self._attempt_results.get(stage_task_id)) is not None
+        ):
+            return cached
         path = result_file_path(self._results_dir, stage_task_id)
         if not path.exists():
             self._raise_if_result_missing(stage_task_id)
@@ -1252,6 +1257,8 @@ class Dispatcher:
             raise StageReferenceNotReady(
                 f"Result for task {stage_task_id} belongs to an earlier attempt"
             )
+        if self._attempt_results is not None:
+            self._attempt_results[stage_task_id] = envelope
         return envelope
 
     def _raise_if_result_missing(
@@ -1281,8 +1288,7 @@ class Dispatcher:
 
     def _require_artifacts(self, task_id: str, paths: list[str] | None) -> None:
         self._load_stage_result(task_id)
-        base_dir = result_file_path(self._results_dir, task_id).parent
-        if artifacts_ready(base_dir, task_id, paths, verify_content=False):
+        if self._snapshots.artifacts_ready(task_id, paths):
             return
         self._raise_if_result_missing(task_id, "Artifact selection")
         raise StageReferenceNotReady(f"Artifacts for task {task_id} are incomplete")
@@ -1323,15 +1329,12 @@ class Dispatcher:
             if path is None or source is None:
                 continue
             self._require_artifacts(upstream.task_id, [path])
-            receipt = read_receipt(
-                result_file_path(self._results_dir, upstream.task_id).parent
-            )
             inputs.append(
                 ArtifactInput(
                     task_id=upstream.task_id,
                     path=path,
                     source=source,
-                    generation=receipt.generation if receipt else None,
+                    generation=self._snapshots.generation(upstream.task_id),
                 )
             )
         return inputs

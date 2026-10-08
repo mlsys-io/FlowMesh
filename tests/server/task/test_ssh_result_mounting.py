@@ -110,11 +110,10 @@ def test_dispatcher_resolves_ssh_input_stage_names_from_local_stage_names(
             ),
         ),
         worker_registry=cast(WorkerRegistry, object()),
-        results_dir=Path("/tmp"),
+        results_dir=tmp_path,
         logger=logging.getLogger("test-ssh-phase2"),
     )
 
-    dispatcher._results_dir = tmp_path
     write_result(
         tmp_path, ResultEnvelope(task_id=upstream.task_id, result=BaseExecutorResult())
     )

@@ -13,7 +13,12 @@ import pytest
 from server.dispatcher.base import StageReferenceNotReady, StageResultMissing
 from server.task.models import TaskStatus
 from shared.schemas.result import BaseExecutorResult, ResultEnvelope, write_result
-from shared.utils.result_delivery import artifacts_ready
+from shared.utils.atomic import atomic_write_text
+from shared.utils.result_delivery import (
+    RECEIPT_NAME,
+    read_receipt,
+    validated_snapshot,
+)
 from tests.server.dispatcher.helpers import CapturingDispatcher
 from tests.server.dispatcher.test_merged_child_redaction_dispatch import (
     _RecordingDispatcher,
@@ -427,7 +432,7 @@ def test_dispatch_checks_each_artifact_reference_once_without_hashing(
 
     with (
         mock.patch(
-            "server.dispatcher.base.artifacts_ready", wraps=artifacts_ready
+            "server.dispatcher.snapshots.validated_snapshot", wraps=validated_snapshot
         ) as ready,
         mock.patch(
             "shared.utils.result_delivery.describe_file",
@@ -508,3 +513,98 @@ spec:
     # The declared output is untouched; nothing turns on the HTTP destination.
     assert message.task.spec.output is None
     assert all(child.spec.output is None for child in message.merged_children)
+
+
+def _ready_upstream(
+    tmp_path: Path, name: str
+) -> tuple[Any, CapturingDispatcher, mock.Mock, dict[str, str], Path]:
+    """A python dependent whose upstream ``prep`` has a complete snapshot."""
+    runtime, _ = build_runtime(name)
+    _, nodes = register(runtime, _payload("python"))
+    disp, registry = _dispatcher(runtime, tmp_path)
+    assert disp.dispatch_once(nodes["prep"])
+    prep = runtime._tasks[nodes["prep"]]
+    prep.status = TaskStatus.DONE
+    prep.finished_ts = time.time()
+    base = populate(tmp_path, task_id=nodes["prep"], dispatch_id=prep.result_dispatch)
+    registry.reset_mock()
+    return runtime, disp, registry, nodes, base
+
+
+def _attempt(runtime: Any, disp: CapturingDispatcher, task_id: str) -> bool:
+    runtime._tasks[task_id].status = TaskStatus.PENDING
+    return disp.dispatch_once(task_id)
+
+
+def test_repeated_attempts_validate_an_unchanged_snapshot_once(
+    tmp_path: Path,
+) -> None:
+    runtime, disp, registry, nodes, base = _ready_upstream(tmp_path, "snapshot-once")
+    receipt = read_receipt(base)
+    assert receipt is not None
+
+    with mock.patch(
+        "server.dispatcher.snapshots.validated_snapshot", wraps=validated_snapshot
+    ) as validated:
+        for _ in range(3):
+            assert _attempt(runtime, disp, nodes["score"])
+            message = registry.publish_task.call_args.args[1]
+            assert message.upstream_result_generations == {
+                nodes["prep"]: receipt.generation
+            }
+
+    assert validated.call_count == 1
+
+
+@pytest.mark.parametrize("rewritten", [RECEIPT_NAME, "results.json"])
+def test_a_rewritten_snapshot_file_is_validated_again(
+    tmp_path: Path, rewritten: str
+) -> None:
+    runtime, disp, _, nodes, base = _ready_upstream(tmp_path, "snapshot-rewritten")
+
+    with mock.patch(
+        "server.dispatcher.snapshots.validated_snapshot", wraps=validated_snapshot
+    ) as validated:
+        assert _attempt(runtime, disp, nodes["score"])
+        atomic_write_text(base / rewritten, (base / rewritten).read_text())
+        assert _attempt(runtime, disp, nodes["score"])
+
+    assert validated.call_count == 2
+
+
+def test_a_removed_receipt_is_not_served_from_the_cache(tmp_path: Path) -> None:
+    runtime, disp, _, nodes, base = _ready_upstream(tmp_path, "snapshot-removed")
+    assert _attempt(runtime, disp, nodes["score"])
+
+    (base / RECEIPT_NAME).unlink()
+
+    assert _attempt(runtime, disp, nodes["score"]) is False
+    assert [task_id for task_id, _ in disp.requeued] == [nodes["score"]]
+
+
+def test_a_cached_snapshot_does_not_serve_a_missing_selection(
+    tmp_path: Path,
+) -> None:
+    _, disp, _, nodes, _ = _ready_upstream(tmp_path, "snapshot-coverage")
+
+    with mock.patch(
+        "server.dispatcher.snapshots.validated_snapshot", wraps=validated_snapshot
+    ) as validated:
+        assert disp._snapshots.artifacts_ready(nodes["prep"], None)
+        assert not disp._snapshots.artifacts_ready(nodes["prep"], ["missing"])
+        assert disp._snapshots.artifacts_ready(nodes["prep"], ["model"])
+
+    assert validated.call_count == 1
+
+
+def test_an_attempt_parses_each_upstream_result_once(tmp_path: Path) -> None:
+    runtime, disp, _, nodes, _ = _ready_upstream(tmp_path, "attempt-memo")
+
+    with mock.patch(
+        "server.dispatcher.base.ResultEnvelope.model_validate",
+        wraps=ResultEnvelope.model_validate,
+    ) as parsed:
+        assert _attempt(runtime, disp, nodes["score"])
+        assert _attempt(runtime, disp, nodes["score"])
+
+    assert parsed.call_count == 2
