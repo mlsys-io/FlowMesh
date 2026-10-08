@@ -140,8 +140,10 @@ def test_sys_exit_is_a_failure(tmp_path: Path) -> None:
 
 def test_upstream_results_are_mounted_by_default(tmp_path: Path) -> None:
     results = tmp_path / "worker-results" / "t-up"
-    results.mkdir(parents=True)
-    (results / "results.json").write_text('{"result": {"items": [{"output": "hi"}]}}')
+    (results / "artifacts").mkdir(parents=True)
+    (results / "results.json").write_text(
+        '{"task_id": "t-up", "result": {"items": [{"output": "hi"}]}}'
+    )
     code = (
         "import json, os\n"
         "def main(inputs):\n"
@@ -154,7 +156,7 @@ def test_upstream_results_are_mounted_by_default(tmp_path: Path) -> None:
 
 def test_upstream_outputs_bind_by_parameter_name(tmp_path: Path) -> None:
     upstream = tmp_path / "worker-results" / "t-py"
-    upstream.mkdir(parents=True)
+    (upstream / "artifacts").mkdir(parents=True)
     (upstream / "results.json").write_text(
         '{"task_id": "t-py", "result": {"ok": true, "task_type": "python", '
         '"exit_code": 0, "value": {"rows": [1, 2, 3]}}}'
