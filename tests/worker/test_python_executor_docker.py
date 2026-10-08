@@ -30,9 +30,9 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def _run(  # type: ignore[no-untyped-def]
+def _run(
     tmp_path: Path, code: str, upstream: dict[str, str] | None = None, **spec: object
-):
+) -> PythonResult:
     task_spec = cast(
         PythonSpecStrict,
         PythonSpecStrict.model_validate({"taskType": "python", "code": code, **spec}),
