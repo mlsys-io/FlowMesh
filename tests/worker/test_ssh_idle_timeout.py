@@ -198,6 +198,17 @@ class TestDiskLimit:
         assert session.stopped_with == 1
         assert session.disk_reads == 3
 
+    def test_a_session_ending_past_the_limit_fails(self, tmp_path: Path) -> None:
+        """The layer is measured once more after the session ends."""
+        executor = _executor(tmp_path)
+        cfg = _fast_poll(_cfg(ttlSeconds=600, interactive=False), idle_sec=600)
+        cfg.disk_limit_bytes = 100
+        session = _FakeSession(exit_code=0, disk_usage=[10, 500])
+
+        with pytest.raises(ExecutionError, match="disk usage exceeded"):
+            executor._wait_for_session(session, cfg)
+        assert session.disk_reads == 2
+
     def test_noninteractive_sessions_are_watched_too(self, tmp_path: Path) -> None:
         executor = _executor(tmp_path)
         cfg = _fast_poll(_cfg(ttlSeconds=600, interactive=False), idle_sec=600)

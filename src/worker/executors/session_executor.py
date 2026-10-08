@@ -309,6 +309,14 @@ class SessionExecutor(Executor):
         }
 
     def _wait_for_session(self, session: SSHSession, cfg: SSHConfig) -> SessionEnd:
+        """Block until the session ends, then fail it if its disk use is past
+        the limit: the polling check may not have run since its last write."""
+        end = self._poll_session(session, cfg)
+        if cfg.disk_limit_bytes is not None:
+            self._enforce_disk_limit(session, cfg.disk_limit_bytes)
+        return end
+
+    def _poll_session(self, session: SSHSession, cfg: SSHConfig) -> SessionEnd:
         """Block until the session exits or its TTL/idle timeout fires.
 
         The idle clock starts when the session does, so a session nobody ever
