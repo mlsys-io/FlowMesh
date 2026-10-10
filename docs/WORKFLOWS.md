@@ -59,8 +59,8 @@ spec:
 
 `spec.stages[].dependsOn` declares the DAG edges; the dispatcher
 schedules each stage once all of its dependencies are `DONE`.
-When a task fails terminally, its pending descendants fail transitively with
-an error naming the task that initiated the failure cascade.
+When a task fails terminally, every pending task downstream of it fails too,
+with an error naming the failed task the cascade started from.
 Substitutions like `{{extract.output}}` are resolved against the
 upstream stage's result.
 A named artifact reference such as `${train.final_model}` resolves to a local

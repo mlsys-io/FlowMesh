@@ -335,7 +335,7 @@ class TaskRuntime:
             if record.status in terminal:
                 continue
             # Only completed deps are subtracted, not failed ones: a failure
-            # cascade-fails its dependents and persists them FAILED atomically,
+            # fails every pending descendant and persists them FAILED atomically,
             # so a non-terminal task here never has a FAILED dep to clear.
             self._pending_deps[task_id] = {
                 dep for dep in original if dep not in self._completed
@@ -1146,8 +1146,8 @@ class TaskRuntime:
         error: str | None = None,
     ) -> tuple[list[tuple[str, str]], list[str], list[tuple[str, TaskUsage]]]:
         """
-        Mark a task as failed. Dependent tasks still waiting on this task are
-        automatically failed to avoid running without prerequisites.
+        Mark a task as failed. Every PENDING task downstream of it fails too, so
+        none runs without its prerequisites.
 
         Returns (impacted_dependents, merged_children_ids, usages).
         """
