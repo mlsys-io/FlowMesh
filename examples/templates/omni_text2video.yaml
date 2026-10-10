@@ -1,0 +1,41 @@
+apiVersion: flowmesh/v1
+kind: OmniTask
+metadata:
+  name: omni-text2video
+
+spec:
+  taskType: omni_text2video
+
+  resources:
+    hardware:
+      memory: 24Gi
+      gpu:
+        count: 1
+        memory: 24GB
+
+  model:
+    source:
+      type: huggingface
+      identifier: Wan-AI/Wan2.1-T2V-1.3B-Diffusers
+
+  data:
+    type: list
+    items:
+      - A red fox trots through fresh snow in a quiet birch forest at dawn, soft golden light
+
+  omni:
+    height: 480
+    width: 832
+    num_frames: 81
+    num_inference_steps: 30
+    fps: 16
+    seed: 42
+    # fits one 24 GB GPU with under 28 GB of host RAM
+    enable_cpu_offload: true
+
+  output:
+    destination:
+      type: http
+    artifacts:
+      - results.json
+      - artifacts/

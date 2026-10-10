@@ -97,6 +97,8 @@ def translate_n8n_workflow(payload: dict[str, Any]) -> dict[str, Any]:
                 elif source_name.startswith("Runtime"):
                     model = spec.setdefault("model", {})
                     model.update({"vllm": fragment})
+                elif source_name.startswith("Omni"):
+                    spec["omni"] = fragment
                 elif source_name.startswith("Checkpoint"):
                     assert (
                         len(incoming[source_name]) == 1
@@ -568,6 +570,8 @@ def _default_artifacts(task_type: str) -> list[str]:
         return ["results.json", "logs"]
     elif task_type == "sft":
         return ["results.json", "logs", "final_model"]
+    elif task_type == "omni_text2video":
+        return ["results.json", "logs", "artifacts/"]
     else:
         raise ValueError(
             f"Cannot determine default artifacts for unknown taskType '{task_type}'"

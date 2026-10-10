@@ -1,9 +1,9 @@
 """Shared base class and utilities for Omni-family executors.
 
-All four Omni executors (text2image, text2speech, text2audio, text2general) inherit from
-``OmniExecutorBase`` which provides model lifecycle management, config
-resolution, and common helpers.  This keeps each concrete executor
-focused on its generation logic.
+All Omni executors (text2image, text2speech, text2audio, text2general,
+text2video) inherit from ``OmniExecutorBase`` which provides model lifecycle
+management, config resolution, and common helpers.  This keeps each concrete
+executor focused on its generation logic.
 """
 
 import gc
