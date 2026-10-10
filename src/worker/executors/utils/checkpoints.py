@@ -17,6 +17,7 @@ from shared.tasks.specs import TaskSpecStrictBase
 from shared.utils.atomic import atomic_write_text
 from shared.utils.http import add_auth_headers
 
+from ...utils.upload_retry import send_with_retries
 from ..base_executor import ExecutionError, TaskReference
 from .artifacts import is_flowmesh_origin_url
 
@@ -468,16 +469,27 @@ def maybe_upload_artifacts(
         if not file_path.is_file():
             continue
         rel_name = file_path.relative_to(artifacts_dir).as_posix()
-        try:
+
+        def send(
+            file_path: Path = file_path, rel_name: str = rel_name
+        ) -> requests.Response:
             with file_path.open("rb") as fh:
-                response = requests.request(
+                return requests.request(
                     destination.method,
                     upload_url,
                     files={"file": (rel_name, fh, "application/octet-stream")},
                     headers=destination.headers,
                     timeout=destination.timeout,
                 )
-                response.raise_for_status()
+
+        try:
+            response = send_with_retries(
+                send,
+                what=f"Artifact upload {rel_name}",
+                idempotent=is_flowmesh_origin_url(upload_url),
+                logger=logger,
+            )
+            response.raise_for_status()
         except Exception as exc:
             if not skip_errors:
                 raise ExecutionError(
@@ -521,16 +533,27 @@ def maybe_upload_traces(
         if not file_path.is_file():
             continue
         upload_url = f"{upload_base}/tasks/{task.task_id}/{trace_type}"
-        try:
+
+        def send(
+            file_path: Path = file_path, upload_url: str = upload_url
+        ) -> requests.Response:
             with file_path.open("rb") as fh:
-                response = requests.request(
+                return requests.request(
                     destination.method,
                     upload_url,
                     files={"file": (file_path.name, fh, "application/octet-stream")},
                     headers=destination.headers,
                     timeout=destination.timeout,
                 )
-                response.raise_for_status()
+
+        try:
+            response = send_with_retries(
+                send,
+                what=f"Trace upload {trace_type}",
+                idempotent=is_flowmesh_origin_url(upload_url),
+                logger=logger,
+            )
+            response.raise_for_status()
         except Exception as exc:
             if not skip_errors:
                 raise ExecutionError(

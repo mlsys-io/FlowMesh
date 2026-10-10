@@ -44,6 +44,7 @@ from .executors.utils.checkpoints import get_http_destination, write_executor_re
 from .lifecycle import Lifecycle
 from .utils.logging import TaskLogEmitter
 from .utils.result_delivery import hydrate_task, publish_result
+from .utils.upload_retry import send_with_retries
 
 # How long a signal for a task that has not started on this worker is kept.
 _PENDING_SIGNAL_TTL_SEC = 300.0
@@ -415,12 +416,17 @@ class Runner:
         self._simulate_bandwidth_delay(payload_size, destination=url)
 
         try:
-            response = requests.request(
-                destination.method,
-                url,
-                json=payload,
-                headers=destination.headers,
-                timeout=destination.timeout,
+            response = send_with_retries(
+                lambda: requests.request(
+                    destination.method,
+                    url,
+                    json=payload,
+                    headers=destination.headers,
+                    timeout=destination.timeout,
+                ),
+                what=f"Task {task_id} result delivery to {url}",
+                idempotent=is_flowmesh_origin_url(url),
+                logger=self.logger,
             )
         except requests.RequestException as exc:
             if ignore_error:

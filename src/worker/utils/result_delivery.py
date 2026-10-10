@@ -27,6 +27,7 @@ from shared.utils.result_delivery import (
 )
 
 from ..executors.base_executor import ExecutionError
+from .upload_retry import send_with_retries
 
 
 def _transfer_timeout() -> float:
@@ -64,7 +65,7 @@ def publish_result(
         )
         with httpx.Client(timeout=_transfer_timeout()) as client:
             if _server_holds(
-                client, base_url, task_id, paths, result_generation(base_dir)
+                client, base_url, task_id, paths, result_generation(base_dir), logger
             ):
                 # The server shares this worker's results volume, or already
                 # received this snapshot; uploading it again would only copy
@@ -75,13 +76,20 @@ def publish_result(
                 base_dir, task_id, paths, include_traces=request.all_artifacts
             )
             size = bundle.stat().st_size
-            with bundle.open("rb") as source:
-                response = client.post(
-                    f"{base_url.rstrip('/')}/api/v1/results/{task_id}/delivery",
-                    files={"file": ("delivery.tar", source, "application/x-tar")},
-                    headers=auth_headers(),
-                )
-                response.raise_for_status()
+            delivery_bundle = bundle
+
+            def send() -> httpx.Response:
+                with delivery_bundle.open("rb") as source:
+                    return client.post(
+                        f"{base_url.rstrip('/')}/api/v1/results/{task_id}/delivery",
+                        files={"file": ("delivery.tar", source, "application/x-tar")},
+                        headers=auth_headers(),
+                    )
+
+            response = send_with_retries(
+                send, what=f"Task {task_id} system result delivery", logger=logger
+            )
+            response.raise_for_status()
         return size
     except Exception as exc:
         logger.warning(
@@ -101,12 +109,12 @@ def _server_holds(
     task_id: str,
     paths: list[str] | None,
     generation: str,
+    logger: logging.Logger,
 ) -> bool:
     """Whether the server already holds this exact snapshot selection.
 
     Any reply but 204, including one from a server without this check, means the
-    snapshot is not held. A server that cannot be reached raises, so nothing is
-    packed for an upload that would fail the same way.
+    snapshot is not held. Connection failures are retried before packing a bundle.
     """
     query: list[tuple[str, str | int | float | bool | None]] = [
         ("generation", generation)
@@ -115,10 +123,14 @@ def _server_holds(
         query.append(("all_artifacts", "true"))
     else:
         query.extend(("artifact_path", path) for path in paths)
-    response = client.get(
-        f"{base_url.rstrip('/')}/api/v1/results/{task_id}/delivery",
-        params=query,
-        headers=auth_headers(),
+    response = send_with_retries(
+        lambda: client.get(
+            f"{base_url.rstrip('/')}/api/v1/results/{task_id}/delivery",
+            params=query,
+            headers=auth_headers(),
+        ),
+        what=f"Task {task_id} system result delivery check",
+        logger=logger,
     )
     return response.status_code == 204
 
