@@ -199,6 +199,30 @@ is set, which `requirements` need to install; `bridge` is the worker's isolated
 session network, and a worker without one does not run the task. The code sees
 GPUs only when `resources.hardware.gpu` asks for them.
 
+## n8n workflows
+
+`Workflow-Format: n8n` submits an n8n workflow JSON; the server translates it
+into a graph DAG. Nodes become stages as follows, and other node types are
+ignored:
+
+| n8n node | Becomes |
+|---|---|
+| Basic LLM Chain (`chainLlm`) with an HF model node | a stage of the `taskType` named in the node's notes, e.g. `{"taskType": "omni_text2video"}` |
+| Basic LLM Chain or OpenAI node with an OpenAI model | an `api` stage |
+| Code node with language Python (`pythonNative`, shown as "Python (Native)"; legacy `python` too) | a `python` stage running the node's code |
+
+Set nodes feeding a stage configure it by name prefix: `Input` / `Data` /
+`Format` give `spec.data` (a `graph_template` reads upstream nodes' results),
+`Resource` gives `resources`, `Runtime` gives `model.vllm`, `Omni` gives
+`spec.omni`, `Training` gives `training`, and `Python` adds `python` stage
+fields such as `requirements`, `network`, `image` and `timeoutSeconds`. Edges
+between stages become `dependsOn`.
+
+A Code node's code defines `main`; it is not run by n8n. Upstream stages reach
+it as described in [Reading upstream stages](#reading-upstream-stages): node
+names that are not Python identifiers are read through an `inputs` parameter,
+e.g. `inputs["Write Narration"]`.
+
 ## data_retrieval: type lumid
 
 `type: lumid` routes the retrieval through lumid-data-app (HTTP). Three
