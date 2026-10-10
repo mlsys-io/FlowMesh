@@ -20,7 +20,7 @@ from shared.tasks.components.model import ModelConfig, ModelSource  # noqa: E402
 from shared.tasks.specs.omni import OmniText2VideoSpecStrict  # noqa: E402
 from shared.tasks.task_type import TaskType  # noqa: E402
 from worker.executors import omni_text2video_executor as mod  # noqa: E402
-from worker.executors.base_executor import ExecutionError  # noqa: E402
+from worker.executors.base_executor import ExecutionError, RunControl  # noqa: E402
 from worker.executors.omni_text2video_executor import (  # noqa: E402
     OmniText2VideoExecutor,
 )
@@ -72,7 +72,7 @@ def _run(
     monkeypatch.setattr(
         mod, "_encode_mp4", lambda output, cfg: f"mp4:{output.request_id}".encode()
     )
-    return executor.run(task, tmp_path), fake
+    return executor.run(task, tmp_path, RunControl(task.task_id)), fake
 
 
 def test_videos_follow_request_id_not_completion_order(
