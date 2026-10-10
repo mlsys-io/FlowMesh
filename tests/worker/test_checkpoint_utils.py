@@ -121,7 +121,7 @@ class TestMaybeUploadArtifacts:
         out_dir = tmp_path / "task-1"
         (out_dir / "artifacts").mkdir(parents=True)
         (out_dir / "artifacts" / "a.jsonl").write_text("payload", encoding="utf-8")
-        monkeypatch.setenv("WORKER_UPLOAD_RETRIES", "2")
+        monkeypatch.setattr(upload_retry, "UPLOAD_RETRIES", 2)
         monkeypatch.setenv("FLOWMESH_BASE_URL", "http://host:8010")
         monkeypatch.setattr(upload_retry.time, "sleep", lambda _s: None)
         calls = 0

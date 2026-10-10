@@ -7,6 +7,7 @@ from urllib3.connection import HTTPConnection
 from urllib3.connectionpool import HTTPConnectionPool
 from urllib3.exceptions import MaxRetryError, NewConnectionError
 
+from worker.utils import upload_retry
 from worker.utils.upload_retry import send_with_retries
 
 
@@ -32,8 +33,8 @@ def _sequence(*outcomes: _Response | Exception):
 
 @pytest.fixture(autouse=True)
 def _defaults(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("WORKER_UPLOAD_RETRIES", raising=False)
-    monkeypatch.delenv("WORKER_UPLOAD_BACKOFF_SEC", raising=False)
+    monkeypatch.setattr(upload_retry, "UPLOAD_RETRIES", 5)
+    monkeypatch.setattr(upload_retry, "UPLOAD_BACKOFF_SEC", 2.0)
 
 
 @pytest.mark.parametrize(
@@ -93,7 +94,7 @@ def test_final_and_client_error_statuses_are_returned_at_once(status: int) -> No
 def test_last_transient_status_is_returned_to_the_caller(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("WORKER_UPLOAD_RETRIES", "1")
+    monkeypatch.setattr(upload_retry, "UPLOAD_RETRIES", 1)
     send, calls = _sequence(_Response(503), _Response(503))
 
     response = send_with_retries(send, what="upload", sleep=lambda _s: None)
@@ -103,7 +104,7 @@ def test_last_transient_status_is_returned_to_the_caller(
 
 
 def test_last_connection_failure_propagates(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("WORKER_UPLOAD_RETRIES", "2")
+    monkeypatch.setattr(upload_retry, "UPLOAD_RETRIES", 2)
     error = requests.ConnectionError("Connection refused")
     send, calls = _sequence(error, error, error)
 
@@ -121,7 +122,7 @@ def test_other_errors_are_not_retried() -> None:
 
 
 def test_zero_retries_sends_once(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("WORKER_UPLOAD_RETRIES", "0")
+    monkeypatch.setattr(upload_retry, "UPLOAD_RETRIES", 0)
     send, calls = _sequence(requests.ConnectionError("refused"))
 
     with pytest.raises(requests.ConnectionError):
@@ -130,7 +131,7 @@ def test_zero_retries_sends_once(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_backoff_is_capped(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("WORKER_UPLOAD_RETRIES", "6")
+    monkeypatch.setattr(upload_retry, "UPLOAD_RETRIES", 6)
     error = requests.ConnectionError("refused")
     send, _calls = _sequence(*([error] * 6), _Response(200))
     delays: list[float] = []

@@ -20,7 +20,7 @@ from tests.worker.factories import make_worker_hardware, make_worker_task_messag
 from worker.executors.mixins.training import TrainingMixin
 from worker.executors.utils.checkpoints import resolve_checkpoint_load
 from worker.runner import Runner
-from worker.utils import result_delivery
+from worker.utils import result_delivery, upload_retry
 
 
 @pytest.mark.parametrize("upload_all", [False, True])
@@ -102,7 +102,7 @@ def test_system_delivery_failure_keeps_producer_successful(
 ) -> None:
     monkeypatch.setenv("FLOWMESH_BASE_URL", "http://server")
     monkeypatch.setenv("WORKER_UPLOAD_RESULTS", "0")
-    monkeypatch.setenv("WORKER_UPLOAD_BACKOFF_SEC", "0")
+    monkeypatch.setattr(upload_retry, "UPLOAD_BACKOFF_SEC", 0.0)
     client_class = httpx.Client
     monkeypatch.setattr(
         result_delivery.httpx,
@@ -419,8 +419,8 @@ def test_an_unreachable_server_gets_no_bundle_packed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("FLOWMESH_BASE_URL", "http://server")
-    monkeypatch.setenv("WORKER_UPLOAD_RETRIES", "2")
-    monkeypatch.setenv("WORKER_UPLOAD_BACKOFF_SEC", "0")
+    monkeypatch.setattr(upload_retry, "UPLOAD_RETRIES", 2)
+    monkeypatch.setattr(upload_retry, "UPLOAD_BACKOFF_SEC", 0.0)
     producer = populate(tmp_path / "producer")
     client_class = httpx.Client
     attempts = 0
@@ -453,7 +453,7 @@ def test_publication_recovers_from_a_transient_preflight_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str, held: bool
 ) -> None:
     monkeypatch.setenv("FLOWMESH_BASE_URL", "http://server")
-    monkeypatch.setenv("WORKER_UPLOAD_BACKOFF_SEC", "0")
+    monkeypatch.setattr(upload_retry, "UPLOAD_BACKOFF_SEC", 0.0)
     producer = populate(tmp_path / "producer")
     checks = 0
     uploads: list[bytes] = []
@@ -492,7 +492,7 @@ def test_publication_reopens_the_bundle_after_a_read_timeout(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("FLOWMESH_BASE_URL", "http://server")
-    monkeypatch.setenv("WORKER_UPLOAD_BACKOFF_SEC", "0")
+    monkeypatch.setattr(upload_retry, "UPLOAD_BACKOFF_SEC", 0.0)
     producer = populate(tmp_path / "producer")
     uploads: list[bytes] = []
 
