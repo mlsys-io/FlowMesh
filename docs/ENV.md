@@ -89,13 +89,6 @@ Spark), set `DOCKER_GPU_RUNTIME=` in the stack env.
 | `SERVE_DEFAULT_TTL_SEC` | `3600` | Default vLLM serve session TTL when `spec.ttlSeconds` is unset |
 | `SERVE_MAX_TTL_SEC` | `86400` | Upper bound on vLLM serve session TTL, regardless of `spec.ttlSeconds` |
 
-Upload retries cover results, artifact files, trace files, system delivery
-bundles, and the system delivery preflight check. FlowMesh uploads retry on
-connection errors, timeouts, and 5xx/408/429 responses. External destinations
-retry only when a connection could not be established; HTTP responses and
-failures after connecting are returned without another attempt. A valid
-`Retry-After` delay overrides the exponential backoff and its 30 s cap.
-
 Workers publish what dependent stages need to the server at
 `FLOWMESH_BASE_URL` unless the server sets `TASK_RESULT_DELIVERY=false`.
 `WORKER_UPLOAD_RESULTS=true` publishes every result and artifact regardless, so clients can retrieve leaf results from a worker that

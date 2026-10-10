@@ -70,13 +70,6 @@ At startup the worker:
 | `WORKER_UPLOAD_BACKOFF_SEC` | `2` | First wait between upload retries, doubled per retry up to 30 s; a `Retry-After` header takes precedence. |
 | `WORKER_EXECUTOR_IDLE_CLEANUP_SEC` | `60` | Seconds a worker waits before unloading an idle executor to release the resources it holds; higher values avoid reload thrash between tasks but keep those resources reserved while idle. |
 
-Upload retries cover results, artifact files, trace files, system delivery
-bundles, and the system delivery preflight check. FlowMesh uploads retry on
-connection errors, timeouts, and 5xx/408/429 responses. External destinations
-retry only when a connection could not be established; HTTP responses and
-failures after connecting are returned without another attempt. A valid
-`Retry-After` delay overrides the exponential backoff and its 30 s cap.
-
 > The heartbeat TTL is computed automatically as `max(HEARTBEAT_INTERVAL_SEC * 4, 120)`.
 
 > When a task sets `spec.output.destination.type: http`, configure
@@ -100,6 +93,16 @@ failures after connecting are returned without another attempt. A valid
 Prefer shared storage? Point both the orchestrator and workers at the same
 mount and disable HTTP uploads—the executors still emit artifacts locally and
 templates can reference absolute paths.
+
+## Upload retries
+
+Upload retries cover results, artifact files, trace files, system delivery
+bundles, and the system delivery preflight check. FlowMesh uploads retry on
+connection errors, timeouts, and 5xx/408/429 responses. External destinations
+retry only when a connection could not be established; HTTP responses and
+failures after connecting are returned without another attempt. A valid
+`Retry-After` delay overrides the exponential backoff and its 30 s cap.
+Retry settings are read when the worker starts.
 
 ## Debugging tips
 - Inspect `worker.log` for executor output and upload diagnostics.
