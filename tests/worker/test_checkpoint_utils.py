@@ -5,9 +5,10 @@ from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
+import requests
 
 from shared.schemas.artifact import ArtifactContext
-from worker.executors.base_executor import TaskReference
+from worker.executors.base_executor import ExecutionError, TaskReference
 from worker.executors.utils import checkpoints
 
 
@@ -63,6 +64,9 @@ class TestMaybeUploadArtifacts:
         uploaded: list[tuple[str, str]] = []
 
         class _Response:
+            status_code = 200
+            headers: dict[str, str] = {}
+
             def raise_for_status(self) -> None:
                 return None
 
@@ -81,6 +85,101 @@ class TestMaybeUploadArtifacts:
             "images/nested/a.png",
             "final_model.tar.gz",
         }
+
+    def test_retries_a_refused_upload_with_the_file_reopened(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        out_dir = tmp_path / "task-1"
+        (out_dir / "artifacts").mkdir(parents=True)
+        (out_dir / "artifacts" / "a.jsonl").write_text("payload", encoding="utf-8")
+        monkeypatch.setenv("FLOWMESH_BASE_URL", "http://host:8010")
+        monkeypatch.setenv("WORKER_UPLOAD_BACKOFF_SEC", "0")
+        bodies: list[bytes] = []
+
+        class _Response:
+            status_code = 200
+            headers: dict[str, str] = {}
+
+            def raise_for_status(self) -> None:
+                return None
+
+        def fake_request(method, url, files, headers, timeout):
+            bodies.append(files["file"][1].read())
+            if len(bodies) == 1:
+                raise requests.ConnectionError("Connection refused")
+            return _Response()
+
+        monkeypatch.setattr(checkpoints.requests, "request", fake_request)
+
+        assert checkpoints.maybe_upload_artifacts(_task(), out_dir) == ["a.jsonl"]
+        assert bodies == [b"payload", b"payload"]
+
+    def test_upload_fails_the_task_once_retries_are_exhausted(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        out_dir = tmp_path / "task-1"
+        (out_dir / "artifacts").mkdir(parents=True)
+        (out_dir / "artifacts" / "a.jsonl").write_text("payload", encoding="utf-8")
+        monkeypatch.setenv("WORKER_UPLOAD_RETRIES", "2")
+        monkeypatch.setenv("FLOWMESH_BASE_URL", "http://host:8010")
+        monkeypatch.setenv("WORKER_UPLOAD_BACKOFF_SEC", "0")
+        calls = 0
+
+        def fake_request(method, url, files, headers, timeout):
+            nonlocal calls
+            calls += 1
+            raise requests.ReadTimeout("read timeout=30.0")
+
+        monkeypatch.setattr(checkpoints.requests, "request", fake_request)
+
+        with pytest.raises(ExecutionError, match="Artifact upload failed"):
+            checkpoints.maybe_upload_artifacts(_task(), out_dir)
+        assert calls == 3
+
+    def test_a_down_server_costs_one_retry_schedule_across_files(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        out_dir = tmp_path / "task-1"
+        (out_dir / "artifacts").mkdir(parents=True)
+        for name in ("a.jsonl", "b.jsonl", "c.jsonl"):
+            (out_dir / "artifacts" / name).write_text("payload", encoding="utf-8")
+        monkeypatch.setenv("WORKER_UPLOAD_RETRIES", "2")
+        monkeypatch.setenv("FLOWMESH_BASE_URL", "http://host:8010")
+        monkeypatch.setenv("WORKER_UPLOAD_BACKOFF_SEC", "0")
+        calls = 0
+
+        def fake_request(method, url, files, headers, timeout):
+            nonlocal calls
+            calls += 1
+            raise requests.ConnectionError("Connection refused")
+
+        monkeypatch.setattr(checkpoints.requests, "request", fake_request)
+
+        assert (
+            checkpoints.maybe_upload_artifacts(_task(), out_dir, skip_errors=True) == []
+        )
+        assert calls == 3 + 1 + 1
+
+    def test_external_destination_is_not_resent_after_a_read_timeout(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        out_dir = tmp_path / "task-1"
+        (out_dir / "artifacts").mkdir(parents=True)
+        (out_dir / "artifacts" / "a.jsonl").write_text("payload", encoding="utf-8")
+        monkeypatch.setenv("FLOWMESH_BASE_URL", "http://flowmesh:8000")
+        monkeypatch.setenv("WORKER_UPLOAD_BACKOFF_SEC", "0")
+        calls = 0
+
+        def fake_request(method, url, files, headers, timeout):
+            nonlocal calls
+            calls += 1
+            raise requests.ReadTimeout("read timeout=30.0")
+
+        monkeypatch.setattr(checkpoints.requests, "request", fake_request)
+
+        with pytest.raises(ExecutionError, match="Artifact upload failed"):
+            checkpoints.maybe_upload_artifacts(_task(), out_dir)
+        assert calls == 1
 
     def test_local_destination_is_noop(self, tmp_path: Path, monkeypatch) -> None:
         out_dir = tmp_path / "task-1"
@@ -104,6 +203,65 @@ class TestMaybeUploadArtifacts:
 
         monkeypatch.setattr(checkpoints.requests, "request", fake_request)
         assert checkpoints.maybe_upload_artifacts(_task(), out_dir) == []
+
+
+class TestMaybeUploadTraces:
+    def test_retries_a_refused_upload_with_the_file_reopened(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        out_dir = tmp_path / "task-1"
+        (out_dir / "logs").mkdir(parents=True)
+        (out_dir / "logs" / "spans.jsonl").write_text("span", encoding="utf-8")
+        monkeypatch.setenv("FLOWMESH_BASE_URL", "http://host:8010")
+        monkeypatch.setenv("WORKER_UPLOAD_BACKOFF_SEC", "0")
+        bodies: list[bytes] = []
+
+        class _Response:
+            status_code = 200
+            headers: dict[str, str] = {}
+
+            def raise_for_status(self) -> None:
+                return None
+
+        def fake_request(method, url, files, headers, timeout):
+            assert url == "http://host:8010/api/v1/traces/tasks/task-1/spans"
+            bodies.append(files["file"][1].read())
+            if len(bodies) == 1:
+                raise requests.ReadTimeout("read timeout=30.0")
+            return _Response()
+
+        monkeypatch.setattr(checkpoints.requests, "request", fake_request)
+
+        assert checkpoints.maybe_upload_traces(_task(), out_dir) == ["spans"]
+        assert bodies == [b"span", b"span"]
+
+    def test_external_destination_is_not_resent_after_a_503(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        out_dir = tmp_path / "task-1"
+        (out_dir / "logs").mkdir(parents=True)
+        (out_dir / "logs" / "spans.jsonl").write_text("span", encoding="utf-8")
+        monkeypatch.setenv("FLOWMESH_BASE_URL", "http://flowmesh:8000")
+        monkeypatch.setenv("WORKER_UPLOAD_BACKOFF_SEC", "0")
+        calls = 0
+
+        class _Response:
+            status_code = 503
+            headers: dict[str, str] = {}
+
+            def raise_for_status(self) -> None:
+                raise requests.HTTPError("503 Service Unavailable")
+
+        def fake_request(method, url, files, headers, timeout):
+            nonlocal calls
+            calls += 1
+            return _Response()
+
+        monkeypatch.setattr(checkpoints.requests, "request", fake_request)
+
+        with pytest.raises(ExecutionError, match="Trace upload failed"):
+            checkpoints.maybe_upload_traces(_task(), out_dir)
+        assert calls == 1
 
 
 @pytest.mark.parametrize(

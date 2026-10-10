@@ -499,14 +499,24 @@ class TestRetries:
         delays = self._run_recording_delays(task, transport, tmp_path)
         assert delays == [pytest.approx(5.0, abs=1.0)]
 
+    @pytest.mark.parametrize(
+        "value",
+        [
+            "nan",
+            "inf",
+            "-1",
+            "not-a-date",
+            "Fri, 31 Dec 99999999999999999999 23:59:59 GMT",
+        ],
+    )
     def test_invalid_retry_after_falls_back_to_exponential(
-        self, tmp_path: Path
+        self, tmp_path: Path, value: str
     ) -> None:
         """A broken Retry-After falls back to the exponential schedule."""
         task = self._task(retries=2)
         transport = _SequenceTransport(
             [
-                httpx.Response(429, headers={"Retry-After": "nan"}),
+                httpx.Response(429, headers={"Retry-After": value}),
                 httpx.Response(429, headers={"Retry-After": "not-a-date"}),
                 _ok_response(),
             ]

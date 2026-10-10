@@ -1,4 +1,3 @@
-import email.utils
 import json
 import logging
 import math
@@ -6,7 +5,6 @@ import os
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -18,6 +16,7 @@ from shared.tasks.specs.misc import ApiConfig, ApiResponseConfig
 from shared.tasks.task_type import TaskType
 from shared.utils.redact import is_credential_key
 
+from ..utils.http_retry import backoff_delay, is_retryable_status
 from .base_executor import (
     ExecutionError,
     Executor,
@@ -39,11 +38,6 @@ _PROMPT_PLACEHOLDER = "{{prompt}}"
 _RETRY_BACKOFF_SEC = 1.0
 # Upper bound on any single retry wait.
 _RETRY_BACKOFF_MAX_SEC = 60.0
-
-
-def _is_retryable_status(status_code: int) -> bool:
-    """Whether an HTTP status is transient and worth retrying."""
-    return status_code >= 500 or status_code in (408, 429)
 
 
 class _RequestFailed(Exception):
@@ -305,7 +299,9 @@ class APIExecutor(DataMixin, Executor):
                 if attempt >= retries:
                     raise _RequestFailed(exc, attempt + 1) from None
                 attempt += 1
-                delay = self._backoff_delay(attempt)
+                delay = backoff_delay(
+                    attempt, _RETRY_BACKOFF_SEC, _RETRY_BACKOFF_MAX_SEC
+                )
                 logger.warning(
                     "API request failed (attempt %d/%d): %s; retrying in %.1fs",
                     attempt,
@@ -315,11 +311,13 @@ class APIExecutor(DataMixin, Executor):
                 )
                 self._wait_for_backoff(delay, failed, control)
                 continue
-            if resp.is_error and _is_retryable_status(resp.status_code):
+            if resp.is_error and is_retryable_status(resp.status_code):
                 if attempt >= retries:
                     return resp, attempt + 1
                 attempt += 1
-                delay = self._backoff_delay(attempt, resp)
+                delay = backoff_delay(
+                    attempt, _RETRY_BACKOFF_SEC, _RETRY_BACKOFF_MAX_SEC, resp
+                )
                 logger.warning(
                     "API request returned %s (attempt %d/%d); retrying in %.1fs",
                     resp.status_code,
@@ -330,35 +328,6 @@ class APIExecutor(DataMixin, Executor):
                 self._wait_for_backoff(delay, failed, control)
                 continue
             return resp, attempt + 1
-
-    def _backoff_delay(self, attempt: int, resp: httpx.Response | None = None) -> float:
-        """Return the wait before the next attempt, honouring Retry-After."""
-        if resp is not None:
-            retry_after = self._retry_after_seconds(resp)
-            if retry_after is not None:
-                return min(retry_after, _RETRY_BACKOFF_MAX_SEC)
-        return min(_RETRY_BACKOFF_SEC * (2 ** (attempt - 1)), _RETRY_BACKOFF_MAX_SEC)
-
-    @staticmethod
-    def _retry_after_seconds(resp: httpx.Response) -> float | None:
-        """Parse the Retry-After header as seconds or an HTTP date."""
-        value = resp.headers.get("Retry-After")
-        if value is None:
-            return None
-        try:
-            seconds = float(value)
-        except ValueError:
-            pass
-        else:
-            if math.isfinite(seconds) and seconds >= 0:
-                return seconds
-        try:
-            retry_at = email.utils.parsedate_to_datetime(value)
-        except (TypeError, ValueError):
-            return None
-        if retry_at.tzinfo is None:
-            retry_at = retry_at.replace(tzinfo=UTC)
-        return max(0.0, (retry_at - datetime.now(UTC)).total_seconds())
 
     def _wait_for_backoff(
         self, delay: float, failed: threading.Event, control: RunControl
@@ -660,7 +629,7 @@ class APIExecutor(DataMixin, Executor):
                 body_text = resp.text[:200]
                 if body_text:
                     message = f"{message}: {body_text}"
-                retryable = _is_retryable_status(resp.status_code)
+                retryable = is_retryable_status(resp.status_code)
                 _record_call(idx, attempts, resp.status_code, start, None)
                 error = ExecutionError(message, retryable=retryable)
                 if not first_error:

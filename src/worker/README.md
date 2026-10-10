@@ -66,6 +66,8 @@ At startup the worker:
 | `WORKER_HB_FILE` | – | Full path to the worker heartbeat file. |
 | `WORKER_UPLOAD_RESULTS` | `false` | Publish every result and artifact to FlowMesh through the system delivery endpoint, independently of user output destinations. |
 | `WORKER_RESULT_TRANSFER_TIMEOUT_SEC` | `1800` | Seconds the worker waits for the server while publishing a result or fetching an upstream one, including the time the server spends packing a large bundle. |
+| `WORKER_UPLOAD_RETRIES` | `5` | Additional upload attempts after retryable failures; `0` disables retries. |
+| `WORKER_UPLOAD_BACKOFF_SEC` | `2` | First wait between upload retries, doubled per retry up to 60 s; a `Retry-After` header takes precedence, under the same cap. |
 | `WORKER_EXECUTOR_IDLE_CLEANUP_SEC` | `60` | Seconds a worker waits before unloading an idle executor to release the resources it holds; higher values avoid reload thrash between tasks but keep those resources reserved while idle. |
 
 > The heartbeat TTL is computed automatically as `max(HEARTBEAT_INTERVAL_SEC * 4, 120)`.
@@ -91,6 +93,19 @@ At startup the worker:
 Prefer shared storage? Point both the orchestrator and workers at the same
 mount and disable HTTP uploads—the executors still emit artifacts locally and
 templates can reference absolute paths.
+
+## Upload retries
+
+Upload retries cover results, artifact files, trace files, system delivery
+bundles, and the system delivery preflight check. FlowMesh uploads retry on
+connection errors, timeouts, and 5xx/408/429 responses. External destinations
+retry only when a connection could not be established; HTTP responses and
+failures after connecting are returned without another attempt. A valid
+`Retry-After` header replaces the exponential delay; either wait is capped at
+60 s. Each system delivery request stops retrying once the next wait would end
+more than `WORKER_RESULT_TRANSFER_TIMEOUT_SEC` after its first attempt began.
+After an upload to a server ends on a connection failure, later uploads to that
+server make a single attempt until one gets a response.
 
 ## Debugging tips
 - Inspect `worker.log` for executor output and upload diagnostics.
