@@ -184,7 +184,7 @@ class OmniText2VideoExecutor(OmniExecutorBase):
 
 
 def _engine_kwargs(cfg: dict[str, Any]) -> dict[str, Any]:
-    """Engine options that change how the model is placed in memory."""
+    """Engine options that change which weights load and where they are placed."""
     kwargs: dict[str, Any] = {}
     for key in _ENGINE_FLAGS:
         if cfg.get(key) is not None:
@@ -192,6 +192,10 @@ def _engine_kwargs(cfg: dict[str, Any]) -> dict[str, Any]:
     quantization = cfg.get("quantization")
     if quantization:
         kwargs["quantization_config"] = str(quantization)
+    task_type = cfg.get("task_type")
+    if task_type:
+        # selects the checkpoint partition, e.g. MiniMax-H3 "t2va" loads FL2VA only
+        kwargs["task_type"] = str(task_type)
     return kwargs
 
 
