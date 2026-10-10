@@ -34,7 +34,7 @@ from shared.tasks.specs import ImageClassificationTrainingSpecStrict
 from shared.tasks.task_type import TaskType
 
 from ..utils.logging import configure_hf_library_logging
-from .base_executor import ExecutionError, Executor, ExecutorTask
+from .base_executor import ExecutionError, Executor, ExecutorTask, RunControl
 from .mixins.training import TrainingMixin
 from .utils.checkpoints import (
     determine_resume_path,
@@ -59,7 +59,7 @@ class ImageClassificationTrainingExecutor(TrainingMixin, Executor):
         self._final_model_dir: Path | None = None
 
     def run(
-        self, task: ExecutorTask, out_dir: Path
+        self, task: ExecutorTask, out_dir: Path, control: RunControl
     ) -> ImageClassificationTrainingResult:
         configure_hf_library_logging()
         spec = self.require_spec(task, ImageClassificationTrainingSpecStrict)

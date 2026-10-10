@@ -19,7 +19,7 @@ from shared.schemas.worker import SSHLimits
 from shared.tasks.specs import PythonSpecStrict, SSHSpecStrict
 from shared.tasks.task_type import TaskType
 from tests.worker.factories import make_live_worker_config, make_worker_task_message
-from worker.executors.base_executor import ExecutionError
+from worker.executors.base_executor import ExecutionError, RunControl
 from worker.executors.python_executor import PythonExecutor
 from worker.executors.ssh_executor import SSHExecutor
 from worker.executors.utils.docker import docker_available
@@ -46,7 +46,7 @@ def _run(
     out = tmp_path / "out"
     out.mkdir()
     try:
-        return executor.run(task, out)
+        return executor.run(task, out, RunControl(task.task_id))
     finally:
         executor.teardown()
 
@@ -252,7 +252,7 @@ def _run_with_disk_cap(
     out = tmp_path / "out"
     out.mkdir()
     try:
-        return executor.run(task, out)
+        return executor.run(task, out, RunControl(task.task_id))
     finally:
         executor.teardown()
 
@@ -343,6 +343,6 @@ def test_ssh_task_past_the_disk_cap_is_stopped(
     out.mkdir()
     try:
         with pytest.raises(ExecutionError, match="disk usage exceeded"):
-            executor.run(task, out)
+            executor.run(task, out, RunControl(task.task_id))
     finally:
         executor.teardown()

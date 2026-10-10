@@ -29,7 +29,7 @@ from shared.tasks.task_type import TaskType
 from shared.utils.manifest import scratch_dir
 
 from ..utils.logging import configure_hf_library_logging
-from .base_executor import ExecutionError, Executor, ExecutorTask
+from .base_executor import ExecutionError, Executor, ExecutorTask, RunControl
 from .mixins.training import TrainingMixin
 from .utils.checkpoints import (
     determine_resume_path,
@@ -56,7 +56,7 @@ class SFTExecutor(TrainingMixin, Executor):
         self._final_model_dir: Path | None = None
         self._task_out_dir: Path | None = None
 
-    def run(self, task: ExecutorTask, out_dir: Path) -> SFTResult:
+    def run(self, task: ExecutorTask, out_dir: Path, control: RunControl) -> SFTResult:
         configure_hf_library_logging()
         spec = self.require_spec(task, SFTSpecStrict)
         requested_gpu_count = self._requested_gpu_count(spec)

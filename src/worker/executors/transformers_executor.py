@@ -71,7 +71,7 @@ from shared.tasks.specs import (
 from shared.tasks.task_type import TaskType
 
 from ..utils.logging import configure_hf_library_logging
-from .base_executor import ExecutionError, Executor, ExecutorTask
+from .base_executor import ExecutionError, Executor, ExecutorTask, RunControl
 from .mixins.data import InferenceEntry
 from .mixins.inference import InferenceMixin
 from .utils.checkpoints import maybe_upload_artifacts, maybe_upload_traces
@@ -418,7 +418,7 @@ class HFTransformersExecutor(InferenceMixin, Executor):
         return None
 
     def run(
-        self, task: ExecutorTask, out_dir: Path
+        self, task: ExecutorTask, out_dir: Path, control: RunControl
     ) -> InferenceResult | EmbeddingResult:
         configure_hf_library_logging()
         spec = task.spec

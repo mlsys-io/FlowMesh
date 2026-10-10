@@ -26,7 +26,13 @@ from shared.tasks.task_type import TaskType
 from shared.utils.parsing import parse_float_env
 from worker.config import WorkerConfig
 
-from .base_executor import ExecutionError, Executor, ExecutorTask, TaskCancelledError
+from .base_executor import (
+    ExecutionError,
+    Executor,
+    ExecutorTask,
+    RunControl,
+    TaskCancelledError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -89,12 +95,6 @@ class VLLMServeExecutor(Executor):
     name = "vllm_serve"
     supported_task_types = frozenset({TaskType.SERVE})
 
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        super().__init__(*args, **kwargs)
-        self._cancel_event = threading.Event()
-        self._stop_event = threading.Event()
-        self._proc: subprocess.Popen[str] | None = None
-
     @classmethod
     def is_available(cls, config: WorkerConfig) -> bool:
         try:
@@ -104,7 +104,9 @@ class VLLMServeExecutor(Executor):
         except Exception:
             return False
 
-    def run(self, task: ExecutorTask, out_dir: Path) -> ServeResult:
+    def run(
+        self, task: ExecutorTask, out_dir: Path, control: RunControl
+    ) -> ServeResult:
         spec = self.require_spec(task, ServeSpecStrict)
 
         model_id = spec.model_name
@@ -174,7 +176,10 @@ class VLLMServeExecutor(Executor):
 
         out_dir.mkdir(parents=True, exist_ok=True)
 
-        if self._stop_event.is_set():
+        control.raise_if_cancelled(
+            f"Serve task {task.task_id} cancelled before vLLM launch"
+        )
+        if control.stop_requested:
             raise TaskCancelledError(
                 f"Serve task {task.task_id} stopped before vLLM launch"
             )
@@ -201,10 +206,13 @@ class VLLMServeExecutor(Executor):
         )
         drain_thread.start()
 
-        self._proc = proc
+        unregister_cancel = control.on_cancel(
+            lambda: self._terminate_process_group(proc)
+        )
+        unregister_stop = control.on_stop(lambda: self._terminate_process_group(proc))
         try:
             self._poll_health(
-                proc, port, task.task_id, readiness_timeout, tail, eof_event
+                proc, port, task.task_id, readiness_timeout, tail, control, eof_event
             )
             self.publish_endpoint(task.task_id, port)
             advertised_host = (
@@ -221,12 +229,11 @@ class VLLMServeExecutor(Executor):
             }
             self.emit_update(task.task_id, update_payload)
             logger.info("vLLM server ready on port %d (task=%s)", port, task.task_id)
-            self._wait_for_serve(proc, ttl_sec)
+            self._wait_for_serve(proc, ttl_sec, control)
         finally:
+            unregister_cancel()
+            unregister_stop()
             self.withdraw_endpoint(task.task_id)
-            self._proc = None
-            self._cancel_event.clear()
-            self._stop_event.clear()
             self._terminate_process_group(proc)
             drain_thread.join(timeout=5.0)
 
@@ -239,14 +246,15 @@ class VLLMServeExecutor(Executor):
         task_id: str,
         timeout_sec: float,
         tail: collections.deque[str],
+        control: RunControl,
         eof_event: threading.Event | None = None,
     ) -> None:
         url = f"http://127.0.0.1:{port}/health"
         deadline = time.time() + timeout_sec
         while time.time() < deadline:
-            if self._cancel_event.is_set():
+            if control.cancel_requested:
                 raise TaskCancelledError("Serve task cancelled during health poll")
-            if self._stop_event.is_set():
+            if control.stop_requested:
                 raise TaskCancelledError("Serve task stopped during health poll")
             if proc.poll() is not None:
                 _raise_with_tail(
@@ -279,12 +287,14 @@ class VLLMServeExecutor(Executor):
             tail,
         )
 
-    def _wait_for_serve(self, proc: subprocess.Popen[str], ttl_sec: float) -> None:
+    def _wait_for_serve(
+        self, proc: subprocess.Popen[str], ttl_sec: float, control: RunControl
+    ) -> None:
         deadline = time.time() + ttl_sec
         while time.time() < deadline:
-            if self._cancel_event.is_set():
+            if control.cancel_requested:
                 raise TaskCancelledError("Serve task cancelled")
-            if self._stop_event.is_set():
+            if control.stop_requested:
                 logger.info("Serve task stop requested; terminating vLLM server")
                 return
             if proc.poll() is not None:
@@ -319,15 +329,3 @@ class VLLMServeExecutor(Executor):
             proc.wait(timeout=5.0)
         except Exception:
             pass
-
-    def cancel(self, task_id: str) -> None:
-        self._cancel_event.set()
-        proc = self._proc
-        if proc is not None:
-            self._terminate_process_group(proc)
-
-    def stop(self, task_id: str) -> None:
-        self._stop_event.set()
-        proc = self._proc
-        if proc is not None:
-            self._terminate_process_group(proc)

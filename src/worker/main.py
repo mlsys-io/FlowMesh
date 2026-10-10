@@ -277,8 +277,8 @@ def main() -> None:
 
     # Install signal handlers to allow graceful shutdown
     def handle_exit_signal(signum: int, _) -> None:
-        logger.info("Received exit signal %d; initiating shutdown", signum)
-        runner.stop()
+        # Logging here could block on a lock held by the thread it interrupted.
+        runner.stop(f"received exit signal {signum}")
 
     for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGQUIT):
         try:

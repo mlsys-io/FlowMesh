@@ -37,6 +37,7 @@ from .base_executor import (
     ExecutionError,
     Executor,
     ExecutorTask,
+    RunControl,
     TaskCancelledError,
 )
 
@@ -96,9 +97,6 @@ class SessionExecutor(Executor):
         super().__init__(*args, **kwargs)
         config = self._config
         self._owner = config.container_name or config.alias
-        self._cancel_event = threading.Event()
-        self._finish_event = threading.Event()
-        self._current_session: SSHSession | None = None
         self._backend = self._make_backend(config)
 
     @classmethod
@@ -130,18 +128,8 @@ class SessionExecutor(Executor):
         """Stop all sessions owned by this worker."""
         self._backend.teardown(self._owner)
 
-    def cancel(self, task_id: str) -> None:
-        self._cancel_event.set()
-        self._stop_current_session("cancellation")
-
-    def stop(self, task_id: str) -> None:
-        self._finish_event.set()
-        self._stop_current_session("graceful stop")
-
-    def _stop_current_session(self, reason: str) -> None:
-        session = self._current_session
-        if session is None:
-            return
+    @staticmethod
+    def _stop_session(session: SSHSession, reason: str) -> None:
         try:
             session.stop(1)
         except Exception:
@@ -165,7 +153,7 @@ class SessionExecutor(Executor):
         )
 
     def _run_session(
-        self, task: ExecutorTask, out_dir: Path, cfg: SSHConfig
+        self, task: ExecutorTask, out_dir: Path, cfg: SSHConfig, control: RunControl
     ) -> SessionOutcome:
         """Bring a session up, wait for it to end, collect its output, tear it down."""
         access_mode = cfg.access_mode
@@ -222,6 +210,14 @@ class SessionExecutor(Executor):
                 cfg.command,
             )
 
+        control.raise_if_cancelled(f"{session_kind} cancelled before start")
+        stoppable = cfg.honor_finish_request
+        if stoppable and control.stop_requested:
+            logger.info(
+                "%s for task %s stopped before start", session_kind, task.task_id
+            )
+            return SessionOutcome(session_id=session_id, end=SessionEnd("finished"))
+
         try:
             session = self._backend.start_session(request)
         except ExecutionError:
@@ -229,7 +225,14 @@ class SessionExecutor(Executor):
         except Exception as exc:
             raise ExecutionError(f"Failed to start {session_kind}: {exc}") from exc
 
-        self._current_session = session
+        unregister_cancel = control.on_cancel(
+            lambda: self._stop_session(session, "cancellation")
+        )
+        unregister_stop = (
+            control.on_stop(lambda: self._stop_session(session, "graceful stop"))
+            if stoppable
+            else lambda: None
+        )
         log_thread: threading.Thread | None = None
         if not interactive:
             log_thread = threading.Thread(
@@ -239,26 +242,33 @@ class SessionExecutor(Executor):
             )
             log_thread.start()
         try:
-            ready_info = (
-                self._wait_session_ready(session, session_id, task, cfg)
-                if interactive
-                else {}
-            )
-            end = self._wait_for_session(session, cfg)
+            try:
+                ready_info = (
+                    self._wait_session_ready(session, session_id, task, cfg)
+                    if interactive
+                    else {}
+                )
+            except Exception as exc:
+                # A signal stops the session, which fails the readiness wait.
+                if control.cancel_requested:
+                    raise TaskCancelledError(f"{session_kind} cancelled") from exc
+                if not (stoppable and control.stop_requested):
+                    raise
+                ready_info = {}
+            end = self._wait_for_session(session, cfg, control)
             if not interactive:
                 # Keep as fallback — captures any output the streaming thread missed.
                 session.save_logs(out_dir)
             session.collect_output(out_dir / ARTIFACTS_DIR)
             maybe_upload_artifacts(task, out_dir, logger=logger, skip_errors=True)
         finally:
+            unregister_cancel()
+            unregister_stop()
             if log_thread is not None:
                 # Wait for the thread to drain remaining output before tearing down
                 # the session.
                 log_thread.join(timeout=30.0)
             self.withdraw_endpoint(session_id)
-            self._current_session = None
-            self._cancel_event.clear()
-            self._finish_event.clear()
             session.stop(cfg.stop_timeout_sec)
             session.cleanup()
 
@@ -309,15 +319,19 @@ class SessionExecutor(Executor):
             "port": host_port,
         }
 
-    def _wait_for_session(self, session: SSHSession, cfg: SSHConfig) -> SessionEnd:
+    def _wait_for_session(
+        self, session: SSHSession, cfg: SSHConfig, control: RunControl
+    ) -> SessionEnd:
         """Block until the session ends, then fail it if its disk use is past
         the limit: the polling check may not have run since its last write."""
-        end = self._poll_session(session, cfg)
+        end = self._poll_session(session, cfg, control)
         if cfg.disk_limit_bytes is not None:
             self._enforce_disk_limit(session, cfg.disk_limit_bytes)
         return end
 
-    def _poll_session(self, session: SSHSession, cfg: SSHConfig) -> SessionEnd:
+    def _poll_session(
+        self, session: SSHSession, cfg: SSHConfig, control: RunControl
+    ) -> SessionEnd:
         """Block until the session exits or its TTL/idle timeout fires.
 
         The idle clock starts when the session does, so a session nobody ever
@@ -329,10 +343,10 @@ class SessionExecutor(Executor):
         idle_unobservable_logged = False
         disk_check_at = 0.0
         while time.time() < deadline:
-            if self._cancel_event.is_set():
+            if control.cancel_requested:
                 raise TaskCancelledError("Session cancelled")
             if cfg.honor_finish_request and (
-                self._finish_event.is_set() or session.finish_requested()
+                control.stop_requested or session.finish_requested()
             ):
                 logger.info("Session finish requested; stopping session")
                 session.stop(1)
@@ -344,7 +358,7 @@ class SessionExecutor(Executor):
                 exit_code = session.poll()
             except Exception as exc:
                 logger.debug("Session poll error (may have exited): %s", exc)
-                if self._finish_event.is_set():
+                if cfg.honor_finish_request and control.stop_requested:
                     return SessionEnd("finished")
                 return SessionEnd("lost")
             if exit_code is not None:

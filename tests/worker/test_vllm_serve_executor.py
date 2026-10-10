@@ -15,13 +15,18 @@ import requests
 from shared.tasks.components.model import ModelConfig, ModelSource
 from shared.tasks.specs.serve import ServeSpecStrict
 from shared.tasks.task_type import TaskType
+from shared.tasks.worker_message import WorkerTaskMessage
 from tests.worker.factories import (
     make_worker_config,
     make_worker_hardware,
     make_worker_task_message,
 )
 from worker.executors import vllm_serve_executor as mod
-from worker.executors.base_executor import ExecutionError, TaskCancelledError
+from worker.executors.base_executor import (
+    ExecutionError,
+    RunControl,
+    TaskCancelledError,
+)
 from worker.executors.vllm_serve_executor import (
     ServeResult,
     VLLMServeExecutor,
@@ -168,7 +173,7 @@ class TestServeExecutorCmdBuilding:
             patch.object(ex, "emit_update"),
             patch.object(ex, "_terminate_process_group"),
         ):
-            ex.run(task, tmp_path)
+            ex.run(task, tmp_path, RunControl(task.task_id))
 
         return captured[0]
 
@@ -237,7 +242,7 @@ class TestServeExecutorCmdBuilding:
         task = make_worker_task_message(spec=spec, task_type=TaskType.SERVE)
         ex = self._make_executor()
         with pytest.raises(ExecutionError, match="model.source.identifier"):
-            ex.run(task, tmp_path)
+            ex.run(task, tmp_path, RunControl(task.task_id))
 
 
 class TestServeApiKey:
@@ -271,7 +276,7 @@ class TestServeApiKey:
             patch.object(ex, "emit_update", emit),
             patch.object(ex, "_terminate_process_group"),
         ):
-            result = ex.run(task, tmp_path)
+            result = ex.run(task, tmp_path, RunControl(task.task_id))
 
         serve = emit.call_args.args[1]["serve"]
         return captured[0], serve, result
@@ -338,7 +343,7 @@ class TestServeAccessModeHostBinding:
             patch.object(ex, "emit_update", emit),
             patch.object(ex, "_terminate_process_group"),
         ):
-            ex.run(task, tmp_path)
+            ex.run(task, tmp_path, RunControl(task.task_id))
 
         serve = emit.call_args.args[1]["serve"]
         return captured[0], serve
@@ -413,7 +418,7 @@ class TestServeAccessModeHostBinding:
             task = make_worker_task_message(spec=spec, task_type=TaskType.SERVE)
             ex = self._make_executor()
             with pytest.raises(ExecutionError, match=f"port {occupied} is unavailable"):
-                ex.run(task, tmp_path)
+                ex.run(task, tmp_path, RunControl(task.task_id))
         finally:
             holder.close()
 
@@ -446,44 +451,135 @@ class TestDefaultReadinessTimeout:
         assert mod._DEFAULT_READINESS_TIMEOUT_SEC >= 600.0
 
 
-class TestVLLMServeExecutorCancelStop:
+class TestServeRunControl:
+    """A run's signals end its own vLLM server, and only while the run is live."""
+
     def _make_executor(self) -> VLLMServeExecutor:
-        cfg = make_worker_config()
-        hw = make_worker_hardware()
-        return VLLMServeExecutor(cfg, hw)
+        return VLLMServeExecutor(make_worker_config(), make_worker_hardware())
 
-    def test_cancel_sets_event(self) -> None:
-        ex = self._make_executor()
-        assert not ex._cancel_event.is_set()
-        ex.cancel("tsk-test")
-        assert ex._cancel_event.is_set()
+    def _task(self) -> WorkerTaskMessage:
+        spec = ServeSpecStrict(
+            taskType=TaskType.SERVE,
+            model=ModelConfig(source=ModelSource(identifier="m")),
+        )
+        return make_worker_task_message(spec=spec, task_type=TaskType.SERVE)
 
-    def test_stop_sets_event(self) -> None:
-        ex = self._make_executor()
-        assert not ex._stop_event.is_set()
-        ex.stop("tsk-test")
-        assert ex._stop_event.is_set()
+    @staticmethod
+    def _fake_proc() -> MagicMock:
+        proc = MagicMock()
+        proc.stdout = io.StringIO("")
+        proc.poll.return_value = None
+        proc.pid = 12345
+        return proc
 
-    def test_cancel_terminates_proc(self) -> None:
+    @pytest.mark.parametrize("signal", ["cancel", "stop"])
+    def test_signal_before_launch_raises_without_popen(
+        self, signal: str, tmp_path: Path
+    ) -> None:
         ex = self._make_executor()
-        mock_proc = MagicMock()
-        ex._proc = mock_proc
-        with patch.object(ex, "_terminate_process_group") as mock_term:
-            ex.cancel("tsk-test")
-            mock_term.assert_called_once_with(mock_proc)
+        control = RunControl("tsk-test")
+        getattr(control, f"request_{signal}")()
+        with patch("subprocess.Popen") as popen:
+            with pytest.raises(TaskCancelledError, match="before vLLM launch"):
+                ex.run(self._task(), tmp_path, control)
+        popen.assert_not_called()
 
-    def test_stop_terminates_proc(self) -> None:
+    @pytest.mark.parametrize("signal", ["cancel", "stop"])
+    def test_signal_terminates_the_process_group(
+        self, signal: str, tmp_path: Path
+    ) -> None:
         ex = self._make_executor()
-        mock_proc = MagicMock()
-        ex._proc = mock_proc
-        with patch.object(ex, "_terminate_process_group") as mock_term:
-            ex.stop("tsk-test")
-            mock_term.assert_called_once_with(mock_proc)
+        control = RunControl("tsk-test")
+        proc = self._fake_proc()
+        polling = threading.Event()
+        terminated_from: list[threading.Thread] = []
 
-    def test_cancel_no_proc_is_safe(self) -> None:
+        def poll_health(*args: object, **kwargs: object) -> None:
+            polling.set()
+            deadline = time.monotonic() + 5.0
+            while time.monotonic() < deadline:
+                if control.cancel_requested or control.stop_requested:
+                    raise TaskCancelledError("signalled")
+                time.sleep(0.01)
+
+        errors: list[BaseException] = []
+
+        def run() -> None:
+            try:
+                ex.run(self._task(), tmp_path, control)
+            except BaseException as exc:
+                errors.append(exc)
+
+        with (
+            patch("subprocess.Popen", return_value=proc),
+            patch.object(ex, "_poll_health", side_effect=poll_health),
+            patch.object(
+                ex,
+                "_terminate_process_group",
+                side_effect=lambda p: terminated_from.append(
+                    threading.current_thread()
+                ),
+            ),
+        ):
+            thread = threading.Thread(target=run)
+            thread.start()
+            assert polling.wait(5.0)
+            getattr(control, f"request_{signal}")()
+            thread.join(5.0)
+
+        assert not thread.is_alive()
+        assert threading.current_thread() in terminated_from
+        assert len(errors) == 1 and isinstance(errors[0], TaskCancelledError)
+
+    def test_callbacks_are_unregistered_when_the_run_ends(self, tmp_path: Path) -> None:
         ex = self._make_executor()
-        ex._proc = None
-        ex.cancel("tsk-test")  # must not raise
+        control = RunControl("tsk-test")
+        with (
+            patch("subprocess.Popen", return_value=self._fake_proc()),
+            patch.object(ex, "_poll_health"),
+            patch.object(ex, "_wait_for_serve"),
+            patch.object(ex, "emit_update"),
+            patch.object(ex, "_terminate_process_group") as terminate,
+        ):
+            ex.run(self._task(), tmp_path, control)
+            calls = terminate.call_count
+            control.request_cancel()
+            control.request_stop()
+            assert terminate.call_count == calls
+
+    def test_cancel_during_teardown_is_tolerated(self, tmp_path: Path) -> None:
+        """The callback and the run's own teardown may terminate concurrently."""
+        ex = self._make_executor()
+        control = RunControl("tsk-test")
+        callback_entered = threading.Event()
+        teardown_entered = threading.Event()
+        signaller: list[threading.Thread] = []
+
+        def terminate(proc: object) -> None:
+            if threading.current_thread() is signaller[0]:
+                callback_entered.set()
+                assert teardown_entered.wait(5.0)
+            else:
+                teardown_entered.set()
+
+        def wait_for_serve(*args: object, **kwargs: object) -> None:
+            thread = threading.Thread(target=control.request_cancel)
+            signaller.append(thread)
+            thread.start()
+            assert callback_entered.wait(5.0)
+
+        with (
+            patch("subprocess.Popen", return_value=self._fake_proc()),
+            patch.object(ex, "_poll_health"),
+            patch.object(ex, "_wait_for_serve", side_effect=wait_for_serve),
+            patch.object(ex, "emit_update"),
+            patch.object(ex, "_terminate_process_group", side_effect=terminate),
+        ):
+            result = ex.run(self._task(), tmp_path, control)
+        signaller[0].join(5.0)
+
+        assert isinstance(result, ServeResult)
+        assert not signaller[0].is_alive()
 
 
 class TestWaitForServe:
@@ -495,16 +591,18 @@ class TestWaitForServe:
         ex = self._make_executor()
         mock_proc = MagicMock()
         mock_proc.poll.return_value = None
-        ex._cancel_event.set()
+        control = RunControl("tsk-test")
+        control.request_cancel()
         with pytest.raises(TaskCancelledError):
-            ex._wait_for_serve(mock_proc, ttl_sec=60.0)
+            ex._wait_for_serve(mock_proc, ttl_sec=60.0, control=control)
 
     def test_exits_on_stop(self) -> None:
         ex = self._make_executor()
         mock_proc = MagicMock()
         mock_proc.poll.return_value = None
-        ex._stop_event.set()
-        ex._wait_for_serve(mock_proc, ttl_sec=60.0)
+        control = RunControl("tsk-test")
+        control.request_stop()
+        ex._wait_for_serve(mock_proc, ttl_sec=60.0, control=control)
 
     def test_raises_on_unexpected_proc_exit(self) -> None:
         ex = self._make_executor()
@@ -512,7 +610,7 @@ class TestWaitForServe:
         mock_proc.poll.return_value = 1
         mock_proc.returncode = 1
         with pytest.raises(ExecutionError):
-            ex._wait_for_serve(mock_proc, ttl_sec=60.0)
+            ex._wait_for_serve(mock_proc, ttl_sec=60.0, control=RunControl("tsk-test"))
 
     def test_exits_when_ttl_expires(self) -> None:
         ex = self._make_executor()
@@ -523,7 +621,7 @@ class TestWaitForServe:
         mod._POLL_INTERVAL_SEC = 0.01
         try:
             start = time.time()
-            ex._wait_for_serve(mock_proc, ttl_sec=0.02)
+            ex._wait_for_serve(mock_proc, ttl_sec=0.02, control=RunControl("tsk-test"))
             elapsed = time.time() - start
         finally:
             mod._POLL_INTERVAL_SEC = original
@@ -553,7 +651,12 @@ class TestPollHealth:
             with patch("requests.get", side_effect=requests.ConnectionError()):
                 with pytest.raises(ExecutionError) as exc_info:
                     ex._poll_health(
-                        mock_proc, 8000, "tsk-test", timeout_sec=0.01, tail=tail
+                        mock_proc,
+                        8000,
+                        "tsk-test",
+                        timeout_sec=0.01,
+                        tail=tail,
+                        control=RunControl("tsk-test"),
                     )
         finally:
             mod._HEALTH_POLL_INTERVAL_SEC = orig
@@ -576,7 +679,12 @@ class TestPollHealth:
         with patch("requests.get", side_effect=requests.ConnectionError()):
             with pytest.raises(ExecutionError) as exc_info:
                 ex._poll_health(
-                    mock_proc, 8000, "tsk-test", timeout_sec=30.0, tail=tail
+                    mock_proc,
+                    8000,
+                    "tsk-test",
+                    timeout_sec=30.0,
+                    tail=tail,
+                    control=RunControl("tsk-test"),
                 )
 
         assert "CUDA error: device-side assert triggered" in str(exc_info.value)
@@ -594,7 +702,12 @@ class TestPollHealth:
             with patch("requests.get", side_effect=requests.ConnectionError()):
                 with pytest.raises(ExecutionError, match=r"within 3s"):
                     ex._poll_health(
-                        mock_proc, 8000, "tsk-x", timeout_sec=3.0, tail=tail
+                        mock_proc,
+                        8000,
+                        "tsk-x",
+                        timeout_sec=3.0,
+                        tail=tail,
+                        control=RunControl("tsk-test"),
                     )
         finally:
             mod._HEALTH_POLL_INTERVAL_SEC = orig
@@ -609,19 +722,32 @@ class TestPollHealth:
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         with patch("requests.get", return_value=mock_resp):
-            ex._poll_health(mock_proc, 8000, "tsk-ok", timeout_sec=30.0, tail=tail)
+            ex._poll_health(
+                mock_proc,
+                8000,
+                "tsk-ok",
+                timeout_sec=30.0,
+                tail=tail,
+                control=RunControl("tsk-test"),
+            )
 
     def test_cancel_during_poll_raises(self) -> None:
         ex = self._make_executor()
         mock_proc = MagicMock()
         mock_proc.poll.return_value = None
         tail = self._empty_tail()
-        ex._cancel_event.set()
+        control = RunControl("tsk-test")
+        control.request_cancel()
 
         with patch("requests.get", side_effect=requests.ConnectionError()):
             with pytest.raises(TaskCancelledError):
                 ex._poll_health(
-                    mock_proc, 8000, "tsk-cancel", timeout_sec=60.0, tail=tail
+                    mock_proc,
+                    8000,
+                    "tsk-cancel",
+                    timeout_sec=60.0,
+                    tail=tail,
+                    control=control,
                 )
 
     def test_stop_during_poll_raises(self) -> None:
@@ -629,12 +755,18 @@ class TestPollHealth:
         mock_proc = MagicMock()
         mock_proc.poll.return_value = None
         tail = self._empty_tail()
-        ex._stop_event.set()
+        control = RunControl("tsk-test")
+        control.request_stop()
 
         with patch("requests.get", side_effect=requests.ConnectionError()):
             with pytest.raises(TaskCancelledError):
                 ex._poll_health(
-                    mock_proc, 8000, "tsk-stop", timeout_sec=60.0, tail=tail
+                    mock_proc,
+                    8000,
+                    "tsk-stop",
+                    timeout_sec=60.0,
+                    tail=tail,
+                    control=control,
                 )
 
     def test_empty_tail_no_snippet_in_message(self) -> None:
@@ -650,7 +782,12 @@ class TestPollHealth:
             with patch("requests.get", side_effect=requests.ConnectionError()):
                 with pytest.raises(ExecutionError) as exc_info:
                     ex._poll_health(
-                        mock_proc, 8000, "tsk-empty", timeout_sec=0.01, tail=tail
+                        mock_proc,
+                        8000,
+                        "tsk-empty",
+                        timeout_sec=0.01,
+                        tail=tail,
+                        control=RunControl("tsk-test"),
                     )
         finally:
             mod._HEALTH_POLL_INTERVAL_SEC = orig
@@ -765,6 +902,7 @@ class TestPollHealthEofFastFail:
                     "tsk-eof",
                     timeout_sec=600.0,
                     tail=tail,
+                    control=RunControl("tsk-test"),
                     eof_event=eof_event,
                 )
         elapsed = time.time() - start
@@ -792,6 +930,7 @@ class TestPollHealthEofFastFail:
                     "tsk-eof-output",
                     timeout_sec=600.0,
                     tail=tail,
+                    control=RunControl("tsk-test"),
                     eof_event=eof_event,
                 )
 
@@ -817,6 +956,7 @@ class TestPollHealthEofFastFail:
                         "tsk-no-eof",
                         timeout_sec=1.0,
                         tail=self._empty_tail(),
+                        control=RunControl("tsk-test"),
                         eof_event=eof_event,
                     )
         finally:

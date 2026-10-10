@@ -25,7 +25,7 @@ from shared.tasks.components.model import ModelConfig, ModelSource
 from shared.tasks.specs import EmbeddingSpecStrict
 from shared.tasks.task_type import TaskType
 from tests.worker.factories import DEFAULT_WORKER_CONFIG, make_worker_task_message
-from worker.executors.base_executor import ExecutionError
+from worker.executors.base_executor import ExecutionError, RunControl
 from worker.executors.vllm_embedding_executor import VLLMEmbeddingExecutor
 from worker.runner import Runner
 
@@ -88,7 +88,7 @@ def test_embedding_writes_tensor_artifact_and_metadata(tmp_path: Path) -> None:
     )
 
     with patch.object(executor, "_ensure_embedding_llm") as mock_ensure:
-        result = executor.run(task, tmp_path)
+        result = executor.run(task, tmp_path, RunControl(task.task_id))
     mock_ensure.assert_called_once()
 
     assert isinstance(result, EmbeddingResult)
@@ -192,7 +192,7 @@ def test_embedding_fails_fast_on_empty_input(tmp_path: Path) -> None:
 
     with patch.object(executor, "_ensure_embedding_llm"):
         with pytest.raises(ExecutionError, match="No inputs prepared"):
-            executor.run(task, tmp_path)
+            executor.run(task, tmp_path, RunControl(task.task_id))
     assert fake.encoded == []
     assert not (tmp_path / "artifacts" / "embeddings.safetensors").exists()
 
@@ -210,7 +210,7 @@ def test_embedding_rejects_inconsistent_dimensions(tmp_path: Path) -> None:
 
     with patch.object(executor, "_ensure_embedding_llm"):
         with pytest.raises(ExecutionError, match="inconsistent dimensionality"):
-            executor.run(task, tmp_path)
+            executor.run(task, tmp_path, RunControl(task.task_id))
 
 
 def test_embedding_executor_advertises_embedding_task() -> None:
