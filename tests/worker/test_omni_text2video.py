@@ -181,6 +181,10 @@ def test_engine_flags_reach_omni_and_key_its_reuse(
     assert len(created) == 2
     assert created[1].init_kwargs == {"model": "org/video"}
 
+    executor._ensure_omni(_spec(["p"], task_type="t2va").model_dump(by_alias=True))
+    assert len(created) == 3
+    assert created[2].init_kwargs == {"model": "org/video", "task_type": "t2va"}
+
 
 def test_encoder_writes_mp4_from_installed_vllm_omni() -> None:
     frames = np.zeros((4, 32, 32, 3), dtype=np.uint8)
