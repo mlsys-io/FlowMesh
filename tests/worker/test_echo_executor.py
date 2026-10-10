@@ -17,18 +17,14 @@ def _spec(data: dict, upstream: dict | None = None) -> dict:
     return spec
 
 
-def _run(
-    data: dict, upstream: dict | None = None, tmp_path: Path | None = None
-) -> EchoResult:
+def _run(data: dict, out_dir: Path, upstream: dict | None = None) -> EchoResult:
     executor = EchoExecutor(make_worker_config())
     task = make_worker_task_message(
         _spec(data, upstream), task_type=TaskType.ECHO, task_id="tsk-echo"
     )
-    return executor.run(
-        task, tmp_path or Path("/tmp/echo-out"), RunControl(task.task_id)
-    )
+    return executor.run(task, out_dir, RunControl(task.task_id))
 
 
-def test_literal_items_are_echoed() -> None:
-    result = _run({"type": "list", "items": ["a", "b", "c"]})
+def test_literal_items_are_echoed(tmp_path: Path) -> None:
+    result = _run({"type": "list", "items": ["a", "b", "c"]}, tmp_path)
     assert [i.output for i in result.items] == ["a", "b", "c"]
