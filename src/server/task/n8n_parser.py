@@ -11,6 +11,17 @@ _CHAIN_NODE_TYPE = "@n8n/n8n-nodes-langchain.chainLlm"
 _HF_MODEL_NODE_TYPE = "@n8n/n8n-nodes-langchain.lmOpenHuggingFaceInference"
 _OPENAI_CHAT_MODEL_NODE_TYPE = "@n8n/n8n-nodes-langchain.lmChatOpenAi"
 _OPENAI_CHAT_NODE_TYPE = "@n8n/n8n-nodes-langchain.openAi"
+_CODE_NODE_TYPE = "n8n-nodes-base.code"
+_PYTHON_CODE_LANGUAGES = frozenset({"python", "pythonNative"})
+_OMNI_TASK_TYPES = frozenset(
+    {
+        "omni_text2image",
+        "omni_text2speech",
+        "omni_text2audio",
+        "omni_text2general",
+        "omni_text2video",
+    }
+)
 _N8N_CREDENTIAL_AES_PASSWORD = os.environ.get("N8N_CREDENTIAL_AES_PASSWORD", "").strip()
 
 N8N_NODE_KEY_SCHEMA = {
@@ -28,6 +39,12 @@ def translate_n8n_workflow(payload: dict[str, Any]) -> dict[str, Any]:
 
     chain_nodes = [node for node in nodes if node["type"] == _CHAIN_NODE_TYPE]
     openai_nodes = [node for node in nodes if node["type"] == _OPENAI_CHAT_NODE_TYPE]
+    python_code_nodes = [
+        node
+        for node in nodes
+        if node["type"] == _CODE_NODE_TYPE
+        and node["parameters"].get("language") in _PYTHON_CODE_LANGUAGES
+    ]
 
     hf_model_nodes = {
         node["name"]: node for node in nodes if node["type"] == _HF_MODEL_NODE_TYPE
@@ -51,7 +68,9 @@ def translate_n8n_workflow(payload: dict[str, Any]) -> dict[str, Any]:
         node for node in chain_nodes if chain_model_types.get(node["name"]) == "api"
     ]
 
-    task_nodes = inference_chain_nodes + api_chain_nodes + openai_nodes
+    task_nodes = (
+        inference_chain_nodes + api_chain_nodes + openai_nodes + python_code_nodes
+    )
     if not task_nodes:
         raise ValueError("No task nodes found in n8n workflow")
 
@@ -69,6 +88,8 @@ def translate_n8n_workflow(payload: dict[str, Any]) -> dict[str, Any]:
         node_task_types[chain["name"]] = "api"
     for node in openai_nodes:
         node_task_types[node["name"]] = "api"
+    for node in python_code_nodes:
+        node_task_types[node["name"]] = "python"
 
     node_specs: dict[str, dict[str, Any]] = {}
     for chain in inference_chain_nodes:
@@ -157,6 +178,11 @@ def translate_n8n_workflow(payload: dict[str, Any]) -> dict[str, Any]:
         }
         node_specs[name] = spec
 
+    for node in python_code_nodes:
+        node_specs[node["name"]] = _build_python_node_spec(
+            node, incoming, raw_set_nodes
+        )
+
     workflow_spec: dict[str, Any] = {}
     if len(node_specs) == 1:
         workflow_spec = next(iter(node_specs.values()))
@@ -188,6 +214,40 @@ def translate_n8n_workflow(payload: dict[str, Any]) -> dict[str, Any]:
         },
         "spec": workflow_spec,
     }
+
+
+def _build_python_node_spec(
+    node: dict[str, Any],
+    incoming: dict[str, list[tuple[str, str]]],
+    raw_set_nodes: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    """Translate a Python Code node into a ``python`` stage.
+
+    The node's code must define ``main``; upstream nodes reach it as keyword
+    arguments, or through an ``inputs`` parameter when their names are not
+    Python identifiers. A ``Python*`` Set node supplies further stage fields
+    (``requirements``, ``network``, ``image``, ``timeoutSeconds``, ...) and a
+    ``Resource*`` Set node its hardware.
+    """
+    code = node["parameters"].get("pythonCode")
+    if not isinstance(code, str) or not code.strip():
+        raise ValueError(f"Code node '{node['name']}' has no Python code")
+    spec: dict[str, Any] = {"taskType": "python", "code": code, "entrypoint": "main"}
+    for source_name, _ in incoming.get(node["name"], []):
+        source = raw_set_nodes.get(source_name)
+        if source is None:
+            continue
+        fragment = json.loads(source["parameters"]["jsonOutput"])
+        if source_name.startswith("Python"):
+            spec.update(fragment)
+        elif source_name.startswith("Resource"):
+            spec["resources"] = fragment
+        else:
+            raise ValueError(
+                f"Unrecognized fragment source node '{source_name}' "
+                f"for Code node '{node['name']}'"
+            )
+    return spec
 
 
 def _resolve_chain_model_type(
@@ -570,7 +630,7 @@ def _default_artifacts(task_type: str) -> list[str]:
         return ["results.json", "logs"]
     elif task_type == "sft":
         return ["results.json", "logs", "final_model"]
-    elif task_type == "omni_text2video":
+    elif task_type in _OMNI_TASK_TYPES:
         return ["results.json", "logs", "artifacts/"]
     else:
         raise ValueError(
