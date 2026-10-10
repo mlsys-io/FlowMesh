@@ -94,3 +94,14 @@ class OmniText2GeneralSpecStrict(OmniSpecStrict):
 
 class OmniText2GeneralSpecTemplate(OmniSpecTemplate):
     taskType: Literal[TaskType.OMNI_TEXT2GENERAL]
+
+
+# ── Text-to-Video ────────────────────────────────────────────────────────────
+
+
+class OmniText2VideoSpecStrict(OmniSpecStrict):
+    taskType: Literal[TaskType.OMNI_TEXT2VIDEO]
+
+
+class OmniText2VideoSpecTemplate(OmniSpecTemplate):
+    taskType: Literal[TaskType.OMNI_TEXT2VIDEO]

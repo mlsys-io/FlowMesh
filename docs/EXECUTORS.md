@@ -9,7 +9,7 @@ The worker resolves `spec.taskType` against an executor registry in
 | `inference` | `VLLMExecutor` / `TransformersExecutor` | LLM inference |
 | `embedding` | `VLLMEmbeddingExecutor` (text, when `model.vllm` is set) / `TransformersExecutor` (visual, `model.transformers.mode: visual-embedding`) | Text / visual embeddings |
 | `diffusion` | `DiffusersExecutor` | Image / video diffusion models |
-| `omni_text2{audio,image,speech,general}` | `Omni*Executor` | Multimodal generation |
+| `omni_text2{audio,image,speech,general,video}` | `Omni*Executor` | Multimodal generation (`omni_text2video`: one mp4 per prompt; `spec.omni` requires `num_frames` and sets `height`, `width`, `num_inference_steps`, `guidance_scale`, `seed`, `fps`, `negative_prompt`, `extra_args` (model-specific sampling arguments, e.g. MiniMax-H3's `aspect_ratio`), `task_type` (vLLM-Omni checkpoint partition, e.g. `t2va` for MiniMax-H3), and the placement flags `enable_cpu_offload`, `enable_layerwise_offload`, `quantization`; see `examples/templates/omni_text2video*.yaml` for Wan and MiniMax-H3) |
 | `training` | `SFTExecutor` / `LoRASFTExecutor` / `DPOExecutor` / `PPOExecutor` | LLM fine-tuning |
 | `image_classification_training` | `ImageClassificationTrainingExecutor` | Vision classification fine-tuning (`AutoModelForImageClassification` + HF `Trainer`) |
 | `rag` | `RAGExecutor` | Retrieval-augmented generation |

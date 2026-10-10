@@ -76,6 +76,12 @@ class OmniGeneralItem(StrictModel):
     text: str | None = None
 
 
+class OmniVideoItem(StrictModel):
+    index: int
+    prompt: str
+    video: ArtifactRef
+
+
 class CostEstimates(StrictModel):
     ok: bool
     num_queries: int
