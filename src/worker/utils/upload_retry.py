@@ -4,7 +4,7 @@ FlowMesh's own upload endpoints (result, artifact and trace files, the system
 delivery bundle) overwrite atomically, so re-sending after an ambiguous failure
 (a read timeout on a request the server may already have stored) is safe; those
 uploads are idempotent. An external destination gets a retry only when the
-request provably never reached it or was turned away unprocessed.
+request failed before connecting to it.
 """
 
 import email.utils
@@ -47,7 +47,7 @@ def upload_backoff_sec() -> float:
 def is_retryable_status(status_code: int, *, idempotent: bool = True) -> bool:
     """Whether an HTTP status is transient and worth retrying."""
     if not idempotent:
-        return status_code in (429, 503)
+        return False
     return status_code >= 500 or status_code in (408, 429)
 
 
@@ -98,7 +98,7 @@ def _backoff(attempt: int, response: _Response | None) -> float:
     if response is not None:
         retry_after = _retry_after_seconds(response)
         if retry_after is not None:
-            return min(retry_after, _BACKOFF_MAX_SEC)
+            return retry_after
     return min(upload_backoff_sec() * (2 ** (attempt - 1)), _BACKOFF_MAX_SEC)
 
 
@@ -108,19 +108,17 @@ def send_with_retries[R: _Response](
     what: str,
     idempotent: bool = True,
     logger: logging.Logger | None = None,
-    sleep: Callable[[float], None] = time.sleep,
+    sleep: Callable[[float], None] | None = None,
 ) -> R:
-    """Call ``send`` until it returns a non-transient response.
+    """Send a rebuilt request with bounded retries.
 
     ``send`` must build the whole request on every call (re-open files, rewind
-    streams). ``idempotent=False`` limits retries to failures where the request
-    was not processed (see ``is_retryable_error`` / ``is_retryable_status``).
-    A connection error or timeout on the last attempt propagates; a
-    transient status on the last attempt is returned for the caller to handle
-    exactly as it handled a single attempt before. Any other exception
-    propagates immediately.
+    streams). ``idempotent=False`` retries only failures before connecting.
+    Return the final response, including a transient status after exhaustion.
+    Raise the final exception; non-retryable exceptions propagate immediately.
     """
     retries = upload_retries()
+    wait = time.sleep if sleep is None else sleep
     attempt = 0
     while True:
         try:
@@ -139,7 +137,7 @@ def send_with_retries[R: _Response](
                     exc,
                     delay,
                 )
-            sleep(delay)
+            wait(delay)
             continue
         if (
             not is_retryable_status(response.status_code, idempotent=idempotent)
@@ -157,4 +155,4 @@ def send_with_retries[R: _Response](
                 retries + 1,
                 delay,
             )
-        sleep(delay)
+        wait(delay)

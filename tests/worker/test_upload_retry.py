@@ -3,6 +3,8 @@
 import httpx
 import pytest
 import requests
+from urllib3.connection import HTTPConnection
+from urllib3.connectionpool import HTTPConnectionPool
 from urllib3.exceptions import MaxRetryError, NewConnectionError
 
 from worker.utils.upload_retry import send_with_retries
@@ -66,13 +68,16 @@ def test_transient_statuses_are_retried(status: int) -> None:
     assert len(calls) == 2
 
 
-def test_retry_after_overrides_backoff() -> None:
-    send, _calls = _sequence(_Response(503, {"Retry-After": "7"}), _Response(200))
+@pytest.mark.parametrize("delay", [7, 300])
+def test_retry_after_overrides_backoff(delay: int) -> None:
+    send, _calls = _sequence(
+        _Response(503, {"Retry-After": str(delay)}), _Response(200)
+    )
     delays: list[float] = []
 
     send_with_retries(send, what="upload", sleep=delays.append)
 
-    assert delays == [7.0]
+    assert delays == [float(delay)]
 
 
 @pytest.mark.parametrize("status", [200, 400, 401, 403, 404, 413])
@@ -136,8 +141,12 @@ def test_backoff_is_capped(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _refused() -> requests.ConnectionError:
-    reason = NewConnectionError(None, "[Errno 111] Connection refused")  # type: ignore[arg-type]
-    return requests.ConnectionError(MaxRetryError(None, "/x", reason))  # type: ignore[arg-type]
+    reason = NewConnectionError(
+        HTTPConnection("sink"), "[Errno 111] Connection refused"
+    )
+    return requests.ConnectionError(
+        MaxRetryError(HTTPConnectionPool("sink"), "/x", reason)
+    )
 
 
 @pytest.mark.parametrize(
@@ -179,17 +188,13 @@ def test_non_idempotent_upload_is_not_resent_after_it_may_have_landed(
     assert len(calls) == 1
 
 
-@pytest.mark.parametrize(
-    ("status", "retried"), [(429, True), (503, True), (500, False), (502, False)]
-)
-def test_non_idempotent_upload_retries_only_unprocessed_statuses(
-    status: int, retried: bool
-) -> None:
+@pytest.mark.parametrize("status", [408, 429, 500, 502, 503])
+def test_non_idempotent_upload_does_not_retry_http_statuses(status: int) -> None:
     send, calls = _sequence(_Response(status), _Response(200))
 
     response = send_with_retries(
         send, what="upload", idempotent=False, sleep=lambda _s: None
     )
 
-    assert response.status_code == (200 if retried else status)
-    assert len(calls) == (2 if retried else 1)
+    assert response.status_code == status
+    assert len(calls) == 1

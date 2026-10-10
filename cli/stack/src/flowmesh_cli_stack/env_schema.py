@@ -644,7 +644,10 @@ STACK_ENV_SCHEMA = EnvSchema(
                 EnvVar(
                     "WORKER_UPLOAD_RETRIES",
                     "5",
-                    description="Retries after a transient worker upload failure.",
+                    description=(
+                        "Additional upload attempts after retryable failures; "
+                        "0 disables retries."
+                    ),
                     var_type=EnvVarType.INT,
                     min_value=0,
                 ),

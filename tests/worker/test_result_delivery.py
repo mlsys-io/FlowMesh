@@ -102,6 +102,7 @@ def test_system_delivery_failure_keeps_producer_successful(
 ) -> None:
     monkeypatch.setenv("FLOWMESH_BASE_URL", "http://server")
     monkeypatch.setenv("WORKER_UPLOAD_RESULTS", "0")
+    monkeypatch.setenv("WORKER_UPLOAD_BACKOFF_SEC", "0")
     client_class = httpx.Client
     monkeypatch.setattr(
         result_delivery.httpx,
@@ -418,10 +419,15 @@ def test_an_unreachable_server_gets_no_bundle_packed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("FLOWMESH_BASE_URL", "http://server")
+    monkeypatch.setenv("WORKER_UPLOAD_RETRIES", "2")
+    monkeypatch.setenv("WORKER_UPLOAD_BACKOFF_SEC", "0")
     producer = populate(tmp_path / "producer")
     client_class = httpx.Client
+    attempts = 0
 
     def refuse(request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
         raise httpx.ConnectError("refused", request=request)
 
     monkeypatch.setattr(
@@ -437,4 +443,78 @@ def test_an_unreachable_server_gets_no_bundle_packed(
     )
 
     assert size == 0
+    assert attempts == 3
     packed.assert_not_called()
+
+
+@pytest.mark.parametrize("failure", ["connect", "read", "status"])
+@pytest.mark.parametrize("held", [False, True])
+def test_publication_recovers_from_a_transient_preflight_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str, held: bool
+) -> None:
+    monkeypatch.setenv("FLOWMESH_BASE_URL", "http://server")
+    monkeypatch.setenv("WORKER_UPLOAD_BACKOFF_SEC", "0")
+    producer = populate(tmp_path / "producer")
+    checks = 0
+    uploads: list[bytes] = []
+
+    def accept(request: httpx.Request) -> httpx.Response:
+        nonlocal checks
+        if request.method == "GET":
+            checks += 1
+            if checks == 1:
+                if failure == "connect":
+                    raise httpx.ConnectError("refused", request=request)
+                if failure == "read":
+                    raise httpx.ReadTimeout("timed out", request=request)
+                return httpx.Response(503)
+            return httpx.Response(204 if held else 404)
+        uploads.append(request.read())
+        return httpx.Response(200)
+
+    client_class = httpx.Client
+    monkeypatch.setattr(
+        result_delivery.httpx,
+        "Client",
+        lambda **kwargs: client_class(transport=httpx.MockTransport(accept), **kwargs),
+    )
+
+    size = result_delivery.publish_result(
+        producer, "tsk-up", ResultDeliveryRequest(), logging.getLogger("test")
+    )
+
+    assert checks == 2
+    assert len(uploads) == int(not held)
+    assert (size > 0) == (not held)
+
+
+def test_publication_reopens_the_bundle_after_a_read_timeout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("FLOWMESH_BASE_URL", "http://server")
+    monkeypatch.setenv("WORKER_UPLOAD_BACKOFF_SEC", "0")
+    producer = populate(tmp_path / "producer")
+    uploads: list[bytes] = []
+
+    def accept(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(404)
+        uploads.append(request.read().split(b"\r\n\r\n", 1)[1].rsplit(b"\r\n--", 1)[0])
+        if len(uploads) == 1:
+            raise httpx.ReadTimeout("timed out", request=request)
+        return httpx.Response(200)
+
+    client_class = httpx.Client
+    monkeypatch.setattr(
+        result_delivery.httpx,
+        "Client",
+        lambda **kwargs: client_class(transport=httpx.MockTransport(accept), **kwargs),
+    )
+
+    size = result_delivery.publish_result(
+        producer, "tsk-up", ResultDeliveryRequest(), logging.getLogger("test")
+    )
+
+    assert size > 0
+    assert len(uploads) == 2
+    assert uploads[0] == uploads[1]

@@ -76,7 +76,7 @@ class WorkerConfig(BaseModel):
     result_transfer_timeout_sec: float = env.WORKER_RESULT_TRANSFER_TIMEOUT_SEC
     """Seconds a worker waits on the server while publishing or fetching a result"""
     upload_retries: int = env.WORKER_UPLOAD_RETRIES
-    """Retries after a transient failure of a worker upload to the server"""
+    """Additional upload attempts after retryable failures; zero disables retries"""
     upload_backoff_sec: float = env.WORKER_UPLOAD_BACKOFF_SEC
     """First wait between upload retries, doubled per retry"""
     executor_idle_cleanup_sec: float = env.WORKER_EXECUTOR_IDLE_CLEANUP_SEC
