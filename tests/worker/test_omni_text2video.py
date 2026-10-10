@@ -223,3 +223,29 @@ def test_configured_fps_wins_over_model_reported_fps(
 
     mod._encode_mp4(output, {})  # type: ignore[arg-type]
     assert seen["fps"] == 24
+
+
+def test_h3_style_request_sends_extra_args_and_no_default_fps(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    spec = _spec(
+        ["a lantern festival"],
+        height=384,
+        width=672,
+        num_frames=124,
+        extra_args={"aspect_ratio": "16:9"},
+    )
+    _, fake = _run(tmp_path, monkeypatch, spec, [_output("0_a")])
+
+    ((_, params),) = fake.calls
+    assert params.extra_args == {"aspect_ratio": "16:9"}
+    assert params.fps is None
+    assert (params.height, params.width, params.num_frames) == (384, 672, 124)
+
+
+def test_extra_args_must_be_a_mapping(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    spec = _spec(["p0"], extra_args="16:9")
+    with pytest.raises(ExecutionError, match="extra_args must be a mapping"):
+        _run(tmp_path, monkeypatch, spec, [_output("0_a")])
