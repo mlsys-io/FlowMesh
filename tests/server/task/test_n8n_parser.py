@@ -8,6 +8,7 @@ import pytest
 from server.task.n8n_parser import _decode_secret_part, translate_n8n_workflow
 from server.task.parser import parse_workflow
 from shared.tasks.specs import ApiSpecTemplate, OmniText2VideoSpecTemplate
+from shared.tasks.task_type import TaskType
 
 
 class TestTranslateN8nWorkflow:
@@ -214,7 +215,7 @@ class TestTranslateN8nWorkflow:
 
         parsed = parse_workflow(json.dumps(payload), format="n8n")
         specs = {t.task.spec.taskType: t.task.spec for t in parsed.tasks}
-        assert isinstance(specs["omni_text2video"], OmniText2VideoSpecTemplate)
+        assert isinstance(specs[TaskType.OMNI_TEXT2VIDEO], OmniText2VideoSpecTemplate)
 
 
 class TestDecodeSecretPart:
