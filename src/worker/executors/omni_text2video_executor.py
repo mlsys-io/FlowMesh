@@ -199,17 +199,19 @@ def _sampling_params(cfg: dict[str, Any]) -> OmniDiffusionSamplingParams:
     num_frames = to_int(cfg.get("num_frames"))
     if num_frames is None or num_frames < 1:
         raise ExecutionError("omni_text2video requires spec.omni.num_frames.")
-    params: dict[str, Any] = {
-        "fps": to_int(cfg.get("fps")) or _DEFAULT_FPS,
-        "num_frames": num_frames,
-    }
-    for key in ("height", "width", "num_inference_steps", "seed"):
+    params: dict[str, Any] = {"num_frames": num_frames}
+    for key in ("height", "width", "num_inference_steps", "seed", "fps"):
         value = to_int(cfg.get(key))
         if value is not None:
             params[key] = value
     guidance_scale = to_float(cfg.get("guidance_scale"))
     if guidance_scale is not None:
         params["guidance_scale"] = guidance_scale
+    extra_args = cfg.get("extra_args")
+    if extra_args is not None:
+        if not isinstance(extra_args, dict):
+            raise ExecutionError("spec.omni.extra_args must be a mapping.")
+        params["extra_args"] = dict(extra_args)
     return OmniDiffusionSamplingParams(**params)
 
 
