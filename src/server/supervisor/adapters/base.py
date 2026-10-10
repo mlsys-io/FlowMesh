@@ -75,6 +75,10 @@ class WorkerConfig(BaseModel):
     is unspecified."""
     result_transfer_timeout_sec: float = env.WORKER_RESULT_TRANSFER_TIMEOUT_SEC
     """Seconds a worker waits on the server while publishing or fetching a result"""
+    upload_retries: int = env.WORKER_UPLOAD_RETRIES
+    """Retries after a transient failure of a worker upload to the server"""
+    upload_backoff_sec: float = env.WORKER_UPLOAD_BACKOFF_SEC
+    """First wait between upload retries, doubled per retry"""
     executor_idle_cleanup_sec: float = env.WORKER_EXECUTOR_IDLE_CLEANUP_SEC
     """Seconds an executor may sit idle before the worker unloads it"""
     foreign_gpu_gate: bool = env.WORKER_FOREIGN_GPU_GATE
@@ -185,6 +189,8 @@ class WorkerAdapter(ABC):
             "WORKER_RESULT_TRANSFER_TIMEOUT_SEC": to_env_str(
                 config.result_transfer_timeout_sec
             ),
+            "WORKER_UPLOAD_RETRIES": to_env_str(config.upload_retries),
+            "WORKER_UPLOAD_BACKOFF_SEC": to_env_str(config.upload_backoff_sec),
             "WORKER_EXECUTOR_IDLE_CLEANUP_SEC": to_env_str(
                 config.executor_idle_cleanup_sec
             ),

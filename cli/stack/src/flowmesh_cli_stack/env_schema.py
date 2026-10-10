@@ -642,6 +642,20 @@ STACK_ENV_SCHEMA = EnvSchema(
                     min_value=1,
                 ),
                 EnvVar(
+                    "WORKER_UPLOAD_RETRIES",
+                    "5",
+                    description="Retries after a transient worker upload failure.",
+                    var_type=EnvVarType.INT,
+                    min_value=0,
+                ),
+                EnvVar(
+                    "WORKER_UPLOAD_BACKOFF_SEC",
+                    "2",
+                    description="First wait between upload retries; doubles per retry.",
+                    var_type=EnvVarType.FLOAT,
+                    min_value=0,
+                ),
+                EnvVar(
                     "WORKER_EXECUTOR_IDLE_CLEANUP_SEC",
                     "60",
                     var_type=EnvVarType.FLOAT,
