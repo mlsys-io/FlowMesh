@@ -17,6 +17,7 @@ from worker.executors.omni_text2audio_executor import OmniText2AudioExecutor
 from worker.executors.omni_text2general_executor import OmniText2GeneralExecutor
 from worker.executors.omni_text2image_executor import OmniText2ImageExecutor
 from worker.executors.omni_text2speech_executor import OmniText2SpeechExecutor
+from worker.executors.omni_text2video_executor import OmniText2VideoExecutor
 
 
 @pytest.mark.parametrize(
@@ -27,6 +28,7 @@ from worker.executors.omni_text2speech_executor import OmniText2SpeechExecutor
         OmniText2GeneralExecutor,
         OmniText2ImageExecutor,
         OmniText2SpeechExecutor,
+        OmniText2VideoExecutor,
     ],
     ids=lambda c: c.__name__,
 )

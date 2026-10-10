@@ -49,6 +49,7 @@ EXECUTOR_MODULES: dict[str, tuple[str, str]] = {
         "OmniText2GeneralExecutor",
         ".omni_text2general_executor",
     ),
+    "omni_text2video": ("OmniText2VideoExecutor", ".omni_text2video_executor"),
 }
 
 

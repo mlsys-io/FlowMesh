@@ -29,6 +29,8 @@ from .omni import (
     OmniText2ImageSpecTemplate,
     OmniText2SpeechSpecStrict,
     OmniText2SpeechSpecTemplate,
+    OmniText2VideoSpecStrict,
+    OmniText2VideoSpecTemplate,
 )
 from .python import PythonSpecStrict, PythonSpecTemplate
 from .rag import RagSpecStrict, RagSpecTemplate
@@ -95,4 +97,6 @@ __all__ = [
     "OmniText2AudioSpecTemplate",
     "OmniText2GeneralSpecStrict",
     "OmniText2GeneralSpecTemplate",
+    "OmniText2VideoSpecStrict",
+    "OmniText2VideoSpecTemplate",
 ]

@@ -94,6 +94,14 @@ class OmniGeneralItem(StrictModel):
     text: str | None = None
 
 
+class OmniVideoItem(StrictModel):
+    """One text-to-video generation."""
+
+    index: int
+    prompt: str
+    video: ArtifactRef
+
+
 class CostEstimates(StrictModel):
     """Aggregated query cost/row estimates for data profiling."""
 

@@ -147,6 +147,7 @@ def initialize_executors(
         "omni_text2speech",
         "omni_text2audio",
         "omni_text2general",
+        "omni_text2video",
     ]:
         inst = init_executor(key, gpu_required=True)
         if inst:

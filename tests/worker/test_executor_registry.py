@@ -41,6 +41,7 @@ class TestExecutorRegistry:
             "omni_text2speech",
             "omni_text2audio",
             "omni_text2general",
+            "omni_text2video",
         }
         assert set(EXECUTOR_REGISTRY.keys()) == expected
 
