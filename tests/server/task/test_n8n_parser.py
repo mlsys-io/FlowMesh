@@ -40,7 +40,7 @@ def chain_node(name: str, task_type: str, text: str = "") -> dict:
     }
 
 
-def code_node(name: str, code: str, language: str = "python") -> dict:
+def code_node(name: str, code: str, language: str = "pythonNative") -> dict:
     return {
         "name": name,
         "type": "n8n-nodes-base.code",
