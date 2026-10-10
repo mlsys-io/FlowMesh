@@ -209,7 +209,7 @@ ignored:
 |---|---|
 | Basic LLM Chain (`chainLlm`) with an HF model node | a stage of the `taskType` named in the node's notes, e.g. `{"taskType": "omni_text2video"}` |
 | Basic LLM Chain or OpenAI node with an OpenAI model | an `api` stage |
-| Code node with language Python | a `python` stage running the node's code |
+| Code node with language Python (`pythonNative`, shown as "Python (Native)"; legacy `python` too) | a `python` stage running the node's code |
 
 Set nodes feeding a stage configure it by name prefix: `Input` / `Data` /
 `Format` give `spec.data` (a `graph_template` reads upstream nodes' results),
