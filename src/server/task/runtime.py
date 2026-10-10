@@ -937,22 +937,37 @@ class TaskRuntime:
         self._remove_from_ready_locked(child_id)
         self._merge_bucket_remove(child_id)
 
-        dependents = list(self._dependents.pop(child_id, set()))
-        for dep_id in dependents:
-            pending = self._pending_deps.get(dep_id)
-            if pending is not None:
-                pending.discard(child_id)
-            dep_record = self._tasks.get(dep_id)
-            if not dep_record or dep_record.status != TaskStatus.PENDING:
-                continue
-            fail_reason = f"Dependency {child_id} failed"
-            dep_record.status = TaskStatus.FAILED
-            dep_record.error = fail_reason
-            dep_record.assigned_worker = None
-            dep_record.finished_ts = time.time()
-            self._pending_deps.pop(dep_id, None)
-            self._remove_from_ready_locked(dep_id)
-            impacted.append((dep_id, fail_reason))
+        impacted.extend(self._fail_dependents_locked(child_id))
+        return impacted
+
+    def _fail_dependents_locked(self, failed_id: str) -> list[tuple[str, str]]:
+        """Fail every PENDING task downstream of ``failed_id``, transitively.
+
+        Returns ``(task_id, reason)`` pairs in breadth-first order, with each
+        reason naming ``failed_id``.
+        """
+        impacted: list[tuple[str, str]] = []
+        reason = f"Dependency {failed_id} failed"
+        frontier = deque([failed_id])
+        while frontier:
+            parent_id = frontier.popleft()
+            for dep_id in sorted(self._dependents.pop(parent_id, set())):
+                pending = self._pending_deps.get(dep_id)
+                if pending is not None:
+                    pending.discard(parent_id)
+                dep_record = self._tasks.get(dep_id)
+                if not dep_record or dep_record.status != TaskStatus.PENDING:
+                    continue
+                dep_record.status = TaskStatus.FAILED
+                dep_record.error = reason
+                dep_record.assigned_worker = None
+                dep_record.finished_ts = time.time()
+                self._failed.add(dep_id)
+                self._completed.discard(dep_id)
+                self._pending_deps.pop(dep_id, None)
+                self._remove_from_ready_locked(dep_id)
+                impacted.append((dep_id, reason))
+                frontier.append(dep_id)
         return impacted
 
     # ------------------------------------------------------------------ #
@@ -1181,23 +1196,7 @@ class TaskRuntime:
             merged_children_ids = self._merge_children_map.pop(task_id, [])
             self._merge_key_by_task.pop(task_id, None)
 
-            impacted: list[tuple[str, str]] = []
-            dependents = list(self._dependents.pop(task_id, set()))
-            for child in dependents:
-                pending = self._pending_deps.get(child)
-                if pending is not None:
-                    pending.discard(task_id)
-                child_record = self._tasks.get(child)
-                if not child_record or child_record.status != TaskStatus.PENDING:
-                    continue
-                reason = f"Dependency {task_id} failed"
-                child_record.status = TaskStatus.FAILED
-                child_record.error = reason
-                child_record.assigned_worker = None
-                child_record.finished_ts = time.time()
-                self._pending_deps.pop(child, None)
-                self._remove_from_ready_locked(child)
-                impacted.append((child, reason))
+            impacted: list[tuple[str, str]] = self._fail_dependents_locked(task_id)
 
             for merged_child in merged_children_ids:
                 impacted.extend(
