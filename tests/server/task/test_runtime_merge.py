@@ -44,6 +44,10 @@ spec:
         dependsOn: [b]
         spec:
           taskType: echo
+      - name: d
+        dependsOn: [c]
+        spec:
+          taskType: echo
 """
 
 _SINGLE_INFER_PAYLOAD = """
@@ -149,7 +153,7 @@ def test_clean_siblings_merge() -> None:
 def test_fail_merged_children_fails_child_and_cascades_atomically() -> None:
     runtime, registry = build_runtime()
     _, nodes = register(runtime, _MERGE_PAYLOAD)
-    parent, child, dep = nodes["a"], nodes["b"], nodes["c"]
+    parent, child, dep, descendant = nodes["a"], nodes["b"], nodes["c"], nodes["d"]
     runtime.plan_merge(parent, 2, _WORKER)
     assert runtime._tasks[parent].merged_children == [child]
     registry.calls.clear()
@@ -159,19 +163,26 @@ def test_fail_merged_children_fails_child_and_cascades_atomically() -> None:
     )
 
     assert failed == [child]
-    assert impacted == [(dep, f"Dependency {child} failed")]
-    # Child is unlinked from the parent and failed; its dependent cascades.
+    reason = f"Dependency {child} failed"
+    assert impacted == [(dep, reason), (descendant, reason)]
     assert runtime._tasks[parent].merged_children is None
     assert runtime._merge_parent_map.get(child) is None
     assert runtime._tasks[child].status == TaskStatus.FAILED
     assert runtime._tasks[child].merged_parent_id is None
     assert runtime._tasks[dep].status == TaskStatus.FAILED
-    # Child and dependent (same workflow) fail together in one transaction.
+    for task_id in (child, dep, descendant):
+        info = runtime.describe_task(task_id)
+        assert info is not None and info.failed
+        assert info.status == TaskStatus.FAILED
+        assert not info.pending_dependencies
+    assert runtime._tasks[parent].status == TaskStatus.PENDING
     failed_idx = next(
-        i for i, c in enumerate(registry.calls) if set(c["failed"]) == {child, dep}
+        i
+        for i, c in enumerate(registry.calls)
+        if set(c["failed"]) == {child, dep, descendant}
     )
-    assert set(registry.calls[failed_idx]["record_ids"]) >= {child, dep}
-    # Crash-safe ordering: the parent's unlink commits after its children are failed.
+    assert set(registry.calls[failed_idx]["record_ids"]) >= {child, dep, descendant}
+    # Persist the failures before unlinking the parent so a crash cannot strand them.
     parent_idx = next(
         i for i, c in enumerate(registry.calls) if parent in c["record_ids"]
     )

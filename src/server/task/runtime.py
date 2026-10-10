@@ -943,14 +943,14 @@ class TaskRuntime:
     def _fail_dependents_locked(self, failed_id: str) -> list[tuple[str, str]]:
         """Fail every PENDING task downstream of ``failed_id``, transitively.
 
-        Each failed task's own dependents are failed in turn, so no descendant
-        is left PENDING on a dependency that can never complete. Returns the
-        ``(task_id, reason)`` pairs in the order they were failed.
+        Returns ``(task_id, reason)`` pairs in breadth-first order, with each
+        reason naming ``failed_id``.
         """
         impacted: list[tuple[str, str]] = []
-        frontier = [failed_id]
+        reason = f"Dependency {failed_id} failed"
+        frontier = deque([failed_id])
         while frontier:
-            parent_id = frontier.pop(0)
+            parent_id = frontier.popleft()
             for dep_id in sorted(self._dependents.pop(parent_id, set())):
                 pending = self._pending_deps.get(dep_id)
                 if pending is not None:
@@ -958,7 +958,6 @@ class TaskRuntime:
                 dep_record = self._tasks.get(dep_id)
                 if not dep_record or dep_record.status != TaskStatus.PENDING:
                     continue
-                reason = f"Dependency {parent_id} failed"
                 dep_record.status = TaskStatus.FAILED
                 dep_record.error = reason
                 dep_record.assigned_worker = None
