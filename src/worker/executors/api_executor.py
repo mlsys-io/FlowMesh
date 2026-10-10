@@ -16,7 +16,7 @@ from shared.tasks.specs.misc import ApiConfig, ApiResponseConfig
 from shared.tasks.task_type import TaskType
 from shared.utils.redact import is_credential_key
 
-from ..utils.http_retry import is_retryable_status, retry_after_seconds
+from ..utils.http_retry import backoff_delay, is_retryable_status
 from .base_executor import (
     ExecutionError,
     Executor,
@@ -299,7 +299,9 @@ class APIExecutor(DataMixin, Executor):
                 if attempt >= retries:
                     raise _RequestFailed(exc, attempt + 1) from None
                 attempt += 1
-                delay = self._backoff_delay(attempt)
+                delay = backoff_delay(
+                    attempt, _RETRY_BACKOFF_SEC, _RETRY_BACKOFF_MAX_SEC
+                )
                 logger.warning(
                     "API request failed (attempt %d/%d): %s; retrying in %.1fs",
                     attempt,
@@ -313,7 +315,9 @@ class APIExecutor(DataMixin, Executor):
                 if attempt >= retries:
                     return resp, attempt + 1
                 attempt += 1
-                delay = self._backoff_delay(attempt, resp)
+                delay = backoff_delay(
+                    attempt, _RETRY_BACKOFF_SEC, _RETRY_BACKOFF_MAX_SEC, resp
+                )
                 logger.warning(
                     "API request returned %s (attempt %d/%d); retrying in %.1fs",
                     resp.status_code,
@@ -324,14 +328,6 @@ class APIExecutor(DataMixin, Executor):
                 self._wait_for_backoff(delay, failed, control)
                 continue
             return resp, attempt + 1
-
-    def _backoff_delay(self, attempt: int, resp: httpx.Response | None = None) -> float:
-        """Return the wait before the next attempt, honouring Retry-After."""
-        if resp is not None:
-            retry_after = retry_after_seconds(resp)
-            if retry_after is not None:
-                return min(retry_after, _RETRY_BACKOFF_MAX_SEC)
-        return min(_RETRY_BACKOFF_SEC * (2 ** (attempt - 1)), _RETRY_BACKOFF_MAX_SEC)
 
     def _wait_for_backoff(
         self, delay: float, failed: threading.Event, control: RunControl

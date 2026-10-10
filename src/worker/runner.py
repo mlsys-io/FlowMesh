@@ -424,6 +424,7 @@ class Runner:
                     headers=destination.headers,
                     timeout=destination.timeout,
                 ),
+                url=url,
                 what=f"Task {task_id} result delivery to {url}",
                 idempotent=is_flowmesh_origin_url(url),
                 logger=self.logger,

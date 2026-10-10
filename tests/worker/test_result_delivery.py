@@ -20,7 +20,7 @@ from tests.worker.factories import make_worker_hardware, make_worker_task_messag
 from worker.executors.mixins.training import TrainingMixin
 from worker.executors.utils.checkpoints import resolve_checkpoint_load
 from worker.runner import Runner
-from worker.utils import result_delivery, upload_retry
+from worker.utils import result_delivery
 
 
 @pytest.mark.parametrize("upload_all", [False, True])
@@ -102,7 +102,7 @@ def test_system_delivery_failure_keeps_producer_successful(
 ) -> None:
     monkeypatch.setenv("FLOWMESH_BASE_URL", "http://server")
     monkeypatch.setenv("WORKER_UPLOAD_RESULTS", "0")
-    monkeypatch.setattr(upload_retry, "UPLOAD_BACKOFF_SEC", 0.0)
+    monkeypatch.setenv("WORKER_UPLOAD_BACKOFF_SEC", "0")
     client_class = httpx.Client
     monkeypatch.setattr(
         result_delivery.httpx,
@@ -415,12 +415,13 @@ def test_transfers_wait_as_long_as_the_configured_timeout(
     assert timeouts == [4321.0, 4321.0]
 
 
+@pytest.mark.parametrize("failure", ["connect", "status"])
 def test_an_unreachable_server_gets_no_bundle_packed(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str
 ) -> None:
     monkeypatch.setenv("FLOWMESH_BASE_URL", "http://server")
-    monkeypatch.setattr(upload_retry, "UPLOAD_RETRIES", 2)
-    monkeypatch.setattr(upload_retry, "UPLOAD_BACKOFF_SEC", 0.0)
+    monkeypatch.setenv("WORKER_UPLOAD_RETRIES", "2")
+    monkeypatch.setenv("WORKER_UPLOAD_BACKOFF_SEC", "0")
     producer = populate(tmp_path / "producer")
     client_class = httpx.Client
     attempts = 0
@@ -428,6 +429,8 @@ def test_an_unreachable_server_gets_no_bundle_packed(
     def refuse(request: httpx.Request) -> httpx.Response:
         nonlocal attempts
         attempts += 1
+        if failure == "status":
+            return httpx.Response(503)
         raise httpx.ConnectError("refused", request=request)
 
     monkeypatch.setattr(
@@ -447,13 +450,42 @@ def test_an_unreachable_server_gets_no_bundle_packed(
     packed.assert_not_called()
 
 
+def test_delivery_retries_end_at_the_transfer_timeout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("FLOWMESH_BASE_URL", "http://server")
+    monkeypatch.setenv("WORKER_RESULT_TRANSFER_TIMEOUT_SEC", "1")
+    monkeypatch.setenv("WORKER_UPLOAD_BACKOFF_SEC", "2")
+    producer = populate(tmp_path / "producer")
+    client_class = httpx.Client
+    attempts = 0
+
+    def refuse(request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        raise httpx.ConnectError("refused", request=request)
+
+    monkeypatch.setattr(
+        result_delivery.httpx,
+        "Client",
+        lambda **_: client_class(transport=httpx.MockTransport(refuse)),
+    )
+
+    size = result_delivery.publish_result(
+        producer, "tsk-up", ResultDeliveryRequest(), logging.getLogger("test")
+    )
+
+    assert size == 0
+    assert attempts == 1
+
+
 @pytest.mark.parametrize("failure", ["connect", "read", "status"])
 @pytest.mark.parametrize("held", [False, True])
 def test_publication_recovers_from_a_transient_preflight_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str, held: bool
 ) -> None:
     monkeypatch.setenv("FLOWMESH_BASE_URL", "http://server")
-    monkeypatch.setattr(upload_retry, "UPLOAD_BACKOFF_SEC", 0.0)
+    monkeypatch.setenv("WORKER_UPLOAD_BACKOFF_SEC", "0")
     producer = populate(tmp_path / "producer")
     checks = 0
     uploads: list[bytes] = []
@@ -492,7 +524,7 @@ def test_publication_reopens_the_bundle_after_a_read_timeout(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("FLOWMESH_BASE_URL", "http://server")
-    monkeypatch.setattr(upload_retry, "UPLOAD_BACKOFF_SEC", 0.0)
+    monkeypatch.setenv("WORKER_UPLOAD_BACKOFF_SEC", "0")
     producer = populate(tmp_path / "producer")
     uploads: list[bytes] = []
 
@@ -518,3 +550,57 @@ def test_publication_reopens_the_bundle_after_a_read_timeout(
     assert size > 0
     assert len(uploads) == 2
     assert uploads[0] == uploads[1]
+
+
+@pytest.mark.parametrize(
+    ("url", "failure", "posts"),
+    [
+        ("http://server/api/v1/results", "read", 2),
+        ("http://server/api/v1/results", "status", 2),
+        ("http://external/sink", "read", 1),
+        ("http://external/sink", "status", 1),
+    ],
+)
+def test_result_post_retries_only_flowmesh_destinations(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    url: str,
+    failure: str,
+    posts: int,
+) -> None:
+    monkeypatch.setenv("FLOWMESH_BASE_URL", "http://server")
+    monkeypatch.setenv("WORKER_UPLOAD_BACKOFF_SEC", "0")
+    calls = 0
+
+    def post(*_args: Any, **_kwargs: Any) -> Mock:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            if failure == "read":
+                raise result_delivery.requests.ReadTimeout("read timeout=30.0")
+            return Mock(status_code=503, headers={}, text="unavailable")
+        return Mock(status_code=200, headers={}, text="")
+
+    monkeypatch.setattr("worker.runner.requests.request", post)
+    spec = EchoSpecStrict(
+        taskType=TaskType.ECHO,
+        data={"type": "list", "items": ["x"]},
+        output=OutputSpec.model_validate({"destination": {"type": "http", "url": url}}),
+    )
+    runner = Runner(
+        cast(Any, Mock(worker_id="wrk-test")),
+        [],
+        tmp_path,
+        make_worker_hardware(),
+        {},
+        cast(Any, Mock()),
+        logging.getLogger("test-result-post"),
+    )
+    result = BaseExecutorResult.model_validate({"value": "computed"})
+
+    if posts == 1:
+        with pytest.raises(RuntimeError, match="tsk-post"):
+            runner._maybe_emit_http("tsk-post", spec, result)
+    else:
+        runner._maybe_emit_http("tsk-post", spec, result)
+    assert calls == posts

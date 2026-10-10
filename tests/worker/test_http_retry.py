@@ -4,13 +4,16 @@ from datetime import UTC, datetime, timedelta
 import httpx
 import pytest
 
-from worker.utils.http_retry import is_retryable_status, retry_after_seconds
+from worker.utils.http_retry import (
+    backoff_delay,
+    is_retryable_status,
+    retry_after_seconds,
+)
 
 
 @pytest.mark.parametrize("status", [408, 429, 500, 502, 503])
-def test_transient_status_requires_idempotency(status: int) -> None:
+def test_transient_statuses_are_retryable(status: int) -> None:
     assert is_retryable_status(status)
-    assert not is_retryable_status(status, idempotent=False)
 
 
 @pytest.mark.parametrize("status", [200, 400, 401, 403, 404, 413])
@@ -60,3 +63,21 @@ def test_past_retry_after_http_date_returns_zero() -> None:
         503, headers={"Retry-After": email.utils.format_datetime(retry_at)}
     )
     assert retry_after_seconds(response) == 0
+
+
+def test_backoff_doubles_up_to_the_cap() -> None:
+    assert [backoff_delay(attempt, 2.0, 60.0) for attempt in range(1, 7)] == [
+        2.0,
+        4.0,
+        8.0,
+        16.0,
+        32.0,
+        60.0,
+    ]
+
+
+@pytest.mark.parametrize(("header", "delay"), [("0", 0.0), ("35", 35.0), ("999", 60.0)])
+def test_retry_after_replaces_backoff_under_the_cap(header: str, delay: float) -> None:
+    response = httpx.Response(503, headers={"Retry-After": header})
+
+    assert backoff_delay(3, 2.0, 60.0, response) == delay

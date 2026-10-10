@@ -485,6 +485,7 @@ def maybe_upload_artifacts(
         try:
             response = send_with_retries(
                 send,
+                url=upload_url,
                 what=f"Artifact upload {rel_name}",
                 idempotent=is_flowmesh_origin_url(upload_url),
                 logger=logger,
@@ -549,6 +550,7 @@ def maybe_upload_traces(
         try:
             response = send_with_retries(
                 send,
+                url=upload_url,
                 what=f"Trace upload {trace_type}",
                 idempotent=is_flowmesh_origin_url(upload_url),
                 logger=logger,
