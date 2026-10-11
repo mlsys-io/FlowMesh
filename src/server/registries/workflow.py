@@ -33,7 +33,7 @@ def _load_compacted(blob: str | bytes) -> "PersistedTask":
     """Parse one task state, dropping a finished task's bulky inputs as it loads,
     so a restart never holds every historical payload at once."""
     persisted = PersistedTask.model_validate_json(blob)
-    persisted.record.compact_terminal()
+    persisted.record.drop_terminal_inputs()
     return persisted
 
 

@@ -1,0 +1,107 @@
+"""A terminal task drops oversized inputs from memory and from its persisted state."""
+
+import logging
+import threading
+from typing import Any, cast
+
+from server.registries.workflow import PersistedTask
+from server.task.models import (
+    TERMINAL_INPUT_MAX_BYTES,
+    TERMINAL_TASK_STATUSES,
+    TaskRecord,
+    TaskStatus,
+)
+from server.task.runtime import TaskRuntime
+from shared.tasks.specs import EchoSpecTemplate
+from tests.server.task.merge_harness import WorkerRegistryStub, register
+from tests.server.task.test_runtime_rehydrate import FakeWorkflowRegistry
+
+DROPPED_SOURCE = "# source dropped after the task finished"
+
+
+def _payload(n_items: int) -> str:
+    items = "\n".join(f"            - row-{i}-" + "x" * 200 for i in range(n_items))
+    return f"""
+apiVersion: flowmesh/v1
+kind: Workflow
+metadata:
+  name: bulky
+spec:
+  graph:
+    nodes:
+      - name: a
+        spec:
+          taskType: echo
+          data:
+            type: list
+            items:
+{items}
+"""
+
+
+def _runtime(registry: FakeWorkflowRegistry) -> TaskRuntime:
+    return TaskRuntime(
+        cast(Any, registry),
+        cast(Any, WorkerRegistryStub()),
+        logging.getLogger("terminal-inputs"),
+    )
+
+
+def _ready_task(n_items: int) -> tuple[TaskRuntime, FakeWorkflowRegistry, str]:
+    registry = FakeWorkflowRegistry()
+    runtime = _runtime(registry)
+    _, ids = register(runtime, _payload(n_items))
+    assert runtime.next_ready(threading.Event(), timeout=0.01) == ids["a"]
+    return runtime, registry, ids["a"]
+
+
+def _data(record: TaskRecord) -> Any:
+    spec = record.task.spec
+    assert isinstance(spec, EchoSpecTemplate)
+    return spec.data
+
+
+def _stored(registry: FakeWorkflowRegistry, task_id: str) -> TaskRecord:
+    return PersistedTask.model_validate_json(registry.task_blobs[task_id]).record
+
+
+def _assert_dropped(record: TaskRecord) -> None:
+    assert _data(record) is None
+    assert record.source.startswith(DROPPED_SOURCE)
+
+
+def test_live_task_keeps_its_inputs() -> None:
+    runtime, _, tid = _ready_task(600)
+    record = runtime.get_record(tid)
+    assert record is not None and record.status not in TERMINAL_TASK_STATUSES
+    assert not record.drop_terminal_inputs()
+    assert _data(record) is not None
+    assert len(record.source.encode()) > TERMINAL_INPUT_MAX_BYTES
+
+
+def test_failed_task_drops_oversized_inputs() -> None:
+    runtime, registry, tid = _ready_task(600)
+    runtime.mark_failed(tid, None, {"error": "boom"}, "2026-10-11T00:00:00Z")
+    record = runtime.get_record(tid)
+    assert record is not None and record.status == TaskStatus.FAILED
+    _assert_dropped(record)
+    _assert_dropped(_stored(registry, tid))
+
+
+def test_cancelled_task_drops_oversized_inputs() -> None:
+    runtime, registry, tid = _ready_task(600)
+    record = runtime.get_record(tid)
+    assert record is not None
+    runtime.cancel_workflow(record.workflow_id)
+    assert record.status == TaskStatus.CANCELLED
+    _assert_dropped(record)
+    _assert_dropped(_stored(registry, tid))
+
+
+def test_terminal_task_keeps_small_inputs() -> None:
+    runtime, registry, tid = _ready_task(3)
+    runtime.mark_failed(tid, None, {"error": "boom"}, "2026-10-11T00:00:00Z")
+    for record in (runtime.get_record(tid), _stored(registry, tid)):
+        assert record is not None
+        assert _data(record) is not None
+        assert "row-0-" in record.source

@@ -368,6 +368,7 @@ class TaskRuntime:
         record = self._tasks.get(task_id)
         if record is None:
             return None
+        record.drop_terminal_inputs()
         return PersistedTask(
             record=record,
             depends_on=self._original_deps.get(task_id) or set(),
@@ -418,7 +419,6 @@ class TaskRuntime:
             record = self._tasks.get(task_id)
             if record is None:
                 continue
-            record.compact_terminal()
             match record.status:
                 case TaskStatus.DONE:
                     moves[record.workflow_id][0].append(task_id)
