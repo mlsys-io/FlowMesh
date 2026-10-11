@@ -59,7 +59,7 @@ except Exception:
 
 logger = logging.getLogger(__name__)
 
-OMNI_OFFLOAD_FLAGS = ("enable_cpu_offload", "enable_layerwise_offload")
+_OMNI_OFFLOAD_FLAGS = ("enable_cpu_offload", "enable_layerwise_offload")
 
 
 class OmniExecutorBase(InferenceMixin, Executor):
@@ -169,7 +169,7 @@ class OmniExecutorBase(InferenceMixin, Executor):
         stored: ``enable_cpu_offload`` / ``enable_layerwise_offload`` and
         ``quantization`` (a method name or a quantization-config mapping)."""
         kwargs: dict[str, Any] = {}
-        for key in OMNI_OFFLOAD_FLAGS:
+        for key in _OMNI_OFFLOAD_FLAGS:
             if cfg.get(key) is not None:
                 kwargs[key] = to_bool(cfg.get(key), default=False)
         quantization = cfg.get("quantization")

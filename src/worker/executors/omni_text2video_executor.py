@@ -141,9 +141,8 @@ class OmniText2VideoExecutor(OmniExecutorBase):
             default="Wan-AI/Wan2.1-T2V-1.3B-Diffusers",
         )
         # vLLM-Omni's checkpoint partition, e.g. MiniMax-H3 "t2va" loads only
-        # FL2VA. Kept out of the base class: omni_text2speech reads
-        # spec.omni.task_type as the TTS task.
-        task_type = str(cfg.get("task_type") or "") or None
+        # FL2VA. Not shared: other executors read spec.omni.task_type differently.
+        task_type = str(raw) if (raw := cfg.get("task_type")) else None
         new_spec = (*self._build_omni_spec(model_name, cfg), task_type)
         if self._omni is not None:
             if self._omni_spec == new_spec:
