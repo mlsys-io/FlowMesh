@@ -220,10 +220,13 @@ Set nodes feeding a stage configure it by name prefix: `Input` / `Data` /
 fields such as `requirements`, `network`, `image` and `timeoutSeconds`. Edges
 between stages become `dependsOn`.
 
-A Code node's code defines `main`; it is not run by n8n. Upstream stages reach
-it as described in [Reading upstream stages](#reading-upstream-stages): node
-names that are not Python identifiers are read through an `inputs` parameter,
-e.g. `inputs["Write Narration"]`.
+A Code node's code defines `main`; it is not run by n8n, so n8n's Code-node
+globals such as `$input` and `items` (`_items` / `_item` in native Python)
+do not exist. Upstream stages reach `main` as described in
+[Reading upstream stages](#reading-upstream-stages): node names that are not
+Python identifiers are read through an `inputs` parameter, e.g.
+`inputs["Write Narration"]`. A `Python` Set node cannot set `taskType`,
+`code` or `entrypoint`; those come from the Code node.
 
 ## data_retrieval: type lumid
 

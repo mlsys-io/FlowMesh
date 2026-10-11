@@ -2,6 +2,7 @@
 
 import base64
 import json
+from typing import Any
 
 import pytest
 
@@ -15,7 +16,7 @@ from shared.tasks.specs import (
 from shared.tasks.task_type import TaskType
 
 
-def set_node(name: str, value: dict) -> dict:
+def set_node(name: str, value: Any) -> dict:
     return {
         "name": name,
         "type": "n8n-nodes-base.set",
@@ -323,6 +324,27 @@ class TestTranslateN8nWorkflow:
         result = translate_n8n_workflow({"nodes": nodes, "connections": connections})
 
         assert result["spec"]["taskType"] == "inference"
+
+    @pytest.mark.parametrize(
+        "field", ["taskType", "code", "entrypoint", "_upstreamResults"]
+    )
+    def test_python_set_node_cannot_override_reserved_fields(self, field: str) -> None:
+        nodes = [
+            set_node("Python Env", {"network": "bridge", field: "injected"}),
+            code_node("Compose", "def main():\n    return 1\n"),
+        ]
+        connections = {"Python Env": main("Compose")}
+        with pytest.raises(
+            ValueError, match=f"cannot set reserved field\\(s\\) {field}"
+        ):
+            translate_n8n_workflow({"nodes": nodes, "connections": connections})
+
+    def test_python_set_node_must_hold_an_object(self) -> None:
+        nodes = [set_node("Python Env", ["bridge"]), code_node("Compose", "x = 1")]
+        with pytest.raises(ValueError, match="must hold a JSON object"):
+            translate_n8n_workflow(
+                {"nodes": nodes, "connections": {"Python Env": main("Compose")}}
+            )
 
     def test_python_code_node_without_code_raises(self) -> None:
         nodes = [code_node("Compose", "  ")]

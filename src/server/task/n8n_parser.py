@@ -13,6 +13,11 @@ _OPENAI_CHAT_MODEL_NODE_TYPE = "@n8n/n8n-nodes-langchain.lmChatOpenAi"
 _OPENAI_CHAT_NODE_TYPE = "@n8n/n8n-nodes-langchain.openAi"
 _CODE_NODE_TYPE = "n8n-nodes-base.code"
 _PYTHON_CODE_LANGUAGES = frozenset({"python", "pythonNative"})
+# Fields a python stage derives from the Code node itself or the server
+# injects; a Python* Set node must not override them.
+_PYTHON_RESERVED_FIELDS = frozenset(
+    {"taskType", "code", "entrypoint", "_upstreamResults", "upstreamResults"}
+)
 _OMNI_TASK_TYPES = frozenset(
     {
         "omni_text2image",
@@ -226,8 +231,9 @@ def _build_python_node_spec(
     The node's code must define ``main``; upstream nodes reach it as keyword
     arguments, or through an ``inputs`` parameter when their names are not
     Python identifiers. A ``Python*`` Set node supplies further stage fields
-    (``requirements``, ``network``, ``image``, ``timeoutSeconds``, ...) and a
-    ``Resource*`` Set node its hardware.
+    (``requirements``, ``network``, ``image``, ``timeoutSeconds``, ...) but not
+    the reserved ones the node itself defines; a ``Resource*`` Set node gives
+    its hardware.
     """
     code = node["parameters"].get("pythonCode")
     if not isinstance(code, str) or not code.strip():
@@ -239,6 +245,13 @@ def _build_python_node_spec(
             continue
         fragment = json.loads(source["parameters"]["jsonOutput"])
         if source_name.startswith("Python"):
+            if not isinstance(fragment, dict):
+                raise ValueError(f"Python node '{source_name}' must hold a JSON object")
+            if reserved := sorted(_PYTHON_RESERVED_FIELDS.intersection(fragment)):
+                raise ValueError(
+                    f"Python node '{source_name}' cannot set reserved "
+                    f"field(s) {', '.join(reserved)} of Code node '{node['name']}'"
+                )
             spec.update(fragment)
         elif source_name.startswith("Resource"):
             spec["resources"] = fragment
