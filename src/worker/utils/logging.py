@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 import queue
 import threading
 import time
@@ -13,6 +14,30 @@ import grpc
 
 from shared.grpc.supervisor.v1 import supervisor_pb2, supervisor_pb2_grpc
 from shared.utils.time import now_iso
+
+
+class PrivateRotatingFileHandler(RotatingFileHandler):
+    """A ``RotatingFileHandler`` that keeps its file and backups at mode 0600,
+    including ones left by an earlier run, since the worker log records every
+    task's details."""
+
+    def __init__(self, filename: str, *args: Any, **kwargs: Any) -> None:
+        super().__init__(filename, *args, **kwargs)
+        for index in range(1, self.backupCount + 1):
+            try:
+                os.chmod(f"{self.baseFilename}.{index}", 0o600)
+            except FileNotFoundError:
+                continue
+
+    def _open(self) -> TextIOWrapper:
+        append = "a" in self.mode
+        flags = os.O_WRONLY | os.O_CREAT | os.O_CLOEXEC
+        flags |= os.O_APPEND if append else os.O_TRUNC
+        fd = os.open(self.baseFilename, flags, 0o600)
+        os.fchmod(fd, 0o600)
+        if append:
+            return open(fd, "a", encoding=self.encoding, errors=self.errors)
+        return open(fd, "w", encoding=self.encoding, errors=self.errors)
 
 
 def get_logger(
@@ -36,7 +61,7 @@ def get_logger(
     logger.propagate = False
 
     # File handler (rotating)
-    fh = RotatingFileHandler(
+    fh = PrivateRotatingFileHandler(
         log_file,
         mode="w",
         maxBytes=max_bytes,

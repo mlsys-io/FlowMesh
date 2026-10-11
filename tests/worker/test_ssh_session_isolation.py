@@ -1,0 +1,1133 @@
+"""Tests for keeping process-mode SSH sessions away from worker state.
+
+Everything here runs unprivileged: accounts are stood in for by the test's own
+uid, and ACL and account tooling is stubbed where a real call would need root.
+"""
+
+import contextlib
+import ctypes
+import dataclasses
+import fcntl
+import grp
+import os
+import pwd
+import stat
+import subprocess
+import tempfile
+import time
+import types
+import typing
+from collections.abc import Iterator
+from pathlib import Path
+from typing import Any, cast
+
+import psutil
+import pytest
+
+from shared.tasks.specs import SSHSpecStrict
+from tests.worker.factories import DEFAULT_WORKER_CONFIG, make_live_worker_config
+from worker import config as worker_config_module
+from worker.config import WorkerConfig
+from worker.executors.base_executor import ExecutionError
+from worker.executors.ssh_session import acl
+from worker.executors.ssh_session import session_identity as identity_module
+from worker.executors.ssh_session.backends import process as process_module
+from worker.executors.ssh_session.backends.process import (
+    ProcessSession,
+    ProcessSessionBackend,
+    ProcessSessionPaths,
+    _create_state_root,
+    _link_mount_path,
+    _path_problem,
+    _required_path_under,
+    _reset_mount_root,
+    denied_roots,
+)
+from worker.executors.ssh_session.base import iter_tree, path_size_bytes
+from worker.executors.ssh_session.config import SSHConfig, normalize_mount_path
+from worker.executors.ssh_session.session_identity import (
+    CurrentUser,
+    DedicatedAccount,
+    purge_uid_files,
+    remove_tree,
+)
+
+
+def _own_account(home: Path, uid: int | None = None) -> DedicatedAccount:
+    return DedicatedAccount(
+        "fmssn-test",
+        uid=os.getuid() if uid is None else uid,
+        gid=os.getgid(),
+        home=home,
+    )
+
+
+def _cfg(**spec: object) -> SSHConfig:
+    payload: dict[str, object] = {
+        "taskType": "ssh",
+        "authorizedKeys": ["ssh-ed25519 AAAA... user@host"],
+        **spec,
+    }
+    return SSHConfig.from_spec(
+        cast(SSHSpecStrict, SSHSpecStrict.model_validate(payload)),
+        DEFAULT_WORKER_CONFIG,
+    )
+
+
+def _path_typed(annotation: Any) -> bool:
+    if annotation is Path:
+        return True
+    return any(_path_typed(arg) for arg in typing.get_args(annotation))
+
+
+class TestMountPathNormalization:
+    @pytest.mark.parametrize(
+        "raw",
+        [
+            "/mnt/flowmesh/../../etc",
+            "/mnt/flowmesh/a/../../../root",
+            "/mnt/flowmesh/..",
+            "/mnt/flowmesh/a/..",
+        ],
+    )
+    def test_parent_components_are_refused(self, raw: str) -> None:
+        with pytest.raises(ExecutionError, match=r"\.\."):
+            normalize_mount_path(raw, field_name="sshOutput.mountPath")
+
+    def test_dot_and_repeated_separators_are_normalized(self) -> None:
+        assert (
+            normalize_mount_path("/mnt//flowmesh/./out//data/", field_name="f")
+            == "/mnt/flowmesh/out/data"
+        )
+
+    def test_a_path_too_deep_to_clear_is_refused(self) -> None:
+        deep = "/mnt/flowmesh/" + "/".join(["a"] * 2100)
+        with pytest.raises(ExecutionError, match="components"):
+            normalize_mount_path(deep, field_name="inputs[x].mountPath")
+
+    def test_a_path_too_long_to_clear_is_refused(self) -> None:
+        long = "/mnt/flowmesh/" + "a" * 1011
+        with pytest.raises(ExecutionError, match="characters"):
+            normalize_mount_path(long, field_name="f")
+        assert normalize_mount_path(long[:-1], field_name="f") == long[:-1]
+
+    def test_the_component_cap_is_inclusive(self) -> None:
+        path = "/mnt/flowmesh/" + "/".join(["a"] * 30)
+        assert normalize_mount_path(path, field_name="f") == path
+
+    @pytest.mark.parametrize("raw", ["mnt/flowmesh/out", "/mnt/other", "/", "/mnt"])
+    def test_paths_outside_the_mount_root_are_refused(self, raw: str) -> None:
+        with pytest.raises(ExecutionError):
+            normalize_mount_path(raw, field_name="f")
+
+
+class TestDeniedStateRoots:
+    def test_every_path_field_is_classified_exactly_once(self) -> None:
+        hints = typing.get_type_hints(WorkerConfig)
+        path_fields = {
+            field.name
+            for field in dataclasses.fields(WorkerConfig)
+            if _path_typed(hints[field.name])
+        }
+        denied = set(process_module.DENIED_CONFIG_FIELDS)
+        allowed = set(process_module.ALLOWED_CONFIG_FIELDS)
+        assert not denied & allowed
+        unclassified = path_fields - denied - allowed
+        assert not unclassified, (
+            f"Classify {sorted(unclassified)} in DENIED_CONFIG_FIELDS or "
+            "ALLOWED_CONFIG_FIELDS"
+        )
+        assert denied | allowed <= path_fields
+
+    def test_denied_paths_cover_results_heartbeat_and_state(
+        self, tmp_path: Path
+    ) -> None:
+        cache = tmp_path / "hf"
+        cfg = make_live_worker_config(tmp_path, state_dirs=(cache,))
+        denied = denied_roots(cfg)
+        assert cfg.results_dir in denied
+        assert cfg.hb_file.parent in denied
+        assert cache in denied
+
+    def test_state_dirs_come_from_home_caches_and_temp_tools(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("HF_HOME", (tmp_path / "hf").as_posix())
+        monkeypatch.delenv("TORCH_HOME", raising=False)
+        dirs = worker_config_module._state_dirs_from_env()
+        assert Path.home() in dirs
+        assert tmp_path / "hf" in dirs
+        assert Path(tempfile.gettempdir()) / "utu" in dirs
+
+    def test_a_root_above_what_sessions_need_is_detected(self) -> None:
+        assert _required_path_under(Path("/")) is not None
+        assert _required_path_under(Path("/mnt")) is not None
+        assert _required_path_under(Path("/app/worker/results")) is None
+
+
+class TestNoFollowWalks:
+    def test_size_ignores_links(self, tmp_path: Path) -> None:
+        outside = tmp_path / "outside"
+        outside.write_bytes(b"x" * 1000)
+        tree = tmp_path / "tree"
+        (tree / "sub").mkdir(parents=True)
+        (tree / "sub" / "a").write_bytes(b"12345")
+        (tree / "link").symlink_to(outside)
+        (tree / "dirlink").symlink_to(tmp_path)
+        assert path_size_bytes(tree) == 5
+
+    def test_a_linked_root_is_not_walked(self, tmp_path: Path) -> None:
+        real = tmp_path / "real"
+        real.mkdir()
+        (real / "f").write_text("data")
+        (tmp_path / "link").symlink_to(real)
+        assert list(iter_tree(tmp_path / "link")) == []
+
+    def test_a_tree_too_deep_to_walk_fails_sizing(self, tmp_path: Path) -> None:
+        deepest = tmp_path.joinpath(*(["d"] * 70))
+        deepest.mkdir(parents=True)
+        (deepest / "f").write_bytes(b"x")
+        with pytest.raises(ExecutionError, match="deeper"):
+            path_size_bytes(tmp_path)
+
+
+class TestHandingPathsToTheSession:
+    def test_a_path_the_session_did_not_create_is_refused(self, tmp_path: Path) -> None:
+        existing = tmp_path / "existing"
+        existing.mkdir()
+        with pytest.raises(ExecutionError, match="did not create"):
+            _own_account(tmp_path).own(existing)
+
+    def test_an_existing_path_cannot_be_created(self, tmp_path: Path) -> None:
+        (tmp_path / "taken").mkdir()
+        with pytest.raises(ExecutionError):
+            _own_account(tmp_path).make_dir(tmp_path / "taken", 0o700)
+
+    def test_a_link_at_the_created_path_is_refused(self, tmp_path: Path) -> None:
+        account = _own_account(tmp_path)
+        created = tmp_path / "out"
+        account.make_dir(created, 0o700)
+        created.rmdir()
+        created.symlink_to(tmp_path)
+        with pytest.raises(ExecutionError, match="link"):
+            account.own(created)
+
+    def test_recursive_handover_does_not_follow_links(self, tmp_path: Path) -> None:
+        outside = tmp_path / "outside"
+        outside.write_text("secret")
+        outside.chmod(0o644)
+        account = _own_account(tmp_path)
+        staged = tmp_path / "staged"
+        account.make_dir(staged, 0o700)
+        (staged / "shared").mkdir(mode=0o777)
+        (staged / "shared" / "file").write_text("input")
+        (staged / "shared" / "file").chmod(0o666)
+        (staged / "link").symlink_to(outside)
+        account.own(staged, recursive=True)
+        assert stat.S_IMODE(outside.stat().st_mode) == 0o644
+        assert stat.S_IMODE((staged / "shared").stat().st_mode) == 0o700
+        assert stat.S_IMODE((staged / "shared" / "file").stat().st_mode) == 0o600
+
+
+class TestAccountDenies:
+    def test_a_partial_deny_is_rolled_back(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        applied: list[Path] = []
+        revoked: list[Path] = []
+
+        def fake_deny(uid: int, path: Path) -> None:
+            if path.name == "second":
+                raise ExecutionError("no ACL support")
+            applied.append(path)
+
+        monkeypatch.setattr(acl, "record", lambda uid, path: None)
+        monkeypatch.setattr(acl, "forget", lambda uid, path: None)
+        monkeypatch.setattr(acl, "deny", fake_deny)
+        monkeypatch.setattr(acl, "revoke", lambda uid, path: revoked.append(path))
+        with pytest.raises(ExecutionError, match="Could not isolate"):
+            _own_account(tmp_path).deny([tmp_path / "first", tmp_path / "second"])
+        assert applied == [tmp_path / "first"]
+        assert set(revoked) == {tmp_path / "first", tmp_path / "second"}
+
+    def test_denies_outlive_an_account_that_cannot_be_deleted(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        revoked: list[Path] = []
+        monkeypatch.setattr(acl, "revoke", lambda uid, path: revoked.append(path))
+        monkeypatch.setattr(acl, "forget", lambda uid, path: None)
+        monkeypatch.setattr(identity_module, "_delete_account", lambda name: False)
+        account = _own_account(tmp_path, uid=4294967)
+        account._denied = [tmp_path / "results"]
+        account.release()
+        assert revoked == []
+
+    def test_denies_outlive_processes_that_survive(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        deleted: list[str] = []
+
+        def delete_account(name: str) -> bool:
+            deleted.append(name)
+            return True
+
+        monkeypatch.setattr(identity_module, "_terminate_uid", lambda uid: False)
+        monkeypatch.setattr(identity_module, "_delete_account", delete_account)
+        account = _own_account(tmp_path, uid=4294967)
+        account._denied = [tmp_path / "results"]
+        account.release()
+        assert deleted == []
+        assert account._denied == [tmp_path / "results"]
+
+    def test_orphaned_records_are_revoked_and_live_ones_kept(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        revoked: list[tuple[int, str]] = []
+        forgotten: list[tuple[int, str]] = []
+        monkeypatch.setattr(
+            acl, "recorded", lambda: {(61001, "/nonexistent/a"), (61002, "/b")}
+        )
+        monkeypatch.setattr(identity_module, "_uid_exists", lambda uid: uid == 61002)
+        monkeypatch.setattr(
+            acl, "revoke", lambda uid, path: revoked.append((uid, path.as_posix()))
+        )
+        monkeypatch.setattr(
+            acl, "forget", lambda uid, path: forgotten.append((uid, path.as_posix()))
+        )
+        identity_module._revoke_orphaned_denies()
+        assert revoked == []
+        assert forgotten == [(61001, "/nonexistent/a")]
+
+    def test_getfacl_output_parses_to_uids(self) -> None:
+        output = (
+            "user::rwx\nuser:61001:---\nuser:1000:r-x\ngroup::r-x\nmask::r-x\n"
+            "other::r-x\ndefault:user:61002:---\n"
+        )
+        assert acl.parse_denied_uids(output) == {61001}
+        assert acl.parse_named_uids(output) == {61001, 1000, 61002}
+
+    def test_a_uid_any_entry_names_is_not_drawn(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        avoided: list[frozenset[int]] = []
+
+        def create(
+            name: str, home: Path, avoid_uids: frozenset[int] = frozenset()
+        ) -> DedicatedAccount:
+            avoided.append(frozenset(avoid_uids))
+            return _own_account(home, uid=61003)
+
+        monkeypatch.setattr(os, "getuid", lambda: 0)
+        monkeypatch.setattr(identity_module, "_ensure_privsep_dir", lambda: None)
+        monkeypatch.setattr(acl, "named_uids", lambda path: {61001, 61002})
+        monkeypatch.setattr(DedicatedAccount, "create", create)
+        monkeypatch.setattr(DedicatedAccount, "deny", lambda self, paths: None)
+        identity_module.resolve_identity("ssn-abcd1234", tmp_path, [tmp_path])
+        assert avoided == [frozenset({61001, 61002})]
+
+
+class TestSessionGroups:
+    def _record_runs(self, monkeypatch: pytest.MonkeyPatch) -> list[list[str]]:
+        calls: list[list[str]] = []
+
+        def run(argv: list[str], what: str) -> "subprocess.CompletedProcess[bytes]":
+            calls.append(argv)
+            return subprocess.CompletedProcess(argv, 0, b"", b"")
+
+        monkeypatch.setattr(identity_module, "_run", run)
+        return calls
+
+    def test_the_account_gets_a_group_of_its_own(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls = self._record_runs(monkeypatch)
+        monkeypatch.setattr(identity_module, "_require_binary", lambda name: name)
+        monkeypatch.setattr(identity_module, "_uid_exists", lambda uid: False)
+        monkeypatch.setattr(identity_module, "_gid_exists", lambda gid: False)
+        identity_module._add_account("fmssn-test", tmp_path / "home", frozenset())
+        [groupadd, useradd] = calls
+        assert groupadd[0] == "groupadd" and groupadd[-1] == "fmssn-test"
+        gid = groupadd[groupadd.index("--gid") + 1]
+        assert useradd[0] == "useradd"
+        assert useradd[useradd.index("--gid") + 1] == gid
+        assert useradd[useradd.index("--uid") + 1] == gid
+
+    def test_a_failed_draw_is_retried_and_leaves_no_group(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls: list[list[str]] = []
+        outcomes = iter([False, True, False, True, True, True])
+
+        def run(argv: list[str], what: str) -> "subprocess.CompletedProcess[bytes]":
+            calls.append(argv)
+            if not next(outcomes):
+                raise ExecutionError(f"{argv[0]} failed")
+            return subprocess.CompletedProcess(argv, 0, b"", b"")
+
+        monkeypatch.setattr(identity_module, "_run", run)
+        monkeypatch.setattr(identity_module, "_require_binary", lambda name: name)
+        monkeypatch.setattr(identity_module.shutil, "which", lambda name: name)
+        monkeypatch.setattr(identity_module, "_uid_exists", lambda uid: False)
+        monkeypatch.setattr(identity_module, "_gid_exists", lambda gid: False)
+        monkeypatch.setattr(identity_module, "_account_exists", lambda name: False)
+        monkeypatch.setattr(
+            identity_module, "_group_exists", lambda name: calls[-1][0] == "useradd"
+        )
+        identity_module._add_account("fmssn-test", tmp_path / "home", frozenset())
+        assert [argv[0] for argv in calls] == [
+            "groupadd",  # a gid taken in between
+            "groupadd",
+            "useradd",  # a uid taken in between
+            "groupdel",
+            "groupadd",
+            "useradd",
+        ]
+
+    def test_an_existing_group_of_that_name_is_not_retried(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def run(argv: list[str], what: str) -> "subprocess.CompletedProcess[bytes]":
+            raise ExecutionError("group exists")
+
+        monkeypatch.setattr(identity_module, "_run", run)
+        monkeypatch.setattr(identity_module, "_require_binary", lambda name: name)
+        monkeypatch.setattr(identity_module, "_uid_exists", lambda uid: False)
+        monkeypatch.setattr(identity_module, "_gid_exists", lambda gid: False)
+        monkeypatch.setattr(identity_module, "_group_exists", lambda name: True)
+        with pytest.raises(ExecutionError, match="group exists"):
+            identity_module._add_account("fmssn-test", tmp_path / "home", frozenset())
+
+    def test_deleting_the_account_deletes_its_group(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls = self._record_runs(monkeypatch)
+        monkeypatch.setattr(identity_module.shutil, "which", lambda name: name)
+        monkeypatch.setattr(identity_module, "_group_exists", lambda name: True)
+        assert identity_module._delete_account("fmssn-test")
+        assert calls == [["userdel", "fmssn-test"], ["groupdel", "fmssn-test"]]
+
+    def test_the_sweep_deletes_a_group_left_without_its_account(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        deleted: list[str] = []
+        groups = [
+            grp.struct_group(("fmssnold", "x", 61001, [])),
+            grp.struct_group(("fmssnlive", "x", 61002, [])),
+            grp.struct_group(("users", "x", 100, [])),
+        ]
+        monkeypatch.setattr(os, "getuid", lambda: 0)
+        monkeypatch.setattr(identity_module.pwd, "getpwall", lambda: [])
+        monkeypatch.setattr(identity_module.grp, "getgrall", lambda: groups)
+        monkeypatch.setattr(
+            identity_module, "_account_exists", lambda name: name == "fmssnlive"
+        )
+        monkeypatch.setattr(identity_module, "_delete_group", deleted.append)
+        monkeypatch.setattr(identity_module, "_revoke_orphaned_denies", lambda: None)
+        identity_module.reap_stale_accounts()
+        assert deleted == ["fmssnold"]
+
+
+@pytest.fixture
+def acl_dir(tmp_path: Path) -> Path:
+    if not acl.tools_available():
+        pytest.skip("setfacl/getfacl are not installed")
+    directory = tmp_path / "state"
+    directory.mkdir()
+    directory.chmod(0o775)
+    try:
+        acl.probe(tmp_path)
+    except ExecutionError:
+        pytest.skip("this filesystem does not store ACL entries")
+    return directory
+
+
+class TestAclMask:
+    def test_a_mask_is_redundant_only_when_it_narrows_nothing(self) -> None:
+        assert acl.mask_is_redundant("user::rwx\ngroup::rwx\nmask::rwx\nother::r-x\n")
+        assert acl.mask_is_redundant(
+            "user::rwx\ngroup::r-x\nmask::rwx\nother::---\ndefault:user:1000:rwx\n"
+        )
+        assert not acl.mask_is_redundant(
+            "user::rwx\ngroup::rwx\t#effective:r-x\nmask::r-x\nother::r-x\n"
+        )
+        assert not acl.mask_is_redundant(
+            "user::rwx\nuser:1000:r-x\ngroup::r-x\nmask::r-x\nother::r-x\n"
+        )
+        assert not acl.mask_is_redundant("user::rwx\ngroup::r-x\nother::r-x\n")
+
+    def test_a_narrowed_mask_survives_a_deny_and_its_revoke(
+        self, acl_dir: Path
+    ) -> None:
+        acl._setfacl(acl_dir, "-m", "m::r-x")
+        acl.deny(61001, acl_dir)
+        assert "mask::r-x" in acl._read_acl(acl_dir).splitlines()
+        acl.revoke(61001, acl_dir)
+        after = acl._read_acl(acl_dir).splitlines()
+        assert "mask::r-x" in after
+        assert not any(line.startswith("user:61001") for line in after)
+
+    def test_a_minimal_acl_is_minimal_again_after_revoke(self, acl_dir: Path) -> None:
+        acl.deny(61001, acl_dir)
+        acl.revoke(61001, acl_dir)
+        assert not any(
+            line.startswith(("mask::", "user:61001"))
+            for line in acl._read_acl(acl_dir).splitlines()
+        )
+        assert stat.S_IMODE(acl_dir.stat().st_mode) == 0o775
+
+
+class TestDenyLock:
+    def test_the_lock_excludes_another_holder(self, tmp_path: Path) -> None:
+        (tmp_path / "sub").mkdir()
+        # The same directory twice must not wait on itself.
+        with acl.locked([tmp_path, tmp_path / "sub" / ".."]):
+            fd = os.open(tmp_path, os.O_RDONLY)
+            try:
+                with pytest.raises(BlockingIOError):
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            finally:
+                os.close(fd)
+        fd = os.open(tmp_path, os.O_RDONLY)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        finally:
+            os.close(fd)
+
+    def test_a_lock_held_past_the_timeout_is_a_retryable_refusal(
+        self, tmp_path: Path
+    ) -> None:
+        fd = os.open(tmp_path, os.O_RDONLY)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            with pytest.raises(ExecutionError, match="Cannot lock") as excinfo:
+                with acl.locked([tmp_path], timeout_sec=0.2):
+                    pass
+            assert excinfo.value.retryable
+        finally:
+            os.close(fd)
+
+    def test_a_filesystem_that_cannot_lock_directories_fails_the_probe(
+        self, acl_dir: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def flock(fd: int, operation: int) -> None:
+            raise OSError(9, "Bad file descriptor")
+
+        monkeypatch.setattr(acl.fcntl, "flock", flock)
+        with pytest.raises(ExecutionError, match="cannot be locked"):
+            acl.probe(acl_dir)
+
+    def test_the_uid_is_drawn_and_denied_under_the_lock(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        events: list[str] = []
+
+        @contextlib.contextmanager
+        def locked(paths: list[Path]) -> Iterator[None]:
+            events.append("lock")
+            yield
+            events.append("unlock")
+
+        def named_uids(path: Path) -> set[int]:
+            events.append("read")
+            return set()
+
+        def create(
+            name: str, home: Path, avoid_uids: frozenset[int] = frozenset()
+        ) -> DedicatedAccount:
+            events.append("create")
+            return _own_account(home, uid=61003)
+
+        monkeypatch.setattr(os, "getuid", lambda: 0)
+        monkeypatch.setattr(identity_module, "_ensure_privsep_dir", lambda: None)
+        monkeypatch.setattr(acl, "locked", locked)
+        monkeypatch.setattr(acl, "named_uids", named_uids)
+        monkeypatch.setattr(DedicatedAccount, "create", create)
+        monkeypatch.setattr(
+            DedicatedAccount, "deny", lambda self, paths: events.append("deny")
+        )
+        identity_module.resolve_identity("ssn-abcd1234", tmp_path, [tmp_path])
+        assert events == ["lock", "read", "create", "deny", "unlock"]
+
+
+@pytest.fixture
+def zombie() -> Iterator[psutil.Process]:
+    pid = os.fork()
+    if pid == 0:
+        os._exit(0)
+    proc = psutil.Process(pid)
+    try:
+        for _ in range(100):
+            if proc.status() == psutil.STATUS_ZOMBIE:
+                break
+            time.sleep(0.01)
+        assert proc.status() == psutil.STATUS_ZOMBIE
+        yield proc
+    finally:
+        os.waitpid(pid, 0)
+
+
+class TestZombies:
+    def test_a_zombie_is_not_a_live_process_of_its_uid(
+        self, zombie: psutil.Process, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(psutil, "process_iter", lambda attrs=None: [zombie])
+        assert identity_module._processes_of(os.getuid()) == []
+
+    def test_a_zombie_does_not_keep_the_account(
+        self,
+        zombie: psutil.Process,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        deleted: list[str] = []
+
+        def delete_account(name: str) -> bool:
+            deleted.append(name)
+            return True
+
+        monkeypatch.setattr(psutil, "process_iter", lambda attrs=None: [zombie])
+        monkeypatch.setattr(identity_module, "_delete_account", delete_account)
+        monkeypatch.setattr(identity_module, "purge_uid", lambda uid: None)
+        _own_account(tmp_path).release()
+        assert deleted == ["fmssn-test"]
+
+    def test_a_zombie_does_not_refuse_the_next_session(
+        self, zombie: psutil.Process, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        entry = pwd.struct_passwd(
+            ("fmssnold", "x", os.getuid(), 100, "", "/nonexistent", "/bin/sh")
+        )
+        monkeypatch.setattr(psutil, "process_iter", lambda attrs=None: [zombie])
+        monkeypatch.setattr(identity_module.pwd, "getpwall", lambda: [entry])
+        monkeypatch.setattr(os, "getuid", lambda: 0)
+        assert identity_module.live_session_accounts() == []
+
+
+class TestUidIpcPurge:
+    TABLE = (
+        "   key  shmid perms  size cpid lpid nattch   uid gid  cuid cgid\n"
+        "     0     11   600  4096  100  100      0 61001 100 61001  100\n"
+        "     0     12   600  4096  100  100      0  1000 100 61001  100\n"
+        "     0     13   666  4096  100  100      0  1000 100  1000  100\n"
+    )
+
+    def test_objects_the_uid_owns_or_created_are_selected(self) -> None:
+        assert identity_module.owned_ipc_ids(self.TABLE, "shmid", 61001) == [11, 12]
+        assert identity_module.owned_ipc_ids("", "shmid", 61001) == []
+
+    def test_a_segment_the_uid_left_is_removed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        libc = ctypes.CDLL(None, use_errno=True)
+        ipc_private, ipc_creat = 0, 0o1000
+        shmid = libc.shmget(ipc_private, 4096, ipc_creat | 0o600)
+        if shmid < 0:
+            pytest.skip("System V shared memory is unavailable")
+        try:
+            real = Path("/proc/sysvipc/shm").read_text(encoding="utf-8").splitlines()
+            ours = [real[0]] + [
+                line for line in real[1:] if line.split()[1] == str(shmid)
+            ]
+            assert len(ours) == 2
+            # Only this test's segment is visible, so no other object of this uid
+            # is touched.
+            monkeypatch.setattr(
+                identity_module,
+                "_read_ipc_table",
+                lambda kind: "\n".join(ours) if kind == "shm" else "",
+            )
+            identity_module.purge_uid_ipc(os.getuid())
+            listed = Path("/proc/sysvipc/shm").read_text(encoding="utf-8")
+            assert str(shmid) not in [
+                line.split()[1] for line in listed.splitlines()[1:]
+            ]
+        finally:
+            libc.shmctl(shmid, 0, None)
+
+
+class TestUidFilePurge:
+    def test_files_the_uid_left_are_removed_without_following_links(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        scratch = tmp_path / "scratch"
+        (scratch / "nested").mkdir(parents=True)
+        (scratch / "nested" / "left").write_text("old tenant")
+        keep = tmp_path / "keep"
+        keep.mkdir()
+        (keep / "file").write_text("not in scratch")
+        (scratch / "link").symlink_to(keep)
+        monkeypatch.setattr(tempfile, "tempdir", scratch.as_posix())
+        monkeypatch.setattr(identity_module, "_WORLD_WRITABLE_DIRS", ())
+        purge_uid_files(os.getuid())
+        assert list(scratch.iterdir()) == []
+        assert (keep / "file").read_text() == "not in scratch"
+
+
+class TestRemoveTree:
+    def test_a_tree_deeper_than_rmtree_can_walk_is_removed(
+        self, tmp_path: Path
+    ) -> None:
+        top = tmp_path / "deep"
+        top.mkdir()
+        fd = os.open(top, os.O_RDONLY | os.O_DIRECTORY)
+        for _ in range(3000):
+            os.mkdir("d", dir_fd=fd)
+            child = os.open("d", os.O_RDONLY | os.O_DIRECTORY, dir_fd=fd)
+            os.close(fd)
+            fd = child
+        os.close(fd)
+        remove_tree(top)
+        assert not os.path.lexists(top)
+
+    def test_links_in_the_tree_are_not_followed(self, tmp_path: Path) -> None:
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (outside / "kept").write_text("keep")
+        tree = tmp_path / "tree"
+        tree.mkdir()
+        (tree / "link").symlink_to(outside)
+        remove_tree(tree)
+        assert not tree.exists()
+        assert (outside / "kept").read_text() == "keep"
+
+
+class TestMountRoot:
+    def test_reset_removes_links_without_following_them(self, tmp_path: Path) -> None:
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (outside / "precious").write_text("keep")
+        root = tmp_path / "mnt"
+        (root / "old" / "deep").mkdir(parents=True)
+        (root / "link").symlink_to(outside)
+        (root / "old" / "link").symlink_to(outside)
+        _reset_mount_root(root, create=True)
+        assert list(root.iterdir()) == []
+        assert (outside / "precious").read_text() == "keep"
+        assert stat.S_IMODE(root.stat().st_mode) == 0o755
+
+    def test_reset_refuses_to_empty_a_nested_mount(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        root = tmp_path / "mnt"
+        (root / "data").mkdir(parents=True)
+        (root / "data" / "kept").write_text("operator data")
+        real_lstat = os.lstat
+
+        def lstat(path: Any, *args: Any, **kwargs: Any) -> os.stat_result:
+            info = real_lstat(path, *args, **kwargs)
+            if Path(path) == root / "data":
+                fields = list(info)
+                fields[stat.ST_DEV] += 1
+                return os.stat_result(fields)
+            return info
+
+        monkeypatch.setattr(process_module.os, "lstat", lstat)
+        with pytest.raises(OSError, match="mounted"):
+            _reset_mount_root(root, create=True)
+        assert (root / "data" / "kept").read_text() == "operator data"
+
+    def test_reset_refuses_to_empty_a_bind_mount_below_it(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        root = tmp_path / "mnt root"
+        (root / "data").mkdir(parents=True)
+        (root / "data" / "kept").write_text("operator data")
+        escaped = (root / "data").as_posix().replace(" ", "\\040")
+        mountinfo = tmp_path / "mountinfo"
+        mountinfo.write_text(
+            "23 28 0:22 / /proc rw,relatime - proc proc rw\n"
+            f"90 28 8:1 /srv/data {escaped} rw,relatime - ext4 /dev/sda1 rw\n"
+        )
+        monkeypatch.setattr(process_module, "_MOUNTINFO", mountinfo)
+        with pytest.raises(OSError, match="mounted"):
+            _reset_mount_root(root, create=True)
+        assert (root / "data" / "kept").read_text() == "operator data"
+
+    def test_reset_replaces_a_linked_root(self, tmp_path: Path) -> None:
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (outside / "precious").write_text("keep")
+        root = tmp_path / "mnt"
+        root.symlink_to(outside)
+        _reset_mount_root(root, create=True)
+        assert root.is_dir() and not root.is_symlink()
+        assert (outside / "precious").read_text() == "keep"
+
+    def test_nested_mount_paths_are_linked(self, tmp_path: Path) -> None:
+        root = tmp_path / "mnt"
+        root.mkdir()
+        target = tmp_path / "session" / "output"
+        target.mkdir(parents=True)
+        _link_mount_path(root, (root / "a" / "b" / "out").as_posix(), target)
+        link = root / "a" / "b" / "out"
+        assert link.is_symlink()
+        assert link.readlink() == target
+
+    def test_a_linked_component_is_never_followed(self, tmp_path: Path) -> None:
+        root = tmp_path / "mnt"
+        root.mkdir()
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (root / "a").symlink_to(outside)
+        with pytest.raises(ExecutionError, match="conflicts"):
+            _link_mount_path(root, (root / "a" / "out").as_posix(), tmp_path)
+        assert list(outside.iterdir()) == []
+
+    def test_an_existing_mount_path_is_refused(self, tmp_path: Path) -> None:
+        root = tmp_path / "mnt"
+        (root / "out").mkdir(parents=True)
+        with pytest.raises(ExecutionError, match="conflicts"):
+            _link_mount_path(root, (root / "out").as_posix(), tmp_path)
+
+    def test_the_mount_root_itself_is_refused(self, tmp_path: Path) -> None:
+        with pytest.raises(ExecutionError, match="below"):
+            _link_mount_path(tmp_path, tmp_path.as_posix(), tmp_path)
+
+
+class TestResolvingStateRoots:
+    def test_an_operator_link_is_resolved_to_its_target(self, tmp_path: Path) -> None:
+        data = tmp_path / "data" / "results"
+        data.mkdir(parents=True)
+        (tmp_path / "results").symlink_to(data)
+        cfg = dataclasses.replace(
+            make_live_worker_config(tmp_path), results_dir=tmp_path / "results"
+        )
+        assert data in denied_roots(cfg)
+        assert _path_problem(tmp_path / "results") is None
+
+    def test_the_heartbeat_directory_is_denied_not_just_the_file(
+        self, tmp_path: Path
+    ) -> None:
+        cfg = make_live_worker_config(tmp_path)
+        paths = denied_roots(cfg)
+        assert cfg.hb_file.parent in paths
+        assert cfg.hb_file not in paths
+
+    def test_a_link_in_a_shared_dir_is_refused_not_followed(
+        self, tmp_path: Path
+    ) -> None:
+        shared = tmp_path / "shared"
+        shared.mkdir()
+        shared.chmod(0o1777)
+        victim = tmp_path / "victim"
+        (victim / "data").mkdir(parents=True)
+        (shared / "utu").symlink_to(victim)
+        assert "shared directory" in (_path_problem(shared / "utu") or "")
+        assert (victim / "data").is_dir()
+
+    def test_an_owned_root_in_a_sticky_dir_is_accepted(self, tmp_path: Path) -> None:
+        shared = tmp_path / "shared"
+        (shared / "cache").mkdir(parents=True)
+        shared.chmod(0o1777)
+        assert _path_problem(shared / "cache") is None
+        assert _path_problem(shared / "missing") is None
+
+    @pytest.mark.parametrize("depth", [1, 2])
+    def test_a_root_below_a_world_writable_dir_is_refused(
+        self, tmp_path: Path, depth: int
+    ) -> None:
+        shared = tmp_path / "shared"
+        root = shared.joinpath(*["sub"] * (depth - 1), "results")
+        root.mkdir(parents=True)
+        shared.chmod(0o777)
+        assert "world-writable" in (_path_problem(root) or "")
+
+    def test_a_world_writable_dir_a_link_leads_through_is_refused(
+        self, tmp_path: Path
+    ) -> None:
+        shared = tmp_path / "shared"
+        (shared / "results").mkdir(parents=True)
+        shared.chmod(0o777)
+        (tmp_path / "hop").symlink_to("shared/results")
+        (tmp_path / "results").symlink_to(tmp_path / "hop")
+        assert "world-writable" in (_path_problem(tmp_path / "results") or "")
+
+    def test_a_link_in_a_world_writable_dir_is_refused(self, tmp_path: Path) -> None:
+        (tmp_path / "real").mkdir()
+        shared = tmp_path / "shared"
+        shared.mkdir()
+        (shared / "link").symlink_to(tmp_path / "real")
+        shared.chmod(0o777)
+        (tmp_path / "results").symlink_to(shared / "link")
+        assert "world-writable" in (_path_problem(tmp_path / "results") or "")
+
+    def test_parent_components_after_a_link_are_resolved_physically(
+        self, tmp_path: Path
+    ) -> None:
+        shared = tmp_path / "shared"
+        (shared / "inner").mkdir(parents=True)
+        (shared / "results").mkdir()
+        shared.chmod(0o777)
+        (tmp_path / "safe").mkdir()
+        (tmp_path / "safe" / "link").symlink_to(shared / "inner")
+        assert "world-writable" in (
+            _path_problem(tmp_path / "safe" / "link" / ".." / "results") or ""
+        )
+
+    def test_a_world_writable_denied_root_holds_denied_paths(
+        self, tmp_path: Path
+    ) -> None:
+        hf = tmp_path / "hf"
+        (hf / "hub").mkdir(parents=True)
+        hf.chmod(0o777)
+        cfg = dataclasses.replace(
+            make_live_worker_config(tmp_path),
+            hb_file=tmp_path / "hb" / "worker.hb",
+            state_dirs=(hf / "hub",),
+        )
+        assert "world-writable" in (process_module._state_problem(cfg) or "")
+        cfg = dataclasses.replace(cfg, state_dirs=(hf, hf / "hub"))
+        assert process_module._state_problem(cfg) is None
+        assert "world-writable" in (_path_problem(hf / "hub") or "")
+
+    def test_a_link_out_of_a_denied_root_is_checked_again(self, tmp_path: Path) -> None:
+        hf = tmp_path / "hf"
+        hf.mkdir()
+        shared = tmp_path / "shared"
+        (shared / "hub").mkdir(parents=True)
+        shared.chmod(0o777)
+        (hf / "hub").symlink_to(shared / "hub")
+        hf.chmod(0o777)
+        assert "world-writable" in (_path_problem(hf / "hub", [hf]) or "")
+
+    def test_a_link_loop_is_refused(self, tmp_path: Path) -> None:
+        (tmp_path / "a").symlink_to(tmp_path / "b")
+        (tmp_path / "b").symlink_to(tmp_path / "a")
+        assert "too many links" in (_path_problem(tmp_path / "a") or "")
+
+    def test_a_missing_root_is_created_owner_only(self, tmp_path: Path) -> None:
+        root = tmp_path / "new" / "state"
+        _create_state_root(root)
+        assert stat.S_IMODE(root.stat().st_mode) == 0o700
+        assert stat.S_IMODE(root.parent.stat().st_mode) == 0o755
+
+    def test_a_link_planted_on_the_way_is_not_followed(self, tmp_path: Path) -> None:
+        elsewhere = tmp_path / "elsewhere"
+        elsewhere.mkdir()
+        (tmp_path / "new").symlink_to(elsewhere)
+        with pytest.raises(OSError):
+            _create_state_root(tmp_path / "new" / "state")
+        assert list(elsewhere.iterdir()) == []
+
+    def test_a_world_writable_dir_on_the_way_offers_no_process_backend(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(os, "getuid", lambda: 0)
+        monkeypatch.setattr(process_module, "_acquire_backend_lock", lambda: True)
+        monkeypatch.setattr(acl, "tools_available", lambda: True)
+        monkeypatch.setattr(acl, "probe", lambda directory: None)
+        shared = tmp_path / "data"
+        (shared / "hf").mkdir(parents=True)
+        cfg = dataclasses.replace(
+            make_live_worker_config(tmp_path),
+            hb_file=tmp_path / "hb" / "worker.hb",
+            state_dirs=(shared / "hf",),
+        )
+        assert ProcessSessionBackend._isolation_ready(cfg) is True
+        shared.chmod(0o777)
+        assert ProcessSessionBackend._isolation_ready(cfg) is False
+
+
+class TestProcessBackendIsolation:
+    def test_root_worker_without_acl_support_offers_no_process_backend(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(os, "getuid", lambda: 0)
+        monkeypatch.setattr(process_module, "_acquire_backend_lock", lambda: True)
+        monkeypatch.setattr(acl, "tools_available", lambda: True)
+
+        def unsupported(directory: Path) -> None:
+            raise ExecutionError("ACL entries do not persist")
+
+        monkeypatch.setattr(acl, "probe", unsupported)
+        cfg = make_live_worker_config(tmp_path)
+        assert ProcessSessionBackend._isolation_ready(cfg) is False
+
+    def test_a_root_covering_the_mount_root_offers_no_process_backend(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(os, "getuid", lambda: 0)
+        monkeypatch.setattr(process_module, "_acquire_backend_lock", lambda: True)
+        monkeypatch.setattr(acl, "tools_available", lambda: True)
+        cfg = make_live_worker_config(tmp_path, state_dirs=(Path("/"),))
+        assert ProcessSessionBackend._isolation_ready(cfg) is False
+
+    def test_another_worker_holding_the_backend_lock_offers_no_process_backend(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(process_module, "_acquire_backend_lock", lambda: False)
+        cfg = make_live_worker_config(tmp_path)
+        assert ProcessSessionBackend._isolation_ready(cfg) is False
+
+    def test_lingering_session_processes_refuse_a_new_session(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            process_module, "live_session_accounts", lambda: ["fmssnold"]
+        )
+        backend = ProcessSessionBackend(make_live_worker_config(tmp_path))
+        request = types.SimpleNamespace(cfg=_cfg())
+        with pytest.raises(ExecutionError, match="earlier SSH session") as excinfo:
+            backend.start_session(cast(Any, request))
+        assert excinfo.value.retryable
+
+    def test_the_finish_sentinel_is_not_followed(self, tmp_path: Path) -> None:
+        sentinel = tmp_path / ".finish"
+        session = ProcessSession.__new__(ProcessSession)
+        session._plan = ProcessSessionPaths(
+            finish_sentinel=sentinel, output_path=None, mount_root=None
+        )
+        assert not session.finish_requested()
+        sentinel.symlink_to(tmp_path / "missing")
+        assert session.finish_requested()
+
+
+class TestLingeringSessionProcesses:
+    def _stale_account(self, monkeypatch: pytest.MonkeyPatch) -> list[str]:
+        entry = pwd.struct_passwd(
+            ("fmssnold", "x", 61001, 100, "", "/nonexistent/home", "/bin/sh")
+        )
+        deleted: list[str] = []
+
+        def delete_account(name: str) -> bool:
+            deleted.append(name)
+            return True
+
+        monkeypatch.setattr(os, "getuid", lambda: 0)
+        monkeypatch.setattr(identity_module.pwd, "getpwall", lambda: [entry])
+        monkeypatch.setattr(identity_module, "_delete_account", delete_account)
+        monkeypatch.setattr(identity_module, "purge_uid", lambda uid: None)
+        monkeypatch.setattr(identity_module, "_revoke_orphaned_denies", lambda: None)
+        return deleted
+
+    def test_the_sweep_kills_a_stale_account_before_deleting_it(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        deleted = self._stale_account(monkeypatch)
+        terminated: list[int] = []
+
+        def terminate(uid: int) -> bool:
+            terminated.append(uid)
+            return True
+
+        monkeypatch.setattr(identity_module, "_terminate_uid", terminate)
+        identity_module.reap_stale_accounts()
+        assert terminated == [61001]
+        assert deleted == ["fmssnold"]
+
+    def test_the_sweep_keeps_an_account_whose_processes_survive(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        deleted = self._stale_account(monkeypatch)
+        monkeypatch.setattr(identity_module, "_terminate_uid", lambda uid: False)
+        identity_module.reap_stale_accounts()
+        assert deleted == []
+
+    def test_every_process_of_the_uid_is_signalled_as_that_uid(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls: list[tuple[list[str], dict[str, Any]]] = []
+
+        def run(argv: list[str], **kwargs: Any) -> "subprocess.CompletedProcess[bytes]":
+            calls.append((argv, kwargs))
+            return subprocess.CompletedProcess(argv, 0, b"", b"")
+
+        monkeypatch.setattr(os, "geteuid", lambda: 0)
+        monkeypatch.setattr(os, "getuid", lambda: 0)
+        monkeypatch.setattr(identity_module.subprocess, "run", run)
+        identity_module._kill_all_as(61001)
+        [(argv, kwargs)] = calls
+        script, uid, gid = argv[-3:]
+        assert "os.setuid(uid)" in script
+        assert "os.kill(-1, signal.SIGKILL)" in script
+        assert (uid, gid) == ("61001", "65534")
+        assert "user" not in kwargs
+
+    def test_helpers_import_nothing_after_switching_uid(self) -> None:
+        preamble = identity_module._AS_UID_PREAMBLE
+        assert preamble.rindex("import") < preamble.index("os.setuid")
+        for script in (
+            identity_module._KILL_ALL_SCRIPT,
+            identity_module._REMOVE_IPC_SCRIPT,
+        ):
+            assert "import" not in script
+
+    @pytest.mark.parametrize("euid,uid,target", [(0, 0, 0), (0, 61001, 61001)])
+    def test_the_worker_never_signals_as_itself(
+        self, monkeypatch: pytest.MonkeyPatch, euid: int, uid: int, target: int
+    ) -> None:
+        calls: list[Any] = []
+        monkeypatch.setattr(os, "geteuid", lambda: euid)
+        monkeypatch.setattr(os, "getuid", lambda: uid)
+        monkeypatch.setattr(
+            identity_module.subprocess, "run", lambda *a, **k: calls.append(a)
+        )
+        identity_module._kill_all_as(target)
+        assert calls == []
+
+    def test_a_non_root_worker_signals_nothing_at_once(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls: list[Any] = []
+        monkeypatch.setattr(os, "geteuid", lambda: 1000)
+        monkeypatch.setattr(
+            identity_module.subprocess, "run", lambda *a, **k: calls.append(a)
+        )
+        identity_module._kill_all_as(61001)
+        assert calls == []
+
+
+class TestOutputCollection:
+    def _session(
+        self, tmp_path: Path, output: Path, identity: Any, max_bytes: int | None = None
+    ) -> ProcessSession:
+        spec: dict[str, object] = {"sshOutput": {"maxBytes": max_bytes}}
+        session = ProcessSession.__new__(ProcessSession)
+        session._plan = ProcessSessionPaths(
+            finish_sentinel=tmp_path / ".finish", output_path=output, mount_root=None
+        )
+        session._cfg = _cfg(**spec)
+        session.identity = identity
+        session.stop = lambda timeout_sec: None  # type: ignore[method-assign]
+        return session
+
+    def test_only_regular_files_are_collected(self, tmp_path: Path) -> None:
+        secret = tmp_path / "secret"
+        secret.write_text("worker credentials")
+        output = tmp_path / "output"
+        (output / "sub").mkdir(parents=True)
+        (output / "result.txt").write_text("result")
+        (output / "sub" / "nested.txt").write_text("nested")
+        (output / "leak").symlink_to(secret)
+        (output / "dirleak").symlink_to(tmp_path)
+        os.mkfifo(output / "fifo")
+        destination = tmp_path / "artifacts"
+        self._session(tmp_path, output, CurrentUser()).collect_output(destination)
+        assert (destination / "result.txt").read_text() == "result"
+        assert (destination / "sub" / "nested.txt").read_text() == "nested"
+        assert not (destination / "leak").exists()
+        assert not (destination / "leak").is_symlink()
+        assert not (destination / "dirleak").exists()
+        assert not (destination / "fifo").exists()
+
+    def test_files_the_session_does_not_own_are_not_collected(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        output = tmp_path / "output"
+        output.mkdir()
+        (output / "hardlinked").write_text("someone else's file")
+        identity = _own_account(tmp_path, uid=os.getuid() + 1)
+        monkeypatch.setattr(identity, "terminate_processes", lambda: True)
+        destination = tmp_path / "artifacts"
+        self._session(tmp_path, output, identity).collect_output(destination)
+        assert not (destination / "hardlinked").exists()
+
+    def test_output_over_max_bytes_is_refused(self, tmp_path: Path) -> None:
+        output = tmp_path / "output"
+        output.mkdir()
+        (output / "big").write_bytes(b"x" * 100)
+        with pytest.raises(ExecutionError, match="maxBytes"):
+            self._session(tmp_path, output, CurrentUser(), max_bytes=10).collect_output(
+                tmp_path / "artifacts"
+            )
+        assert not (tmp_path / "artifacts" / "big").exists()
