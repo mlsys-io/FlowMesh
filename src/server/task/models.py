@@ -184,10 +184,11 @@ class TaskRecord(BaseModel):
 
     _redacted_spec: TaskSpecTemplate | None = PrivateAttr(default=None)
 
-    def drop_terminal_inputs(self, max_bytes: int = TERMINAL_INPUT_MAX_BYTES) -> bool:
-        """Drop ``source`` and ``task.spec.data``, each only if over ``max_bytes``.
+    def drop_terminal_inputs(self) -> bool:
+        """Drop ``source`` and ``task.spec.data``, each only if oversized.
 
-        Safe because a terminal task is never dispatched again. ``source`` becomes a
+        Oversized means larger than ``TERMINAL_INPUT_MAX_BYTES`` once encoded. Safe
+        because a terminal task is never dispatched again. ``source`` becomes a
         one-line marker giving its original size. Returns whether anything was
         dropped; a no-op for a non-terminal task.
         """
@@ -195,7 +196,7 @@ class TaskRecord(BaseModel):
             return False
         changed = False
         source_bytes = len(self.source.encode())
-        if source_bytes > max_bytes:
+        if source_bytes > TERMINAL_INPUT_MAX_BYTES:
             self.source = (
                 f"# source dropped after the task finished ({source_bytes} bytes)"
             )
@@ -204,7 +205,7 @@ class TaskRecord(BaseModel):
         data = getattr(spec, "data", None)
         if data is not None:
             data_bytes = len(json.dumps(data, default=str, ensure_ascii=False).encode())
-            if data_bytes > max_bytes:
+            if data_bytes > TERMINAL_INPUT_MAX_BYTES:
                 self.task.spec = spec.model_copy(update={"data": None})
                 self._redacted_spec = None
                 changed = True
