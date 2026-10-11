@@ -10,6 +10,8 @@ from collections.abc import Collection, Sequence
 from itertools import batched
 from typing import Any
 
+from redis.exceptions import RedisError
+
 from shared.schemas.command import InterruptMessage
 from shared.tasks import TaskEnvelopeTemplate
 from shared.utils import new_workflow_id
@@ -294,8 +296,11 @@ class TaskRuntime:
         self, task_ids: Sequence[str]
     ) -> list[PersistedTask]:
         """Load task states ``REHYDRATE_LOAD_BATCH`` at a time, dropping terminal
-        tasks' oversized inputs and saving each changed state back. At most one batch
-        is held at full size.
+        tasks' oversized inputs and saving each changed state back.
+
+        Saving back is best-effort: a Redis that refuses writes (``maxmemory`` under
+        ``noeviction``, a read-only replica) still serves reads, so a failed save
+        logs and rehydration continues with the dropped inputs in memory.
         """
         states: list[PersistedTask] = []
         for batch in batched(task_ids, REHYDRATE_LOAD_BATCH):
@@ -306,9 +311,15 @@ class TaskRuntime:
                 )
                 if state
             ]
-            await self._workflow_registry.save_task_states_async(
-                [state for state in loaded if state.record.drop_terminal_inputs()]
-            )
+            changed = [state for state in loaded if state.record.drop_terminal_inputs()]
+            try:
+                await self._workflow_registry.save_task_states_async(changed)
+            except (RedisError, OSError) as exc:
+                self._logger.warning(
+                    "Failed to save back %d task state(s) with dropped inputs: %s",
+                    len(changed),
+                    exc,
+                )
             states.extend(loaded)
         return states
 

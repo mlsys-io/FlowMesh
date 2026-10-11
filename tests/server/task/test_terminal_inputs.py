@@ -6,6 +6,9 @@ import threading
 from typing import Any, cast
 from unittest.mock import MagicMock
 
+import pytest
+from redis.exceptions import RedisError
+
 from server.registries.workflow import PersistedTask
 from server.services.monitoring import EventMonitor
 from server.task.models import (
@@ -117,7 +120,6 @@ def test_rehydrate_drops_and_saves_back_oversized_terminal_inputs() -> None:
     record = runtime.get_record(tid)
     assert record is not None
     record.status = TaskStatus.DONE
-    # a terminal record saved uncompacted
     registry.task_blobs[tid] = PersistedTask(record=record).model_dump_json()
 
     restored = _runtime(registry)
@@ -150,3 +152,22 @@ def test_succeeded_task_records_worker_cache_before_dropping_data() -> None:
     worker_registry.record_worker_cache.assert_called_once_with(
         "wkr-1", models=[], datasets=["corpus-x"]
     )
+
+
+async def _refuse_writes(items: list[PersistedTask]) -> None:
+    raise RedisError("OOM command not allowed when used memory > 'maxmemory'")
+
+
+def test_rehydrate_survives_a_failed_save_back(monkeypatch: pytest.MonkeyPatch) -> None:
+    runtime, registry, tid = _ready_task(600)
+    record = runtime.get_record(tid)
+    assert record is not None
+    record.status = TaskStatus.DONE
+    registry.task_blobs[tid] = PersistedTask(record=record).model_dump_json()
+    monkeypatch.setattr(registry, "save_task_states_async", _refuse_writes)
+
+    restored = _runtime(registry)
+    assert asyncio.run(restored.rehydrate()) == 1
+    loaded = restored.get_record(tid)
+    assert loaded is not None
+    _assert_dropped(loaded)
