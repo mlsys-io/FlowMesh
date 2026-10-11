@@ -1,3 +1,4 @@
+import json
 import time
 from typing import Any
 
@@ -51,6 +52,10 @@ class TaskStatus(str):
 TERMINAL_TASK_STATUSES = frozenset(
     {TaskStatus.FAILED, TaskStatus.CANCELLED, TaskStatus.DONE}
 )
+
+# Above this, a finished task's ``source`` / ``spec.data`` is dropped (see
+# ``TaskRecord.compact_terminal``).
+TERMINAL_PAYLOAD_MAX_BYTES = 64 * 1024
 
 
 class TaskUsage(BaseModel):
@@ -180,6 +185,33 @@ class TaskRecord(BaseModel):
         return self.failed_workers[-1] if self.failed_workers else None
 
     _redacted_spec: TaskSpecTemplate | None = PrivateAttr(default=None)
+
+    def compact_terminal(self, max_bytes: int = TERMINAL_PAYLOAD_MAX_BYTES) -> bool:
+        """Drop a finished task's bulky inputs: ``source`` and ``task.spec.data``.
+
+        A finished task is never dispatched again, yet every task record stays in
+        memory and is reloaded at startup. Inline payloads (an ``api`` task's table
+        template, say) stored once in ``source`` and again in ``spec.data`` made
+        single records ~3 MB and pushed startup past the server's memory limit.
+        Fields under ``max_bytes`` are kept so ordinary tasks still show their
+        input. Returns whether anything was dropped. No-op for a live task.
+        """
+        if self.status not in TERMINAL_TASK_STATUSES:
+            return False
+        changed = False
+        if len(self.source) > max_bytes:
+            dropped = len(self.source)
+            self.source = f"# source dropped after the task finished ({dropped} bytes)"
+            changed = True
+        spec = self.task.spec
+        data = getattr(spec, "data", None)
+        if data is not None:
+            size = len(json.dumps(data, default=str))
+            if size > max_bytes:
+                spec.data = None
+                self._redacted_spec = None
+                changed = True
+        return changed
 
     def _redact_spec(self) -> TaskSpecTemplate:
         if self._redacted_spec is None:

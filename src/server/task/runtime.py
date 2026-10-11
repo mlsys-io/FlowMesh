@@ -418,6 +418,7 @@ class TaskRuntime:
             record = self._tasks.get(task_id)
             if record is None:
                 continue
+            record.compact_terminal()
             match record.status:
                 case TaskStatus.DONE:
                     moves[record.workflow_id][0].append(task_id)

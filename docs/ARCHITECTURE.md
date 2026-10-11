@@ -127,6 +127,12 @@ scripts/dev/            compile_protos, sync_requirements, check_env_examples
   can then only leave a child durably failed while the parent still lists it as
   merged — reconciled on the parent's next dispatch — never a live child
   stranded under a parent that no longer lists it.
+- **Finished-task compaction** — a task that reaches DONE, FAILED or
+  CANCELLED drops its `source` and `task.spec.data` when either is larger than
+  64 KiB, in memory and in its persisted state, and a task state reloaded at
+  startup is compacted the same way as it loads. Every task record stays in
+  memory and is reloaded on restart, so large inline inputs would otherwise make
+  startup memory grow with history. Smaller inputs are kept for display.
 - **Stage stickiness** (`ENABLE_STAGE_WEIGHT_STICKINESS=true`) — the
   dispatcher pins stages that reference an upstream stage's checkpoint
   to the worker that produced it, falling back to normal selection when
