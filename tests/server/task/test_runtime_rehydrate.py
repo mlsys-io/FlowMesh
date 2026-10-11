@@ -9,6 +9,7 @@ from typing import Any, cast
 import pytest
 
 from server.registries.workflow import PersistedTask, WorkflowSched
+from server.task import runtime as runtime_module
 from server.task.models import TaskStatus
 from server.task.runtime import TaskRuntime
 
@@ -180,6 +181,17 @@ async def test_persisted_task_round_trips_failed_workers_and_deps() -> None:
     assert restored.depends_on == {a}
     assert restored.epoch_index == 2
     assert restored.record.task_id == b
+
+
+@pytest.mark.anyio
+async def test_rehydrate_loads_every_batch(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(runtime_module, "REHYDRATE_LOAD_BATCH", 1)
+    registry = FakeWorkflowRegistry()
+    _, ids = await _register(_runtime(registry), GRAPH)
+
+    restored = _runtime(registry)
+    assert await restored.rehydrate() == 1
+    assert all(restored.get_record(task_id) for task_id in ids.values())
 
 
 @pytest.mark.anyio

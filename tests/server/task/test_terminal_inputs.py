@@ -1,5 +1,6 @@
 """A terminal task drops oversized inputs from memory and from its persisted state."""
 
+import asyncio
 import logging
 import threading
 from typing import Any, cast
@@ -105,3 +106,19 @@ def test_terminal_task_keeps_small_inputs() -> None:
         assert record is not None
         assert _data(record) is not None
         assert "row-0-" in record.source
+
+
+def test_rehydrate_drops_and_saves_back_oversized_terminal_inputs() -> None:
+    runtime, registry, tid = _ready_task(600)
+    record = runtime.get_record(tid)
+    assert record is not None
+    record.status = TaskStatus.DONE
+    # a terminal record saved uncompacted
+    registry.task_blobs[tid] = PersistedTask(record=record).model_dump_json()
+
+    restored = _runtime(registry)
+    assert asyncio.run(restored.rehydrate()) == 1
+    loaded = restored.get_record(tid)
+    assert loaded is not None and loaded.status == TaskStatus.DONE
+    _assert_dropped(loaded)
+    _assert_dropped(_stored(registry, tid))

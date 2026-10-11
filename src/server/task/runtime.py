@@ -6,7 +6,8 @@ import logging
 import threading
 import time
 from collections import defaultdict, deque
-from collections.abc import Collection
+from collections.abc import Collection, Sequence
+from itertools import batched
 from typing import Any
 
 from shared.schemas.command import InterruptMessage
@@ -28,6 +29,8 @@ from .models import (
     categorize_task_type,
 )
 from .parser import parse_workflow
+
+REHYDRATE_LOAD_BATCH = 16
 
 
 def _sanitize_merge_spec(spec: dict[str, Any]) -> dict[str, Any]:
@@ -273,13 +276,7 @@ class TaskRuntime:
             )
             if wf_record is None:
                 continue
-            tasks: list[PersistedTask] = [
-                state
-                for state in await self._workflow_registry.load_task_states_async(
-                    *wf_record.task_ids
-                )
-                if state
-            ]
+            tasks = await self._load_task_states_async(wf_record.task_ids)
             if not tasks:
                 continue
             sched = await self._workflow_registry.load_workflow_sched_async(workflow_id)
@@ -292,6 +289,28 @@ class TaskRuntime:
         if restored:
             self._logger.info("Rehydrated %d workflow(s) from durable state", restored)
         return restored
+
+    async def _load_task_states_async(
+        self, task_ids: Sequence[str]
+    ) -> list[PersistedTask]:
+        """Load task states ``REHYDRATE_LOAD_BATCH`` at a time, dropping terminal
+        tasks' oversized inputs and saving each changed state back. At most one batch
+        is held at full size.
+        """
+        states: list[PersistedTask] = []
+        for batch in batched(task_ids, REHYDRATE_LOAD_BATCH):
+            loaded = [
+                state
+                for state in await self._workflow_registry.load_task_states_async(
+                    *batch
+                )
+                if state
+            ]
+            await self._workflow_registry.save_task_states_async(
+                [state for state in loaded if state.record.drop_terminal_inputs()]
+            )
+            states.extend(loaded)
+        return states
 
     def _install_rehydrated_workflow_locked(
         self,

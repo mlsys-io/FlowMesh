@@ -29,14 +29,6 @@ from ..task.models import TaskRecord, TaskStatus
 from ..utils.time import now_iso
 
 
-def _load_compacted(blob: str | bytes) -> "PersistedTask":
-    """Parse one task state, dropping a finished task's bulky inputs as it loads,
-    so a restart never holds every historical payload at once."""
-    persisted = PersistedTask.model_validate_json(blob)
-    persisted.record.drop_terminal_inputs()
-    return persisted
-
-
 class PersistedTask(BaseModel):
     """A durable per-task snapshot sufficient to rebuild scheduler state."""
 
@@ -417,7 +409,9 @@ class WorkflowRegistry:
         if not task_ids:
             return []
         blobs = self._rds.sync.mget([task_state_key(task_id) for task_id in task_ids])
-        return [_load_compacted(blob) if blob else None for blob in blobs]
+        return [
+            PersistedTask.model_validate_json(blob) if blob else None for blob in blobs
+        ]
 
     async def load_task_states_async(
         self, *task_ids: str
@@ -427,7 +421,9 @@ class WorkflowRegistry:
         blobs = await self._rds.asyncio.mget(
             [task_state_key(task_id) for task_id in task_ids]
         )
-        return [_load_compacted(blob) if blob else None for blob in blobs]
+        return [
+            PersistedTask.model_validate_json(blob) if blob else None for blob in blobs
+        ]
 
     def save_workflow_sched(
         self, workflow_id: str, in_epoch_order: bool, epoch_frontier: int
