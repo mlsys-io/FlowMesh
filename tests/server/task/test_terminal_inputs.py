@@ -4,8 +4,10 @@ import asyncio
 import logging
 import threading
 from typing import Any, cast
+from unittest.mock import MagicMock
 
 from server.registries.workflow import PersistedTask
+from server.services.monitoring import EventMonitor
 from server.task.models import (
     TERMINAL_INPUT_MAX_BYTES,
     TERMINAL_TASK_STATUSES,
@@ -13,6 +15,7 @@ from server.task.models import (
     TaskStatus,
 )
 from server.task.runtime import TaskRuntime
+from shared.schemas.event import TaskEvent
 from shared.tasks.specs import EchoSpecTemplate
 from tests.server.task.merge_harness import WorkerRegistryStub, register
 from tests.server.task.test_runtime_rehydrate import FakeWorkflowRegistry
@@ -35,6 +38,7 @@ spec:
           taskType: echo
           data:
             type: list
+            dataset_name: corpus-x
             items:
 {items}
 """
@@ -122,3 +126,27 @@ def test_rehydrate_drops_and_saves_back_oversized_terminal_inputs() -> None:
     assert loaded is not None and loaded.status == TaskStatus.DONE
     _assert_dropped(loaded)
     _assert_dropped(_stored(registry, tid))
+
+
+def test_succeeded_task_records_worker_cache_before_dropping_data() -> None:
+    runtime, _, tid = _ready_task(600)
+    worker_registry = MagicMock()
+    monitor = EventMonitor(
+        redis_client=MagicMock(),
+        logger=logging.getLogger("terminal-inputs"),
+        runtime=runtime,
+        dispatcher=MagicMock(),
+        worker_registry=worker_registry,
+        node_registry=MagicMock(),
+        metrics_recorder=MagicMock(),
+        watchdog=MagicMock(),
+    )
+    monitor._handle_task_event(
+        TaskEvent(type="TASK_SUCCEEDED", task_id=tid, worker_id="wkr-1", payload={})
+    )
+    record = runtime.get_record(tid)
+    assert record is not None and record.status == TaskStatus.DONE
+    _assert_dropped(record)
+    worker_registry.record_worker_cache.assert_called_once_with(
+        "wkr-1", models=[], datasets=["corpus-x"]
+    )

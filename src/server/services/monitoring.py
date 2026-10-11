@@ -449,6 +449,20 @@ class EventMonitor:
             self._logger.debug("Failed to parse task stream event: %s (%s)", raw, exc)
             return None
 
+    def _record_worker_cache(self, worker_id: str, task_id: str) -> None:
+        try:
+            record = self._runtime.get_record(task_id)
+            if record:
+                models, datasets = extract_model_dataset_names(record.task)
+                if models or datasets:
+                    self._worker_registry.record_worker_cache(
+                        worker_id, models=models, datasets=datasets
+                    )
+        except Exception as exc:
+            self._logger.debug(
+                "Failed to update cache metadata for worker %s: %s", worker_id, exc
+            )
+
     def _handle_task_event(self, event: TaskEvent) -> None:
         payload = event.payload or {}
         event_type = event.type
@@ -472,6 +486,10 @@ class EventMonitor:
                 merged_children = self._runtime.get_merged_children(event.task_id)
                 if merged_children:
                     self.mirror_task_results(event.task_id, merged_children)
+                if event.worker_id:
+                    # Before mark_succeeded, which drops a terminal task's
+                    # oversized spec.data, where dataset names can live.
+                    self._record_worker_cache(event.worker_id, event.task_id)
                 usages = self._runtime.mark_succeeded(
                     event.task_id, event.worker_id, payload, event.ts
                 )
@@ -507,22 +525,6 @@ class EventMonitor:
                         self._close_task_log_stream(child_id)
                         self._maybe_close_workflow_log_stream(child_id)
                 if event.worker_id:
-                    try:
-                        record = self._runtime.get_record(event.task_id)
-                        if record:
-                            models, datasets = extract_model_dataset_names(record.task)
-                            if models or datasets:
-                                self._worker_registry.record_worker_cache(
-                                    event.worker_id,
-                                    models=models,
-                                    datasets=datasets,
-                                )
-                    except Exception as exc:
-                        self._logger.debug(
-                            "Failed to update cache metadata for worker %s: %s",
-                            event.worker_id,
-                            exc,
-                        )
                     try:
                         self._worker_registry.update_worker_status(
                             event.worker_id, WorkerStatus.IDLE
