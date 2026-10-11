@@ -10,7 +10,8 @@ from shared.schemas.result import OmniText2VideoResult, OmniVideoItem
 from shared.tasks.specs import TaskSpecStrictBase
 from shared.tasks.specs.omni import OmniText2VideoSpecStrict
 from shared.tasks.task_type import TaskType
-from shared.utils.parsing import to_bool, to_float, to_int
+from shared.utils.parsing import to_float, to_int
+from worker.config import WorkerConfig
 
 from .base_executor import ExecutionError, ExecutorTask
 from .omni_executor_base import (
@@ -18,12 +19,14 @@ from .omni_executor_base import (
     Omni,
     OmniExecutorBase,
     OmniRequestOutput,
+    prompt_index_from_request_id,
 )
 
 try:
     from vllm_omni.entrypoints.openai.serving_video import OmniOpenAIServingVideo
     from vllm_omni.entrypoints.openai.video_api_utils import _encode_video_bytes
     from vllm_omni.inputs.data import OmniDiffusionSamplingParams, OmniTextPrompt
+    from vllm_omni.outputs.output_metadata import DiffusionPayloadValue
 
     _HAS_OMNI_VIDEO = True
 except Exception:
@@ -31,10 +34,12 @@ except Exception:
         from vllm_omni.entrypoints.openai.serving_video import OmniOpenAIServingVideo
         from vllm_omni.entrypoints.openai.video_api_utils import _encode_video_bytes
         from vllm_omni.inputs.data import OmniDiffusionSamplingParams, OmniTextPrompt
+        from vllm_omni.outputs.output_metadata import DiffusionPayloadValue
     else:
         OmniOpenAIServingVideo = object
         OmniDiffusionSamplingParams = object
         OmniTextPrompt = object
+        DiffusionPayloadValue = object
         _encode_video_bytes = None
     _HAS_OMNI_VIDEO = False
 
@@ -42,7 +47,6 @@ logger = logging.getLogger(__name__)
 EXECUTOR_NAME = "omni_text2video"
 
 _DEFAULT_FPS = 16
-_ENGINE_FLAGS = ("enable_cpu_offload", "enable_layerwise_offload")
 
 
 class OmniText2VideoExecutor(OmniExecutorBase):
@@ -55,6 +59,10 @@ class OmniText2VideoExecutor(OmniExecutorBase):
     name = EXECUTOR_NAME
     supported_task_types = frozenset({TaskType.OMNI_TEXT2VIDEO})
     _TASK_SPEC_TYPE = OmniText2VideoSpecStrict
+
+    @classmethod
+    def is_available(cls, config: WorkerConfig) -> bool:
+        return _HAS_OMNI and _HAS_OMNI_VIDEO
 
     def prepare(self) -> None:
         if not _HAS_OMNI or not _HAS_OMNI_VIDEO:
@@ -72,6 +80,7 @@ class OmniText2VideoExecutor(OmniExecutorBase):
         assert isinstance(spec, OmniText2VideoSpecStrict)
         prompts = self._collect_text_inputs(spec, task.task_id)
         cfg = self.omni_cfg(spec_dict)
+        params = _sampling_params(cfg)
 
         with self._span(
             "model load",
@@ -85,7 +94,7 @@ class OmniText2VideoExecutor(OmniExecutorBase):
             span_type=SpanType.COMPUTE,
             attributes={"task_id": task.task_id, "prompt_count": len(prompts)},
         ):
-            videos = self._generate_videos(prompts, cfg)
+            videos = self._generate_videos(prompts, cfg, params)
 
         artifacts_dir = out_dir / "artifacts"
         items: list[OmniVideoItem] = []
@@ -131,11 +140,11 @@ class OmniText2VideoExecutor(OmniExecutorBase):
             env_keys=("OMNI_MODEL",),
             default="Wan-AI/Wan2.1-T2V-1.3B-Diffusers",
         )
-        engine_kwargs = _engine_kwargs(cfg)
-        new_spec = (
-            *self._build_omni_spec(model_name, cfg),
-            tuple(sorted(engine_kwargs.items())),
-        )
+        # vLLM-Omni's checkpoint partition, e.g. MiniMax-H3 "t2va" loads only
+        # FL2VA. Kept out of the base class: omni_text2speech reads
+        # spec.omni.task_type as the TTS task.
+        task_type = str(cfg.get("task_type") or "") or None
+        new_spec = (*self._build_omni_spec(model_name, cfg), task_type)
         if self._omni is not None:
             if self._omni_spec == new_spec:
                 logger.info("Reusing existing Omni instance for model %s", model_name)
@@ -146,14 +155,20 @@ class OmniText2VideoExecutor(OmniExecutorBase):
             )
             self._close_omni()
         init_kwargs = self.build_omni_init_kwargs(model_name, cfg)
-        init_kwargs.update(engine_kwargs)
+        if task_type:
+            init_kwargs["task_type"] = task_type
         self._omni = Omni(**init_kwargs)
         self._model_name = model_name
         self._omni_spec = new_spec
 
     # ── generation ───────────────────────────────────────────────────────
 
-    def _generate_videos(self, prompts: list[str], cfg: dict[str, Any]) -> list[bytes]:
+    def _generate_videos(
+        self,
+        prompts: list[str],
+        cfg: dict[str, Any],
+        params: OmniDiffusionSamplingParams,
+    ) -> list[bytes]:
         if self._omni is None:
             raise ExecutionError("Omni model not initialized.")
         negative_prompt = cfg.get("negative_prompt")
@@ -163,7 +178,7 @@ class OmniText2VideoExecutor(OmniExecutorBase):
             if negative_prompt:
                 request["negative_prompt"] = str(negative_prompt)
             requests.append(request)
-        outputs = self._omni.generate(requests, _sampling_params(cfg), use_tqdm=False)
+        outputs = self._omni.generate(requests, params, use_tqdm=False)
         by_index: dict[int, OmniRequestOutput] = {}
         for output in outputs:
             idx = _prompt_index(str(output.request_id), len(prompts))
@@ -181,22 +196,6 @@ class OmniText2VideoExecutor(OmniExecutorBase):
 
 
 # ── config / output helpers ──────────────────────────────────────────────────
-
-
-def _engine_kwargs(cfg: dict[str, Any]) -> dict[str, Any]:
-    """Engine options that change which weights load and where they are placed."""
-    kwargs: dict[str, Any] = {}
-    for key in _ENGINE_FLAGS:
-        if cfg.get(key) is not None:
-            kwargs[key] = to_bool(cfg.get(key), default=False)
-    quantization = cfg.get("quantization")
-    if quantization:
-        kwargs["quantization_config"] = str(quantization)
-    task_type = cfg.get("task_type")
-    if task_type:
-        # selects the checkpoint partition, e.g. MiniMax-H3 "t2va" loads FL2VA only
-        kwargs["task_type"] = str(task_type)
-    return kwargs
 
 
 def _sampling_params(cfg: dict[str, Any]) -> OmniDiffusionSamplingParams:
@@ -221,26 +220,24 @@ def _sampling_params(cfg: dict[str, Any]) -> OmniDiffusionSamplingParams:
 
 def _prompt_index(request_id: str, prompt_count: int) -> int:
     """Return the prompt index encoded as the request id's leading field."""
-    head = request_id.split("_", 1)[0]
-    if not head.isdigit() or int(head) >= prompt_count:
+    idx = prompt_index_from_request_id(request_id)
+    if idx is None or idx >= prompt_count:
         raise ExecutionError(f"request id {request_id!r} has no valid prompt index.")
-    return int(head)
+    return idx
 
 
 def _encode_mp4(output: OmniRequestOutput, cfg: dict[str, Any]) -> bytes:
     """Encode one request's video (and audio, when the model emits it) as mp4."""
     serving = OmniOpenAIServingVideo
-    target = getattr(output, "request_output", None) or output
-    multimodal = getattr(target, "multimodal_output", None) or {}
-    videos = serving._normalize_video_outputs(
-        getattr(target, "images", None) or multimodal.get("video")
-    )
+    multimodal = output.multimodal_output or {}
+    images: list[DiffusionPayloadValue] = list(output.images)
+    videos = serving._normalize_video_outputs(images or multimodal.get("video"))
     if not videos:
         raise ExecutionError("Omni video generation returned no video.")
-    fps = to_int(cfg.get("fps")) or serving._resolve_fps(target) or _DEFAULT_FPS
+    fps = to_int(cfg.get("fps")) or serving._resolve_fps(output) or _DEFAULT_FPS
     return _encode_video_bytes(
         videos[0],
         fps=fps,
-        audio=serving._extract_audio_outputs(target, expected_count=len(videos))[0],
-        audio_sample_rate=serving._extract_audio_sample_rate_from_result(target),
+        audio=serving._extract_audio_outputs(output, expected_count=len(videos))[0],
+        audio_sample_rate=serving._extract_audio_sample_rate_from_result(output),
     )

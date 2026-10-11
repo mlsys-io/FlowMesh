@@ -5,6 +5,7 @@ The engine yields outputs in completion order and tags request ids
 model; the encoder check runs against the installed vllm-omni.
 """
 
+import io
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -253,3 +254,73 @@ def test_extra_args_must_be_a_mapping(
     spec = _spec(["p0"], extra_args="16:9")
     with pytest.raises(ExecutionError, match="extra_args must be a mapping"):
         _run(tmp_path, monkeypatch, spec, [_output("0_a")])
+
+
+def test_invalid_sampling_params_fail_before_the_engine_loads(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    spec = OmniText2VideoSpecStrict(
+        taskType=TaskType.OMNI_TEXT2VIDEO,
+        model=ModelConfig(source=ModelSource(identifier="org/video")),
+        data={"type": "list", "items": ["p0"]},
+        omni={"extra_args": "16:9"},
+    )
+    task = make_worker_task_message(
+        spec, task_type=TaskType.OMNI_TEXT2VIDEO, task_id="tsk-video"
+    )
+    executor = OmniText2VideoExecutor(DEFAULT_WORKER_CONFIG)
+
+    def _load(spec_dict: Any) -> None:
+        raise AssertionError("engine loaded before sampling params were validated")
+
+    monkeypatch.setattr(executor, "_ensure_omni", _load)
+    with pytest.raises(ExecutionError, match="requires spec.omni.num_frames"):
+        executor.run(task, tmp_path, RunControl(task.task_id))
+
+
+@pytest.mark.parametrize(
+    "quantization", ["fp8", {"method": "fp8", "ignored_layers": []}]
+)
+def test_quantization_reaches_omni_unchanged(
+    monkeypatch: pytest.MonkeyPatch, quantization: Any
+) -> None:
+    created: list[_FakeOmni] = []
+
+    def _factory(**kwargs: Any) -> _FakeOmni:
+        created.append(_FakeOmni([], **kwargs))
+        return created[-1]
+
+    monkeypatch.setattr(mod, "Omni", _factory)
+    executor = OmniText2VideoExecutor(DEFAULT_WORKER_CONFIG)
+    executor._ensure_omni(
+        _spec(["p"], quantization=quantization).model_dump(by_alias=True)
+    )
+
+    assert created[0].init_kwargs["quantization_config"] == quantization
+
+
+def test_quantization_must_be_a_name_or_mapping(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(mod, "Omni", lambda **kwargs: _FakeOmni([], **kwargs))
+    executor = OmniText2VideoExecutor(DEFAULT_WORKER_CONFIG)
+    with pytest.raises(ExecutionError, match="method name or a mapping"):
+        executor._ensure_omni(_spec(["p"], quantization=8).model_dump(by_alias=True))
+
+
+def test_encoder_muxes_model_audio_into_the_mp4() -> None:
+    av = pytest.importorskip("av")
+    frames = np.zeros((8, 32, 32, 3), dtype=np.uint8)
+    audio = np.zeros(22050, dtype=np.float32)
+    output = SimpleNamespace(
+        request_id="0_a",
+        images=[frames],
+        multimodal_output={"audio": audio, "audio_sample_rate": 44100},
+    )
+
+    data = mod._encode_mp4(output, {"fps": 8})  # type: ignore[arg-type]
+
+    with av.open(io.BytesIO(data)) as container:
+        assert len(container.streams.video) == 1
+        assert len(container.streams.audio) == 1
+        assert container.streams.audio[0].rate == 44100

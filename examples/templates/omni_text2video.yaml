@@ -8,7 +8,7 @@ spec:
 
   resources:
     hardware:
-      memory: 24Gi
+      memory: 28Gi
       gpu:
         count: 1
         memory: 24GB
@@ -30,7 +30,7 @@ spec:
     num_inference_steps: 30
     fps: 16
     seed: 42
-    # fits one 24 GB GPU with under 28 GB of host RAM
+    # measured to fit one 24 GB GPU and 28 GiB of host RAM
     enable_cpu_offload: true
 
   output:
