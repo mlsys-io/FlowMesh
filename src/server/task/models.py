@@ -1,3 +1,4 @@
+import json
 import time
 from typing import Any
 
@@ -51,6 +52,8 @@ class TaskStatus(str):
 TERMINAL_TASK_STATUSES = frozenset(
     {TaskStatus.FAILED, TaskStatus.CANCELLED, TaskStatus.DONE}
 )
+
+TERMINAL_INPUT_MAX_BYTES = 64 * 1024
 
 
 class TaskUsage(BaseModel):
@@ -180,6 +183,33 @@ class TaskRecord(BaseModel):
         return self.failed_workers[-1] if self.failed_workers else None
 
     _redacted_spec: TaskSpecTemplate | None = PrivateAttr(default=None)
+
+    def drop_terminal_inputs(self) -> bool:
+        """Drop ``source`` and ``task.spec.data``, each only if oversized.
+
+        Oversized means larger than ``TERMINAL_INPUT_MAX_BYTES`` once encoded. Safe
+        because a terminal task is never dispatched again. ``source`` becomes a
+        one-line marker giving its original size. Returns whether anything was
+        dropped; a no-op for a non-terminal task.
+        """
+        if self.status not in TERMINAL_TASK_STATUSES:
+            return False
+        changed = False
+        source_bytes = len(self.source.encode())
+        if source_bytes > TERMINAL_INPUT_MAX_BYTES:
+            self.source = (
+                f"# source dropped after the task finished ({source_bytes} bytes)"
+            )
+            changed = True
+        spec = self.task.spec
+        data = getattr(spec, "data", None)
+        if data is not None:
+            data_bytes = len(json.dumps(data, default=str, ensure_ascii=False).encode())
+            if data_bytes > TERMINAL_INPUT_MAX_BYTES:
+                self.task.spec = spec.model_copy(update={"data": None})
+                self._redacted_spec = None
+                changed = True
+        return changed
 
     def _redact_spec(self) -> TaskSpecTemplate:
         if self._redacted_spec is None:

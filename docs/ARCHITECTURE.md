@@ -127,6 +127,10 @@ scripts/dev/            compile_protos, sync_requirements, check_env_examples
   can then only leave a child durably failed while the parent still lists it as
   merged — reconciled on the parent's next dispatch — never a live child
   stranded under a parent that no longer lists it.
+- **Terminal-task inputs.** Once a task is DONE, FAILED or CANCELLED, its
+  `source` and its `task.spec.data` are each dropped when larger than 64 KiB:
+  `source` becomes a one-line marker giving its original size, and `data`
+  becomes `null`. A restart rewrites an older oversized record in this form.
 - **Stage stickiness** (`ENABLE_STAGE_WEIGHT_STICKINESS=true`) — the
   dispatcher pins stages that reference an upstream stage's checkpoint
   to the worker that produced it, falling back to normal selection when

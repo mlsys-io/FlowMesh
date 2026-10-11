@@ -6,8 +6,11 @@ import logging
 import threading
 import time
 from collections import defaultdict, deque
-from collections.abc import Collection
+from collections.abc import Collection, Sequence
+from itertools import batched
 from typing import Any
+
+from redis.exceptions import RedisError
 
 from shared.schemas.command import InterruptMessage
 from shared.tasks import TaskEnvelopeTemplate
@@ -28,6 +31,8 @@ from .models import (
     categorize_task_type,
 )
 from .parser import parse_workflow
+
+REHYDRATE_LOAD_BATCH = 16
 
 
 def _sanitize_merge_spec(spec: dict[str, Any]) -> dict[str, Any]:
@@ -273,13 +278,7 @@ class TaskRuntime:
             )
             if wf_record is None:
                 continue
-            tasks: list[PersistedTask] = [
-                state
-                for state in await self._workflow_registry.load_task_states_async(
-                    *wf_record.task_ids
-                )
-                if state
-            ]
+            tasks = await self._load_task_states_async(wf_record.task_ids)
             if not tasks:
                 continue
             sched = await self._workflow_registry.load_workflow_sched_async(workflow_id)
@@ -292,6 +291,37 @@ class TaskRuntime:
         if restored:
             self._logger.info("Rehydrated %d workflow(s) from durable state", restored)
         return restored
+
+    async def _load_task_states_async(
+        self, task_ids: Sequence[str]
+    ) -> list[PersistedTask]:
+        """Load task states ``REHYDRATE_LOAD_BATCH`` at a time, dropping terminal
+        tasks' oversized inputs and saving each changed state back.
+
+        Saving back is best-effort: a Redis that refuses writes (``maxmemory`` under
+        ``noeviction``, a read-only replica) still serves reads, so a failed save
+        logs and rehydration continues with the dropped inputs in memory.
+        """
+        states: list[PersistedTask] = []
+        for batch in batched(task_ids, REHYDRATE_LOAD_BATCH):
+            loaded = [
+                state
+                for state in await self._workflow_registry.load_task_states_async(
+                    *batch
+                )
+                if state
+            ]
+            changed = [state for state in loaded if state.record.drop_terminal_inputs()]
+            try:
+                await self._workflow_registry.save_task_states_async(changed)
+            except (RedisError, OSError) as exc:
+                self._logger.warning(
+                    "Failed to save back %d task state(s) with dropped inputs: %s",
+                    len(changed),
+                    exc,
+                )
+            states.extend(loaded)
+        return states
 
     def _install_rehydrated_workflow_locked(
         self,
@@ -368,6 +398,7 @@ class TaskRuntime:
         record = self._tasks.get(task_id)
         if record is None:
             return None
+        record.drop_terminal_inputs()
         return PersistedTask(
             record=record,
             depends_on=self._original_deps.get(task_id) or set(),
