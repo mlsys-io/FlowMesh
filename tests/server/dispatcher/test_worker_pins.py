@@ -227,3 +227,55 @@ def test_fallback_policy_and_merge_index_survive_rehydration(setup: PinSetup) ->
     )
     hint = record.task.metadata.annotations.schedule_hint
     assert hint is not None and hint.allow_worker_fallback
+
+
+@pytest.mark.parametrize("rehydrate", [False, True])
+def test_transformers_peers_dispatch_independently(
+    setup: PinSetup, rehydrate: bool
+) -> None:
+    runtime, dispatcher, registry = setup
+    spec = {
+        "taskType": "inference",
+        "model": {
+            "source": {"identifier": "tiny"},
+            "transformers": {"device_map": "cpu"},
+        },
+    }
+    payload = yaml.safe_dump(
+        {
+            "apiVersion": "flowmesh/v1",
+            "kind": "Workflow",
+            "metadata": {
+                "annotations": {
+                    "schedule_hint": {
+                        "selected_worker": "wkr-old",
+                        "allow_worker_fallback": True,
+                    }
+                }
+            },
+            "spec": {
+                "graph": {
+                    "nodes": [{"name": name, "spec": spec} for name in ["a", "b"]]
+                }
+            },
+        }
+    )
+    _, tasks = asyncio.run(runtime.register("owner", "org", payload))
+    if rehydrate:
+        for task in tasks:
+            record = runtime.get_record(task.task_id)
+            assert record is not None
+            record.merge_key = "legacy-transformers-merge-key"
+            runtime._persist_locked(task.task_id)
+        restored = TaskRuntime(
+            runtime._workflow_registry,
+            registry,
+            logging.getLogger("restored-transformers"),
+        )
+        assert asyncio.run(restored.rehydrate()) == 1
+        dispatcher._runtime = restored
+    for task in tasks:
+        assert dispatcher.dispatch_once(task.task_id)
+    assert registry.publish_task.call_count == 2
+    for call in registry.publish_task.call_args_list:
+        assert not call.args[1].merged_children

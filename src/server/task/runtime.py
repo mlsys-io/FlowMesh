@@ -14,6 +14,7 @@ from redis.exceptions import RedisError
 
 from shared.schemas.command import InterruptMessage
 from shared.tasks import TaskEnvelopeTemplate
+from shared.tasks.specs.inference import InferenceBackend, InferenceSpecTemplate
 from shared.utils import new_workflow_id
 from shared.utils.redact import redact_raw_yaml
 
@@ -49,9 +50,18 @@ def _sanitize_merge_spec(spec: dict[str, Any]) -> dict[str, Any]:
     return clone
 
 
+def _uses_transformers_inference(task: TaskEnvelopeTemplate) -> bool:
+    return (
+        isinstance(task.spec, InferenceSpecTemplate)
+        and task.spec.backend() is InferenceBackend.TRANSFORMERS
+    )
+
+
 def _compute_merge_key(task: TaskEnvelopeTemplate) -> str | None:
     task_type = str(task.spec.taskType or "").strip().lower()
     if task_type not in {"inference", "rag", "diffusion"}:
+        return None
+    if _uses_transformers_inference(task):
         return None
     try:
         spec = task.spec.model_dump(mode="python", exclude_none=True)
@@ -344,6 +354,8 @@ class TaskRuntime:
 
         for persisted in tasks:
             record = persisted.record
+            if _uses_transformers_inference(record.task):
+                record.merge_key = None
             task_id = record.task_id
             self._tasks[task_id] = record
             self._original_deps[task_id] = set(persisted.depends_on)
