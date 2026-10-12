@@ -161,6 +161,7 @@ class OmniExecutorBase(InferenceMixin, Executor):
             cfg.get("init_timeout"),
             cfg.get("async_chunk"),
             json.dumps(cls.engine_weight_kwargs(cfg), sort_keys=True),
+            json.dumps(cls.engine_execution_kwargs(cfg), sort_keys=True),
         )
 
     @staticmethod
@@ -179,6 +180,34 @@ class OmniExecutorBase(InferenceMixin, Executor):
                     "omni quantization must be a method name or a mapping."
                 )
             kwargs["quantization_config"] = quantization
+        return kwargs
+
+    @staticmethod
+    def engine_execution_kwargs(cfg: dict[str, Any]) -> dict[str, Any]:
+        """``Omni`` options for how a diffusion stage executes: request
+        batching (``step_execution``), sequence parallelism
+        (``ulysses_degree`` / ``ring_degree``, which need that many GPUs) and
+        step caching (``cache_backend`` with an optional ``cache_config``
+        mapping). Only the options set in the spec are passed."""
+        kwargs: dict[str, Any] = {}
+        if cfg.get("step_execution") is not None:
+            kwargs["step_execution"] = to_bool(cfg.get("step_execution"), default=False)
+        for key in ("ulysses_degree", "ring_degree"):
+            if cfg.get(key) is not None:
+                degree = to_int(cfg.get(key))
+                if degree is None or degree < 1:
+                    raise ExecutionError(f"omni {key} must be a positive integer.")
+                kwargs[key] = degree
+        cache_backend = cfg.get("cache_backend")
+        if cache_backend:
+            kwargs["cache_backend"] = str(cache_backend)
+        cache_config = cfg.get("cache_config")
+        if cache_config is not None:
+            if not isinstance(cache_config, dict):
+                raise ExecutionError("omni cache_config must be a mapping.")
+            if not cache_backend:
+                raise ExecutionError("omni cache_config needs cache_backend.")
+            kwargs["cache_config"] = cache_config
         return kwargs
 
     def _materialize_deploy_config(self, cfg: dict[str, Any]) -> str | None:
@@ -341,6 +370,7 @@ class OmniExecutorBase(InferenceMixin, Executor):
             if val is not None:
                 init_kwargs[key] = val
         init_kwargs.update(self.engine_weight_kwargs(cfg))
+        init_kwargs.update(self.engine_execution_kwargs(cfg))
         return init_kwargs
 
     # ── common small helpers ─────────────────────────────────────────────

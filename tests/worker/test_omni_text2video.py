@@ -16,9 +16,14 @@ pytest.importorskip("vllm_omni", reason="vllm-omni not installed")
 
 import numpy as np  # noqa: E402
 
+from shared.schemas.result import OmniText2VideoResult  # noqa: E402
 from shared.schemas.result import InferenceItem, InferenceResult  # noqa: E402
+from shared.tasks import MergedChildTaskStrict  # noqa: E402
 from shared.tasks.components.model import ModelConfig, ModelSource  # noqa: E402
-from shared.tasks.specs.omni import OmniText2VideoSpecStrict  # noqa: E402
+from shared.tasks.specs.omni import (  # noqa: E402
+    OmniText2ImageSpecStrict,
+    OmniText2VideoSpecStrict,
+)
 from shared.tasks.task_type import TaskType  # noqa: E402
 from worker.executors import omni_text2video_executor as mod  # noqa: E402
 from worker.executors.base_executor import ExecutionError, RunControl  # noqa: E402
@@ -324,3 +329,138 @@ def test_encoder_muxes_model_audio_into_the_mp4() -> None:
         assert len(container.streams.video) == 1
         assert len(container.streams.audio) == 1
         assert container.streams.audio[0].rate == 44100
+
+
+def _child(task_id: str, items: list[str]) -> MergedChildTaskStrict:
+    return MergedChildTaskStrict(
+        task_id=task_id,
+        owner_id="usr-other",
+        workflow_id="wfl-other",
+        spec=_spec(items),
+    )
+
+
+def test_merged_children_share_one_generate_and_keep_their_own_videos(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A parent with two merged children: every prompt goes to one generate
+    call, and each task gets only its own videos, in its own output dir."""
+    fake = _FakeOmni([_output("2_c"), _output("0_a"), _output("3_d"), _output("1_b")])
+    task = make_worker_task_message(
+        _spec(["parent"]),
+        task_type=TaskType.OMNI_TEXT2VIDEO,
+        task_id="tsk-parent",
+        merged_children=[
+            _child("tsk-child1", ["c1a", "c1b"]),
+            _child("tsk-child2", ["c2"]),
+        ],
+    )
+    executor = OmniText2VideoExecutor(DEFAULT_WORKER_CONFIG)
+    executor._model_name = "org/video"
+    executor._omni = fake  # type: ignore[assignment]
+    monkeypatch.setattr(executor, "_ensure_omni", lambda spec_dict: None)
+    monkeypatch.setattr(
+        mod, "_encode_mp4", lambda output, cfg: f"mp4:{output.request_id}".encode()
+    )
+    uploaded: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        mod,
+        "maybe_upload_artifacts",
+        lambda ref, out_dir, logger=None: uploaded.append((ref.task_id, out_dir.name)),
+    )
+
+    out_dir = tmp_path / "tsk-parent"
+    result = executor.run(task, out_dir, RunControl(task.task_id))
+    child1 = result.children["tsk-child1"]
+    child2 = result.children["tsk-child2"]
+    assert isinstance(result, OmniText2VideoResult)
+    assert isinstance(child1, OmniText2VideoResult)
+    assert isinstance(child2, OmniText2VideoResult)
+
+    ((requests, _),) = fake.calls
+    assert [r["prompt"] for r in requests] == ["parent", "c1a", "c1b", "c2"]
+    assert [i.prompt for i in result.items] == ["parent"]
+    assert (out_dir / "artifacts" / "generated_video.mp4").read_bytes() == b"mp4:0_a"
+    assert [i.prompt for i in child1.items] == ["c1a", "c1b"]
+    child1_dir = tmp_path / "tsk-child1" / "artifacts"
+    assert (child1_dir / "generated_video_1.mp4").read_bytes() == b"mp4:1_b"
+    assert (child1_dir / "generated_video_2.mp4").read_bytes() == b"mp4:2_c"
+    child2_dir = tmp_path / "tsk-child2" / "artifacts"
+    assert [i.prompt for i in child2.items] == ["c2"]
+    assert (child2_dir / "generated_video.mp4").read_bytes() == b"mp4:3_d"
+    assert ("tsk-child1", "tsk-child1") in uploaded
+    assert ("tsk-child2", "tsk-child2") in uploaded
+
+
+def test_merged_child_of_another_type_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    image_child = MergedChildTaskStrict(
+        task_id="tsk-image",
+        owner_id="usr-other",
+        workflow_id="wfl-other",
+        spec=OmniText2ImageSpecStrict(
+            taskType=TaskType.OMNI_TEXT2IMAGE,
+            model=ModelConfig(source=ModelSource(identifier="org/video")),
+            data={"type": "list", "items": ["x"]},
+        ),
+    )
+    task = make_worker_task_message(
+        _spec(["p"]),
+        task_type=TaskType.OMNI_TEXT2VIDEO,
+        task_id="tsk-parent",
+        merged_children=[image_child],
+    )
+    executor = OmniText2VideoExecutor(DEFAULT_WORKER_CONFIG)
+    monkeypatch.setattr(executor, "_ensure_omni", lambda spec_dict: None)
+    with pytest.raises(ExecutionError, match="must be omni_text2video"):
+        executor.run(task, tmp_path / "tsk-parent", RunControl(task.task_id))
+
+
+def test_execution_flags_reach_omni_and_key_its_reuse(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    created: list[_FakeOmni] = []
+
+    def _factory(**kwargs: Any) -> _FakeOmni:
+        created.append(_FakeOmni([], **kwargs))
+        return created[-1]
+
+    monkeypatch.setattr(mod, "Omni", _factory)
+    executor = OmniText2VideoExecutor(DEFAULT_WORKER_CONFIG)
+    flags = {
+        "step_execution": True,
+        "ulysses_degree": 2,
+        "ring_degree": 1,
+        "cache_backend": "cache_dit",
+        "cache_config": {"Fn_compute_blocks": 1},
+    }
+    executor._ensure_omni(_spec(["p"], **flags).model_dump(by_alias=True))
+    executor._ensure_omni(_spec(["p"], **flags).model_dump(by_alias=True))
+    assert len(created) == 1
+    assert created[0].init_kwargs == {"model": "org/video", **flags}
+
+    executor._ensure_omni(_spec(["p"], step_execution=False).model_dump(by_alias=True))
+    assert len(created) == 2
+    assert created[1].init_kwargs == {"model": "org/video", "step_execution": False}
+
+
+@pytest.mark.parametrize(
+    ("flags", "message"),
+    [
+        ({"ulysses_degree": 0}, "ulysses_degree must be a positive integer"),
+        ({"ring_degree": "x"}, "ring_degree must be a positive integer"),
+        (
+            {"cache_backend": "tea_cache", "cache_config": "x"},
+            "cache_config must be a mapping",
+        ),
+        ({"cache_config": {"a": 1}}, "cache_config needs cache_backend"),
+    ],
+)
+def test_invalid_execution_flags_fail(
+    monkeypatch: pytest.MonkeyPatch, flags: dict[str, Any], message: str
+) -> None:
+    monkeypatch.setattr(mod, "Omni", lambda **kwargs: _FakeOmni([], **kwargs))
+    executor = OmniText2VideoExecutor(DEFAULT_WORKER_CONFIG)
+    with pytest.raises(ExecutionError, match=message):
+        executor._ensure_omni(_spec(["p"], **flags).model_dump(by_alias=True))

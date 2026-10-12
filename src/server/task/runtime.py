@@ -46,7 +46,7 @@ def _sanitize_merge_spec(spec: dict[str, Any]) -> dict[str, Any]:
 
 def _compute_merge_key(task: TaskEnvelopeTemplate) -> str | None:
     task_type = str(task.spec.taskType or "").strip().lower()
-    if task_type not in {"inference", "rag", "diffusion"}:
+    if task_type not in {"inference", "rag", "diffusion", "omni_text2video"}:
         return None
     try:
         spec = task.spec.model_dump(mode="python", exclude_none=True)

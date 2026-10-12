@@ -21,6 +21,7 @@ from .omni_executor_base import (
     OmniRequestOutput,
     prompt_index_from_request_id,
 )
+from .utils.checkpoints import maybe_upload_artifacts
 
 try:
     from vllm_omni.entrypoints.openai.serving_video import OmniOpenAIServingVideo
@@ -78,9 +79,25 @@ class OmniText2VideoExecutor(OmniExecutorBase):
         out_dir: Path,
     ) -> OmniText2VideoResult:
         assert isinstance(spec, OmniText2VideoSpecStrict)
-        prompts = self._collect_text_inputs(spec, task.task_id)
         cfg = self.omni_cfg(spec_dict)
         params = _sampling_params(cfg)
+        # Merged children share the parent's model, spec.omni and sampling
+        # (the merge key); only their prompts differ, so all of them go to the
+        # same Omni.generate call.
+        members: list[tuple[str, OmniText2VideoSpecStrict, Path]] = [
+            (task.task_id, spec, out_dir)
+        ]
+        for child in task.merged_children or []:
+            if not isinstance(child.spec, OmniText2VideoSpecStrict):
+                raise ExecutionError(
+                    "Merged child spec must be omni_text2video for merged execution."
+                )
+            members.append((child.task_id, child.spec, out_dir.parent / child.task_id))
+        prompts_by_member = [
+            self._collect_text_inputs(member_spec, member_id)
+            for member_id, member_spec, _ in members
+        ]
+        prompts = [p for member_prompts in prompts_by_member for p in member_prompts]
 
         with self._span(
             "model load",
@@ -92,38 +109,61 @@ class OmniText2VideoExecutor(OmniExecutorBase):
         with self._span(
             "generation",
             span_type=SpanType.COMPUTE,
-            attributes={"task_id": task.task_id, "prompt_count": len(prompts)},
+            attributes={
+                "task_id": task.task_id,
+                "prompt_count": len(prompts),
+                "merged_tasks": len(members),
+            },
         ):
             videos = self._generate_videos(prompts, cfg, params)
 
-        artifacts_dir = out_dir / "artifacts"
-        items: list[OmniVideoItem] = []
+        results: list[OmniText2VideoResult] = []
         with self._span(
             "output postprocessing",
             span_type=SpanType.COMPUTE,
             attributes={"task_id": task.task_id, "item_count": len(prompts)},
         ):
-            for idx, (prompt, video) in enumerate(zip(prompts, videos)):
-                save_path = self.resolve_save_path(
-                    cfg,
-                    out_dir,
-                    index=idx,
-                    ext="mp4",
-                    multi=len(prompts) > 1,
-                    default_prefix="generated_video",
-                )
-                save_path.parent.mkdir(parents=True, exist_ok=True)
-                save_path.write_bytes(video)
-                items.append(
-                    OmniVideoItem(
-                        index=idx,
-                        prompt=prompt,
-                        video=ArtifactRef(
-                            path=self.relative_to(save_path, artifacts_dir)
-                        ),
-                    )
+            offset = 0
+            for (_, _, member_out), member_prompts in zip(members, prompts_by_member):
+                member_videos = videos[offset : offset + len(member_prompts)]
+                offset += len(member_prompts)
+                results.append(
+                    self._save_videos(cfg, member_out, member_prompts, member_videos)
                 )
 
+        for child, child_result in zip(task.merged_children or [], results[1:]):
+            maybe_upload_artifacts(child, out_dir.parent / child.task_id, logger=logger)
+            results[0].children[child.task_id] = child_result
+        return results[0]
+
+    def _save_videos(
+        self,
+        cfg: dict[str, Any],
+        out_dir: Path,
+        prompts: list[str],
+        videos: list[bytes],
+    ) -> OmniText2VideoResult:
+        """Write one task's mp4s under ``out_dir/artifacts`` and describe them."""
+        artifacts_dir = out_dir / "artifacts"
+        items: list[OmniVideoItem] = []
+        for idx, (prompt, video) in enumerate(zip(prompts, videos)):
+            save_path = self.resolve_save_path(
+                cfg,
+                out_dir,
+                index=idx,
+                ext="mp4",
+                multi=len(prompts) > 1,
+                default_prefix="generated_video",
+            )
+            save_path.parent.mkdir(parents=True, exist_ok=True)
+            save_path.write_bytes(video)
+            items.append(
+                OmniVideoItem(
+                    index=idx,
+                    prompt=prompt,
+                    video=ArtifactRef(path=self.relative_to(save_path, artifacts_dir)),
+                )
+            )
         return OmniText2VideoResult(
             model=self.model_name,
             video=items[0].video if items else None,
