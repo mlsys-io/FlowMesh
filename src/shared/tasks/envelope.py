@@ -36,6 +36,8 @@ from .specs import (
     OmniText2ImageSpecTemplate,
     OmniText2SpeechSpecStrict,
     OmniText2SpeechSpecTemplate,
+    OmniText2VideoSpecStrict,
+    OmniText2VideoSpecTemplate,
     PPOSpecStrict,
     PPOSpecTemplate,
     PythonSpecStrict,
@@ -71,7 +73,8 @@ type TaskSpecStrict = Annotated[
     | OmniText2ImageSpecStrict
     | OmniText2SpeechSpecStrict
     | OmniText2AudioSpecStrict
-    | OmniText2GeneralSpecStrict,
+    | OmniText2GeneralSpecStrict
+    | OmniText2VideoSpecStrict,
     Field(discriminator="taskType"),
 ]
 
@@ -96,7 +99,8 @@ type TaskSpecTemplate = Annotated[
     | OmniText2ImageSpecTemplate
     | OmniText2SpeechSpecTemplate
     | OmniText2AudioSpecTemplate
-    | OmniText2GeneralSpecTemplate,
+    | OmniText2GeneralSpecTemplate
+    | OmniText2VideoSpecTemplate,
     Field(discriminator="taskType"),
 ]
 

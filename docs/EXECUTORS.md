@@ -9,7 +9,7 @@ The worker resolves `spec.taskType` against an executor registry in
 | `inference` | `VLLMExecutor` / `TransformersExecutor` | LLM inference |
 | `embedding` | `VLLMEmbeddingExecutor` (text, when `model.vllm` is set) / `TransformersExecutor` (visual, `model.transformers.mode: visual-embedding`) | Text / visual embeddings |
 | `diffusion` | `DiffusersExecutor` | Image / video diffusion models |
-| `omni_text2{audio,image,speech,general}` | `Omni*Executor` | Multimodal generation |
+| `omni_text2{audio,image,speech,general,video}` | `Omni*Executor` | Multimodal generation |
 | `training` | `SFTExecutor` / `LoRASFTExecutor` / `DPOExecutor` / `PPOExecutor` | LLM fine-tuning |
 | `image_classification_training` | `ImageClassificationTrainingExecutor` | Vision classification fine-tuning (`AutoModelForImageClassification` + HF `Trainer`) |
 | `rag` | `RAGExecutor` | Retrieval-augmented generation |

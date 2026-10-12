@@ -31,6 +31,7 @@ from .payloads import (
     OmniGeneralItem,
     OmniImageItem,
     OmniSpeechItem,
+    OmniVideoItem,
     RagEmbedding,
     RagQdrant,
     RagQuery,
@@ -163,6 +164,14 @@ class OmniText2GeneralResult(OmniResult):
     items: list[OmniGeneralItem]
 
 
+class OmniText2VideoResult(OmniResult):
+    task_type: Literal[TaskType.OMNI_TEXT2VIDEO] = TaskType.OMNI_TEXT2VIDEO
+    executor: str = "omni_text2video"
+    mode: str = "video"
+    video: ArtifactRef | None
+    items: list[OmniVideoItem]
+
+
 class DataProfilingResult(StrictExecutorResult):
     task_type: Literal[TaskType.DATA_PROFILING] = TaskType.DATA_PROFILING
     type: str = "sql"
@@ -254,6 +263,7 @@ _RESULT_TAGS: frozenset[str] = frozenset(
         TaskType.OMNI_TEXT2SPEECH.value,
         TaskType.OMNI_TEXT2AUDIO.value,
         TaskType.OMNI_TEXT2GENERAL.value,
+        TaskType.OMNI_TEXT2VIDEO.value,
         TaskType.DATA_PROFILING.value,
         TaskType.DATA_RETRIEVAL.value,
         TaskType.AGENT.value,
@@ -295,6 +305,7 @@ AnyExecutorResult = Annotated[
         | Annotated[OmniText2SpeechResult, Tag(TaskType.OMNI_TEXT2SPEECH.value)]
         | Annotated[OmniText2AudioResult, Tag(TaskType.OMNI_TEXT2AUDIO.value)]
         | Annotated[OmniText2GeneralResult, Tag(TaskType.OMNI_TEXT2GENERAL.value)]
+        | Annotated[OmniText2VideoResult, Tag(TaskType.OMNI_TEXT2VIDEO.value)]
         | Annotated[DataProfilingResult, Tag(TaskType.DATA_PROFILING.value)]
         | Annotated[DataRetrievalResult, Tag(TaskType.DATA_RETRIEVAL.value)]
         | Annotated[AgentResult, Tag(TaskType.AGENT.value)]

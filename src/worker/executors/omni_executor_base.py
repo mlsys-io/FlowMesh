@@ -1,9 +1,8 @@
 """Shared base class and utilities for Omni-family executors.
 
-All four Omni executors (text2image, text2speech, text2audio, text2general) inherit from
-``OmniExecutorBase`` which provides model lifecycle management, config
-resolution, and common helpers.  This keeps each concrete executor
-focused on its generation logic.
+All Omni executors inherit from ``OmniExecutorBase`` which provides model lifecycle
+management, config resolution, and common helpers.  This keeps each concrete
+executor focused on its generation logic.
 """
 
 import gc
@@ -59,6 +58,8 @@ except Exception:
     _HAS_OMNI = False
 
 logger = logging.getLogger(__name__)
+
+_OMNI_OFFLOAD_FLAGS = ("enable_cpu_offload", "enable_layerwise_offload")
 
 
 class OmniExecutorBase(InferenceMixin, Executor):
@@ -133,8 +134,8 @@ class OmniExecutorBase(InferenceMixin, Executor):
             release_gpu_memory()
         self._cleanup_deploy_config_tmp()
 
-    @staticmethod
-    def _build_omni_spec(model_name: str, cfg: dict[str, Any]) -> tuple[Any, ...]:
+    @classmethod
+    def _build_omni_spec(cls, model_name: str, cfg: dict[str, Any]) -> tuple[Any, ...]:
         """Build a hashable spec capturing all init-relevant settings.
 
         Two tasks with matching specs can safely share an ``Omni`` instance.
@@ -159,7 +160,26 @@ class OmniExecutorBase(InferenceMixin, Executor):
             cfg.get("stage_init_timeout"),
             cfg.get("init_timeout"),
             cfg.get("async_chunk"),
+            json.dumps(cls.engine_weight_kwargs(cfg), sort_keys=True),
         )
+
+    @staticmethod
+    def engine_weight_kwargs(cfg: dict[str, Any]) -> dict[str, Any]:
+        """``Omni`` options for how model weights are held: where they live
+        (``enable_cpu_offload`` / ``enable_layerwise_offload``) and how they are
+        stored (``quantization``, a method name or a quantization-config mapping)."""
+        kwargs: dict[str, Any] = {}
+        for key in _OMNI_OFFLOAD_FLAGS:
+            if cfg.get(key) is not None:
+                kwargs[key] = to_bool(cfg.get(key), default=False)
+        quantization = cfg.get("quantization")
+        if quantization:
+            if not isinstance(quantization, (str, dict)):
+                raise ExecutionError(
+                    "omni quantization must be a method name or a mapping."
+                )
+            kwargs["quantization_config"] = quantization
+        return kwargs
 
     def _materialize_deploy_config(self, cfg: dict[str, Any]) -> str | None:
         """Resolve ``deploy_config`` to a path.
@@ -320,6 +340,7 @@ class OmniExecutorBase(InferenceMixin, Executor):
             val = to_int(cfg.get(key))
             if val is not None:
                 init_kwargs[key] = val
+        init_kwargs.update(self.engine_weight_kwargs(cfg))
         return init_kwargs
 
     # ── common small helpers ─────────────────────────────────────────────
@@ -335,6 +356,12 @@ class OmniExecutorBase(InferenceMixin, Executor):
 
 
 # ── module-level utilities (used by multiple executors) ──────────────────────
+
+
+def prompt_index_from_request_id(request_id: str) -> int | None:
+    """Parse the prompt index from a vllm_omni ``{index}_{uuid}`` request id."""
+    head = request_id.split("_", 1)[0]
+    return int(head) if head.isdecimal() else None
 
 
 def release_gpu_memory() -> None:

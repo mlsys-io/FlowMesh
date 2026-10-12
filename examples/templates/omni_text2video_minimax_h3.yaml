@@ -1,0 +1,52 @@
+apiVersion: flowmesh/v1
+kind: OmniTask
+metadata:
+  name: omni-text2video-minimax-h3
+
+# MiniMax-H3 text-to-video+audio on vLLM-Omni. task_type t2va loads only the
+# FL2VA partition of the repository (not Ref2VA). H3 renders at a fixed
+# 24 fps, 4-15 s per clip (num_frames is aligned to 17n+5), and needs the
+# canvas aspect ratio in extra_args. With enable_cpu_offload the BF16 model
+# peaks at ~66 GiB of GPU memory at this shape; drop it on a >=141 GB GPU to
+# keep everything resident (~121 GiB, about 1.5x faster). The MiniMax H3
+# Community License does not cover the US, EU, UK or South Korea.
+spec:
+  taskType: omni_text2video
+
+  resources:
+    hardware:
+      gpu:
+        count: 1
+        memory: 80GB
+
+  model:
+    source:
+      type: huggingface
+      identifier: MiniMaxAI/MiniMax-H3
+
+  data:
+    type: list
+    items:
+      - >-
+        integrated_multimodal_description: [Shot 1] Cinematic, a wide shot at
+        dusk over a narrow river in an old town, hundreds of paper lanterns
+        drifting on the dark water. The camera pushes in slowly toward a
+        small stone bridge. overall_soundscape: gentle water and a soft breeze.
+
+  omni:
+    height: 384
+    width: 672
+    num_frames: 124
+    num_inference_steps: 20
+    seed: 42
+    task_type: t2va
+    enable_cpu_offload: true
+    extra_args:
+      aspect_ratio: "16:9"
+
+  output:
+    destination:
+      type: http
+    artifacts:
+      - results.json
+      - artifacts/

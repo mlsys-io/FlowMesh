@@ -7,7 +7,8 @@ import pytest
 
 from server.task.n8n_parser import _decode_secret_part, translate_n8n_workflow
 from server.task.parser import parse_workflow
-from shared.tasks.specs import ApiSpecTemplate
+from shared.tasks.specs import ApiSpecTemplate, OmniText2VideoSpecTemplate
+from shared.tasks.task_type import TaskType
 
 
 class TestTranslateN8nWorkflow:
@@ -119,6 +120,102 @@ class TestTranslateN8nWorkflow:
         assert spec.api is not None
         assert spec.api.headers is not None
         assert spec.api.headers["Authorization"] == "Bearer sk-secret"
+
+    def test_llm_to_video_chain(self) -> None:
+        """An LLM chain feeding a video chain through a Format node becomes a
+        two-stage graph; the ``Omni`` Set node lands in ``spec.omni``."""
+
+        def set_node(name: str, value: dict) -> dict:
+            return {
+                "name": name,
+                "type": "n8n-nodes-base.set",
+                "parameters": {"mode": "raw", "jsonOutput": json.dumps(value)},
+            }
+
+        def model_node(name: str, model: str) -> dict:
+            return {
+                "name": name,
+                "type": "@n8n/n8n-nodes-langchain.lmOpenHuggingFaceInference",
+                "parameters": {"model": model},
+            }
+
+        def chain_node(name: str, task_type: str, text: str = "") -> dict:
+            return {
+                "name": name,
+                "type": "@n8n/n8n-nodes-langchain.chainLlm",
+                "parameters": {"promptType": "define", "text": text},
+                "notes": json.dumps({"taskType": task_type}),
+            }
+
+        hardware = {"hardware": {"gpu": {"type": "any", "count": 1}}}
+        nodes = [
+            set_node("Input Idea", {"type": "list", "items": ["a fox in snow"]}),
+            set_node("Resource Spec W", hardware),
+            model_node("Model Writer", "Qwen/Qwen2.5-7B-Instruct"),
+            chain_node("Write Prompt", "inference", "Expand into a video prompt."),
+            set_node(
+                "Format Video",
+                {
+                    "type": "graph_template",
+                    "template": {
+                        "name": "video_prompt",
+                        "text": "{col0_value}",
+                        "columns": [
+                            {
+                                "label": "PROMPT",
+                                "node": "Write Prompt",
+                                "path": "items[0].output",
+                            }
+                        ],
+                    },
+                },
+            ),
+            set_node("Resource Spec V", hardware),
+            set_node("Omni Video", {"num_frames": 81, "enable_cpu_offload": True}),
+            model_node("Model Video", "Wan-AI/Wan2.1-T2V-1.3B-Diffusers"),
+            chain_node("Render Video", "omni_text2video"),
+        ]
+
+        def main(*targets: str) -> dict:
+            return {
+                "main": [[{"node": t, "type": "main", "index": 0} for t in targets]]
+            }
+
+        def lm(target: str) -> dict:
+            return {
+                "ai_languageModel": [
+                    [{"node": target, "type": "ai_languageModel", "index": 0}]
+                ]
+            }
+
+        connections = {
+            "Input Idea": main("Write Prompt"),
+            "Resource Spec W": main("Write Prompt"),
+            "Model Writer": lm("Write Prompt"),
+            "Write Prompt": main("Format Video"),
+            "Format Video": main("Render Video"),
+            "Resource Spec V": main("Render Video"),
+            "Omni Video": main("Render Video"),
+            "Model Video": lm("Render Video"),
+        }
+        payload = {"nodes": nodes, "connections": connections}
+        result = translate_n8n_workflow(payload)
+
+        graph = {n["name"]: n for n in result["spec"]["graph"]["nodes"]}
+        video = graph["Render Video"]
+        assert video["dependsOn"] == ["Write Prompt"]
+        assert video["spec"]["taskType"] == "omni_text2video"
+        assert video["spec"]["omni"] == {"num_frames": 81, "enable_cpu_offload": True}
+        assert video["spec"]["data"]["type"] == "graph_template"
+        assert video["spec"]["output"]["artifacts"] == [
+            "results.json",
+            "logs",
+            "artifacts/",
+        ]
+
+        parsed = parse_workflow(json.dumps(payload), format="n8n")
+        specs = {t.task.spec.taskType: t.task.spec for t in parsed.tasks}
+        assert isinstance(specs[TaskType.OMNI_TEXT2VIDEO], OmniText2VideoSpecTemplate)
 
 
 class TestDecodeSecretPart:

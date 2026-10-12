@@ -39,6 +39,7 @@ from .omni_executor_base import (
     RequestOutput,
     extract_audio_from_mm,
     extract_multimodal_output,
+    prompt_index_from_request_id,
     save_audio,
 )
 
@@ -253,15 +254,9 @@ def _narration_cfg(spec_dict: dict[str, Any]) -> dict[str, Any]:
     return OmniExecutorBase.omni_cfg(spec_dict, "omni:narration", "omni_text2general")
 
 
-def _prompt_index_from_request_id(request_id: str) -> int | None:
-    """Parse the prompt index from a vllm_omni ``{index}_{uuid}`` request id."""
-    head = request_id.split("_", 1)[0]
-    return int(head) if head.isdecimal() else None
-
-
 def _prompt_for_request_id(request_id: str, texts: list[str]) -> str:
     """Return the input prompt named by ``request_id``'s leading index."""
-    idx = _prompt_index_from_request_id(request_id)
+    idx = prompt_index_from_request_id(request_id)
     if idx is None or idx >= len(texts):
         raise ExecutionError(
             f"omni_text2general cannot correlate audio output to a prompt: "
