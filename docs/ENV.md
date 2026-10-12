@@ -134,11 +134,10 @@ task's GPU requirements when `ENABLE_SSH_GPU_LIMIT=true`. This subset is
 advisory: a process session can unset the variable and access all GPUs exposed
 to its worker.
 
-Newly rented Vast.ai workers receive `WORKER_HOST_GPU_ID=0..num_gpus-1`
-and `WORKER_HOST_GPU_ARCH` from their offer. Offers with missing, invalid, or
-nonpositive GPU counts inject neither variable. Existing instances retain
-their creation environment, including when restarted; recreate them through
-FlowMesh to receive this metadata.
+Vast.ai workers receive GPU metadata from their rental offer:
+`WORKER_HOST_GPU_ID` lists the container-local device IDs from `0` through
+`num_gpus-1`, and `WORKER_HOST_GPU_ARCH` identifies the GPU architecture.
+Offers with missing, invalid, or nonpositive GPU counts inject neither variable.
 
 ## SSH session resource caps
 
