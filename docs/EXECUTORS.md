@@ -38,8 +38,9 @@ package. The base class carries two cross-cutting fields:
 - `artifacts: ArtifactContext | None` (wire key `_artifacts`) —
   resolution context for relative artifact refs.
 
-Transformers inference runs each task independently; it does not process
-merged children. The server therefore leaves those tasks out of merge batches.
+Inference tasks that explicitly select Transformers run independently; that
+executor does not process merged children. The server therefore leaves those
+tasks out of merge batches.
 
 Each subclass declares its exact fields (typed nested payloads) and tags itself
 with a `task_type` discriminator — e.g. `InferenceResult`, `LoRAResult`,
