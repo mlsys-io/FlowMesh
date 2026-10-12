@@ -40,6 +40,29 @@ def offer_gpu_arch(gpu_name: str | None) -> GpuArch | None:
     return None if name.lower() in _GPULESS_NAMES else GpuArch.from_name(name)
 
 
+def _offer_gpu_environment(
+    offer: dict[str, Any] | None, gpu_arch: GpuArch | None
+) -> dict[str, str]:
+    """GPU env for a rented instance, mirroring the docker adapter's GPU case.
+
+    The worker's SSH executor slices GPUs from ``WORKER_HOST_GPU_ID``; the docker
+    adapter sets it, this adapter never did, so on vast an SSH task asking for
+    ``gpu.count: 1`` failed with "requested 1 GPU(s) but this worker has none" while
+    the same task's usage record listed the instance's RTX 5080. A vast instance's
+    container sees exactly its rented GPUs, as ``0..num_gpus-1``.
+    """
+    try:
+        num_gpus = int((offer or {}).get("num_gpus") or 0)
+    except (TypeError, ValueError):
+        num_gpus = 0
+    if num_gpus <= 0:
+        return {}
+    env = {"WORKER_HOST_GPU_ID": ",".join(str(i) for i in range(num_gpus))}
+    if gpu_arch is not None:
+        env["WORKER_HOST_GPU_ARCH"] = gpu_arch.value
+    return env
+
+
 class VastAIWorkerConfig(WorkerConfig):
     supervisor_grpc_target: str = f"{env.SERVER_HOST}:{env.SERVER_GRPC_PORT}"
     """Supervisor gRPC target"""
@@ -278,7 +301,7 @@ class VastAIWorkerAdapter(WorkerAdapter):
                 "Launching VastAI instance %s for worker %s.", instance_id, self.alias
             )
             gpu_arch = offer_gpu_arch(instance_info.get("gpu_name"))
-            env = self._build_env_str()
+            env = self._build_env_str(offer=instance_info, gpu_arch=gpu_arch)
             try:
                 resp = self._client.create_instance(
                     id=instance_id,
@@ -370,8 +393,13 @@ class VastAIWorkerAdapter(WorkerAdapter):
         self._hardware = self.config.hardware_specs
         return True
 
-    def _build_env_str(self) -> str:
+    def _build_env_str(
+        self,
+        offer: dict[str, Any] | None = None,
+        gpu_arch: GpuArch | None = None,
+    ) -> str:
         env = self._base_environment()
+        env.update(_offer_gpu_environment(offer, gpu_arch))
         parts: list[str] = []
         for key, val in env.items():
             if val is None:
