@@ -3,7 +3,7 @@
 from importlib.metadata import PackageNotFoundError, version
 
 _PACKAGE_NAME = "flowmesh-sdk"
-_STATIC_VERSION = "0.1.11"
+_STATIC_VERSION = "0.1.12"
 
 
 def _resolve_version() -> str:
