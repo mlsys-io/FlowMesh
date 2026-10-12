@@ -259,13 +259,14 @@ class DiffusersExecutor(DataMixin, Executor):
         with self._task_span(
             task_id, task.workflow_id, out_dir, owner_id=task.owner_id
         ):
-            result = self._run_inner(spec, task_id, out_dir)
+            result = self._run_inner(task, spec, task_id, out_dir)
         maybe_upload_artifacts(task, out_dir, logger=logger)
         maybe_upload_traces(task, out_dir, logger=logger)
         return result
 
     def _run_inner(
         self,
+        task: ExecutorTask,
         spec: DiffusionSpecStrict,
         task_id: str,
         out_dir: Path,
@@ -273,18 +274,23 @@ class DiffusersExecutor(DataMixin, Executor):
         self._ensure_pipeline(spec)
         assert self._pipe is not None
 
-        deps = self._extract_source_data_ids(spec)
-        dependencies_by_task = {task_id: deps}
-
-        # Data preparation using DataMixin
-        data_entry = self._collect_prompts_for_spec(spec, task_id=task_id)
-        if len(data_entry.prompts) == 0:
-            raise ExecutionError("No prompts provided.")
-
-        prompts = [
-            p[-1]["content"] if isinstance(p, list) else str(p)
-            for p in data_entry.prompts
+        # Merged children share the parent's model and inference settings (the
+        # merge key); only their prompts differ, so all of them go to the same
+        # pipeline call.
+        members: list[tuple[str, DiffusionSpecStrict, Path]] = [
+            (task_id, spec, out_dir)
         ]
+        for child in task.merged_children or []:
+            if not isinstance(child.spec, DiffusionSpecStrict):
+                raise ExecutionError(
+                    "Merged child spec must be diffusion for merged execution."
+                )
+            members.append((child.task_id, child.spec, out_dir.parent / child.task_id))
+        prompts_by_member = [
+            self._member_prompts(member_spec, member_id)
+            for member_id, member_spec, _ in members
+        ]
+        prompts = [p for member_prompts in prompts_by_member for p in member_prompts]
 
         inference_config = spec.inference or {}
         num_inference_steps = int(inference_config.get("num_inference_steps", 50))
@@ -345,21 +351,48 @@ class DiffusersExecutor(DataMixin, Executor):
                 "No fallback/coercion is allowed."
             )
 
+        results: list[DiffusionResult] = []
+        offset = 0
+        for (member_id, member_spec, member_out), member_prompts in zip(
+            members, prompts_by_member
+        ):
+            count = len(member_prompts) * num_images
+            member_images = images[offset : offset + count]
+            offset += count
+            result = self._save_images(member_out, member_images)
+            self._dump_to_governance(
+                task_id=member_id,
+                result=result,
+                dependencies_by_task={
+                    member_id: self._extract_source_data_ids(member_spec)
+                },
+            )
+            results.append(result)
+
+        for child, child_result in zip(task.merged_children or [], results[1:]):
+            maybe_upload_artifacts(child, out_dir.parent / child.task_id, logger=logger)
+            results[0].children[child.task_id] = child_result
+        return results[0]
+
+    def _member_prompts(self, spec: DiffusionSpecStrict, task_id: str) -> list[str]:
+        """The text prompts of one task (parent or merged child)."""
+        data_entry = self._collect_prompts_for_spec(spec, task_id=task_id)
+        if len(data_entry.prompts) == 0:
+            raise ExecutionError(f"No prompts provided for task {task_id}.")
+        return [
+            p[-1]["content"] if isinstance(p, list) else str(p)
+            for p in data_entry.prompts
+        ]
+
+    def _save_images(self, out_dir: Path, images: list[Image.Image]) -> DiffusionResult:
+        """Write one task's images under ``out_dir/artifacts/images``."""
         image_dir = out_dir / "artifacts" / "images"
         image_dir.mkdir(parents=True, exist_ok=True)
-
         generated_images: list[ArtifactRef] = []
         for idx, img in enumerate(images):
             img.save(image_dir / f"image_{idx}.png", format="PNG")
             generated_images.append(ArtifactRef(path=f"images/image_{idx}.png"))
-
-        result = DiffusionResult(model=self._model_name, images=generated_images)
-        self._dump_to_governance(
-            task_id=task_id,
-            result=result,
-            dependencies_by_task=dependencies_by_task,
-        )
-        return result
+        return DiffusionResult(model=self._model_name, images=generated_images)
 
     def cleanup_after_run(self) -> None:
         if self._pipe is not None:
