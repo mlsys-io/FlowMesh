@@ -126,7 +126,9 @@ scripts/dev/            compile_protos, sync_requirements, check_env_examples
   batch can span workflows, so this cannot always be one atomic write. A crash
   can then only leave a child durably failed while the parent still lists it as
   merged — reconciled on the parent's next dispatch — never a live child
-  stranded under a parent that no longer lists it.
+  stranded under a parent that no longer lists it. The merge key ignores
+  `inference.system_prompt` except for `diffusion`, where it conditions every
+  image of the batch.
 - **Terminal-task inputs.** Once a task is DONE, FAILED or CANCELLED, its
   `source` and its `task.spec.data` are each dropped when larger than 64 KiB:
   `source` becomes a one-line marker giving its original size, and `data`

@@ -6,28 +6,28 @@ each task's images in its own output dir, and each child's result in
 ``result.children``. Driven through the public ``run`` with a fake pipeline.
 """
 
+import importlib.util
+import json
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from PIL import Image
 
-torch = pytest.importorskip("torch", reason="torch not installed")
+from shared.schemas.result import DiffusionResult
+from shared.tasks import MergedChildTaskStrict
+from shared.tasks.components.model import ModelConfig, ModelSource
+from shared.tasks.specs import DiffusionSpecStrict, EchoSpecStrict
+from shared.tasks.task_type import TaskType
+from tests.worker.factories import DEFAULT_WORKER_CONFIG, make_worker_task_message
+from worker.executors import diffusers_executor as mod
+from worker.executors.base_executor import ExecutionError, RunControl
+from worker.executors.diffusers_executor import DiffusersExecutor
 
-from PIL import Image  # noqa: E402
-
-from shared.schemas.result import DiffusionResult  # noqa: E402
-from shared.tasks import MergedChildTaskStrict  # noqa: E402
-from shared.tasks.components.model import ModelConfig, ModelSource  # noqa: E402
-from shared.tasks.specs import DiffusionSpecStrict, EchoSpecStrict  # noqa: E402
-from shared.tasks.task_type import TaskType  # noqa: E402
-from tests.worker.factories import (  # noqa: E402
-    DEFAULT_WORKER_CONFIG,
-    make_worker_task_message,
+pytestmark = pytest.mark.skipif(
+    importlib.util.find_spec("torch") is None, reason="torch not installed"
 )
-from worker.executors import diffusers_executor as mod  # noqa: E402
-from worker.executors.base_executor import ExecutionError, RunControl  # noqa: E402
-from worker.executors.diffusers_executor import DiffusersExecutor  # noqa: E402
 
 
 class _FakePipe:
@@ -44,27 +44,27 @@ class _FakePipe:
         )
 
 
-def _spec(items: list[str]) -> DiffusionSpecStrict:
+def _spec(items: list[str], **inference: Any) -> DiffusionSpecStrict:
     return DiffusionSpecStrict(
         taskType=TaskType.DIFFUSION,
         model=ModelConfig(source=ModelSource(identifier="org/sd"), diffusers={}),
         data={"type": "list", "items": items},
-        inference={"num_inference_steps": 2},
+        inference={"num_inference_steps": 2, **inference},
     )
 
 
-def _child(task_id: str, items: list[str]) -> MergedChildTaskStrict:
+def _child(task_id: str, items: list[str], **inference: Any) -> MergedChildTaskStrict:
     return MergedChildTaskStrict(
         task_id=task_id,
         owner_id="usr-other",
         workflow_id="wfl-other",
-        spec=_spec(items),
+        spec=_spec(items, **inference),
     )
 
 
 def _executor(monkeypatch: pytest.MonkeyPatch, pipe: _FakePipe) -> DiffusersExecutor:
     executor = DiffusersExecutor(DEFAULT_WORKER_CONFIG)
-    executor._pipe = pipe  # type: ignore[assignment]
+    executor._pipe = pipe
     executor._model_name = "org/sd"
     executor._device = "cpu"
     monkeypatch.setattr(executor, "_ensure_pipeline", lambda spec: None)
@@ -120,6 +120,17 @@ def test_merged_children_share_one_pipeline_call(
     assert shade("tsk-c2", 0) == 3
     assert uploaded == ["tsk-c1", "tsk-c2", "tsk-parent"]
 
+    assets = tmp_path / "tsk-parent" / "logs" / "assets.jsonl"
+    owners = {
+        row["data_id"]: row["user_id"]
+        for row in map(json.loads, assets.read_text().splitlines())
+    }
+    assert owners == {
+        "tsk-parent": "usr-test",
+        "tsk-c1": "usr-other",
+        "tsk-c2": "usr-other",
+    }
+
 
 def test_unmerged_task_is_unchanged(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -159,3 +170,19 @@ def test_merged_child_of_another_type_fails(
     )
     with pytest.raises(ExecutionError, match="must be diffusion"):
         executor.run(task, tmp_path / "tsk-parent", RunControl(task.task_id))
+
+
+def test_merged_child_with_another_system_prompt_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pipe = _FakePipe()
+    executor = _executor(monkeypatch, pipe)
+    task = make_worker_task_message(
+        _spec(["p"], system_prompt="watercolor"),
+        task_type=TaskType.DIFFUSION,
+        task_id="tsk-parent",
+        merged_children=[_child("tsk-c1", ["a"], system_prompt="photo")],
+    )
+    with pytest.raises(ExecutionError, match="different system_prompt"):
+        executor.run(task, tmp_path / "tsk-parent", RunControl(task.task_id))
+    assert pipe.batch_sizes == []

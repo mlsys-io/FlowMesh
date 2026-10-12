@@ -277,18 +277,30 @@ class DiffusersExecutor(DataMixin, Executor):
         # Merged children share the parent's model and inference settings (the
         # merge key); only their prompts differ, so all of them go to the same
         # pipeline call.
-        members: list[tuple[str, DiffusionSpecStrict, Path]] = [
-            (task_id, spec, out_dir)
+        system_prompt = (spec.inference or {}).get("system_prompt")
+        members: list[tuple[str, str, DiffusionSpecStrict, Path]] = [
+            (task_id, task.owner_id, spec, out_dir)
         ]
         for child in task.merged_children or []:
             if not isinstance(child.spec, DiffusionSpecStrict):
                 raise ExecutionError(
                     "Merged child spec must be diffusion for merged execution."
                 )
-            members.append((child.task_id, child.spec, out_dir.parent / child.task_id))
+            if (child.spec.inference or {}).get("system_prompt") != system_prompt:
+                raise ExecutionError(
+                    f"Merged child {child.task_id} has a different system_prompt."
+                )
+            members.append(
+                (
+                    child.task_id,
+                    child.owner_id,
+                    child.spec,
+                    out_dir.parent / child.task_id,
+                )
+            )
         prompts_by_member = [
             self._member_prompts(member_spec, member_id)
-            for member_id, member_spec, _ in members
+            for member_id, _, member_spec, _ in members
         ]
         prompts = [p for member_prompts in prompts_by_member for p in member_prompts]
 
@@ -305,7 +317,6 @@ class DiffusersExecutor(DataMixin, Executor):
             )
         seed = inference_config.get("seed")
         negative_prompt = inference_config.get("negative_prompt")
-        system_prompt = inference_config.get("system_prompt")
 
         generator = None
         if seed is not None:
@@ -353,7 +364,7 @@ class DiffusersExecutor(DataMixin, Executor):
 
         results: list[DiffusionResult] = []
         offset = 0
-        for (member_id, member_spec, member_out), member_prompts in zip(
+        for (member_id, owner_id, member_spec, member_out), member_prompts in zip(
             members, prompts_by_member
         ):
             count = len(member_prompts) * num_images
@@ -366,6 +377,7 @@ class DiffusersExecutor(DataMixin, Executor):
                 dependencies_by_task={
                     member_id: self._extract_source_data_ids(member_spec)
                 },
+                owner_id=owner_id,
             )
             results.append(result)
 
@@ -379,10 +391,16 @@ class DiffusersExecutor(DataMixin, Executor):
         data_entry = self._collect_prompts_for_spec(spec, task_id=task_id)
         if len(data_entry.prompts) == 0:
             raise ExecutionError(f"No prompts provided for task {task_id}.")
-        return [
-            p[-1]["content"] if isinstance(p, list) else str(p)
-            for p in data_entry.prompts
-        ]
+        texts: list[str] = []
+        for prompt in data_entry.prompts:
+            if isinstance(prompt, str):
+                text: str | None = prompt
+            else:
+                text = prompt[-1].get("content") if prompt else None
+            if not isinstance(text, str):
+                raise ExecutionError(f"Task {task_id} has a prompt without text.")
+            texts.append(text)
+        return texts
 
     def _save_images(self, out_dir: Path, images: list[Image.Image]) -> DiffusionResult:
         """Write one task's images under ``out_dir/artifacts/images``."""

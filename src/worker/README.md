@@ -160,6 +160,9 @@ Relevant env vars for SSH tasks:
   executors (e.g. vLLM) emit per-child outputs under `result.children`; the
   runner writes each child result to its own directory. Disabled with
   `ENABLE_TASK_MERGE=false` on the server.
+- **Merged diffusion** tasks share one pipeline call; they differ only in
+  their prompts (`inference.system_prompt` is part of their merge key), and
+  each child's images, asset rows and owner stay its own.
 - **Multi-GPU execution**: when multiple GPUs are available, vLLM automatically
   sets `tensor_parallel_size`, and PPO/DPO/SFT executors launch distributed jobs
   via `torchrun`. Override `training.allow_multi_gpu=false` or

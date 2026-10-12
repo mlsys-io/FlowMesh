@@ -36,11 +36,13 @@ from .parser import parse_workflow
 REHYDRATE_LOAD_BATCH = 16
 
 
-def _sanitize_merge_spec(spec: dict[str, Any]) -> dict[str, Any]:
+def _sanitize_merge_spec(spec: dict[str, Any], task_type: str) -> dict[str, Any]:
+    """The spec without its per-request fields. ``inference.system_prompt`` is
+    per request for LLM tasks but conditions every image of a diffusion
+    batch, so diffusion tasks keep it in the key."""
     clone = copy.deepcopy(spec)
-    if isinstance(clone.get("inference"), dict):
-        inference_cfg = clone["inference"]
-        inference_cfg.pop("system_prompt", None)
+    if task_type != "diffusion" and isinstance(clone.get("inference"), dict):
+        clone["inference"].pop("system_prompt", None)
     clone.pop("data", None)
     return clone
 
@@ -51,7 +53,7 @@ def _compute_merge_key(task: TaskEnvelopeTemplate) -> str | None:
         return None
     try:
         spec = task.spec.model_dump(mode="python", exclude_none=True)
-        sanitized = _sanitize_merge_spec(spec)
+        sanitized = _sanitize_merge_spec(spec, task_type)
         return json.dumps(sanitized, ensure_ascii=False, sort_keys=True)
     except Exception:
         return None
