@@ -62,6 +62,12 @@ Results are read from the server, so a result that was never published there
 raises `NotFoundError` (see `WORKER_UPLOAD_RESULTS` in [`ENV.md`](ENV.md)). A
 bundle missing a requested section raises `FlowMeshError`.
 
+SSH task builders accept `worker=<worker_id>` to restrict the task to that
+worker, including standalone submissions. A missing worker does not permit
+another worker to run the task. To allow fallback, submit a workflow with
+`metadata.annotations.schedule_hint.allow_worker_fallback: true`; see
+[`WORKFLOWS.md`](WORKFLOWS.md#schedule-hints) for the complete policy.
+
 ## Cursor pagination
 
 Cursor-enabled calls take `limit` and `before` / `after` params.

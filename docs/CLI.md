@@ -234,6 +234,12 @@ Migration: the former `flowmesh stack purge <version>` (pre-v0.2.0) is replaced 
 
 ## SSH tasks
 
+When submitting an SSH session or command, `--worker <worker_id>` restricts it
+to that worker. An unavailable ID is waited for until the no-worker grace
+expires; the command is never sent to another worker. Workflows that permit
+another worker can opt in through
+[`schedule_hint.allow_worker_fallback`](WORKFLOWS.md#schedule-hints).
+
 ```bash
 flowmesh ssh connect <tsk-id>          # interactive shell into an SSH task
 flowmesh ssh run <tsk-id> -- <cmd>     # one-shot exec

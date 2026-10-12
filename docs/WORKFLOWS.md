@@ -278,8 +278,39 @@ data:
 Workflows can declare scheduling preferences via
 `metadata.annotations.schedule_hint`:
 
-- `epoch_groups: [[<task_name>, ...], ...]` — epoch-ordered execution;
+- `node_execution_order: [[<task_name>, ...], ...]` — epoch-ordered execution;
   tasks in epoch `n` only dispatch after every task in epoch `n-1`
   succeeds.
-- `schedule_in_epoch_order: true` — for dependent DAGs, prefer
+- `node_schedule_in_epoch_order: true` — for dependent DAGs, prefer
   position-in-epoch tie-breaks during dispatch.
+- `selected_worker: <worker_id>` or `[<worker_id>, ...]` — restrict all tasks to
+  those worker IDs. A mapping supports `global: [<worker_id>, ...]` and
+  `selected: {<task_name>: <worker_id-or-list>}`; per-task entries override the
+  global list. For a standalone task, the name is `metadata.name`, or `task`
+  when no name is supplied. Unknown names in `selected` are rejected.
+- `allow_worker_fallback: true` — permit any suitable worker when every selected
+  worker ID is unregistered. Defaults to `false` and applies to all tasks in
+  the workflow. Use it only when execution on another worker is acceptable.
+
+Worker pins are strict by default: a busy selected worker is waited for, and a
+pin that no eligible worker can satisfy fails after `TASK_NO_WORKER_GRACE_SEC`.
+Fallback still checks hardware, task capabilities, cordons, and failed-worker
+retry exclusions. With fallback enabled, a list containing any registered ID
+stays strict; it does not fall back because that worker is busy, stale, cordoned,
+or incompatible. Registry existence differs from heartbeat liveness: a dead
+worker can keep its pin strict until its record is reaped. A restarted worker
+may have a new ID, and fallback does not resolve an old ID by alias.
+
+```yaml
+metadata:
+  annotations:
+    schedule_hint:
+      selected_worker:
+        global: [wkr-8]
+        selected:
+          evaluate: [wkr-9, wkr-10]
+      allow_worker_fallback: true
+```
+
+The dispatcher and merged-task planner use the same effective pin. The
+requested IDs and fallback policy survive retries and server restarts.

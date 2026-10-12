@@ -73,6 +73,16 @@ reached; the terminal error is the executor's own message. Controlled
 executor errors are not retried. A task that no worker can satisfy fails
 after `TASK_NO_WORKER_GRACE_SEC`.
 
+`metadata.annotations.schedule_hint.selected_worker` restricts a task to the
+named worker IDs, including standalone tasks. Pins remain strict by default.
+Setting `allow_worker_fallback: true` in the same hint permits another suitable
+worker only when every pinned ID is unregistered. A pin with any registered ID
+stays strict, even when that worker is busy, cordoned, or stale. A crashed
+worker's record can remain registered until the stale-worker reaper removes it.
+Dispatch and task merging enforce the same policy, and the original pin remains
+in the task record across retries and server restarts. See
+[`WORKFLOWS.md`](WORKFLOWS.md#schedule-hints) for the hint format.
+
 ## Directory map
 
 ```
