@@ -34,6 +34,7 @@ from .services.monitoring import EventMonitor
 from .services.port_forward import PortForwardService
 from .services.ssh_connections import SshConnectionRegistry
 from .services.watchdog import WorkerWatchdog
+from .services.worker_deaths import WorkerDeathMarks
 from .supervisor import WorkerSupervisor
 from .task.runtime import TaskRuntime
 from .utils.logging import get_logger
@@ -118,11 +119,13 @@ LOG_ARCHIVER = None
 if IS_ROOT_NODE:
     WORKFLOW_REGISTRY = WorkflowRegistry(REDIS_CLIENT)
     WORKER_REGISTRY = WorkerRegistry(REDIS_CLIENT)
+    WORKER_DEATHS = WorkerDeathMarks(enabled=config.watchdog.enabled)
     RUNTIME = TaskRuntime(
         WORKFLOW_REGISTRY,
         WORKER_REGISTRY,
         logger,
         worker_pin_fallback=config.dispatch.worker_pin_fallback,
+        worker_deaths=WORKER_DEATHS,
     )
 
     DISPATCHER = create_dispatcher(
@@ -164,6 +167,7 @@ if IS_ROOT_NODE:
         rehydration_grace_seconds=config.watchdog.rehydration_grace_sec,
         reap_enabled=config.watchdog.reap_enabled,
         reap_grace_seconds=config.watchdog.reap_grace_sec,
+        death_marks=WORKER_DEATHS,
     )
     if config.watchdog.reap_enabled and not config.watchdog.enabled:
         logger.warning(

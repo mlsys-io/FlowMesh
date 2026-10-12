@@ -11,6 +11,7 @@ import yaml
 
 from server.dispatcher import Dispatcher
 from server.registries.worker import Worker, WorkerRegistry
+from server.services.worker_deaths import WorkerDeathMarks
 from server.task.models import TaskStatus
 from server.task.runtime import TaskRuntime
 from tests.server.task.test_runtime_rehydrate import FakeWorkflowRegistry
@@ -55,6 +56,7 @@ def setup(tmp_path: Path) -> PinSetup:
         node_alias="test-node",
     )
     registry.worker_exists.side_effect = lambda wid: wid in {"wkr-new", "wkr-live"}
+    registry.is_worker_stale.return_value = False
     registry.idle_satisfying_pool.return_value = [worker]
     registry.satisfying_workers.return_value = [worker]
     registry.publish_task.return_value = 1
@@ -63,6 +65,7 @@ def setup(tmp_path: Path) -> PinSetup:
         registry,
         logging.getLogger("worker-pins"),
         worker_pin_fallback=False,
+        worker_deaths=WorkerDeathMarks(),
     )
     dispatcher = Dispatcher(
         runtime,
@@ -324,3 +327,66 @@ def test_transformers_peers_dispatch_independently(
     assert registry.publish_task.call_count == 2
     for call in registry.publish_task.call_args_list:
         assert not call.args[1].merged_children
+
+
+def _deaths(runtime: TaskRuntime) -> WorkerDeathMarks:
+    deaths = runtime._worker_deaths
+    assert deaths is not None
+    return deaths
+
+
+@pytest.mark.parametrize(("fallback", "falls_back"), [(True, True), (False, False)])
+def test_dead_pinned_worker_relaxes_only_an_opted_in_pin(
+    setup: PinSetup, fallback: bool, falls_back: bool
+) -> None:
+    runtime, dispatcher, registry = setup
+    task_id = _register(runtime, ["wkr-live"], fallback=fallback, task_type="echo")
+    _deaths(runtime).mark("wkr-live")
+    assert dispatcher.dispatch_once(task_id) is falls_back
+    record = runtime.get_record(task_id)
+    assert record is not None
+    if falls_back:
+        assert record.assigned_worker == "wkr-new"
+    else:
+        assert record.status == TaskStatus.FAILED
+        registry.publish_task.assert_not_called()
+
+
+def test_stale_pinned_worker_waits_for_the_watchdog_verdict(setup: PinSetup) -> None:
+    runtime, dispatcher, registry = setup
+    registry.is_worker_stale.side_effect = lambda wid: wid == "wkr-live"
+    task_id = _register(runtime, ["wkr-live"], fallback=True, task_type="echo")
+
+    # An expired heartbeat alone (e.g. right after a root restart) keeps the pin
+    # and does not burn the no-worker grace.
+    assert dispatcher.dispatch_once(task_id) is False
+    record = runtime.get_record(task_id)
+    assert record is not None
+    assert record.status == TaskStatus.PENDING
+    assert record.no_eligible_since is None
+    assert record.attempts == 0
+    registry.publish_task.assert_not_called()
+
+    _deaths(runtime).mark("wkr-live")
+    assert dispatcher.dispatch_once(task_id)
+    assert record.assigned_worker == "wkr-new"
+
+
+def test_stale_pinned_worker_without_watchdog_uses_the_grace(setup: PinSetup) -> None:
+    runtime, dispatcher, registry = setup
+    runtime._worker_deaths = WorkerDeathMarks(enabled=False)
+    registry.is_worker_stale.side_effect = lambda wid: wid == "wkr-live"
+    task_id = _register(runtime, ["wkr-live"], fallback=True, task_type="echo")
+    dispatcher.dispatch_once(task_id)
+    record = runtime.get_record(task_id)
+    assert record is not None
+    assert record.status == TaskStatus.FAILED
+
+
+def test_plan_merge_checks_each_pinned_worker_once(setup: PinSetup) -> None:
+    runtime, _, registry = setup
+    parent = _register(runtime, ["wkr-old"], fallback=True)
+    children = [_register(runtime, ["wkr-old"], fallback=True) for _ in range(3)]
+    registry.worker_exists.reset_mock()
+    assert runtime.plan_merge(parent, 4, "wkr-new") == children
+    assert registry.worker_exists.call_count == 1

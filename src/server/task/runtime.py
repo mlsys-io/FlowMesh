@@ -1,5 +1,6 @@
 import asyncio
 import copy
+import functools
 import heapq
 import json
 import logging
@@ -21,6 +22,7 @@ from shared.utils.redact import redact_raw_yaml
 from ..hooks import SUPPLIER_RESOLVERS
 from ..registries.worker import Worker, WorkerRegistry
 from ..registries.workflow import PersistedTask, WorkflowRegistry, WorkflowSched
+from ..services.worker_deaths import WorkerDeathMarks
 from ..utils.time import parse_iso_ts
 from .models import (
     TERMINAL_TASK_STATUSES,
@@ -95,11 +97,13 @@ class TaskRuntime:
         worker_registry: WorkerRegistry,
         logger: logging.Logger,
         worker_pin_fallback: bool = True,
+        worker_deaths: WorkerDeathMarks | None = None,
     ) -> None:
         self._workflow_registry = workflow_registry
         self._worker_registry = worker_registry
         self._logger = logger
         self._worker_pin_fallback = worker_pin_fallback
+        self._worker_deaths = worker_deaths
         self._tasks: dict[str, TaskRecord] = {}
         self._original_deps: dict[str, set[str]] = {}
         self._pending_deps: dict[str, set[str]] = {}
@@ -761,6 +765,33 @@ class TaskRuntime:
                 self._cv.notify_all()
             return added
 
+    def is_pinned_worker_present(self, worker_id: str) -> bool:
+        """Whether a pinned worker is registered and not declared dead."""
+        if self._worker_deaths is not None and self._worker_deaths.is_dead(worker_id):
+            return False
+        return self._worker_registry.worker_exists(worker_id)
+
+    def resolve_pins(self, record: TaskRecord) -> list[str] | None:
+        """The worker IDs a task is currently restricted to, or None if unrestricted."""
+        return effective_selected_worker(record, self.is_pinned_worker_present)
+
+    def awaits_pinned_worker(self, record: TaskRecord) -> bool:
+        """Whether a fallback-enabled pin should wait for the watchdog's verdict.
+
+        True while some pinned worker is registered and has an expired heartbeat but
+        is not yet declared dead: it either recovers or is declared dead within the
+        watchdog's grace, which then relaxes the pin.
+        """
+        deaths = self._worker_deaths
+        if not record.allow_worker_fallback or deaths is None or not deaths.enabled:
+            return False
+        return any(
+            not deaths.is_dead(wid)
+            and self._worker_registry.worker_exists(wid)
+            and self._worker_registry.is_worker_stale(wid)
+            for wid in record.selected_worker or []
+        )
+
     def plan_merge(
         self, task_id: str, max_batch_size: int, assigned_worker: str
     ) -> list[str]:
@@ -779,7 +810,8 @@ class TaskRuntime:
             return []
         if self._merge_children_map.get(task_id):
             return []
-        pins = effective_selected_worker(record, self._worker_registry.worker_exists)
+        present = functools.cache(self.is_pinned_worker_present)
+        pins = effective_selected_worker(record, present)
         if pins and assigned_worker not in pins:
             raise WorkerPinMismatch(
                 f"The worker assigned for task {task_id} ({assigned_worker}) "
@@ -802,9 +834,7 @@ class TaskRuntime:
                 continue
             if assigned_worker in candidate_record.failed_workers:
                 continue
-            candidate_pins = effective_selected_worker(
-                candidate_record, self._worker_registry.worker_exists
-            )
+            candidate_pins = effective_selected_worker(candidate_record, present)
             if candidate_pins and assigned_worker not in candidate_pins:
                 continue
             if candidate not in self._ready_index:

@@ -15,6 +15,7 @@ from ..clients.redis import (
 from ..dispatcher import Dispatcher
 from ..registries.worker import WorkerRegistry
 from ..task.runtime import TaskRuntime
+from .worker_deaths import WorkerDeathMarks
 
 
 @dataclass
@@ -41,6 +42,7 @@ class WorkerWatchdog:
         rehydration_grace_seconds: int = 0,
         reap_enabled: bool = False,
         reap_grace_seconds: int = 0,
+        death_marks: WorkerDeathMarks | None = None,
     ) -> None:
         self._redis = redis_client
         self._worker_registry = worker_registry
@@ -54,7 +56,7 @@ class WorkerWatchdog:
         self._reap_enabled = reap_enabled
         self._reap_grace_seconds = max(0, reap_grace_seconds)
         self._lock = threading.RLock()
-        self._dead_marks: set[str] = set()
+        self._death_marks = death_marks or WorkerDeathMarks(enabled)
         self._thread: threading.Thread | None = None
 
     @property
@@ -62,16 +64,11 @@ class WorkerWatchdog:
         return self._enabled
 
     def is_marked_dead(self, worker_id: str) -> bool:
-        if not self._enabled or not worker_id:
-            return False
-        with self._lock:
-            return worker_id in self._dead_marks
+        return self._enabled and self._death_marks.is_dead(worker_id)
 
     def clear_dead_mark(self, worker_id: str) -> None:
-        if not self._enabled or not worker_id:
-            return
-        with self._lock:
-            self._dead_marks.discard(worker_id)
+        if self._enabled:
+            self._death_marks.clear(worker_id)
 
     def start(self, stop_event: threading.Event) -> threading.Thread | None:
         if not self._enabled:
@@ -158,7 +155,7 @@ class WorkerWatchdog:
         for worker_id in list(state.dead_since):
             if worker_id not in worker_ids:
                 state.dead_since.pop(worker_id, None)
-        for worker_id in list(self._snapshot_dead_marks()):
+        for worker_id in self._death_marks.snapshot():
             if worker_id not in worker_ids:
                 self.clear_dead_mark(worker_id)
 
@@ -282,11 +279,4 @@ class WorkerWatchdog:
                     )
 
     def _mark_dead(self, worker_id: str) -> None:
-        if not worker_id:
-            return
-        with self._lock:
-            self._dead_marks.add(worker_id)
-
-    def _snapshot_dead_marks(self) -> set[str]:
-        with self._lock:
-            return set(self._dead_marks)
+        self._death_marks.mark(worker_id)

@@ -41,7 +41,7 @@ from ..services.metrics import MetricsRecorder
 from ..task.metadata import extract_model_dataset_names
 from ..task.models import TaskRecord, TaskStatus
 from ..task.runtime import TaskRuntime
-from ..task.worker_pins import WorkerPinMismatch, effective_selected_worker
+from ..task.worker_pins import WorkerPinMismatch
 from ..utils.time import now_iso
 from .snapshots import SnapshotCache
 from .worker_selector import DEFAULT_WORKER_SELECTION, select_worker
@@ -118,7 +118,7 @@ class Dispatcher:
 
     def effective_selected_worker(self, record: TaskRecord) -> list[str] | None:
         """Resolve the task's pin and log opted-in fallback to other workers."""
-        pins = effective_selected_worker(record, self._worker_registry.worker_exists)
+        pins = self._runtime.resolve_pins(record)
         if record.selected_worker and pins is None:
             self._logger.warning(
                 "No selected worker %s for %s is registered; allowing worker fallback",
@@ -255,6 +255,12 @@ class Dispatcher:
         # take the task, or every eligible worker has already failed it.
         if not pool:
             eligible = self.eligible_worker_ids(record)
+            if not eligible and self._runtime.awaits_pinned_worker(record):
+                record.no_eligible_since = None
+                self.requeue_task(
+                    task_id, reason="selected_worker_unresponsive", count_retry=False
+                )
+                return False
             if not eligible:
                 return self._grace_then_fail(
                     task_id,
@@ -383,9 +389,7 @@ class Dispatcher:
             self.requeue_task(task_id, reason="no_selection")
             return False
 
-        current_pins = effective_selected_worker(
-            record, self._worker_registry.worker_exists
-        )
+        current_pins = self._runtime.resolve_pins(record)
         if current_pins and worker.id not in current_pins:
             self.requeue_task(
                 task_id, reason="selected_worker_changed", count_retry=False
