@@ -5,33 +5,30 @@ The engine yields outputs in completion order and tags request ids
 model; the encoder check runs against the installed vllm-omni.
 """
 
+import importlib.util
 import io
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+import numpy as np
 import pytest
 
-pytest.importorskip("vllm_omni", reason="vllm-omni not installed")
-
-import numpy as np  # noqa: E402
-
-from shared.schemas.result import OmniText2VideoResult  # noqa: E402
-from shared.schemas.result import InferenceItem, InferenceResult  # noqa: E402
-from shared.tasks import MergedChildTaskStrict  # noqa: E402
-from shared.tasks.components.model import ModelConfig, ModelSource  # noqa: E402
-from shared.tasks.specs.omni import (  # noqa: E402
-    OmniText2ImageSpecStrict,
-    OmniText2VideoSpecStrict,
-)
-from shared.tasks.task_type import TaskType  # noqa: E402
-from worker.executors import omni_text2video_executor as mod  # noqa: E402
-from worker.executors.base_executor import ExecutionError, RunControl  # noqa: E402
-from worker.executors.omni_text2video_executor import (  # noqa: E402
-    OmniText2VideoExecutor,
-)
+from shared.schemas.result import InferenceItem, InferenceResult, OmniText2VideoResult
+from shared.tasks import MergedChildTaskStrict
+from shared.tasks.components.model import ModelConfig, ModelSource
+from shared.tasks.specs.omni import OmniText2ImageSpecStrict, OmniText2VideoSpecStrict
+from shared.tasks.task_type import TaskType
+from worker.executors import omni_executor_base as base_mod
+from worker.executors import omni_text2video_executor as mod
+from worker.executors.base_executor import ExecutionError, RunControl
+from worker.executors.omni_text2video_executor import OmniText2VideoExecutor
 
 from .factories import DEFAULT_WORKER_CONFIG, make_worker_task_message
+
+pytestmark = pytest.mark.skipif(
+    importlib.util.find_spec("vllm_omni") is None, reason="vllm-omni not installed"
+)
 
 
 class _FakeOmni:
@@ -50,6 +47,12 @@ class _FakeOmni:
 
 def _output(request_id: str) -> SimpleNamespace:
     return SimpleNamespace(request_id=request_id, images=None, multimodal_output={})
+
+
+def _request_output(frames: Any, **multimodal: Any) -> mod.OmniRequestOutput:
+    return mod.OmniRequestOutput(
+        request_id="0_a", images=[frames], _multimodal_output=multimodal
+    )
 
 
 def _spec(items: list[str], **omni: Any) -> OmniText2VideoSpecStrict:
@@ -73,7 +76,7 @@ def _run(
     )
     executor = OmniText2VideoExecutor(DEFAULT_WORKER_CONFIG)
     executor._model_name = "org/video"
-    executor._omni = fake  # type: ignore[assignment]
+    monkeypatch.setattr(executor, "_omni", fake)
     monkeypatch.setattr(executor, "_ensure_omni", lambda spec_dict: None)
     monkeypatch.setattr(
         mod, "_encode_mp4", lambda output, cfg: f"mp4:{output.request_id}".encode()
@@ -194,9 +197,7 @@ def test_engine_flags_reach_omni_and_key_its_reuse(
 
 def test_encoder_writes_mp4_from_installed_vllm_omni() -> None:
     frames = np.zeros((4, 32, 32, 3), dtype=np.uint8)
-    output = SimpleNamespace(request_id="0_a", images=[frames], multimodal_output={})
-
-    data = mod._encode_mp4(output, {"fps": 8})  # type: ignore[arg-type]
+    data = mod._encode_mp4(_request_output(frames), 8)
 
     assert data[4:8] == b"ftyp"
 
@@ -209,7 +210,9 @@ def test_missing_num_frames_fails_before_generation(
         model=ModelConfig(source=ModelSource(identifier="org/video")),
         data={"type": "list", "items": ["p0"]},
     )
-    with pytest.raises(ExecutionError, match="requires spec.omni.num_frames"):
+    with pytest.raises(
+        ExecutionError, match="invalid omni_text2video spec.omni: num_frames"
+    ):
         _run(tmp_path, monkeypatch, spec, [_output("0_a")])
 
 
@@ -224,14 +227,12 @@ def test_configured_fps_wins_over_model_reported_fps(
 
     monkeypatch.setattr(mod, "_encode_video_bytes", _encode)
     frames = np.zeros((4, 32, 32, 3), dtype=np.uint8)
-    output = SimpleNamespace(
-        request_id="0_a", images=[frames], multimodal_output={"fps": 24}
-    )
+    output = _request_output(frames, fps=24)
 
-    mod._encode_mp4(output, {"fps": 8})  # type: ignore[arg-type]
+    mod._encode_mp4(output, 8)
     assert seen["fps"] == 8
 
-    mod._encode_mp4(output, {})  # type: ignore[arg-type]
+    mod._encode_mp4(output, None)
     assert seen["fps"] == 24
 
 
@@ -257,7 +258,35 @@ def test_extra_args_must_be_a_mapping(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     spec = _spec(["p0"], extra_args="16:9")
-    with pytest.raises(ExecutionError, match="extra_args must be a mapping"):
+    with pytest.raises(
+        ExecutionError, match="invalid omni_text2video spec.omni: extra_args"
+    ):
+        _run(tmp_path, monkeypatch, spec, [_output("0_a")])
+
+
+@pytest.mark.parametrize(
+    ("omni", "field"),
+    [
+        ({"num_frames": 0}, "num_frames"),
+        ({"num_frames": 80.5}, "num_frames"),
+        ({"num_frames": True}, "num_frames"),
+        ({"num_frames": "81"}, "num_frames"),
+        ({"num_frames": 81, "height": 480.0}, "height"),
+        ({"num_frames": 81, "seed": False}, "seed"),
+        ({"num_frames": 81, "guidance_scale": True}, "guidance_scale"),
+        ({"num_frames": 81, "negative_prompt": 1}, "negative_prompt"),
+    ],
+)
+def test_sampling_options_reject_casts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, omni: dict[str, Any], field: str
+) -> None:
+    spec = OmniText2VideoSpecStrict(
+        taskType=TaskType.OMNI_TEXT2VIDEO,
+        model=ModelConfig(source=ModelSource(identifier="org/video")),
+        data={"type": "list", "items": ["p0"]},
+        omni=omni,
+    )
+    with pytest.raises(ExecutionError, match=f"spec.omni: {field}"):
         _run(tmp_path, monkeypatch, spec, [_output("0_a")])
 
 
@@ -279,7 +308,9 @@ def test_invalid_sampling_params_fail_before_the_engine_loads(
         raise AssertionError("engine loaded before sampling params were validated")
 
     monkeypatch.setattr(executor, "_ensure_omni", _load)
-    with pytest.raises(ExecutionError, match="requires spec.omni.num_frames"):
+    with pytest.raises(
+        ExecutionError, match="invalid omni_text2video spec.omni: num_frames"
+    ):
         executor.run(task, tmp_path, RunControl(task.task_id))
 
 
@@ -309,7 +340,9 @@ def test_quantization_must_be_a_name_or_mapping(
 ) -> None:
     monkeypatch.setattr(mod, "Omni", lambda **kwargs: _FakeOmni([], **kwargs))
     executor = OmniText2VideoExecutor(DEFAULT_WORKER_CONFIG)
-    with pytest.raises(ExecutionError, match="method name or a mapping"):
+    with pytest.raises(
+        ExecutionError, match="invalid omni weight options: quantization"
+    ):
         executor._ensure_omni(_spec(["p"], quantization=8).model_dump(by_alias=True))
 
 
@@ -317,13 +350,9 @@ def test_encoder_muxes_model_audio_into_the_mp4() -> None:
     av = pytest.importorskip("av")
     frames = np.zeros((8, 32, 32, 3), dtype=np.uint8)
     audio = np.zeros(22050, dtype=np.float32)
-    output = SimpleNamespace(
-        request_id="0_a",
-        images=[frames],
-        multimodal_output={"audio": audio, "audio_sample_rate": 44100},
-    )
+    output = _request_output(frames, audio=audio, audio_sample_rate=44100)
 
-    data = mod._encode_mp4(output, {"fps": 8})  # type: ignore[arg-type]
+    data = mod._encode_mp4(output, 8)
 
     with av.open(io.BytesIO(data)) as container:
         assert len(container.streams.video) == 1
@@ -357,14 +386,14 @@ def test_merged_children_share_one_generate_and_keep_their_own_videos(
     )
     executor = OmniText2VideoExecutor(DEFAULT_WORKER_CONFIG)
     executor._model_name = "org/video"
-    executor._omni = fake  # type: ignore[assignment]
+    monkeypatch.setattr(executor, "_omni", fake)
     monkeypatch.setattr(executor, "_ensure_omni", lambda spec_dict: None)
     monkeypatch.setattr(
         mod, "_encode_mp4", lambda output, cfg: f"mp4:{output.request_id}".encode()
     )
     uploaded: list[tuple[str, str]] = []
     monkeypatch.setattr(
-        mod,
+        base_mod,
         "maybe_upload_artifacts",
         lambda ref, out_dir, logger=None: uploaded.append((ref.task_id, out_dir.name)),
     )
@@ -445,19 +474,28 @@ def test_execution_flags_reach_omni_and_key_its_reuse(
     assert created[1].init_kwargs == {"model": "org/video", "step_execution": False}
 
 
+_EXEC = "invalid omni execution options: "
+_WEIGHT = "invalid omni weight options: "
+
+
 @pytest.mark.parametrize(
     ("flags", "message"),
     [
-        ({"ulysses_degree": 0}, "ulysses_degree must be a positive integer"),
-        ({"ring_degree": "x"}, "ring_degree must be a positive integer"),
-        (
-            {"cache_backend": "tea_cache", "cache_config": "x"},
-            "cache_config must be a mapping",
-        ),
-        ({"cache_config": {"a": 1}}, "cache_config needs cache_backend"),
+        ({"ulysses_degree": 0}, _EXEC + "ulysses_degree"),
+        ({"ulysses_degree": 1.5}, _EXEC + "ulysses_degree"),
+        ({"ulysses_degree": 2.0}, _EXEC + "ulysses_degree"),
+        ({"ring_degree": True}, _EXEC + "ring_degree"),
+        ({"ring_degree": "2"}, _EXEC + "ring_degree"),
+        ({"step_execution": "yes"}, _EXEC + "step_execution"),
+        ({"cache_backend": ""}, _EXEC + "cache_backend"),
+        ({"cache_backend": "tea_cache", "cache_config": "x"}, _EXEC + "cache_config"),
+        ({"cache_config": {"a": 1}}, _EXEC + ".*cache_config needs cache_backend"),
+        ({"enable_cpu_offload": "yes"}, _WEIGHT + "enable_cpu_offload"),
+        ({"enable_layerwise_offload": 1}, _WEIGHT + "enable_layerwise_offload"),
+        ({"task_type": 3}, "task_type must be a string"),
     ],
 )
-def test_invalid_execution_flags_fail(
+def test_invalid_engine_options_fail(
     monkeypatch: pytest.MonkeyPatch, flags: dict[str, Any], message: str
 ) -> None:
     monkeypatch.setattr(mod, "Omni", lambda **kwargs: _FakeOmni([], **kwargs))

@@ -36,7 +36,7 @@ from shared.tasks.specs.omni import OmniText2AudioSpecStrict
 from shared.tasks.task_type import TaskType
 from shared.utils.parsing import to_float, to_int
 
-from .base_executor import ExecutionError, ExecutorTask
+from .base_executor import ExecutionError
 from .omni_executor_base import (
     _HAS_OMNI,
     Omni,
@@ -68,13 +68,13 @@ class OmniText2AudioExecutor(OmniExecutorBase):
 
     def _run_inner(
         self,
-        task: ExecutorTask,
+        task_id: str,
         spec: TaskSpecStrictBase,
         spec_dict: dict[str, Any],
         out_dir: Path,
     ) -> OmniText2AudioResult:
         assert isinstance(spec, OmniText2AudioSpecStrict)
-        prompts = self._collect_text_inputs(spec, task.task_id)
+        prompts = self._collect_text_inputs(spec, task_id)
 
         cfg = _bgm_cfg(spec_dict)
         output_format = str(cfg.get("output_format") or "").strip().lower() or "wav"
@@ -98,7 +98,7 @@ class OmniText2AudioExecutor(OmniExecutorBase):
         with self._span(
             "model load",
             span_type=SpanType.COMPUTE,
-            attributes={"task_id": task.task_id, "prompt_count": len(prompts)},
+            attributes={"task_id": task_id, "prompt_count": len(prompts)},
         ):
             self._ensure_omni(spec_dict)
         omni = self._omni
@@ -111,7 +111,7 @@ class OmniText2AudioExecutor(OmniExecutorBase):
             "generation",
             span_type=SpanType.COMPUTE,
             attributes={
-                "task_id": task.task_id,
+                "task_id": task_id,
                 "prompt_count": len(prompts),
                 "num_waveforms": num_waveforms,
                 "num_inference_steps": num_inference_steps,
@@ -153,7 +153,7 @@ class OmniText2AudioExecutor(OmniExecutorBase):
         with self._span(
             "output postprocessing",
             span_type=SpanType.COMPUTE,
-            attributes={"task_id": task.task_id, "prompt_count": len(prompts)},
+            attributes={"task_id": task_id, "prompt_count": len(prompts)},
         ):
             for prompt_idx, prompt, outputs in per_prompt_outputs:
                 extracted = _extract_audio_waveforms(outputs)

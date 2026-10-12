@@ -13,7 +13,7 @@ from shared.tasks.specs.omni import OmniText2SpeechSpecStrict
 from shared.tasks.task_type import TaskType
 from shared.utils.parsing import to_int
 
-from .base_executor import ExecutionError, ExecutorTask
+from .base_executor import ExecutionError
 from .omni import qwen3_tts
 from .omni_executor_base import (
     _HAS_OMNI,
@@ -44,18 +44,18 @@ class OmniText2SpeechExecutor(OmniExecutorBase):
 
     def _run_inner(
         self,
-        task: ExecutorTask,
+        task_id: str,
         spec: TaskSpecStrictBase,
         spec_dict: dict[str, Any],
         out_dir: Path,
     ) -> OmniText2SpeechResult:
         assert isinstance(spec, OmniText2SpeechSpecStrict)
-        texts = self._collect_text_inputs(spec, task.task_id)
+        texts = self._collect_text_inputs(spec, task_id)
 
         with self._span(
             "model load",
             span_type=SpanType.COMPUTE,
-            attributes={"task_id": task.task_id, "prompt_count": len(texts)},
+            attributes={"task_id": task_id, "prompt_count": len(texts)},
         ):
             self._ensure_omni(spec_dict)
         cfg = self.omni_cfg(spec_dict, "omni:tts", "omni_text2speech")
@@ -65,7 +65,7 @@ class OmniText2SpeechExecutor(OmniExecutorBase):
         with self._span(
             "generation",
             span_type=SpanType.COMPUTE,
-            attributes={"task_id": task.task_id, "prompt_count": len(texts)},
+            attributes={"task_id": task_id, "prompt_count": len(texts)},
         ):
             audio_objects = [
                 self._generate_single(t, spec_dict=spec_dict) for t in texts
@@ -75,7 +75,7 @@ class OmniText2SpeechExecutor(OmniExecutorBase):
         with self._span(
             "output postprocessing",
             span_type=SpanType.COMPUTE,
-            attributes={"task_id": task.task_id, "item_count": len(texts)},
+            attributes={"task_id": task_id, "item_count": len(texts)},
         ):
             for idx, (text, audio_obj) in enumerate(zip(texts, audio_objects)):
                 save_path = self.resolve_save_path(

@@ -30,7 +30,7 @@ from shared.tasks.task_type import TaskType
 from shared.utils.parsing import to_bool, to_float, to_int, to_int_list
 from worker.config import WorkerConfig
 
-from .base_executor import ExecutionError, ExecutorTask
+from .base_executor import ExecutionError
 from .omni_executor_base import (
     _HAS_OMNI,
     Omni,
@@ -77,13 +77,13 @@ class OmniText2GeneralExecutor(OmniExecutorBase):
 
     def _run_inner(
         self,
-        task: ExecutorTask,
+        task_id: str,
         spec: TaskSpecStrictBase,
         spec_dict: dict[str, Any],
         out_dir: Path,
     ) -> OmniText2GeneralResult:
         assert isinstance(spec, OmniText2GeneralSpecStrict)
-        texts = self._collect_text_inputs(spec, task.task_id)
+        texts = self._collect_text_inputs(spec, task_id)
 
         cfg = _narration_cfg(spec_dict)
         output_format = str(cfg.get("output_format") or "").strip().lower() or "wav"
@@ -98,7 +98,7 @@ class OmniText2GeneralExecutor(OmniExecutorBase):
         with self._span(
             "model load",
             span_type=SpanType.COMPUTE,
-            attributes={"task_id": task.task_id, "prompt_count": len(texts)},
+            attributes={"task_id": task_id, "prompt_count": len(texts)},
         ):
             self._ensure_omni(spec_dict)
         if self._omni is None:
@@ -119,7 +119,7 @@ class OmniText2GeneralExecutor(OmniExecutorBase):
         with self._span(
             "generation",
             span_type=SpanType.COMPUTE,
-            attributes={"task_id": task.task_id, "prompt_count": len(prompts)},
+            attributes={"task_id": task_id, "prompt_count": len(prompts)},
         ):
             generator: Iterable[OmniRequestOutput]
             try:
@@ -173,7 +173,7 @@ class OmniText2GeneralExecutor(OmniExecutorBase):
         with self._span(
             "output postprocessing",
             span_type=SpanType.COMPUTE,
-            attributes={"task_id": task.task_id, "item_count": len(audio_results)},
+            attributes={"task_id": task_id, "item_count": len(audio_results)},
         ):
             for idx, entry in enumerate(audio_results):
                 rid = str(entry.get("request_id") or f"req_{idx + 1}")

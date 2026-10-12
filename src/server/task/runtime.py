@@ -14,6 +14,7 @@ from redis.exceptions import RedisError
 
 from shared.schemas.command import InterruptMessage
 from shared.tasks import TaskEnvelopeTemplate
+from shared.tasks.task_type import TaskType
 from shared.utils import new_workflow_id
 from shared.utils.redact import redact_raw_yaml
 
@@ -33,6 +34,18 @@ from .models import (
 from .parser import parse_workflow
 
 REHYDRATE_LOAD_BATCH = 16
+MERGEABLE_TASK_TYPES = frozenset(
+    {
+        TaskType.INFERENCE,
+        TaskType.RAG,
+        TaskType.DIFFUSION,
+        TaskType.OMNI_TEXT2IMAGE,
+        TaskType.OMNI_TEXT2SPEECH,
+        TaskType.OMNI_TEXT2AUDIO,
+        TaskType.OMNI_TEXT2GENERAL,
+        TaskType.OMNI_TEXT2VIDEO,
+    }
+)
 
 
 def _sanitize_merge_spec(spec: dict[str, Any]) -> dict[str, Any]:
@@ -46,7 +59,7 @@ def _sanitize_merge_spec(spec: dict[str, Any]) -> dict[str, Any]:
 
 def _compute_merge_key(task: TaskEnvelopeTemplate) -> str | None:
     task_type = str(task.spec.taskType or "").strip().lower()
-    if task_type not in {"inference", "rag", "diffusion", "omni_text2video"}:
+    if task_type not in MERGEABLE_TASK_TYPES:
         return None
     try:
         spec = task.spec.model_dump(mode="python", exclude_none=True)
