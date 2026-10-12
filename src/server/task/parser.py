@@ -7,7 +7,7 @@ import yaml
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from shared.tasks import TaskEnvelopeTemplate, TaskType
-from shared.tasks.components import TaskAnnotations
+from shared.tasks.components import SelectedWorkerHint, TaskAnnotations
 from shared.utils import new_task_id, parse_bool_env
 from shared.utils.json import safe_get
 
@@ -215,6 +215,12 @@ def _expand_specs(data: Any) -> ParsedWorkflow:
     depends_on_raw = root.spec.get("dependsOn") or []
     depends_on = _normalize_dep_list(depends_on_raw)
     task = _build_task_template(root)
+    task_name = root.metadata.name if root.metadata and root.metadata.name else "task"
+    annotations = root.metadata.annotations if root.metadata else None
+    hint = annotations.schedule_hint if annotations else None
+    selected_workers = _parse_selected_workers(
+        hint.selected_worker if hint else None, {task_name}
+    )
     return _build_workflow(
         specs=[
             ParsedTaskSpec(
@@ -223,6 +229,7 @@ def _expand_specs(data: Any) -> ParsedWorkflow:
                 local_name=None,
                 graph_node_name=None,
                 load=_compute_task_load(task),
+                selected_worker=selected_workers.get(task_name),
             )
         ],
         schedule_in_epoch_order=None,
@@ -414,19 +421,9 @@ def _compute_task_load(task: TaskEnvelopeTemplate) -> int:
         return 0
 
 
-def _parse_schedule_hint(
-    base: _WorkflowRootInput, indexed: dict[str, _WorkflowNodeInput]
-) -> tuple[list[list[str]] | None, dict[str, int], bool | None, dict[str, list[str]]]:
-    """
-    Return epoch groups, in-epoch order positions, workflow flag, and worker hints.
-    """
-
-    def _parse_node_name(value: Any, path: str) -> str:
-        node_name = str(value).strip()
-        if node_name == "":
-            raise ValueError(f"{path} must contain non-empty node names")
-        return node_name
-
+def _parse_selected_workers(
+    selected_worker: str | list[str] | SelectedWorkerHint | None, node_names: set[str]
+) -> dict[str, list[str]]:
     def _normalize_selected_worker_list(value: Any, path: str) -> list[str]:
         if isinstance(value, str):
             selected = value.strip()
@@ -439,6 +436,49 @@ def _parse_schedule_hint(
                 raise ValueError(f"{path} list must contain non-empty strings")
             return list(dict.fromkeys(candidates))
         raise ValueError(f"{path} must be a string or list of strings")
+
+    node_selected_workers: dict[str, list[str]] = {}
+    if selected_worker:
+        if isinstance(selected_worker, (str, list)):
+            global_workers = _normalize_selected_worker_list(
+                selected_worker, "schedule_hint.selected_worker"
+            )
+            node_selected_workers = {name: global_workers for name in node_names}
+        else:
+            global_workers_payload = selected_worker.global_
+            if global_workers_payload is not None:
+                global_workers = _normalize_selected_worker_list(
+                    global_workers_payload,
+                    "schedule_hint.selected_worker['global']",
+                )
+                node_selected_workers = {name: global_workers for name in node_names}
+            selected_workers_payload = selected_worker.selected or {}
+            for key, value in selected_workers_payload.items():
+                if key not in node_names:
+                    raise ValueError(
+                        "schedule_hint.selected_worker['selected'] references "
+                        f"unknown node '{key}'"
+                    )
+                node_selected_workers[key] = _normalize_selected_worker_list(
+                    value,
+                    f"schedule_hint.selected_worker['selected']['{key}']",
+                )
+
+    return node_selected_workers
+
+
+def _parse_schedule_hint(
+    base: _WorkflowRootInput, indexed: dict[str, _WorkflowNodeInput]
+) -> tuple[list[list[str]] | None, dict[str, int], bool | None, dict[str, list[str]]]:
+    """
+    Return epoch groups, in-epoch order positions, workflow flag, and worker hints.
+    """
+
+    def _parse_node_name(value: Any, path: str) -> str:
+        node_name = str(value).strip()
+        if node_name == "":
+            raise ValueError(f"{path} must contain non-empty node names")
+        return node_name
 
     annotations = base.metadata.annotations if base.metadata else None
     if annotations is None:
@@ -541,32 +581,7 @@ def _parse_schedule_hint(
                         "but it appears after the node within its epoch"
                     )
 
-    node_selected_workers: dict[str, list[str]] = {}
-    if selected_worker:
-        if isinstance(selected_worker, (str, list)):
-            global_workers = _normalize_selected_worker_list(
-                selected_worker, "schedule_hint.selected_worker"
-            )
-            node_selected_workers = {name: global_workers for name in node_names}
-        else:
-            global_workers_payload = selected_worker.global_
-            if global_workers_payload is not None:
-                global_workers = _normalize_selected_worker_list(
-                    global_workers_payload,
-                    "schedule_hint.selected_worker['global']",
-                )
-                node_selected_workers = {name: global_workers for name in node_names}
-            selected_workers_payload = selected_worker.selected or {}
-            for key, value in selected_workers_payload.items():
-                if key not in node_names:
-                    raise ValueError(
-                        "schedule_hint.selected_worker['selected'] references "
-                        f"unknown node '{key}'"
-                    )
-                node_selected_workers[key] = _normalize_selected_worker_list(
-                    value,
-                    f"schedule_hint.selected_worker['selected']['{key}']",
-                )
+    node_selected_workers = _parse_selected_workers(selected_worker, node_names)
 
     return (
         epoch_groups,

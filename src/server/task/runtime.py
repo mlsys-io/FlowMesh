@@ -31,6 +31,11 @@ from .models import (
     categorize_task_type,
 )
 from .parser import parse_workflow
+from .worker_pins import (
+    WorkerPinMismatch,
+    allows_worker_fallback,
+    effective_selected_worker,
+)
 
 REHYDRATE_LOAD_BATCH = 16
 
@@ -179,7 +184,9 @@ class TaskRuntime:
                 record.merge_key = merge_key
                 selected_worker_hint = (
                     record.selected_worker[0]
-                    if record.selected_worker and len(record.selected_worker) == 1
+                    if record.selected_worker
+                    and len(record.selected_worker) == 1
+                    and not allows_worker_fallback(record.task)
                     else None
                 )
                 self._merge_key_by_task[task_id] = (merge_key, selected_worker_hint)
@@ -342,7 +349,9 @@ class TaskRuntime:
             self._original_deps[task_id] = set(persisted.depends_on)
             selected_worker_hint = (
                 record.selected_worker[0]
-                if record.selected_worker and len(record.selected_worker) == 1
+                if record.selected_worker
+                and len(record.selected_worker) == 1
+                and not allows_worker_fallback(record.task)
                 else None
             )
             self._merge_key_by_task[task_id] = (record.merge_key, selected_worker_hint)
@@ -753,10 +762,11 @@ class TaskRuntime:
             return []
         if self._merge_children_map.get(task_id):
             return []
-        if record.selected_worker and assigned_worker not in record.selected_worker:
-            raise ValueError(
+        pins = effective_selected_worker(record, self._worker_registry.worker_exists)
+        if pins and assigned_worker not in pins:
+            raise WorkerPinMismatch(
                 f"The worker assigned for task {task_id} ({assigned_worker}) "
-                f"is not in selected workers {record.selected_worker}."
+                f"is not in selected workers {pins}."
             )
         bucket = (
             self._merge_buckets[(record.merge_key, assigned_worker)]
@@ -773,10 +783,10 @@ class TaskRuntime:
             candidate_record = self._tasks.get(candidate)
             if not candidate_record or candidate_record.status != TaskStatus.PENDING:
                 continue
-            if (
-                candidate_record.selected_worker
-                and assigned_worker not in candidate_record.selected_worker
-            ):
+            candidate_pins = effective_selected_worker(
+                candidate_record, self._worker_registry.worker_exists
+            )
+            if candidate_pins and assigned_worker not in candidate_pins:
                 continue
             if candidate not in self._ready_index:
                 continue

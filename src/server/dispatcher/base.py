@@ -41,6 +41,7 @@ from ..services.metrics import MetricsRecorder
 from ..task.metadata import extract_model_dataset_names
 from ..task.models import TaskRecord, TaskStatus
 from ..task.runtime import TaskRuntime
+from ..task.worker_pins import WorkerPinMismatch, effective_selected_worker
 from ..utils.time import now_iso
 from .snapshots import SnapshotCache
 from .worker_selector import DEFAULT_WORKER_SELECTION, select_worker
@@ -116,30 +117,15 @@ class Dispatcher:
         )
 
     def effective_selected_worker(self, record: TaskRecord) -> list[str] | None:
-        """The task's ``selected_worker`` pin, or ``None`` when the pin is stale.
-
-        A pin names worker ids, and worker ids are not stable: a worker that
-        restarts re-registers under a NEW id (``wkr-8`` came back as ``wkr-11``).
-        A pin whose ids are all unregistered can therefore never be satisfied
-        again, and honouring it turned a short worker restart into a terminal
-        "No worker satisfies the task hardware and capability requirements"
-        (mlsys-io/FlowMesh#224). When none of the pinned ids is registered, the
-        pin is dropped and any hardware-satisfying worker may take the task. A
-        pin with at least one registered id is still honoured strictly: a busy
-        pinned worker is waited for, as before.
-        """
-        pins = record.selected_worker
-        if not pins:
-            return None
-        if any(self._worker_registry.worker_exists(wid) for wid in pins):
-            return list(pins)
-        self._logger.warning(
-            "selected_worker %s for %s: no pinned worker is registered (restarted "
-            "workers get new ids); ignoring the pin",
-            pins,
-            getattr(record, "task_id", "?"),
-        )
-        return None
+        """Resolve the task's pin and log opted-in fallback to other workers."""
+        pins = effective_selected_worker(record, self._worker_registry.worker_exists)
+        if record.selected_worker and pins is None:
+            self._logger.warning(
+                "No selected worker %s for %s is registered; allowing worker fallback",
+                record.selected_worker,
+                record.task_id,
+            )
+        return pins
 
     def eligible_worker_ids(self, record: TaskRecord) -> set[str]:
         """Worker ids whose hardware satisfies the task, honoring selected_worker."""
@@ -259,8 +245,6 @@ class Dispatcher:
         # 1. Get idle worker pool
         pool = self._worker_registry.idle_satisfying_pool(task)
 
-        # 2. Filter by selected_worker hint if present (and not stale; see
-        # effective_selected_worker).
         pins = self.effective_selected_worker(record)
         if pins:
             pool = [c for c in pool if c.id in pins]
@@ -399,12 +383,27 @@ class Dispatcher:
             self.requeue_task(task_id, reason="no_selection")
             return False
 
+        current_pins = effective_selected_worker(
+            record, self._worker_registry.worker_exists
+        )
+        if current_pins and worker.id not in current_pins:
+            self.requeue_task(
+                task_id, reason="selected_worker_changed", count_retry=False
+            )
+            return False
+
         # Plan task merge: coalesce sibling merge candidates onto this worker
         merged_children: list[str] = []
         if self._task_merge_enabled and self._task_merge_max_batch_size > 1:
-            merged_children = self._runtime.plan_merge(
-                task_id, self._task_merge_max_batch_size, worker.id
-            )
+            try:
+                merged_children = self._runtime.plan_merge(
+                    task_id, self._task_merge_max_batch_size, worker.id
+                )
+            except WorkerPinMismatch:
+                self.requeue_task(
+                    task_id, reason="selected_worker_changed", count_retry=False
+                )
+                return False
             if merged_children:
                 self._logger.debug(
                     "Coalesced task %s with siblings %s",

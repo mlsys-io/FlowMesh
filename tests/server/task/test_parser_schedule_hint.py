@@ -1,8 +1,10 @@
 """Parser schedule-hint behavior and schema validation tests."""
 
 import textwrap
+from typing import Any
 
 import pytest
+import yaml
 
 from server.task.parser import ParsedTask, ParsedWorkflow, parse_workflow
 from shared.tasks.components.output import (
@@ -336,3 +338,94 @@ def test_parse_task_allows_placeholders_in_typed_template_fields() -> None:
     assert spec.parallel is not None
     assert spec.parallel.enabled == "${inputs.parallel_enabled}"
     assert spec.parallel.max_shards == "${inputs.max_shards}"
+
+
+@pytest.mark.parametrize(
+    ("hint", "expected"),
+    [
+        (" wkr-1 ", ["wkr-1"]),
+        (["wkr-1", "wkr-1", "wkr-2"], ["wkr-1", "wkr-2"]),
+        ({"global": ["wkr-1"]}, ["wkr-1"]),
+        ({"global": ["wkr-1"], "selected": {"single": "wkr-2"}}, ["wkr-2"]),
+    ],
+)
+def test_single_task_preserves_worker_pins(hint: Any, expected: list[str]) -> None:
+    payload = yaml.safe_dump(
+        {
+            "apiVersion": "flowmesh/v1",
+            "kind": "Task",
+            "metadata": {
+                "name": "single",
+                "annotations": {"schedule_hint": {"selected_worker": hint}},
+            },
+            "spec": {"taskType": "echo"},
+        }
+    )
+    parsed = parse_workflow(payload, "native")
+    assert parsed.tasks[0].selected_worker == expected
+
+
+def test_single_task_rejects_unknown_worker_pin_map_key() -> None:
+    payload = yaml.safe_dump(
+        {
+            "apiVersion": "flowmesh/v1",
+            "kind": "Task",
+            "metadata": {
+                "name": "single",
+                "annotations": {
+                    "schedule_hint": {
+                        "selected_worker": {"selected": {"other": "wkr-1"}}
+                    }
+                },
+            },
+            "spec": {"taskType": "echo"},
+        }
+    )
+    with pytest.raises(ValueError, match="unknown node 'other'"):
+        parse_workflow(payload, "native")
+
+
+@pytest.mark.parametrize("shape", ["single", "stages", "graph"])
+def test_worker_fallback_policy_survives_expansion(shape: str) -> None:
+    spec: dict[str, Any] = {"taskType": "echo"}
+    if shape == "stages":
+        spec = {"stages": [{"name": "a", "spec": {"taskType": "echo"}}]}
+    elif shape == "graph":
+        spec = {"graph": {"nodes": [{"name": "a", "spec": {"taskType": "echo"}}]}}
+    payload = yaml.safe_dump(
+        {
+            "apiVersion": "flowmesh/v1",
+            "kind": "Workflow",
+            "metadata": {
+                "annotations": {
+                    "schedule_hint": {
+                        "selected_worker": "wkr-old",
+                        "allow_worker_fallback": True,
+                    }
+                }
+            },
+            "spec": spec,
+        }
+    )
+    parsed = parse_workflow(payload, "native")
+    task = parsed.tasks[0]
+    assert task.selected_worker == ["wkr-old"]
+    assert task.task.metadata is not None and task.task.metadata.annotations is not None
+    hint = task.task.metadata.annotations.schedule_hint
+    assert hint is not None and hint.allow_worker_fallback
+
+
+@pytest.mark.parametrize("value", ["true", 1, None])
+def test_worker_fallback_requires_a_boolean(value: Any) -> None:
+    payload = yaml.safe_dump(
+        {
+            "apiVersion": "flowmesh/v1",
+            "kind": "Task",
+            "metadata": {
+                "annotations": {"schedule_hint": {"allow_worker_fallback": value}}
+            },
+            "spec": {"taskType": "echo"},
+        }
+    )
+    with pytest.raises(ValueError, match="allow_worker_fallback"):
+        parse_workflow(payload, "native")

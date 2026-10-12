@@ -1,10 +1,9 @@
 """Eligible-worker computation and the no-worker grace in the dispatcher."""
 
-from types import SimpleNamespace
-from typing import Any, cast
 from unittest import mock
 
 from server.task.models import TaskRecord
+from shared.tasks import TaskEnvelopeTemplate
 from tests.server.dispatcher.helpers import make_capturing_dispatcher
 
 
@@ -13,15 +12,32 @@ def _record(
     no_eligible_since: float | None = None,
     last_error: str | None = None,
     last_failed_worker: str | None = None,
+    allow_worker_fallback: bool = False,
 ) -> TaskRecord:
-    rec = SimpleNamespace(
-        task=SimpleNamespace(),
+    return TaskRecord(
+        task_id="tsk-1",
+        workflow_id="wfl-1",
+        owner_id="owner",
+        source="",
+        task=TaskEnvelopeTemplate.model_validate(
+            {
+                "apiVersion": "flowmesh/v1",
+                "kind": "EchoTask",
+                "metadata": {
+                    "annotations": {
+                        "schedule_hint": {
+                            "allow_worker_fallback": allow_worker_fallback
+                        }
+                    }
+                },
+                "spec": {"taskType": "echo"},
+            }
+        ),
         selected_worker=selected_worker,
         no_eligible_since=no_eligible_since,
         last_error=last_error,
-        last_failed_worker=last_failed_worker,
+        failed_workers=[last_failed_worker] if last_failed_worker else [],
     )
-    return cast(TaskRecord, cast(Any, rec))
 
 
 def test_eligible_worker_ids_returns_satisfying_set() -> None:
@@ -63,24 +79,31 @@ def test_grace_then_fail_fails_after_grace() -> None:
     assert kwargs["payload"]["reason"] == "no_eligible_worker"
 
 
-# mlsys-io/FlowMesh#224: worker ids change on restart, so a pin whose ids are all
-# unregistered can never be satisfied and must not fail the task.
-
-
-def test_a_pin_to_unregistered_workers_is_ignored() -> None:
+def test_an_opted_in_pin_to_unregistered_workers_is_ignored() -> None:
     disp = make_capturing_dispatcher(satisfying_ids=["w-1", "w-2"])
-    disp._worker_registry.worker_exists.return_value = False
-    record = _record(selected_worker=["wkr-8"])
-    assert disp.effective_selected_worker(record) is None
-    assert disp.eligible_worker_ids(record) == {"w-1", "w-2"}
+    record = _record(selected_worker=["wkr-8"], allow_worker_fallback=True)
+    with mock.patch.object(disp._worker_registry, "worker_exists", return_value=False):
+        assert disp.effective_selected_worker(record) is None
+        assert disp.eligible_worker_ids(record) == {"w-1", "w-2"}
+    assert record.selected_worker == ["wkr-8"]
 
 
 def test_a_pin_with_a_registered_worker_is_still_strict() -> None:
     disp = make_capturing_dispatcher(satisfying_ids=["w-1", "w-2"])
-    disp._worker_registry.worker_exists.side_effect = lambda wid: wid == "w-2"
-    record = _record(selected_worker=["w-2", "wkr-8"])
-    assert disp.effective_selected_worker(record) == ["w-2", "wkr-8"]
-    assert disp.eligible_worker_ids(record) == {"w-2"}
+    record = _record(selected_worker=["w-2", "wkr-8"], allow_worker_fallback=True)
+    with mock.patch.object(
+        disp._worker_registry, "worker_exists", side_effect=lambda wid: wid == "w-2"
+    ):
+        assert disp.effective_selected_worker(record) == ["w-2", "wkr-8"]
+        assert disp.eligible_worker_ids(record) == {"w-2"}
+
+
+def test_an_unregistered_pin_is_strict_by_default() -> None:
+    disp = make_capturing_dispatcher(satisfying_ids=["w-1"])
+    record = _record(selected_worker=["wkr-8"])
+    with mock.patch.object(disp._worker_registry, "worker_exists", return_value=False):
+        assert disp.effective_selected_worker(record) == ["wkr-8"]
+        assert disp.eligible_worker_ids(record) == set()
 
 
 def test_no_pin_is_no_pin() -> None:

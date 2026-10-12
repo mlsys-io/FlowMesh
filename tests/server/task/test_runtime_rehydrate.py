@@ -95,6 +95,9 @@ class FakeWorkflowRegistry:
 
 
 class _WorkerRegistryStub:
+    def worker_exists(self, worker_id: str) -> bool:
+        return True
+
     def get_worker(self, worker_id: str) -> Any:
         return SimpleNamespace(id=worker_id, node_id="nde-1")
 
