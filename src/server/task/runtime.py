@@ -783,6 +783,8 @@ class TaskRuntime:
             candidate_record = self._tasks.get(candidate)
             if not candidate_record or candidate_record.status != TaskStatus.PENDING:
                 continue
+            if assigned_worker in candidate_record.failed_workers:
+                continue
             candidate_pins = effective_selected_worker(
                 candidate_record, self._worker_registry.worker_exists
             )

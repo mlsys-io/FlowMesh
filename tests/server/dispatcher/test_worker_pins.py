@@ -144,6 +144,23 @@ def test_strict_parent_can_merge_an_opted_in_stale_sibling(setup: PinSetup) -> N
     assert [item.task_id for item in message.merged_children or []] == [child]
 
 
+def test_merge_excludes_a_sibling_that_failed_on_the_selected_worker(
+    setup: PinSetup,
+) -> None:
+    runtime, dispatcher, registry = setup
+    parent = _register(runtime, ["wkr-old"], fallback=True)
+    child = _register(runtime, ["wkr-other-old"], fallback=True)
+    record = runtime.get_record(child)
+    assert record is not None
+    record.failed_workers.append("wkr-new")
+    assert dispatcher.dispatch_once(parent)
+    message = registry.publish_task.call_args.args[1]
+    assert not message.merged_children
+    assert record.status == TaskStatus.PENDING
+    assert record.assigned_worker is None
+    assert record.attempts == 0
+
+
 def test_opted_in_registered_pin_waits_without_spending_attempts(
     setup: PinSetup,
 ) -> None:
