@@ -61,3 +61,28 @@ def test_grace_then_fail_fails_after_grace() -> None:
     assert task_id == "tsk-1"
     assert message == "bad spec"
     assert kwargs["payload"]["reason"] == "no_eligible_worker"
+
+
+# mlsys-io/FlowMesh#224: worker ids change on restart, so a pin whose ids are all
+# unregistered can never be satisfied and must not fail the task.
+
+
+def test_a_pin_to_unregistered_workers_is_ignored() -> None:
+    disp = make_capturing_dispatcher(satisfying_ids=["w-1", "w-2"])
+    disp._worker_registry.worker_exists.return_value = False
+    record = _record(selected_worker=["wkr-8"])
+    assert disp.effective_selected_worker(record) is None
+    assert disp.eligible_worker_ids(record) == {"w-1", "w-2"}
+
+
+def test_a_pin_with_a_registered_worker_is_still_strict() -> None:
+    disp = make_capturing_dispatcher(satisfying_ids=["w-1", "w-2"])
+    disp._worker_registry.worker_exists.side_effect = lambda wid: wid == "w-2"
+    record = _record(selected_worker=["w-2", "wkr-8"])
+    assert disp.effective_selected_worker(record) == ["w-2", "wkr-8"]
+    assert disp.eligible_worker_ids(record) == {"w-2"}
+
+
+def test_no_pin_is_no_pin() -> None:
+    disp = make_capturing_dispatcher(satisfying_ids=["w-1"])
+    assert disp.effective_selected_worker(_record()) is None

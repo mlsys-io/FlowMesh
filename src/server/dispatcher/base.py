@@ -115,14 +115,41 @@ class Dispatcher:
             "artifact",
         )
 
+    def effective_selected_worker(self, record: TaskRecord) -> list[str] | None:
+        """The task's ``selected_worker`` pin, or ``None`` when the pin is stale.
+
+        A pin names worker ids, and worker ids are not stable: a worker that
+        restarts re-registers under a NEW id (``wkr-8`` came back as ``wkr-11``).
+        A pin whose ids are all unregistered can therefore never be satisfied
+        again, and honouring it turned a short worker restart into a terminal
+        "No worker satisfies the task hardware and capability requirements"
+        (mlsys-io/FlowMesh#224). When none of the pinned ids is registered, the
+        pin is dropped and any hardware-satisfying worker may take the task. A
+        pin with at least one registered id is still honoured strictly: a busy
+        pinned worker is waited for, as before.
+        """
+        pins = record.selected_worker
+        if not pins:
+            return None
+        if any(self._worker_registry.worker_exists(wid) for wid in pins):
+            return list(pins)
+        self._logger.warning(
+            "selected_worker %s for %s: no pinned worker is registered (restarted "
+            "workers get new ids); ignoring the pin",
+            pins,
+            getattr(record, "task_id", "?"),
+        )
+        return None
+
     def eligible_worker_ids(self, record: TaskRecord) -> set[str]:
         """Worker ids whose hardware satisfies the task, honoring selected_worker."""
         eligible = {
             worker.id
             for worker in self._worker_registry.satisfying_workers(record.task)
         }
-        if record.selected_worker:
-            eligible &= set(record.selected_worker)
+        pins = self.effective_selected_worker(record)
+        if pins:
+            eligible &= set(pins)
         return eligible
 
     def _grace_then_fail(
@@ -232,9 +259,11 @@ class Dispatcher:
         # 1. Get idle worker pool
         pool = self._worker_registry.idle_satisfying_pool(task)
 
-        # 2. Filter by selected_worker hint if present
-        if record.selected_worker:
-            pool = [c for c in pool if c.id in record.selected_worker]
+        # 2. Filter by selected_worker hint if present (and not stale; see
+        # effective_selected_worker).
+        pins = self.effective_selected_worker(record)
+        if pins:
+            pool = [c for c in pool if c.id in pins]
 
         failed_ids = set(record.failed_workers)
 
@@ -253,9 +282,7 @@ class Dispatcher:
             if not (eligible - failed_ids):
                 return self._grace_then_fail_exhausted(task_id, record, failed_ids)
             record.no_eligible_since = None
-            reason = (
-                "candidate_workers_busy" if record.selected_worker else "no_idle_worker"
-            )
+            reason = "candidate_workers_busy" if pins else "no_idle_worker"
             self._logger.debug("No idle worker available for %s; requeueing", task_id)
             self.requeue_task(task_id, reason=reason, count_retry=False)
             return False
@@ -289,7 +316,7 @@ class Dispatcher:
         worker: Worker | None = None
 
         sticky_worker_id: str | None = None
-        if (not record.selected_worker) and self._stage_weight_stickiness_enabled:
+        if (not pins) and self._stage_weight_stickiness_enabled:
             sticky_worker_id = self._preferred_stage_worker(record, task)
             selection_info = {
                 "strategy": "stage_weight_affinity",
