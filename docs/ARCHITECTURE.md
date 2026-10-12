@@ -74,14 +74,16 @@ executor errors are not retried. A task that no worker can satisfy fails
 after `TASK_NO_WORKER_GRACE_SEC`.
 
 `metadata.annotations.schedule_hint.selected_worker` restricts a task to the
-named worker IDs, including standalone tasks. Pins remain strict by default.
-Setting `allow_worker_fallback: true` in the same hint permits another suitable
-worker only when every pinned ID is unregistered. A pin with any registered ID
-stays strict, even when that worker is busy, cordoned, or stale. A crashed
-worker's record can remain registered until the stale-worker reaper removes it.
-Dispatch and task merging enforce the same policy, and the original pin remains
-in the task record across retries and server restarts. See
-[`WORKFLOWS.md`](WORKFLOWS.md#schedule-hints) for the hint format.
+named worker IDs, including standalone tasks. While any pinned worker is
+registered and not declared dead by the watchdog, the pin is strict, even when
+that worker is busy or cordoned. Once none remains, another suitable worker may
+run the task if fallback is enabled: by the hint's `allow_worker_fallback`, or
+otherwise by `TASK_WORKER_PIN_FALLBACK` (default `true`). A pinned worker whose
+heartbeat has expired holds a fallback-enabled task until the watchdog declares
+it dead or sees it recover. The policy is fixed at submission. Dispatch and task
+merging enforce it, and the original pin remains in the task record across
+retries and server restarts. See [`WORKFLOWS.md`](WORKFLOWS.md#schedule-hints)
+for the hint format.
 
 ## Directory map
 
@@ -126,10 +128,10 @@ scripts/dev/            compile_protos, sync_requirements, check_env_examples
 
 - **Task merging.** Compatible adjacent tasks in a DAG (same `taskType`,
   model, hardware shape, and merge key) coalesce into a single dispatch.
-  Inference tasks that explicitly select Transformers dispatch individually
-  because that executor does not produce merged-child results.
-  Merged children ride on `WorkerTaskMessage.merged_children`; the worker
-  writes per-child results into `result.children`; the dispatcher fans
+  Inference tasks that explicitly select Transformers dispatch individually.
+  Merged children ride on `WorkerTaskMessage.merged_children`; an executor
+  that supports merging writes per-child results into `result.children`
+  (see [`EXECUTORS.md`](EXECUTORS.md)); the dispatcher fans
   out synthetic `TASK_SUCCEEDED` / `TASK_FAILED` events. Disable with
   `ENABLE_TASK_MERGE=false`. When only some children of a batch fail, they
   fail individually with their dependents and the parent dispatches with its

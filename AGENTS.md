@@ -34,8 +34,8 @@ and artifacts.
   requirements (`UTU_LLM_*`, `SERPER_API_KEY`, `JINA_API_KEY`).
 - **[`docs/WORKFLOWS.md`](docs/WORKFLOWS.md)** — workflow YAML format
   hierarchy: single task, multi-stage DAG (`spec.stages`), graph DAG
-  (`taskType: graph_template`), and schedule hints (`epoch_groups`,
-  `schedule_in_epoch_order`).
+  (`taskType: graph_template`), and schedule hints (`node_execution_order`,
+  `node_schedule_in_epoch_order`, `selected_worker`).
 - **[`docs/ENV.md`](docs/ENV.md)** — curated server / worker /
   supervisor env var tables (the knobs you actually tune). Full schema
   in `cli/stack/src/flowmesh_cli_stack/env_schema.py`.
