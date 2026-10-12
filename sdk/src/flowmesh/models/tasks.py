@@ -57,6 +57,7 @@ class TaskInfo(BaseModel):
     load: int
     position_in_epoch: int | None = None
     selected_worker: list[str] | None = None
+    allow_worker_fallback: bool | None = None
     merged_children: list[str] | None = None
     merged_parent_id: str | None = None
     merge_slice: dict[str, int] | None = None

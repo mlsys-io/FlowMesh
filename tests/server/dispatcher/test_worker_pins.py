@@ -21,7 +21,7 @@ type PinSetup = tuple[TaskRuntime, Dispatcher, mock.Mock]
 def _register(
     runtime: TaskRuntime,
     pins: list[str] | None = None,
-    fallback: bool = False,
+    fallback: bool | None = False,
     task_type: str = "inference",
 ) -> str:
     spec: dict[str, Any] = {"taskType": task_type}
@@ -29,19 +29,14 @@ def _register(
         spec["model"] = {"source": {"identifier": "llama"}}
     if task_type == "ssh":
         spec.update(interactive=False, command=["true"])
+    hint: dict[str, Any] = {"selected_worker": pins}
+    if fallback is not None:
+        hint["allow_worker_fallback"] = fallback
     payload = yaml.safe_dump(
         {
             "apiVersion": "flowmesh/v1",
             "kind": "Task",
-            "metadata": {
-                "name": "worker-pin",
-                "annotations": {
-                    "schedule_hint": {
-                        "selected_worker": pins,
-                        "allow_worker_fallback": fallback,
-                    }
-                },
-            },
+            "metadata": {"name": "worker-pin", "annotations": {"schedule_hint": hint}},
             "spec": spec,
         }
     )
@@ -64,7 +59,10 @@ def setup(tmp_path: Path) -> PinSetup:
     registry.satisfying_workers.return_value = [worker]
     registry.publish_task.return_value = 1
     runtime = TaskRuntime(
-        cast(Any, FakeWorkflowRegistry()), registry, logging.getLogger("worker-pins")
+        cast(Any, FakeWorkflowRegistry()),
+        registry,
+        logging.getLogger("worker-pins"),
+        worker_pin_fallback=False,
     )
     dispatcher = Dispatcher(
         runtime,
@@ -227,6 +225,53 @@ def test_fallback_policy_and_merge_index_survive_rehydration(setup: PinSetup) ->
     )
     hint = record.task.metadata.annotations.schedule_hint
     assert hint is not None and hint.allow_worker_fallback
+    assert record.allow_worker_fallback
+
+
+@pytest.mark.parametrize(
+    ("server_default", "hint", "expected"),
+    [
+        (True, None, True),
+        (False, None, False),
+        (True, False, False),
+        (False, True, True),
+    ],
+)
+def test_explicit_hint_overrides_the_server_default(
+    setup: PinSetup, server_default: bool, hint: bool | None, expected: bool
+) -> None:
+    runtime, _, _ = setup
+    runtime._worker_pin_fallback = server_default
+    record = runtime.get_record(_register(runtime, ["wkr-old"], fallback=hint))
+    assert record is not None
+    assert record.allow_worker_fallback is expected
+
+
+def test_server_default_is_fixed_at_submission(setup: PinSetup) -> None:
+    runtime, _, registry = setup
+    runtime._worker_pin_fallback = True
+    task_id = _register(runtime, ["wkr-old"], fallback=None)
+    restored = TaskRuntime(
+        runtime._workflow_registry,
+        registry,
+        logging.getLogger("restored-default"),
+        worker_pin_fallback=False,
+    )
+    asyncio.run(restored.rehydrate())
+    record = restored.get_record(task_id)
+    assert record is not None
+    assert record.allow_worker_fallback
+
+
+def test_server_default_relaxes_an_unhinted_absent_pin(setup: PinSetup) -> None:
+    runtime, dispatcher, registry = setup
+    runtime._worker_pin_fallback = True
+    task_id = _register(runtime, ["wkr-old"], fallback=None, task_type="echo")
+    assert dispatcher.dispatch_once(task_id)
+    record = runtime.get_record(task_id)
+    assert record is not None
+    assert record.assigned_worker == "wkr-new"
+    registry.publish_task.assert_called_once()
 
 
 @pytest.mark.parametrize("rehydrate", [False, True])

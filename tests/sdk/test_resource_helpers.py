@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
+import yaml
 from flowmesh.exceptions import FlowMeshError
 from flowmesh.models.common import TaskStatus
 from flowmesh.models.tasks import TaskInfo
@@ -275,7 +276,8 @@ class TestSSHHelpers:
             entrypoint=["/bin/sh", "-c"],
         )
         assert "kind: SSHTask" in expected_yaml
-        assert "selected_worker: worker-1" in expected_yaml
+        hint = yaml.safe_load(expected_yaml)["metadata"]["annotations"]["schedule_hint"]
+        assert hint == {"selected_worker": "worker-1", "allow_worker_fallback": False}
         assert "env:" in expected_yaml
         assert "A:" in expected_yaml
         assert "B:" in expected_yaml

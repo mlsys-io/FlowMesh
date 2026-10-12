@@ -162,6 +162,11 @@ class TaskRecord(BaseModel):
     selected_worker: list[str] | None = Field(
         default=None, description="Selected worker identifiers."
     )
+    allow_worker_fallback: bool = Field(
+        default=False,
+        description="Whether another worker may run the task once none of its "
+        "selected workers remains, resolved at submission.",
+    )
     merged_children: list[str] | None = Field(
         default=None, description="Merged child task identifiers."
     )

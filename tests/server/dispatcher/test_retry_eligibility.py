@@ -23,17 +23,11 @@ def _record(
             {
                 "apiVersion": "flowmesh/v1",
                 "kind": "EchoTask",
-                "metadata": {
-                    "annotations": {
-                        "schedule_hint": {
-                            "allow_worker_fallback": allow_worker_fallback
-                        }
-                    }
-                },
                 "spec": {"taskType": "echo"},
             }
         ),
         selected_worker=selected_worker,
+        allow_worker_fallback=allow_worker_fallback,
         no_eligible_since=no_eligible_since,
         last_error=last_error,
         failed_workers=[last_failed_worker] if last_failed_worker else [],

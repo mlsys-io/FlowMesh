@@ -415,7 +415,7 @@ def test_worker_fallback_policy_survives_expansion(shape: str) -> None:
     assert hint is not None and hint.allow_worker_fallback
 
 
-@pytest.mark.parametrize("value", ["true", 1, None])
+@pytest.mark.parametrize("value", ["true", 1])
 def test_worker_fallback_requires_a_boolean(value: Any) -> None:
     payload = yaml.safe_dump(
         {
@@ -429,3 +429,20 @@ def test_worker_fallback_requires_a_boolean(value: Any) -> None:
     )
     with pytest.raises(ValueError, match="allow_worker_fallback"):
         parse_workflow(payload, "native")
+
+
+def test_null_worker_fallback_is_unset() -> None:
+    payload = yaml.safe_dump(
+        {
+            "apiVersion": "flowmesh/v1",
+            "kind": "Task",
+            "metadata": {
+                "annotations": {"schedule_hint": {"allow_worker_fallback": None}}
+            },
+            "spec": {"taskType": "echo"},
+        }
+    )
+    task = parse_workflow(payload, "native").tasks[0].task
+    assert task.metadata is not None and task.metadata.annotations is not None
+    hint = task.metadata.annotations.schedule_hint
+    assert hint is not None and hint.allow_worker_fallback is None

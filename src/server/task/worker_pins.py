@@ -9,21 +9,22 @@ class WorkerPinMismatch(ValueError):
     """Raised when a selected worker is outside the task's effective pin."""
 
 
-def allows_worker_fallback(task: TaskEnvelopeTemplate) -> bool:
+def resolve_worker_fallback(task: TaskEnvelopeTemplate, default: bool) -> bool:
+    """Return the task's ``allow_worker_fallback`` hint, or ``default`` when unset."""
     annotations = task.metadata.annotations if task.metadata else None
     hint = annotations.schedule_hint if annotations else None
-    return hint is not None and hint.allow_worker_fallback
+    if hint is None or hint.allow_worker_fallback is None:
+        return default
+    return hint.allow_worker_fallback
 
 
 def effective_selected_worker(
-    record: TaskRecord, worker_exists: Callable[[str], bool]
+    record: TaskRecord, is_present: Callable[[str], bool]
 ) -> list[str] | None:
-    """Resolve a worker pin, relaxing opted-in pins with no registered IDs."""
+    """Resolve a worker pin, relaxing a fallback-enabled pin once no ID is present."""
     pins = record.selected_worker
     if not pins:
         return None
-    if not allows_worker_fallback(record.task) or any(
-        worker_exists(wid) for wid in pins
-    ):
+    if not record.allow_worker_fallback or any(is_present(wid) for wid in pins):
         return list(pins)
     return None

@@ -34,8 +34,8 @@ from .models import (
 from .parser import parse_workflow
 from .worker_pins import (
     WorkerPinMismatch,
-    allows_worker_fallback,
     effective_selected_worker,
+    resolve_worker_fallback,
 )
 
 REHYDRATE_LOAD_BATCH = 16
@@ -71,6 +71,21 @@ def _compute_merge_key(task: TaskEnvelopeTemplate) -> str | None:
         return None
 
 
+def _merge_index_key(record: TaskRecord) -> tuple[str | None, str | None]:
+    """Merge bucket for a task: a strict single-worker pin gets that worker's bucket.
+
+    A fallback-enabled pin uses the general bucket so the task stays discoverable
+    after its pinned worker disappears.
+    """
+    pins = record.selected_worker
+    pinned_worker = (
+        pins[0]
+        if pins and len(pins) == 1 and not record.allow_worker_fallback
+        else None
+    )
+    return record.merge_key, pinned_worker
+
+
 class TaskRuntime:
     """In-memory task registry with FIFO-ready queue and dependency tracking."""
 
@@ -79,10 +94,12 @@ class TaskRuntime:
         workflow_registry: WorkflowRegistry,
         worker_registry: WorkerRegistry,
         logger: logging.Logger,
+        worker_pin_fallback: bool = True,
     ) -> None:
         self._workflow_registry = workflow_registry
         self._worker_registry = worker_registry
         self._logger = logger
+        self._worker_pin_fallback = worker_pin_fallback
         self._tasks: dict[str, TaskRecord] = {}
         self._original_deps: dict[str, set[str]] = {}
         self._pending_deps: dict[str, set[str]] = {}
@@ -185,21 +202,16 @@ class TaskRuntime:
                     load=entry.load,
                     position_in_epoch=entry.position_in_epoch,
                     selected_worker=selected_worker,
+                    allow_worker_fallback=resolve_worker_fallback(
+                        task, self._worker_pin_fallback
+                    ),
                     task_type=task_type,
                     category=category,
                 )
                 task_records.append(record)
                 record.last_queue_ts = record.submitted_ts
-                merge_key = _compute_merge_key(task)
-                record.merge_key = merge_key
-                selected_worker_hint = (
-                    record.selected_worker[0]
-                    if record.selected_worker
-                    and len(record.selected_worker) == 1
-                    and not allows_worker_fallback(record.task)
-                    else None
-                )
-                self._merge_key_by_task[task_id] = (merge_key, selected_worker_hint)
+                record.merge_key = _compute_merge_key(task)
+                self._merge_key_by_task[task_id] = _merge_index_key(record)
 
                 self._tasks[task_id] = record
                 if record.graph_node_name:
@@ -359,14 +371,7 @@ class TaskRuntime:
             task_id = record.task_id
             self._tasks[task_id] = record
             self._original_deps[task_id] = set(persisted.depends_on)
-            selected_worker_hint = (
-                record.selected_worker[0]
-                if record.selected_worker
-                and len(record.selected_worker) == 1
-                and not allows_worker_fallback(record.task)
-                else None
-            )
-            self._merge_key_by_task[task_id] = (record.merge_key, selected_worker_hint)
+            self._merge_key_by_task[task_id] = _merge_index_key(record)
             if persisted.epoch_index is not None:
                 self._task_epoch_index[task_id] = persisted.epoch_index
                 epoch_members[persisted.epoch_index].add(task_id)

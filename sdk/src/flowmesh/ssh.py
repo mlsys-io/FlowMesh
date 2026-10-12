@@ -142,7 +142,9 @@ def build_ssh_task_yaml(
 
     metadata: dict[str, Any] = {"name": name}
     if worker:
-        metadata["annotations"] = {"schedule_hint": {"selected_worker": worker}}
+        metadata["annotations"] = {
+            "schedule_hint": {"selected_worker": worker, "allow_worker_fallback": False}
+        }
 
     return yaml.dump(
         {
