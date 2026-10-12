@@ -2,6 +2,7 @@
 
 import base64
 import json
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -60,6 +61,7 @@ def lm(target: str) -> dict:
 
 
 GPU = {"hardware": {"gpu": {"type": "any", "count": 1}}}
+CPU = {"hardware": {"cpu": "2", "memory": "4Gi"}}
 
 
 class TestTranslateN8nWorkflow:
@@ -176,10 +178,9 @@ class TestTranslateN8nWorkflow:
         """An LLM chain feeding a video chain through a Format node becomes a
         two-stage graph; the ``Omni`` Set node lands in ``spec.omni``."""
 
-        hardware = GPU
         nodes = [
             set_node("Input Idea", {"type": "list", "items": ["a fox in snow"]}),
-            set_node("Resource Spec W", hardware),
+            set_node("Resource Spec W", GPU),
             model_node("Model Writer", "Qwen/Qwen2.5-7B-Instruct"),
             chain_node("Write Prompt", "inference", "Expand into a video prompt."),
             set_node(
@@ -199,7 +200,7 @@ class TestTranslateN8nWorkflow:
                     },
                 },
             ),
-            set_node("Resource Spec V", hardware),
+            set_node("Resource Spec V", GPU),
             set_node("Omni Video", {"num_frames": 81, "enable_cpu_offload": True}),
             model_node("Model Video", "Wan-AI/Wan2.1-T2V-1.3B-Diffusers"),
             chain_node("Render Video", "omni_text2video"),
@@ -268,6 +269,7 @@ class TestTranslateN8nWorkflow:
                     "timeoutSeconds": 900,
                 },
             ),
+            set_node("Resource Spec C", CPU),
             code_node("Compose", compose),
         ]
         connections = {
@@ -281,6 +283,7 @@ class TestTranslateN8nWorkflow:
             "Model Speech": lm("Speak"),
             "Speak": main("Compose"),
             "Python Env": main("Compose"),
+            "Resource Spec C": main("Compose"),
         }
         payload = {"nodes": nodes, "connections": connections}
         result = translate_n8n_workflow(payload)
@@ -301,6 +304,7 @@ class TestTranslateN8nWorkflow:
             "requirements": ["imageio-ffmpeg"],
             "network": "bridge",
             "timeoutSeconds": 900,
+            "resources": CPU,
         }
 
         parsed = parse_workflow(json.dumps(payload), format="n8n")
@@ -326,7 +330,8 @@ class TestTranslateN8nWorkflow:
         assert result["spec"]["taskType"] == "inference"
 
     @pytest.mark.parametrize(
-        "field", ["taskType", "code", "entrypoint", "_upstreamResults"]
+        "field",
+        ["taskType", "code", "entrypoint", "_upstreamResults", "upstreamResults"],
     )
     def test_python_set_node_cannot_override_reserved_fields(self, field: str) -> None:
         nodes = [
@@ -346,10 +351,56 @@ class TestTranslateN8nWorkflow:
                 {"nodes": nodes, "connections": {"Python Env": main("Compose")}}
             )
 
+    def test_code_node_rejects_other_set_node_prefixes(self) -> None:
+        nodes = [
+            set_node("Runtime Spec", {"tensor_parallel_size": 1}),
+            code_node("Compose", "def main():\n    return 1\n"),
+        ]
+        with pytest.raises(
+            ValueError, match="Unrecognized fragment source node 'Runtime Spec'"
+        ):
+            translate_n8n_workflow(
+                {"nodes": nodes, "connections": {"Runtime Spec": main("Compose")}}
+            )
+
+    def test_legacy_python_language_is_translated(self) -> None:
+        code = "def main():\n    return 1\n"
+        result = translate_n8n_workflow(
+            {
+                "nodes": [code_node("Compose", code, language="python")],
+                "connections": {},
+            }
+        )
+
+        assert result["spec"]["taskType"] == "python"
+        assert result["spec"]["code"] == code
+
     def test_python_code_node_without_code_raises(self) -> None:
         nodes = [code_node("Compose", "  ")]
         with pytest.raises(ValueError, match="has no Python code"):
             translate_n8n_workflow({"nodes": nodes, "connections": {}})
+
+
+_N8N_EXAMPLES = sorted(
+    (Path(__file__).resolve().parents[3] / "examples" / "templates" / "n8n").glob(
+        "*.json"
+    )
+)
+
+
+@pytest.mark.parametrize("path", _N8N_EXAMPLES, ids=lambda p: p.name)
+def test_n8n_examples_validate(path: Path) -> None:
+    """Every shipped n8n example translates and validates as a workflow."""
+    assert parse_workflow(path.read_text(), format="n8n").tasks
+
+
+def test_llm_then_python_example_ends_in_a_python_stage() -> None:
+    path = next(p for p in _N8N_EXAMPLES if p.name == "llm_then_python.json")
+    result = translate_n8n_workflow(json.loads(path.read_text()))
+
+    graph = {n["name"]: n for n in result["spec"]["graph"]["nodes"]}
+    assert graph["Build Report"]["spec"]["taskType"] == "python"
+    assert graph["Build Report"]["dependsOn"] == ["Write Outline"]
 
 
 class TestDecodeSecretPart:
