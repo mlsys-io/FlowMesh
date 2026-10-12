@@ -1,8 +1,10 @@
 """Eligible-worker computation and the no-worker grace in the dispatcher."""
 
+from typing import cast
 from unittest import mock
 
 from server.task.models import TaskRecord
+from server.task.worker_pins import effective_selected_worker
 from shared.tasks import TaskEnvelopeTemplate
 from tests.server.dispatcher.helpers import make_capturing_dispatcher
 
@@ -36,13 +38,13 @@ def _record(
 
 def test_eligible_worker_ids_returns_satisfying_set() -> None:
     disp = make_capturing_dispatcher(satisfying_ids=["w-1", "w-2", "w-3"])
-    assert disp.eligible_worker_ids(_record()) == {"w-1", "w-2", "w-3"}
+    assert disp.eligible_worker_ids(_record(), None) == {"w-1", "w-2", "w-3"}
 
 
 def test_eligible_worker_ids_intersects_selected_worker() -> None:
     disp = make_capturing_dispatcher(satisfying_ids=["w-1", "w-2", "w-3"])
     record = _record(selected_worker=["w-2", "w-9"])
-    assert disp.eligible_worker_ids(record) == {"w-2"}
+    assert disp.eligible_worker_ids(record, ["w-2", "w-9"]) == {"w-2"}
 
 
 def test_grace_then_fail_waits_within_grace() -> None:
@@ -74,32 +76,43 @@ def test_grace_then_fail_fails_after_grace() -> None:
 
 
 def test_an_opted_in_pin_to_unregistered_workers_is_ignored() -> None:
-    disp = make_capturing_dispatcher(satisfying_ids=["w-1", "w-2"])
     record = _record(selected_worker=["wkr-8"], allow_worker_fallback=True)
-    with mock.patch.object(disp._worker_registry, "worker_exists", return_value=False):
-        assert disp.effective_selected_worker(record) is None
-        assert disp.eligible_worker_ids(record) == {"w-1", "w-2"}
+    assert effective_selected_worker(record, lambda wid: False) is None
     assert record.selected_worker == ["wkr-8"]
 
 
-def test_a_pin_with_a_registered_worker_is_still_strict() -> None:
-    disp = make_capturing_dispatcher(satisfying_ids=["w-1", "w-2"])
+def test_a_pin_with_a_present_worker_is_still_strict() -> None:
     record = _record(selected_worker=["w-2", "wkr-8"], allow_worker_fallback=True)
-    with mock.patch.object(
-        disp._worker_registry, "worker_exists", side_effect=lambda wid: wid == "w-2"
-    ):
-        assert disp.effective_selected_worker(record) == ["w-2", "wkr-8"]
-        assert disp.eligible_worker_ids(record) == {"w-2"}
+    assert effective_selected_worker(record, lambda wid: wid == "w-2") == [
+        "w-2",
+        "wkr-8",
+    ]
 
 
-def test_an_unregistered_pin_is_strict_by_default() -> None:
-    disp = make_capturing_dispatcher(satisfying_ids=["w-1"])
+def test_an_absent_pin_is_strict_without_fallback() -> None:
     record = _record(selected_worker=["wkr-8"])
-    with mock.patch.object(disp._worker_registry, "worker_exists", return_value=False):
-        assert disp.effective_selected_worker(record) == ["wkr-8"]
-        assert disp.eligible_worker_ids(record) == set()
+    assert effective_selected_worker(record, lambda wid: False) == ["wkr-8"]
 
 
 def test_no_pin_is_no_pin() -> None:
-    disp = make_capturing_dispatcher(satisfying_ids=["w-1"])
-    assert disp.effective_selected_worker(_record()) is None
+    assert effective_selected_worker(_record(), lambda wid: True) is None
+
+
+def test_unavailable_pin_fails_with_its_own_reason() -> None:
+    disp = make_capturing_dispatcher(satisfying_ids=["w-1"], grace_sec=0)
+    record = _record(selected_worker=["wkr-8"])
+    cast(mock.Mock, disp._runtime).get_record.return_value = record
+    disp._attempt_results = {}
+    assert disp._dispatch_attempt("tsk-1") is False
+    _, message, kwargs = disp.failed[0]
+    assert kwargs["payload"]["reason"] == "selected_worker_unavailable"
+    assert kwargs["payload"]["selected_worker"] == ["wkr-8"]
+    assert "wkr-8" in message
+
+
+def test_unpinned_task_keeps_the_hardware_reason() -> None:
+    disp = make_capturing_dispatcher(grace_sec=0)
+    cast(mock.Mock, disp._runtime).get_record.return_value = _record()
+    disp._attempt_results = {}
+    disp._dispatch_attempt("tsk-1")
+    assert disp.failed[0][2]["payload"]["reason"] == "no_eligible_worker"

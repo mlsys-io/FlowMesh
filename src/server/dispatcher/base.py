@@ -116,24 +116,14 @@ class Dispatcher:
             "artifact",
         )
 
-    def effective_selected_worker(self, record: TaskRecord) -> list[str] | None:
-        """Resolve the task's pin and log opted-in fallback to other workers."""
-        pins = self._runtime.resolve_pins(record)
-        if record.selected_worker and pins is None:
-            self._logger.warning(
-                "No selected worker %s for %s is registered; allowing worker fallback",
-                record.selected_worker,
-                record.task_id,
-            )
-        return pins
-
-    def eligible_worker_ids(self, record: TaskRecord) -> set[str]:
-        """Worker ids whose hardware satisfies the task, honoring selected_worker."""
+    def eligible_worker_ids(
+        self, record: TaskRecord, pins: list[str] | None
+    ) -> set[str]:
+        """Worker ids whose hardware satisfies the task, restricted to ``pins``."""
         eligible = {
             worker.id
             for worker in self._worker_registry.satisfying_workers(record.task)
         }
-        pins = self.effective_selected_worker(record)
         if pins:
             eligible &= set(pins)
         return eligible
@@ -245,7 +235,7 @@ class Dispatcher:
         # 1. Get idle worker pool
         pool = self._worker_registry.idle_satisfying_pool(task)
 
-        pins = self.effective_selected_worker(record)
+        pins = self._runtime.resolve_pins(record)
         if pins:
             pool = [c for c in pool if c.id in pins]
 
@@ -254,13 +244,23 @@ class Dispatcher:
         # 3. No idle worker: wait for a busy one, or grace-then-fail when no worker can
         # take the task, or every eligible worker has already failed it.
         if not pool:
-            eligible = self.eligible_worker_ids(record)
+            eligible = self.eligible_worker_ids(record, pins)
             if not eligible and self._runtime.awaits_pinned_worker(record):
                 record.no_eligible_since = None
                 self.requeue_task(
                     task_id, reason="selected_worker_unresponsive", count_retry=False
                 )
                 return False
+            if not eligible and pins:
+                return self._grace_then_fail(
+                    task_id,
+                    record,
+                    reason="selected_worker_unavailable",
+                    message=f"No selected worker ({', '.join(pins)}) can run the "
+                    "task: each is unregistered, unresponsive, cordoned, or lacks "
+                    "the required hardware or capabilities",
+                    extra_payload={"selected_worker": pins},
+                )
             if not eligible:
                 return self._grace_then_fail(
                     task_id,
@@ -282,7 +282,7 @@ class Dispatcher:
             filtered_pool = [c for c in pool if c.id not in failed_ids]
             if filtered_pool:
                 pool = filtered_pool
-            elif self.eligible_worker_ids(record) - failed_ids:
+            elif self.eligible_worker_ids(record, pins) - failed_ids:
                 # Untried eligible workers exist but are busy; wait for them.
                 record.no_eligible_since = None
                 self._logger.debug(
@@ -671,6 +671,13 @@ class Dispatcher:
         # 9. Mark dispatched
         record.no_dispatch_since = None
         self._runtime.mark_dispatched(task_id, worker)
+        if record.selected_worker and worker.id not in record.selected_worker:
+            self._logger.info(
+                "Task %s runs on %s: none of its selected workers %s remains",
+                task_id,
+                worker.id,
+                record.selected_worker,
+            )
         if merged_children:
             try:
                 self._logger.info(

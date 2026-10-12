@@ -390,3 +390,20 @@ def test_plan_merge_checks_each_pinned_worker_once(setup: PinSetup) -> None:
     registry.worker_exists.reset_mock()
     assert runtime.plan_merge(parent, 4, "wkr-new") == children
     assert registry.worker_exists.call_count == 1
+
+
+def test_fallback_is_logged_once_per_dispatch(
+    setup: PinSetup, caplog: pytest.LogCaptureFixture
+) -> None:
+    runtime, dispatcher, registry = setup
+    task_id = _register(runtime, ["wkr-old"], fallback=True, task_type="echo")
+    registry.idle_satisfying_pool.return_value = []
+    with caplog.at_level(logging.INFO, logger="worker-pins"):
+        for _ in range(3):
+            dispatcher.dispatch_once(task_id)
+        assert not [r for r in caplog.records if "wkr-old" in r.getMessage()]
+        registry.idle_satisfying_pool.return_value = registry.satisfying_workers()
+        assert dispatcher.dispatch_once(task_id)
+    fallback_logs = [r for r in caplog.records if "wkr-old" in r.getMessage()]
+    assert len(fallback_logs) == 1
+    assert fallback_logs[0].levelno == logging.INFO
