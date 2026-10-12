@@ -278,3 +278,70 @@ class TaskParsingResult(BaseModel):
     task_id: str = Field(description="Task identifier.")
     graph_node_name: str | None = Field(description="Original graph node name.")
     depends_on: list[str] = Field(description="Dependency task IDs.")
+
+
+# Fields of TaskStatusView, in the order they are documented.
+_STATUS_VIEW_FIELDS = (
+    "task_id",
+    "workflow_id",
+    "status",
+    "task_type",
+    "category",
+    "assigned_worker",
+    "submitted_at",
+    "submitted_ts",
+    "dispatched_ts",
+    "started_ts",
+    "finished_ts",
+    "error",
+    "last_error",
+    "attempts",
+    "max_attempts",
+    "next_retry_at",
+    "last_failed_worker",
+    "parent_task_id",
+    "merged_parent_id",
+    "local_name",
+    "graph_node_name",
+    "completed",
+    "failed",
+)
+
+
+class TaskStatusView(BaseModel):
+    """The polling view of a task (``?view=status``): status, placement, timing
+    and errors -- no spec, no ``source``.
+
+    A full TaskInfo carries the task spec plus its YAML source (~230 KB each for a
+    Lumilake inference task), so pollers asking only "is it done yet" were
+    pulling ~0.5-1 MB per call (mlsys-io/FlowMesh#225)."""
+
+    task_id: str
+    workflow_id: str | None = None
+    status: str
+    task_type: str | None = None
+    category: str | None = None
+    assigned_worker: str | None = None
+    submitted_at: str | None = None
+    submitted_ts: float | None = None
+    dispatched_ts: float | None = None
+    started_ts: float | None = None
+    finished_ts: float | None = None
+    error: str | None = None
+    last_error: str | None = None
+    attempts: int | None = None
+    max_attempts: int | None = None
+    next_retry_at: str | None = None
+    last_failed_worker: str | None = None
+    parent_task_id: str | None = None
+    merged_parent_id: str | None = None
+    local_name: str | None = None
+    graph_node_name: str | None = None
+    completed: bool | None = None
+    failed: bool | None = None
+
+    @classmethod
+    def from_info(cls, info: "TaskInfo") -> "TaskStatusView":
+        return cls.model_validate(
+            {name: getattr(info, name, None) for name in _STATUS_VIEW_FIELDS}
+        )

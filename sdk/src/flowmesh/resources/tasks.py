@@ -13,7 +13,7 @@ from ..models.common import (
     LogQueryResponse,
     OkResponse,
 )
-from ..models.tasks import TaskInfo
+from ..models.tasks import TaskInfo, TaskStatusView
 from ..params import append_param, extend_params
 from ..ssh import task_ssh_info, wait_for_ssh_info, wait_for_ssh_info_async
 from ._base import AsyncResource, SyncResource
@@ -27,6 +27,16 @@ class Tasks(SyncResource):
         data = self._client._request("GET", f"/tasks/{task_id}")
         return TaskInfo.model_validate(data)
 
+    def status(self, task_id: str) -> TaskStatusView:
+        """Retrieve only a task's status, placement, timing and errors.
+
+        Use this for polling: the full task (``retrieve``) carries the spec and
+        source, ~0.5-1 MB for a Lumilake inference task (FlowMesh#225)."""
+        data = self._client._request(
+            "GET", f"/tasks/{task_id}", params=[("view", "status")]
+        )
+        return TaskStatusView.model_validate(data)
+
     def list(
         self,
         task_id: str | None = None,
@@ -38,6 +48,7 @@ class Tasks(SyncResource):
         graph_node_name: str | None = None,
         completed: bool | None = None,
         failed: bool | None = None,
+        limit: int | None = None,
         query_params: list[tuple[str, str]] | None = None,
     ) -> list[TaskInfo]:
         """List tasks with optional filters."""
@@ -51,6 +62,7 @@ class Tasks(SyncResource):
         append_param(params, "graph_node_name", graph_node_name)
         append_param(params, "completed", completed)
         append_param(params, "failed", failed)
+        append_param(params, "limit", limit)
         if query_params:
             params.extend(query_params)
         data = self._client._request("GET", "/tasks", params=params or None)
@@ -107,9 +119,8 @@ class Tasks(SyncResource):
     ) -> TaskInfo:
         """Poll a task until it reaches a terminal state."""
         while True:
-            task = self.retrieve(task_id)
-            if task.status in TERMINAL_TASK_STATUSES:
-                return task
+            if self.status(task_id).status in TERMINAL_TASK_STATUSES:
+                return self.retrieve(task_id)
             time.sleep(interval)
 
     def ssh_info(self, task_id: str) -> dict[str, Any] | None:
@@ -135,6 +146,16 @@ class AsyncTasks(AsyncResource):
         data = await self._client._request("GET", f"/tasks/{task_id}")
         return TaskInfo.model_validate(data)
 
+    async def status(self, task_id: str) -> TaskStatusView:
+        """Retrieve only a task's status, placement, timing and errors.
+
+        Use this for polling: the full task (``retrieve``) carries the spec and
+        source, ~0.5-1 MB for a Lumilake inference task (FlowMesh#225)."""
+        data = await self._client._request(
+            "GET", f"/tasks/{task_id}", params=[("view", "status")]
+        )
+        return TaskStatusView.model_validate(data)
+
     async def list(
         self,
         task_id: str | None = None,
@@ -146,6 +167,7 @@ class AsyncTasks(AsyncResource):
         graph_node_name: str | None = None,
         completed: bool | None = None,
         failed: bool | None = None,
+        limit: int | None = None,
         query_params: list[tuple[str, str]] | None = None,
     ) -> list[TaskInfo]:
         """List tasks with optional filters."""
@@ -159,6 +181,7 @@ class AsyncTasks(AsyncResource):
         append_param(params, "graph_node_name", graph_node_name)
         append_param(params, "completed", completed)
         append_param(params, "failed", failed)
+        append_param(params, "limit", limit)
         if query_params:
             params.extend(query_params)
         data = await self._client._request("GET", "/tasks", params=params or None)
@@ -217,9 +240,8 @@ class AsyncTasks(AsyncResource):
     ) -> TaskInfo:
         """Poll a task until it reaches a terminal state."""
         while True:
-            task = await self.retrieve(task_id)
-            if task.status in TERMINAL_TASK_STATUSES:
-                return task
+            if (await self.status(task_id)).status in TERMINAL_TASK_STATUSES:
+                return await self.retrieve(task_id)
             await asyncio.sleep(interval)
 
     async def ssh_info(self, task_id: str) -> dict[str, Any] | None:

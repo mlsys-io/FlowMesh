@@ -32,6 +32,7 @@ from flowmesh.models import (
     SSHLimits,
     StorageInfo,
     TaskInfo,
+    TaskStatusView,
     TaskType,
     TaskUsage,
     VersionResponse,
@@ -91,6 +92,7 @@ from server.schemas.workflow import (
     WorkflowValidateTaskEntry as SrvWorkflowValidateTaskEntry,
 )
 from server.task.models import TaskInfo as SrvTaskInfo
+from server.task.models import TaskStatusView as SrvTaskStatusView
 from server.task.models import TaskUsage as SrvTaskUsage
 from shared.schemas.artifact import ArtifactContext as SrvArtifactContext
 from shared.schemas.artifact import ArtifactRef as SrvArtifactRef
@@ -260,6 +262,10 @@ def test_result_field_types_match(server_model: type, sdk_model: type) -> None:
 def test_task_info_fields() -> None:
     """TaskInfo: last_queue_ts is server-internal, skip it."""
     assert_fields_match(SrvTaskInfo, TaskInfo, skip_server_fields={"last_queue_ts"})
+
+
+def test_task_status_view_fields() -> None:
+    assert_fields_match(SrvTaskStatusView, TaskStatusView)
 
 
 def test_worker_register_response_fields() -> None:

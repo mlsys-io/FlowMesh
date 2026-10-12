@@ -301,3 +301,50 @@ async def test_event_loop_stays_responsive_during_list_serialization(
     assert ping_resp.status_code == 200
     assert elapsed < 0.3
     assert list_resp.status_code == 200
+
+
+# mlsys-io/FlowMesh#225: pollers asked for a ~0.5-1 MB task to read one status
+# field, and `limit` on the list was silently ignored (240+ MB responses).
+
+
+@pytest.mark.anyio
+async def test_get_task_status_view_omits_spec_and_source(no_checkers: None) -> None:
+    runtime, _ = build_runtime()
+    wf = await _register(runtime, _PAYLOAD)
+    task_id = _task_ids(runtime, wf)[0]
+
+    async with _client(runtime) as ac:
+        full = await ac.get(f"{PREFIX}/tasks/{task_id}")
+        slim = await ac.get(f"{PREFIX}/tasks/{task_id}", params={"view": "status"})
+
+    assert full.status_code == 200 and slim.status_code == 200
+    f, s = full.json(), slim.json()
+    assert "task" in f and "source" in f  # default unchanged
+    assert "task" not in s and "source" not in s
+    for key in ("task_id", "status", "attempts", "error", "assigned_worker"):
+        assert s[key] == f[key]
+
+
+@pytest.mark.anyio
+async def test_list_tasks_honours_limit_and_status_view(no_checkers: None) -> None:
+    runtime, _ = build_runtime()
+    wf = await _register(runtime, _PAYLOAD)
+    assert len(_task_ids(runtime, wf)) == 2
+
+    async with _client(runtime) as ac:
+        one = await ac.get(f"{PREFIX}/tasks", params={"workflow_id": wf, "limit": 1})
+        slim = await ac.get(
+            f"{PREFIX}/tasks", params={"workflow_id": wf, "view": "status"}
+        )
+
+    assert one.status_code == 200 and len(one.json()) == 1
+    assert slim.status_code == 200 and len(slim.json()) == 2
+    assert all("task" not in t and "source" not in t for t in slim.json())
+
+
+@pytest.mark.anyio
+async def test_unknown_view_is_rejected(no_checkers: None) -> None:
+    runtime, _ = build_runtime()
+    async with _client(runtime) as ac:
+        resp = await ac.get(f"{PREFIX}/tasks", params={"view": "bogus"})
+    assert resp.status_code == 422

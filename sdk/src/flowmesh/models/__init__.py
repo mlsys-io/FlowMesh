@@ -74,7 +74,7 @@ from .result import (
     SFTResult,
     SSHResult,
 )
-from .tasks import HardwareUsage, TaskInfo, TaskUsage
+from .tasks import HardwareUsage, TaskInfo, TaskStatusView, TaskUsage
 from .traces import (
     ActiveWaitBreakdown,
     AssetSummary,
@@ -190,6 +190,7 @@ __all__ = [
     "SSHLimits",
     "StorageInfo",
     "TaskInfo",
+    "TaskStatusView",
     "TaskStatus",
     "TaskTiming",
     "TaskType",

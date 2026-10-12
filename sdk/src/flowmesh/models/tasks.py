@@ -68,3 +68,35 @@ class TaskInfo(BaseModel):
     dependents: list[str]
     completed: bool
     failed: bool
+
+
+class TaskStatusView(BaseModel):
+    """The polling view of a task (``GET /tasks/{id}?view=status``).
+
+    Status, placement, timing and errors only -- no task spec or source. A server
+    that predates the view returns the full task, which validates here too (the
+    extra fields are ignored), so this works against any server version."""
+
+    task_id: str
+    workflow_id: str | None = None
+    status: TaskStatus
+    task_type: str | None = None
+    category: str | None = None
+    assigned_worker: str | None = None
+    submitted_at: str | None = None
+    submitted_ts: float | None = None
+    dispatched_ts: float | None = None
+    started_ts: float | None = None
+    finished_ts: float | None = None
+    error: str | None = None
+    last_error: str | None = None
+    attempts: int | None = None
+    max_attempts: int | None = None
+    next_retry_at: str | None = None
+    last_failed_worker: str | None = None
+    parent_task_id: str | None = None
+    merged_parent_id: str | None = None
+    local_name: str | None = None
+    graph_node_name: str | None = None
+    completed: bool | None = None
+    failed: bool | None = None
