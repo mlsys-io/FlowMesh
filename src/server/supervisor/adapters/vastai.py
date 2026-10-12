@@ -43,13 +43,10 @@ def offer_gpu_arch(gpu_name: str | None) -> GpuArch | None:
 def _offer_gpu_environment(
     offer: dict[str, Any] | None, gpu_arch: GpuArch | None
 ) -> dict[str, str]:
-    """GPU env for a rented instance, mirroring the docker adapter's GPU case.
+    """Build GPU metadata from a rented instance's offer.
 
-    The worker's SSH executor slices GPUs from ``WORKER_HOST_GPU_ID``; the docker
-    adapter sets it, this adapter never did, so on vast an SSH task asking for
-    ``gpu.count: 1`` failed with "requested 1 GPU(s) but this worker has none" while
-    the same task's usage record listed the instance's RTX 5080. A vast instance's
-    container sees exactly its rented GPUs, as ``0..num_gpus-1``.
+    The container sees only its rented GPUs, numbered ``0..num_gpus-1``.
+    Missing, invalid, or nonpositive GPU counts produce no metadata.
     """
     try:
         num_gpus = int((offer or {}).get("num_gpus") or 0)
