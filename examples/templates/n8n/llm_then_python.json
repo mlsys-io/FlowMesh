@@ -1,0 +1,206 @@
+{
+  "name": "LLM outline then Python report",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -720,
+        0
+      ],
+      "id": "f93ee8af-0f08-4b7b-ba16-2725c7f71c96",
+      "name": "When clicking 'Execute workflow'"
+    },
+    {
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "{\n  \"type\": \"list\",\n  \"items\": [\n    \"How FlowMesh schedules a multi-stage workflow\"\n  ]\n}\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -480,
+        -120
+      ],
+      "id": "3cd0beea-b6fa-44b0-9a0a-d3335645753d",
+      "name": "Input Topic"
+    },
+    {
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "{\n  \"tensor_parallel_size\": 1,\n  \"gpu_memory_utilization\": 0.9\n}\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -480,
+        0
+      ],
+      "id": "4610c7bf-81b7-4eed-a64b-c9e10b919ea2",
+      "name": "Runtime Spec"
+    },
+    {
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "{\n  \"hardware\": {\n    \"cpu\": \"8\",\n    \"memory\": \"24Gi\",\n    \"gpu\": {\n      \"type\": \"any\",\n      \"count\": 1\n    }\n  }\n}\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -480,
+        120
+      ],
+      "id": "5b8d18bc-744a-4798-bbee-906e44e8185a",
+      "name": "Resource Spec"
+    },
+    {
+      "parameters": {
+        "model": "Qwen/Qwen2.5-7B-Instruct",
+        "options": {
+          "maxTokens": 256,
+          "temperature": 0.3
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmOpenHuggingFaceInference",
+      "typeVersion": 1,
+      "position": [
+        -480,
+        240
+      ],
+      "id": "a39a1dcc-6c41-4678-975b-78139e71baed",
+      "name": "Model Writer"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "batching": {},
+        "text": "Write a five-point outline for a short technical note on the user's topic. One point per line, no preamble."
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.8,
+      "position": [
+        -200,
+        0
+      ],
+      "id": "be20a7e9-f373-4c46-81c6-fa3ce92b520b",
+      "name": "Write Outline",
+      "notes": "{\"taskType\": \"inference\"}"
+    },
+    {
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "{\n  \"timeoutSeconds\": 120\n}\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        40,
+        -120
+      ],
+      "id": "d7e6913c-138f-4dc3-b8d4-5c9cf54bcb94",
+      "name": "Python Env"
+    },
+    {
+      "parameters": {
+        "language": "pythonNative",
+        "pythonCode": "import json\nimport os\nfrom pathlib import Path\n\n\ndef main(inputs):\n    \"\"\"Turn the LLM's outline into a Markdown report artifact.\n\n    Upstream stages arrive through ``inputs``: each is keyed by its node name\n    and exposes the stage's result as ``.output`` and its files as\n    ``.artifacts``. n8n's $input / items do not exist here.\n    \"\"\"\n    outline = str(inputs[\"Write Outline\"].output[\"items\"][0][\"output\"]).strip()\n    out = Path(os.environ[\"FLOWMESH_OUTPUT\"])\n    out.mkdir(parents=True, exist_ok=True)\n    lines = [line.strip(\"-* \").strip() for line in outline.splitlines() if line.strip()]\n    report = \"# Outline\\n\\n\" + \"\\n\".join(f\"{i}. {line}\" for i, line in enumerate(lines, 1))\n    (out / \"report.md\").write_text(report + \"\\n\")\n    return {\"sections\": len(lines), \"report\": \"report.md\", \"metrics\": {\"sections\": len(lines)}}\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        280,
+        0
+      ],
+      "id": "83279d68-7f7b-44a9-88b1-a38cf4dad876",
+      "name": "Build Report"
+    }
+  ],
+  "connections": {
+    "When clicking 'Execute workflow'": {
+      "main": [
+        [
+          {
+            "node": "Input Topic",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Input Topic": {
+      "main": [
+        [
+          {
+            "node": "Write Outline",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Runtime Spec": {
+      "main": [
+        [
+          {
+            "node": "Write Outline",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resource Spec": {
+      "main": [
+        [
+          {
+            "node": "Write Outline",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Model Writer": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Write Outline",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write Outline": {
+      "main": [
+        [
+          {
+            "node": "Build Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Python Env": {
+      "main": [
+        [
+          {
+            "node": "Build Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "meta": {
+    "instanceId": "flowmesh-example-llm-then-python"
+  }
+}
