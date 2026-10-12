@@ -301,7 +301,9 @@ satisfy fails after `TASK_NO_WORKER_GRACE_SEC` with reason
 `selected_worker_unavailable`. A cordoned selected worker still remains, so its
 pin waits or fails rather than falling back. With fallback enabled, a selected
 worker whose heartbeat has expired holds the task until the watchdog either sees
-it recover or declares it dead (`WORKER_DEATH_GRACE_SEC` after expiry); the
+it recover or declares it dead, which takes `WORKER_DEATH_GRACE_SEC` (or
+`WORKER_REHYDRATION_GRACE_SEC` for a worker with tasks in flight across a server
+restart) from when the running server first sees the expired heartbeat; the
 no-worker grace does not run meanwhile. With the watchdog disabled, a selected
 worker remains until its record is removed. A restarted worker may register
 under a new ID; fallback does not resolve an old ID by alias.
