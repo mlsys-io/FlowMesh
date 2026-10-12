@@ -74,6 +74,8 @@ Spark), set `DOCKER_GPU_RUNTIME=` in the stack env.
 | `SUPERVISOR_GRPC_TARGET` | – | Supervisor gRPC endpoint |
 | `RESULTS_DIR` | `./results` | Task output directory |
 | `WORKER_TAGS` | `` | Scheduler hints |
+| `WORKER_HOST_GPU_ID` | set by the supervisor | Comma-separated device IDs for SSH GPU selection; host IDs for Docker workers and container-local IDs for rented Vast.ai workers |
+| `WORKER_HOST_GPU_ARCH` | set by the supervisor | GPU architecture metadata: `hopper`, `blackwell`, or `unknown` |
 | `WORKER_COST_PER_HOUR` | `1.0` | Cost metadata |
 | `WORKER_UPLOAD_RESULTS` | `false` | Publish every result and artifact to FlowMesh, independently of user output destinations |
 | `WORKER_RESULT_TRANSFER_TIMEOUT_SEC` | `1800` | Seconds a worker waits for the server while publishing a result or fetching an upstream one, including the time the server spends packing a large bundle |
@@ -126,8 +128,17 @@ Only a root worker can give a session its own account, so `process` is
 unavailable on any other worker unless `ENABLE_UNISOLATED_SSH_SESSION` is set —
 without an account of its own a session runs as the worker and can read its
 environment and credentials. `SSH_MAX_CPU` / `SSH_MAX_MEMORY` / `SSH_MAX_PIDS` /
-`SSH_MAX_DISK`, the `ENABLE_SSH_GPU_LIMIT` subset, and `ssh -L` forwarding have
-no effect in `process` mode.
+`SSH_MAX_DISK` and `ssh -L` forwarding have no effect in `process` mode.
+GPU selection still sets `CUDA_VISIBLE_DEVICES` to the subset matching the
+task's GPU requirements when `ENABLE_SSH_GPU_LIMIT=true`. This subset is
+advisory: a process session can unset the variable and access all GPUs exposed
+to its worker.
+
+Newly rented Vast.ai workers receive `WORKER_HOST_GPU_ID=0..num_gpus-1`
+and `WORKER_HOST_GPU_ARCH` from their offer. Offers with missing, invalid, or
+nonpositive GPU counts inject neither variable. Existing instances retain
+their creation environment, including when restarted; recreate them through
+FlowMesh to receive this metadata.
 
 ## SSH session resource caps
 
