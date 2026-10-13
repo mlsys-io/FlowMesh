@@ -1370,7 +1370,13 @@ Summary:"""
             self._maybe_export_jsonl(spec, task_id, items, out_dir)
 
         self._dump_to_governance(
-            task_id=task_id, result=result, dependencies_by_task=dependencies_by_task
+            task_id=task_id,
+            result=result,
+            dependencies_by_task=dependencies_by_task,
+            owners_by_task={
+                task_id: task.owner_id,
+                **{child.task_id: child.owner_id for child in merge_children},
+            },
         )
 
         return result

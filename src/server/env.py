@@ -151,6 +151,10 @@ WORKER_UPLOAD_BACKOFF_SEC: float = parse_float_env("WORKER_UPLOAD_BACKOFF_SEC", 
 WORKER_EXECUTOR_IDLE_CLEANUP_SEC: float = parse_float_env(
     "WORKER_EXECUTOR_IDLE_CLEANUP_SEC", 60
 )
+# validated by the worker, which reads it as a positive integer
+WORKER_DIFFUSION_MAX_IMAGES_PER_CALL: str = os.getenv(
+    "WORKER_DIFFUSION_MAX_IMAGES_PER_CALL", ""
+)
 WORKER_FOREIGN_GPU_GATE: bool = parse_bool_env("WORKER_FOREIGN_GPU_GATE", True)
 WORKER_FOREIGN_GPU_MEM_MIB: int = parse_int_env("WORKER_FOREIGN_GPU_MEM_MIB", 1024)
 WORKER_FOREIGN_GPU_CONSECUTIVE: int = parse_int_env("WORKER_FOREIGN_GPU_CONSECUTIVE", 2)

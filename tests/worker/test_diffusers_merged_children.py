@@ -1,10 +1,6 @@
-"""DiffusersExecutor renders merged children in the parent's pipeline call.
-
-FlowMesh merges ``diffusion`` tasks that differ only in their prompts, so the
-executor must run every merged child too: one pipeline call over all prompts,
-each task's images in its own output dir, and each child's result in
-``result.children``. Driven through the public ``run`` with a fake pipeline.
-"""
+"""DiffusersExecutor runs a diffusion task with its merged children: each
+task's images, uploads and asset owner, per-call image caps, and seeded
+reproducibility. Driven through the public ``run`` with a fake pipeline."""
 
 import importlib.util
 import json
@@ -31,16 +27,27 @@ pytestmark = pytest.mark.skipif(
 
 
 class _FakePipe:
-    """Returns one solid image per requested prompt, shaded by its position."""
+    """Returns one solid image per embedding. Unseeded, an image is shaded by
+    its position across all calls; seeded, by a draw from its generator."""
 
     def __init__(self) -> None:
-        self.batch_sizes: list[int] = []
+        self.calls: list[list[str]] = []
+        self._count = 0
 
     def __call__(self, **kwargs: Any) -> SimpleNamespace:
-        count = len(kwargs["prompt_embeds"])
-        self.batch_sizes.append(count)
+        prompts = list(kwargs["prompt_embeds"])
+        self.calls.append(prompts)
+        generators = kwargs["generator"]
+        shades: list[int] = []
+        for i in range(len(prompts)):
+            if generators is None:
+                shades.append(self._count)
+            else:
+                draw = mod.torch.randint(0, 256, (1,), generator=generators[i])
+                shades.append(int(draw.item()))
+            self._count += 1
         return SimpleNamespace(
-            images=[Image.new("L", (4, 4), color=i) for i in range(count)]
+            images=[Image.new("L", (4, 4), color=shade) for shade in shades]
         )
 
 
@@ -63,6 +70,8 @@ def _child(task_id: str, items: list[str], **inference: Any) -> MergedChildTaskS
 
 
 def _executor(monkeypatch: pytest.MonkeyPatch, pipe: _FakePipe) -> DiffusersExecutor:
+    """An executor on ``pipe`` whose encoder yields each prompt once per
+    image, grouped per prompt like the real one."""
     executor = DiffusersExecutor(DEFAULT_WORKER_CONFIG)
     executor._pipe = pipe
     executor._model_name = "org/sd"
@@ -71,9 +80,24 @@ def _executor(monkeypatch: pytest.MonkeyPatch, pipe: _FakePipe) -> DiffusersExec
     monkeypatch.setattr(
         executor,
         "_encode_and_combine_prompts",
-        lambda prompts, system, negative, num: (list(prompts), None, None, None),
+        lambda prompts, system, negative, num: (
+            [p for p in prompts for _ in range(num)],
+            None,
+            None,
+            None,
+        ),
     )
     return executor
+
+
+def _shades(out_dir: Path) -> list[int]:
+    shades: list[int] = []
+    for path in sorted((out_dir / "artifacts" / "images").glob("image_*.png")):
+        with Image.open(path) as image:
+            pixel = image.getpixel((0, 0))
+        assert isinstance(pixel, int)
+        shades.append(pixel)
+    return shades
 
 
 def test_merged_children_share_one_pipeline_call(
@@ -100,39 +124,138 @@ def test_merged_children_share_one_pipeline_call(
     assert isinstance(child1, DiffusionResult)
     assert isinstance(child2, DiffusionResult)
 
-    assert pipe.batch_sizes == [4]
+    assert pipe.calls == [["parent", "a", "b", "c"]]
     assert [i.path for i in result.images] == ["images/image_0.png"]
     assert [i.path for i in child1.images] == [
         "images/image_0.png",
         "images/image_1.png",
     ]
     assert [i.path for i in child2.images] == ["images/image_0.png"]
-
-    def shade(task_id: str, idx: int) -> int:
-        path = tmp_path / task_id / "artifacts" / "images" / f"image_{idx}.png"
-        with Image.open(path) as image:
-            pixel = image.getpixel((0, 0))
-        assert isinstance(pixel, int)
-        return pixel
-
-    assert shade("tsk-parent", 0) == 0
-    assert [shade("tsk-c1", 0), shade("tsk-c1", 1)] == [1, 2]
-    assert shade("tsk-c2", 0) == 3
-    assert uploaded == ["tsk-c1", "tsk-c2", "tsk-parent"]
+    assert _shades(tmp_path / "tsk-parent") == [0]
+    assert _shades(tmp_path / "tsk-c1") == [1, 2]
+    assert _shades(tmp_path / "tsk-c2") == [3]
+    assert uploaded == ["tsk-parent", "tsk-c1", "tsk-c2"]
 
     assets = tmp_path / "tsk-parent" / "logs" / "assets.jsonl"
-    owners = {
-        row["data_id"]: row["user_id"]
+    owners = [
+        (row["data_id"], row["user_id"])
         for row in map(json.loads, assets.read_text().splitlines())
-    }
-    assert owners == {
-        "tsk-parent": "usr-test",
-        "tsk-c1": "usr-other",
-        "tsk-c2": "usr-other",
-    }
+    ]
+    assert sorted(owners) == [
+        ("tsk-c1", "usr-other"),
+        ("tsk-c2", "usr-other"),
+        ("tsk-parent", "usr-test"),
+    ]
 
 
-def test_unmerged_task_is_unchanged(
+def test_merged_children_split_images_per_prompt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pipe = _FakePipe()
+    executor = _executor(monkeypatch, pipe)
+    monkeypatch.setenv("WORKER_DIFFUSION_MAX_IMAGES_PER_CALL", "8")
+    monkeypatch.setattr(mod, "maybe_upload_artifacts", lambda *a, **k: [])
+    task = make_worker_task_message(
+        _spec(["p"], num_images_per_prompt=2),
+        task_type=TaskType.DIFFUSION,
+        task_id="tsk-parent",
+        merged_children=[_child("tsk-c1", ["a", "b"], num_images_per_prompt=2)],
+    )
+
+    executor.run(task, tmp_path / "tsk-parent", RunControl(task.task_id))
+
+    assert pipe.calls == [["p", "p", "a", "a", "b", "b"]]
+    assert _shades(tmp_path / "tsk-parent") == [0, 1]
+    assert _shades(tmp_path / "tsk-c1") == [2, 3, 4, 5]
+
+
+def test_merged_tasks_are_packed_whole_under_the_per_call_cap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pipe = _FakePipe()
+    executor = _executor(monkeypatch, pipe)
+    monkeypatch.setenv("WORKER_DIFFUSION_MAX_IMAGES_PER_CALL", "2")
+    monkeypatch.setattr(mod, "maybe_upload_artifacts", lambda *a, **k: [])
+    task = make_worker_task_message(
+        _spec(["p"]),
+        task_type=TaskType.DIFFUSION,
+        task_id="tsk-parent",
+        merged_children=[
+            _child("tsk-c1", ["a", "b"]),
+            _child("tsk-c2", ["c"]),
+            _child("tsk-c3", ["d"]),
+        ],
+    )
+
+    executor.run(task, tmp_path / "tsk-parent", RunControl(task.task_id))
+
+    assert pipe.calls == [["p"], ["a", "b"], ["c", "d"]]
+    assert _shades(tmp_path / "tsk-parent") == [0]
+    assert _shades(tmp_path / "tsk-c1") == [1, 2]
+    assert _shades(tmp_path / "tsk-c2") == [3]
+    assert _shades(tmp_path / "tsk-c3") == [4]
+
+
+def test_task_larger_than_the_cap_runs_in_one_call(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pipe = _FakePipe()
+    executor = _executor(monkeypatch, pipe)
+    monkeypatch.setenv("WORKER_DIFFUSION_MAX_IMAGES_PER_CALL", "1")
+    monkeypatch.setattr(mod, "maybe_upload_artifacts", lambda *a, **k: [])
+    task = make_worker_task_message(
+        _spec(["x", "y", "z"]), task_type=TaskType.DIFFUSION, task_id="tsk-solo"
+    )
+
+    executor.run(task, tmp_path / "tsk-solo", RunControl(task.task_id))
+
+    assert pipe.calls == [["x", "y", "z"]]
+
+
+@pytest.mark.parametrize("value", ["0", "-1", "2.5", "true"])
+def test_invalid_per_call_cap_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    pipe = _FakePipe()
+    executor = _executor(monkeypatch, pipe)
+    monkeypatch.setenv("WORKER_DIFFUSION_MAX_IMAGES_PER_CALL", value)
+    task = make_worker_task_message(
+        _spec(["p"]), task_type=TaskType.DIFFUSION, task_id="tsk-solo"
+    )
+    with pytest.raises(ExecutionError, match="WORKER_DIFFUSION_MAX_IMAGES_PER_CALL"):
+        executor.run(task, tmp_path / "tsk-solo", RunControl(task.task_id))
+    assert pipe.calls == []
+
+
+def test_seeded_task_renders_the_same_merged_or_alone(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(mod, "maybe_upload_artifacts", lambda *a, **k: [])
+    monkeypatch.setenv("WORKER_DIFFUSION_MAX_IMAGES_PER_CALL", "2")
+    alone = make_worker_task_message(
+        _spec(["x"], seed=7, num_images_per_prompt=2),
+        task_type=TaskType.DIFFUSION,
+        task_id="tsk-alone",
+    )
+    _executor(monkeypatch, _FakePipe()).run(
+        alone, tmp_path / "tsk-alone", RunControl(alone.task_id)
+    )
+    merged = make_worker_task_message(
+        _spec(["a", "b"], seed=7, num_images_per_prompt=2),
+        task_type=TaskType.DIFFUSION,
+        task_id="tsk-parent",
+        merged_children=[_child("tsk-c1", ["x"], seed=7, num_images_per_prompt=2)],
+    )
+    pipe = _FakePipe()
+    _executor(monkeypatch, pipe).run(
+        merged, tmp_path / "tsk-parent", RunControl(merged.task_id)
+    )
+
+    assert len(pipe.calls) == 2
+    assert _shades(tmp_path / "tsk-c1") == _shades(tmp_path / "tsk-alone")
+
+
+def test_unmerged_task_renders_only_its_prompts(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     pipe = _FakePipe()
@@ -144,7 +267,7 @@ def test_unmerged_task_is_unchanged(
 
     result = executor.run(task, tmp_path / "tsk-solo", RunControl(task.task_id))
 
-    assert pipe.batch_sizes == [2]
+    assert pipe.calls == [["x", "y"]]
     assert [i.path for i in result.images] == [
         "images/image_0.png",
         "images/image_1.png",
@@ -185,4 +308,4 @@ def test_merged_child_with_another_system_prompt_fails(
     )
     with pytest.raises(ExecutionError, match="different system_prompt"):
         executor.run(task, tmp_path / "tsk-parent", RunControl(task.task_id))
-    assert pipe.batch_sizes == []
+    assert pipe.calls == []

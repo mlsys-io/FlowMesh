@@ -243,18 +243,20 @@ class GovernanceMixin:
         task_id: str,
         result: BaseExecutorResult,
         dependencies_by_task: dict[str, list[str]],
-        owner_id: str | None = None,
+        owners_by_task: dict[str, str] | None = None,
     ) -> None:
         """Write parent + merged-child results and emit asset/lineage rows.
-        ``owner_id`` owns ``task_id``'s asset, by default the running task's
-        owner."""
+        Each asset belongs to its task's entry in ``owners_by_task``, by
+        default the running task's owner; executors that run merged children
+        pass every child's owner."""
+        owners = owners_by_task or {}
         parent_deps = dependencies_by_task.get(task_id, [])
         collection_jobs: list[dict[str, Any]] = [
             {
                 "task_id": task_id,
                 "result": result.model_dump(),
                 "deps": parent_deps,
-                "owner_id": owner_id,
+                "owner_id": owners.get(task_id),
                 "is_parent": True,
             }
         ]
@@ -265,7 +267,7 @@ class GovernanceMixin:
                     "task_id": child_id,
                     "result": child_result.model_dump(),
                     "deps": child_deps,
-                    "owner_id": None,
+                    "owner_id": owners.get(child_id),
                     "is_parent": False,
                 }
             )

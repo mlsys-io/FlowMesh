@@ -141,6 +141,34 @@ def test_dump_to_governance_with_merged_children(tmp_path: Path) -> None:
     }
 
 
+def test_dump_to_governance_records_each_owner(tmp_path: Path) -> None:
+    mixin = _Mixin()
+    out_dir = tmp_path / "task"
+    with mixin._task_span("tsk-parent", "wfl-1", out_dir, owner_id="alice"):
+        result = BaseExecutorResult.model_validate(
+            {
+                "items": [{"output": "p"}],
+                "children": {
+                    "tsk-c1": {"items": [{"output": "c1"}]},
+                    "tsk-c2": {"items": [{"output": "c2"}]},
+                },
+            }
+        )
+        mixin._dump_to_governance(
+            task_id="tsk-parent",
+            result=result,
+            dependencies_by_task={},
+            owners_by_task={"tsk-parent": "alice", "tsk-c1": "bob", "tsk-c2": "carol"},
+        )
+
+    assets = _read_jsonl(out_dir / "logs" / "assets.jsonl")
+    assert {row["data_id"]: row["user_id"] for row in assets} == {
+        "tsk-parent": "alice",
+        "tsk-c1": "bob",
+        "tsk-c2": "carol",
+    }
+
+
 def test_extract_source_data_ids_from_upstream_artifacts(tmp_path: Path) -> None:
     """Upstream task IDs are recovered from each result's _artifacts.base_dir
     (the producer's output dir), since the payload carries no ID itself."""

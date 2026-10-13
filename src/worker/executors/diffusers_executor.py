@@ -11,7 +11,7 @@ import inspect
 import logging
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 from PIL import Image
 
@@ -21,7 +21,13 @@ from shared.tasks.specs import DiffusionSpecStrict
 from shared.tasks.task_type import TaskType
 
 from ..utils.logging import configure_hf_library_logging
-from .base_executor import ExecutionError, Executor, ExecutorTask, RunControl
+from .base_executor import (
+    ExecutionError,
+    Executor,
+    ExecutorTask,
+    RunControl,
+    TaskReference,
+)
 from .mixins.data import DataMixin
 from .utils.checkpoints import maybe_upload_artifacts, maybe_upload_traces
 
@@ -43,6 +49,30 @@ except Exception:
         _HAS_DIFFUSERS = False
 
 logger = logging.getLogger(__name__)
+
+
+class _Member(NamedTuple):
+    """A task rendered in one batch: the parent or one of its merged children."""
+
+    task_id: str
+    ref: TaskReference
+    spec: DiffusionSpecStrict
+    out_dir: Path
+    prompts: list[str]
+
+
+def diffusion_max_images_per_call() -> int:
+    """Images one pipeline call may denoise across merged tasks
+    (``WORKER_DIFFUSION_MAX_IMAGES_PER_CALL``, a positive integer, default 4)."""
+    raw = os.getenv("WORKER_DIFFUSION_MAX_IMAGES_PER_CALL", "").strip()
+    if not raw:
+        return 4
+    if not raw.isdecimal() or int(raw) == 0:
+        raise ExecutionError(
+            "WORKER_DIFFUSION_MAX_IMAGES_PER_CALL must be a positive integer "
+            f"(got {raw!r})."
+        )
+    return int(raw)
 
 
 class DiffusersExecutor(DataMixin, Executor):
@@ -259,9 +289,11 @@ class DiffusersExecutor(DataMixin, Executor):
         with self._task_span(
             task_id, task.workflow_id, out_dir, owner_id=task.owner_id
         ):
-            result = self._run_inner(task, spec, task_id, out_dir)
+            members, result = self._run_inner(task, spec, task_id, out_dir)
         maybe_upload_artifacts(task, out_dir, logger=logger)
         maybe_upload_traces(task, out_dir, logger=logger)
+        for member in members[1:]:
+            maybe_upload_artifacts(member.ref, member.out_dir, logger=logger)
         return result
 
     def _run_inner(
@@ -270,16 +302,18 @@ class DiffusersExecutor(DataMixin, Executor):
         spec: DiffusionSpecStrict,
         task_id: str,
         out_dir: Path,
-    ) -> DiffusionResult:
+    ) -> tuple[list[_Member], DiffusionResult]:
+        max_images_per_call = diffusion_max_images_per_call()
         self._ensure_pipeline(spec)
         assert self._pipe is not None
 
         # Merged children share the parent's model and inference settings (the
-        # merge key); only their prompts differ, so all of them go to the same
-        # pipeline call.
-        system_prompt = (spec.inference or {}).get("system_prompt")
-        members: list[tuple[str, str, DiffusionSpecStrict, Path]] = [
-            (task_id, task.owner_id, spec, out_dir)
+        # merge key); only their prompts differ, so they render on the same
+        # pipeline.
+        inference_config = spec.inference or {}
+        system_prompt = inference_config.get("system_prompt")
+        members = [
+            _Member(task_id, task, spec, out_dir, self._member_prompts(spec, task_id))
         ]
         for child in task.merged_children or []:
             if not isinstance(child.spec, DiffusionSpecStrict):
@@ -291,20 +325,16 @@ class DiffusersExecutor(DataMixin, Executor):
                     f"Merged child {child.task_id} has a different system_prompt."
                 )
             members.append(
-                (
+                _Member(
                     child.task_id,
-                    child.owner_id,
+                    child,
                     child.spec,
                     out_dir.parent / child.task_id,
+                    self._member_prompts(child.spec, child.task_id),
                 )
             )
-        prompts_by_member = [
-            self._member_prompts(member_spec, member_id)
-            for member_id, _, member_spec, _ in members
-        ]
-        prompts = [p for member_prompts in prompts_by_member for p in member_prompts]
+        prompts = [p for member in members for p in member.prompts]
 
-        inference_config = spec.inference or {}
         num_inference_steps = int(inference_config.get("num_inference_steps", 50))
         guidance_scale = float(inference_config.get("guidance_scale", 7.5))
         height = int(inference_config.get("height", 768))
@@ -318,9 +348,14 @@ class DiffusersExecutor(DataMixin, Executor):
         seed = inference_config.get("seed")
         negative_prompt = inference_config.get("negative_prompt")
 
-        generator = None
+        # One generator per member, repeated for each of its images, so a
+        # member's latents do not depend on which tasks it was merged with.
+        generators: list[Any] | None = None
         if seed is not None:
-            generator = torch.Generator(device=self._device).manual_seed(int(seed))
+            generators = []
+            for member in members:
+                generator = torch.Generator(device=self._device).manual_seed(int(seed))
+                generators += [generator] * (len(member.prompts) * num_images)
 
         logger.info(f"Starting generation for {len(prompts)} prompts...")
 
@@ -333,27 +368,40 @@ class DiffusersExecutor(DataMixin, Executor):
         )
         logger.info("Prompts encoded.")
 
-        kwargs = {
-            "prompt_embeds": prompt_embeds,
-            "negative_prompt_embeds": neg_embeds,
-            "num_inference_steps": num_inference_steps,
-            "guidance_scale": guidance_scale,
-            "height": height,
-            "width": width,
-            "generator": generator,
-        }
-        if pooled_embeds is not None:
-            kwargs["pooled_prompt_embeds"] = pooled_embeds
-
-        if neg_pooled_embeds is not None:
-            kwargs["negative_pooled_prompt_embeds"] = neg_pooled_embeds
-
-        # Run generation
-        logger.info(f"Running pipeline with {num_inference_steps} steps...")
-        output = self._pipe(**kwargs)
-        logger.info("Pipeline generation completed.")
-        images: list[Image.Image] = output.images
+        # Diffusers denoises the whole batch at once, so whole members are
+        # packed into calls of at most max_images_per_call images; a member
+        # larger than that gets a call of its own, as it would unmerged.
         expected_count = len(prompts) * num_images
+        batches: list[slice] = []
+        begin = end = 0
+        for member in members:
+            count = len(member.prompts) * num_images
+            if end > begin and end + count - begin > max_images_per_call:
+                batches.append(slice(begin, end))
+                begin = end
+            end += count
+        batches.append(slice(begin, end))
+
+        images: list[Image.Image] = []
+        logger.info(f"Running pipeline with {num_inference_steps} steps...")
+        for batch in batches:
+            kwargs = {
+                "prompt_embeds": prompt_embeds[batch],
+                "negative_prompt_embeds": (
+                    neg_embeds[batch] if neg_embeds is not None else None
+                ),
+                "num_inference_steps": num_inference_steps,
+                "guidance_scale": guidance_scale,
+                "height": height,
+                "width": width,
+                "generator": generators[batch] if generators is not None else None,
+            }
+            if pooled_embeds is not None:
+                kwargs["pooled_prompt_embeds"] = pooled_embeds[batch]
+            if neg_pooled_embeds is not None:
+                kwargs["negative_pooled_prompt_embeds"] = neg_pooled_embeds[batch]
+            images += self._pipe(**kwargs).images
+        logger.info("Pipeline generation completed.")
         actual_count = len(images)
         if actual_count != expected_count:
             raise ExecutionError(
@@ -362,29 +410,28 @@ class DiffusersExecutor(DataMixin, Executor):
                 "No fallback/coercion is allowed."
             )
 
+        # Images come back grouped per prompt, members in order.
         results: list[DiffusionResult] = []
         offset = 0
-        for (member_id, owner_id, member_spec, member_out), member_prompts in zip(
-            members, prompts_by_member
-        ):
-            count = len(member_prompts) * num_images
-            member_images = images[offset : offset + count]
-            offset += count
-            result = self._save_images(member_out, member_images)
-            self._dump_to_governance(
-                task_id=member_id,
-                result=result,
-                dependencies_by_task={
-                    member_id: self._extract_source_data_ids(member_spec)
-                },
-                owner_id=owner_id,
+        for member in members:
+            count = len(member.prompts) * num_images
+            results.append(
+                self._save_images(member.out_dir, images[offset : offset + count])
             )
-            results.append(result)
-
-        for child, child_result in zip(task.merged_children or [], results[1:]):
-            maybe_upload_artifacts(child, out_dir.parent / child.task_id, logger=logger)
-            results[0].children[child.task_id] = child_result
-        return results[0]
+            offset += count
+        result = results[0]
+        for member, child_result in zip(members[1:], results[1:]):
+            result.children[member.task_id] = child_result
+        self._dump_to_governance(
+            task_id=task_id,
+            result=result,
+            dependencies_by_task={
+                member.task_id: self._extract_source_data_ids(member.spec)
+                for member in members
+            },
+            owners_by_task={member.task_id: member.ref.owner_id for member in members},
+        )
+        return members, result
 
     def _member_prompts(self, spec: DiffusionSpecStrict, task_id: str) -> list[str]:
         """The text prompts of one task (parent or merged child)."""

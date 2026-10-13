@@ -82,6 +82,7 @@ Spark), set `DOCKER_GPU_RUNTIME=` in the stack env.
 | `WORKER_RESULT_TRANSFER_TIMEOUT_SEC` | `1800` | Seconds a worker waits for the server while publishing a result or fetching an upstream one, including the time the server spends packing a large bundle |
 | `WORKER_UPLOAD_RETRIES` | `5` | Additional upload attempts after retryable failures; `0` disables retries |
 | `WORKER_UPLOAD_BACKOFF_SEC` | `2` | First wait between upload retries, doubled per retry up to 60 s; a `Retry-After` header takes precedence, under the same cap |
+| `WORKER_DIFFUSION_MAX_IMAGES_PER_CALL` | `4` | Images one diffusion pipeline call may denoise across merged tasks; a task is never split across calls, so one larger than this runs alone |
 | `WORKER_EXECUTOR_IDLE_CLEANUP_SEC` | `60` | Seconds a worker waits before unloading an idle executor to release the resources it holds; higher values avoid reload thrash between tasks but keep those resources reserved while idle |
 | `WORKER_FOREIGN_GPU_GATE` | `true` | Report a GPU as unavailable while a process outside FlowMesh is using it |
 | `WORKER_FOREIGN_GPU_MEM_MIB` | `1024` | Foreign GPU-memory threshold in MiB |
