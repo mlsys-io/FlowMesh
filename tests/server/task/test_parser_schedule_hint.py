@@ -415,7 +415,7 @@ def test_worker_fallback_policy_survives_expansion(shape: str) -> None:
     assert hint is not None and hint.allow_worker_fallback
 
 
-@pytest.mark.parametrize("value", ["true", 1])
+@pytest.mark.parametrize("value", ["maybe", 2])
 def test_worker_fallback_requires_a_boolean(value: Any) -> None:
     payload = yaml.safe_dump(
         {

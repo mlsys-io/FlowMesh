@@ -19,7 +19,7 @@ class ScheduleHint(StrictBaseModel):
     node_execution_order: list[str] | list[list[str]] | None = None
     node_schedule_in_epoch_order: bool | None = True
     selected_worker: str | list[str] | SelectedWorkerHint | None = None
-    allow_worker_fallback: bool | None = Field(default=None, strict=True)
+    allow_worker_fallback: bool | None = None
 
 
 class TaskAnnotations(StrictBaseModel):

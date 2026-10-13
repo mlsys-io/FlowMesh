@@ -126,16 +126,6 @@ class TestComputeMergeKey:
         t = self._make_task("echo")
         assert _compute_merge_key(t) is None
 
-    def test_transformers_inference_has_no_merge_key(self) -> None:
-        task = self._make_task(
-            "inference",
-            model={
-                "source": {"identifier": "llama"},
-                "transformers": {"device_map": "cpu"},
-            },
-        )
-        assert _compute_merge_key(task) is None
-
     def test_ignores_data_field(self) -> None:
         """Two tasks with same model but different prompts should merge."""
         t1 = self._make_task(

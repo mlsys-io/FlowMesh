@@ -98,6 +98,9 @@ class _WorkerRegistryStub:
     def is_cordoned(self, worker: Any) -> bool:
         return False
 
+    def is_marked_dead(self, worker_id: str) -> bool:
+        return False
+
     def get_worker(self, worker_id: str) -> Any:
         return SimpleNamespace(id=worker_id, node_id="nde-1")
 

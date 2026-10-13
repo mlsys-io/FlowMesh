@@ -4,7 +4,6 @@ from typing import cast
 from unittest import mock
 
 from server.task.models import TaskRecord
-from server.task.worker_pins import effective_selected_worker
 from shared.tasks import TaskEnvelopeTemplate
 from tests.server.dispatcher.helpers import make_capturing_dispatcher
 
@@ -77,13 +76,13 @@ def test_grace_then_fail_fails_after_grace() -> None:
 
 def test_an_opted_in_pin_to_unregistered_workers_is_ignored() -> None:
     record = _record(selected_worker=["wkr-8"], allow_worker_fallback=True)
-    assert effective_selected_worker(record, lambda wid: False) is None
+    assert record.effective_selected_worker(lambda wid: False) is None
     assert record.selected_worker == ["wkr-8"]
 
 
 def test_a_pin_with_a_present_worker_is_still_strict() -> None:
     record = _record(selected_worker=["w-2", "wkr-8"], allow_worker_fallback=True)
-    assert effective_selected_worker(record, lambda wid: wid == "w-2") == [
+    assert record.effective_selected_worker(lambda wid: wid == "w-2") == [
         "w-2",
         "wkr-8",
     ]
@@ -91,11 +90,11 @@ def test_a_pin_with_a_present_worker_is_still_strict() -> None:
 
 def test_an_absent_pin_is_strict_without_fallback() -> None:
     record = _record(selected_worker=["wkr-8"])
-    assert effective_selected_worker(record, lambda wid: False) == ["wkr-8"]
+    assert record.effective_selected_worker(lambda wid: False) == ["wkr-8"]
 
 
 def test_no_pin_is_no_pin() -> None:
-    assert effective_selected_worker(_record(), lambda wid: True) is None
+    assert _record().effective_selected_worker(lambda wid: True) is None
 
 
 def test_unavailable_pin_fails_with_its_own_reason() -> None:

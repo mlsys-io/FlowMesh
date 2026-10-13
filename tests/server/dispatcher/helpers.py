@@ -10,7 +10,6 @@ from unittest import mock
 
 from server.dispatcher import Dispatcher
 from server.registries.workflow import PersistedTask, WorkflowSched
-from server.task.worker_pins import effective_selected_worker
 
 
 class CapturingDispatcher(Dispatcher):
@@ -68,8 +67,8 @@ def make_capturing_dispatcher(
     ]
     if runtime is None:
         runtime = mock.Mock()
-        runtime.resolve_pins.side_effect = lambda record: effective_selected_worker(
-            record, registry.worker_exists
+        runtime.resolve_pins.side_effect = lambda record: (
+            record.effective_selected_worker(registry.worker_exists)
         )
         runtime.awaits_pinned_worker.return_value = False
     return CapturingDispatcher(

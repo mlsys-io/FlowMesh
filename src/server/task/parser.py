@@ -216,8 +216,7 @@ def _expand_specs(data: Any) -> ParsedWorkflow:
     depends_on = _normalize_dep_list(depends_on_raw)
     task = _build_task_template(root)
     task_name = root.metadata.name if root.metadata and root.metadata.name else "task"
-    annotations = root.metadata.annotations if root.metadata else None
-    hint = annotations.schedule_hint if annotations else None
+    hint = task.schedule_hint
     selected_workers = _parse_selected_workers(
         hint.selected_worker if hint else None, {task_name}
     )

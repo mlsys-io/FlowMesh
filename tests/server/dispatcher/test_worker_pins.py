@@ -11,7 +11,6 @@ import yaml
 
 from server.dispatcher import Dispatcher
 from server.registries.worker import Worker, WorkerRegistry
-from server.services.worker_deaths import WorkerDeathMarks
 from server.task.models import TaskStatus
 from server.task.runtime import TaskRuntime
 from tests.server.task.test_runtime_rehydrate import FakeWorkflowRegistry
@@ -61,6 +60,7 @@ def setup(tmp_path: Path) -> PinSetup:
         else None
     )
     registry.is_cordoned.return_value = False
+    registry.is_marked_dead.return_value = False
     registry.is_worker_stale.return_value = False
     registry.idle_satisfying_pool.return_value = [worker]
     registry.satisfying_workers.return_value = [worker]
@@ -70,7 +70,7 @@ def setup(tmp_path: Path) -> PinSetup:
         registry,
         logging.getLogger("worker-pins"),
         worker_pin_fallback=False,
-        worker_deaths=WorkerDeathMarks(),
+        watchdog_enabled=True,
     )
     dispatcher = Dispatcher(
         runtime,
@@ -185,29 +185,19 @@ def test_opted_in_registered_pin_waits_without_spending_attempts(
     registry.publish_task.assert_not_called()
 
 
-@pytest.mark.parametrize(
-    ("merge", "exists"), [(False, [False, True]), (True, [False, False, True])]
-)
-def test_pin_registration_race_requeues_without_spending_attempts(
-    setup: PinSetup, merge: bool, exists: list[bool]
-) -> None:
+def test_pin_is_resolved_once_per_dispatch_attempt(setup: PinSetup) -> None:
     runtime, dispatcher, registry = setup
-    dispatcher._task_merge_enabled = merge
     task_id = _register(runtime, ["wkr-old"], fallback=True)
     lookup = registry.get_worker.side_effect
-    replies = iter(exists)
+    lookups = iter([None])
     registry.get_worker.side_effect = lambda wid: (
-        (lookup("wkr-new") if next(replies) else None)
-        if wid == "wkr-old"
-        else lookup(wid)
+        next(lookups, lookup("wkr-new")) if wid == "wkr-old" else lookup(wid)
     )
-    assert dispatcher.dispatch_once(task_id) is False
+    assert dispatcher.dispatch_once(task_id)
     record = runtime.get_record(task_id)
     assert record is not None
-    assert record.status == TaskStatus.PENDING
+    assert record.assigned_worker == "wkr-new"
     assert record.attempts == 0
-    assert record.merged_children is None
-    registry.publish_task.assert_not_called()
 
 
 def test_opted_in_stale_pin_preserves_failed_worker_exclusion(setup: PinSetup) -> None:
@@ -288,62 +278,8 @@ def test_server_default_relaxes_an_unhinted_absent_pin(setup: PinSetup) -> None:
     registry.publish_task.assert_called_once()
 
 
-@pytest.mark.parametrize("rehydrate", [False, True])
-def test_transformers_peers_dispatch_independently(
-    setup: PinSetup, rehydrate: bool
-) -> None:
-    runtime, dispatcher, registry = setup
-    spec = {
-        "taskType": "inference",
-        "model": {
-            "source": {"identifier": "tiny"},
-            "transformers": {"device_map": "cpu"},
-        },
-    }
-    payload = yaml.safe_dump(
-        {
-            "apiVersion": "flowmesh/v1",
-            "kind": "Workflow",
-            "metadata": {
-                "annotations": {
-                    "schedule_hint": {
-                        "selected_worker": "wkr-old",
-                        "allow_worker_fallback": True,
-                    }
-                }
-            },
-            "spec": {
-                "graph": {
-                    "nodes": [{"name": name, "spec": spec} for name in ["a", "b"]]
-                }
-            },
-        }
-    )
-    _, tasks = asyncio.run(runtime.register("owner", "org", payload))
-    if rehydrate:
-        for task in tasks:
-            record = runtime.get_record(task.task_id)
-            assert record is not None
-            record.merge_key = "legacy-transformers-merge-key"
-            runtime._persist_locked(task.task_id)
-        restored = TaskRuntime(
-            runtime._workflow_registry,
-            registry,
-            logging.getLogger("restored-transformers"),
-        )
-        assert asyncio.run(restored.rehydrate()) == 1
-        dispatcher._runtime = restored
-    for task in tasks:
-        assert dispatcher.dispatch_once(task.task_id)
-    assert registry.publish_task.call_count == 2
-    for call in registry.publish_task.call_args_list:
-        assert not call.args[1].merged_children
-
-
-def _deaths(runtime: TaskRuntime) -> WorkerDeathMarks:
-    deaths = runtime._worker_deaths
-    assert deaths is not None
-    return deaths
+def _mark_dead(registry: mock.Mock, worker_id: str) -> None:
+    registry.is_marked_dead.side_effect = lambda wid: wid == worker_id
 
 
 @pytest.mark.parametrize(("fallback", "falls_back"), [(True, True), (False, False)])
@@ -352,7 +288,7 @@ def test_dead_pinned_worker_relaxes_only_an_opted_in_pin(
 ) -> None:
     runtime, dispatcher, registry = setup
     task_id = _register(runtime, ["wkr-live"], fallback=fallback, task_type="echo")
-    _deaths(runtime).mark("wkr-live")
+    _mark_dead(registry, "wkr-live")
     assert dispatcher.dispatch_once(task_id) is falls_back
     record = runtime.get_record(task_id)
     assert record is not None
@@ -378,14 +314,14 @@ def test_stale_pinned_worker_waits_for_the_watchdog_verdict(setup: PinSetup) -> 
     assert record.attempts == 0
     registry.publish_task.assert_not_called()
 
-    _deaths(runtime).mark("wkr-live")
+    _mark_dead(registry, "wkr-live")
     assert dispatcher.dispatch_once(task_id)
     assert record.assigned_worker == "wkr-new"
 
 
 def test_stale_pinned_worker_without_watchdog_uses_the_grace(setup: PinSetup) -> None:
     runtime, dispatcher, registry = setup
-    runtime._worker_deaths = WorkerDeathMarks(enabled=False)
+    runtime._watchdog_enabled = False
     registry.is_worker_stale.side_effect = lambda wid: wid == "wkr-live"
     task_id = _register(runtime, ["wkr-live"], fallback=True, task_type="echo")
     dispatcher.dispatch_once(task_id)

@@ -15,14 +15,12 @@ from redis.exceptions import RedisError
 
 from shared.schemas.command import InterruptMessage
 from shared.tasks import TaskEnvelopeTemplate
-from shared.tasks.specs.inference import InferenceBackend, InferenceSpecTemplate
 from shared.utils import new_workflow_id
 from shared.utils.redact import redact_raw_yaml
 
 from ..hooks import SUPPLIER_RESOLVERS
 from ..registries.worker import Worker, WorkerRegistry
 from ..registries.workflow import PersistedTask, WorkflowRegistry, WorkflowSched
-from ..services.worker_deaths import WorkerDeathMarks
 from ..utils.time import parse_iso_ts
 from .models import (
     TERMINAL_TASK_STATUSES,
@@ -34,11 +32,6 @@ from .models import (
     categorize_task_type,
 )
 from .parser import parse_workflow
-from .worker_pins import (
-    WorkerPinMismatch,
-    effective_selected_worker,
-    resolve_worker_fallback,
-)
 
 REHYDRATE_LOAD_BATCH = 16
 
@@ -52,18 +45,9 @@ def _sanitize_merge_spec(spec: dict[str, Any]) -> dict[str, Any]:
     return clone
 
 
-def _uses_transformers_inference(task: TaskEnvelopeTemplate) -> bool:
-    return (
-        isinstance(task.spec, InferenceSpecTemplate)
-        and task.spec.backend() is InferenceBackend.TRANSFORMERS
-    )
-
-
 def _compute_merge_key(task: TaskEnvelopeTemplate) -> str | None:
     task_type = str(task.spec.taskType or "").strip().lower()
     if task_type not in {"inference", "rag", "diffusion"}:
-        return None
-    if _uses_transformers_inference(task):
         return None
     try:
         spec = task.spec.model_dump(mode="python", exclude_none=True)
@@ -97,13 +81,13 @@ class TaskRuntime:
         worker_registry: WorkerRegistry,
         logger: logging.Logger,
         worker_pin_fallback: bool = True,
-        worker_deaths: WorkerDeathMarks | None = None,
+        watchdog_enabled: bool = False,
     ) -> None:
         self._workflow_registry = workflow_registry
         self._worker_registry = worker_registry
         self._logger = logger
         self._worker_pin_fallback = worker_pin_fallback
-        self._worker_deaths = worker_deaths
+        self._watchdog_enabled = watchdog_enabled
         self._tasks: dict[str, TaskRecord] = {}
         self._original_deps: dict[str, set[str]] = {}
         self._pending_deps: dict[str, set[str]] = {}
@@ -206,9 +190,7 @@ class TaskRuntime:
                     load=entry.load,
                     position_in_epoch=entry.position_in_epoch,
                     selected_worker=selected_worker,
-                    allow_worker_fallback=resolve_worker_fallback(
-                        task, self._worker_pin_fallback
-                    ),
+                    allow_worker_fallback=self._resolve_worker_fallback(task),
                     task_type=task_type,
                     category=category,
                 )
@@ -370,8 +352,6 @@ class TaskRuntime:
 
         for persisted in tasks:
             record = persisted.record
-            if _uses_transformers_inference(record.task):
-                record.merge_key = None
             task_id = record.task_id
             self._tasks[task_id] = record
             self._original_deps[task_id] = set(persisted.depends_on)
@@ -765,16 +745,22 @@ class TaskRuntime:
                 self._cv.notify_all()
             return added
 
+    def _resolve_worker_fallback(self, task: TaskEnvelopeTemplate) -> bool:
+        hint = task.schedule_hint
+        if hint is None or hint.allow_worker_fallback is None:
+            return self._worker_pin_fallback
+        return hint.allow_worker_fallback
+
     def is_pinned_worker_available(self, worker_id: str) -> bool:
         """Whether a pinned worker is registered, uncordoned, and not declared dead."""
-        if self._worker_deaths is not None and self._worker_deaths.is_dead(worker_id):
+        if self._worker_registry.is_marked_dead(worker_id):
             return False
         worker = self._worker_registry.get_worker(worker_id)
         return worker is not None and not self._worker_registry.is_cordoned(worker)
 
     def resolve_pins(self, record: TaskRecord) -> list[str] | None:
         """The worker IDs a task is currently restricted to, or None if unrestricted."""
-        return effective_selected_worker(record, self.is_pinned_worker_available)
+        return record.effective_selected_worker(self.is_pinned_worker_available)
 
     def awaits_pinned_worker(self, record: TaskRecord) -> bool:
         """Whether a fallback-enabled pin should wait for the watchdog's verdict.
@@ -783,8 +769,7 @@ class TaskRuntime:
         recovers or is declared dead within the watchdog's grace, which then makes it
         unavailable.
         """
-        deaths = self._worker_deaths
-        if not record.allow_worker_fallback or deaths is None or not deaths.enabled:
+        if not record.allow_worker_fallback or not self._watchdog_enabled:
             return False
         return any(
             self.is_pinned_worker_available(wid)
@@ -811,12 +796,6 @@ class TaskRuntime:
         if self._merge_children_map.get(task_id):
             return []
         available = functools.cache(self.is_pinned_worker_available)
-        pins = effective_selected_worker(record, available)
-        if pins and assigned_worker not in pins:
-            raise WorkerPinMismatch(
-                f"The worker assigned for task {task_id} ({assigned_worker}) "
-                f"is not in selected workers {pins}."
-            )
         bucket = (
             self._merge_buckets[(record.merge_key, assigned_worker)]
             + self._merge_buckets[(record.merge_key, None)]
@@ -834,7 +813,7 @@ class TaskRuntime:
                 continue
             if assigned_worker in candidate_record.failed_workers:
                 continue
-            candidate_pins = effective_selected_worker(candidate_record, available)
+            candidate_pins = candidate_record.effective_selected_worker(available)
             if candidate_pins and assigned_worker not in candidate_pins:
                 continue
             if candidate not in self._ready_index:

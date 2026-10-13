@@ -3,7 +3,7 @@ from typing import Annotated
 from pydantic import BaseModel, Field
 
 from ._base import StrictBaseModel, TemplateBaseModel
-from .components import TaskMetadata
+from .components import ScheduleHint, TaskMetadata
 from .placeholders import PLACEHOLDER_PATTERN, placeholder_fields
 from .specs import (
     AgentSpecStrict,
@@ -117,6 +117,11 @@ class TaskEnvelopeTemplate(TemplateBaseModel):
     kind: str
     metadata: TaskMetadata | None = None
     spec: TaskSpecTemplate
+
+    @property
+    def schedule_hint(self) -> ScheduleHint | None:
+        annotations = self.metadata.annotations if self.metadata else None
+        return annotations.schedule_hint if annotations else None
 
     def has_placeholder(self) -> bool:
         def walk(value: object) -> bool:

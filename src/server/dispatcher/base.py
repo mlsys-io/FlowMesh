@@ -41,7 +41,6 @@ from ..services.metrics import MetricsRecorder
 from ..task.metadata import extract_model_dataset_names
 from ..task.models import TaskRecord, TaskStatus
 from ..task.runtime import TaskRuntime
-from ..task.worker_pins import WorkerPinMismatch
 from ..utils.time import now_iso
 from .snapshots import SnapshotCache
 from .worker_selector import DEFAULT_WORKER_SELECTION, select_worker
@@ -235,6 +234,7 @@ class Dispatcher:
         # 1. Get idle worker pool
         pool = self._worker_registry.idle_satisfying_pool(task)
 
+        # 2. Restrict the pool to the task's effective worker pin
         pins = self._runtime.resolve_pins(record)
         if pins:
             pool = [c for c in pool if c.id in pins]
@@ -245,23 +245,24 @@ class Dispatcher:
         # take the task, or every eligible worker has already failed it.
         if not pool:
             eligible = self.eligible_worker_ids(record, pins)
-            if not eligible and self._runtime.awaits_pinned_worker(record):
-                record.no_eligible_since = None
-                self.requeue_task(
-                    task_id, reason="selected_worker_unresponsive", count_retry=False
-                )
-                return False
-            if not eligible and pins:
-                return self._grace_then_fail(
-                    task_id,
-                    record,
-                    reason="selected_worker_unavailable",
-                    message=f"No selected worker ({', '.join(pins)}) can run the "
-                    "task: each is unregistered, unresponsive, cordoned, or lacks "
-                    "the required hardware or capabilities",
-                    extra_payload={"selected_worker": pins},
-                )
             if not eligible:
+                if self._runtime.awaits_pinned_worker(record):
+                    record.no_eligible_since = None
+                    self.requeue_task(
+                        task_id,
+                        reason="selected_worker_unresponsive",
+                        count_retry=False,
+                    )
+                    return False
+                if pins:
+                    return self._grace_then_fail(
+                        task_id,
+                        record,
+                        reason="selected_worker_unavailable",
+                        message=f"No selected worker ({', '.join(pins)}) can run "
+                        "the task",
+                        extra_payload={"selected_worker": pins},
+                    )
                 return self._grace_then_fail(
                     task_id,
                     record,
@@ -389,25 +390,12 @@ class Dispatcher:
             self.requeue_task(task_id, reason="no_selection")
             return False
 
-        current_pins = self._runtime.resolve_pins(record)
-        if current_pins and worker.id not in current_pins:
-            self.requeue_task(
-                task_id, reason="selected_worker_changed", count_retry=False
-            )
-            return False
-
         # Plan task merge: coalesce sibling merge candidates onto this worker
         merged_children: list[str] = []
         if self._task_merge_enabled and self._task_merge_max_batch_size > 1:
-            try:
-                merged_children = self._runtime.plan_merge(
-                    task_id, self._task_merge_max_batch_size, worker.id
-                )
-            except WorkerPinMismatch:
-                self.requeue_task(
-                    task_id, reason="selected_worker_changed", count_retry=False
-                )
-                return False
+            merged_children = self._runtime.plan_merge(
+                task_id, self._task_merge_max_batch_size, worker.id
+            )
             if merged_children:
                 self._logger.debug(
                     "Coalesced task %s with siblings %s",
