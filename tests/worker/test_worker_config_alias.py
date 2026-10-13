@@ -49,3 +49,20 @@ def test_invalid_ssh_max_disk_exits(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SSH_MAX_DISK", "lots")
     with pytest.raises(SystemExit, match="SSH_MAX_DISK"):
         WorkerConfig.from_env()
+
+
+def test_diffusion_max_images_per_call_defaults_to_four(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("WORKER_TOKEN", _external_token("gpu-box.lab"))
+    monkeypatch.delenv("WORKER_DIFFUSION_MAX_IMAGES_PER_CALL", raising=False)
+    assert WorkerConfig.from_env().diffusion_max_images_per_call == 4
+
+
+def test_non_positive_diffusion_max_images_per_call_exits(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("WORKER_TOKEN", _external_token("gpu-box.lab"))
+    monkeypatch.setenv("WORKER_DIFFUSION_MAX_IMAGES_PER_CALL", "0")
+    with pytest.raises(SystemExit, match="WORKER_DIFFUSION_MAX_IMAGES_PER_CALL"):
+        WorkerConfig.from_env()

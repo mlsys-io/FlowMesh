@@ -56,6 +56,7 @@ class WorkerConfig:
     ssh_direct_host: str | None = None
     enable_unisolated_ssh_session: bool = False
     foreign_gpu_gate: GpuGateConfig = GpuGateConfig()
+    diffusion_max_images_per_call: int = 4
 
     @staticmethod
     def from_env() -> "WorkerConfig":
@@ -171,6 +172,11 @@ class WorkerConfig:
             )
         )
         enable_ssh_gpu_limit = parse_bool_env("ENABLE_SSH_GPU_LIMIT", True)
+        diffusion_max_images_per_call = parse_int_env(
+            "WORKER_DIFFUSION_MAX_IMAGES_PER_CALL", 4
+        )
+        if diffusion_max_images_per_call <= 0:
+            raise SystemExit("WORKER_DIFFUSION_MAX_IMAGES_PER_CALL must be positive")
         ssh_session_backend = os.getenv("SSH_SESSION_BACKEND", "").strip() or "auto"
         ssh_direct_host = (
             os.getenv("SSH_DIRECT_HOST", "").strip()
@@ -218,4 +224,5 @@ class WorkerConfig:
             ssh_direct_host=ssh_direct_host,
             enable_unisolated_ssh_session=enable_unisolated_ssh_session,
             foreign_gpu_gate=foreign_gpu_gate,
+            diffusion_max_images_per_call=diffusion_max_images_per_call,
         )

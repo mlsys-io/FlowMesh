@@ -61,18 +61,20 @@ class _Member(NamedTuple):
     prompts: list[str]
 
 
-def diffusion_max_images_per_call() -> int:
-    """Images one pipeline call may denoise across merged tasks
-    (``WORKER_DIFFUSION_MAX_IMAGES_PER_CALL``, a positive integer, default 4)."""
-    raw = os.getenv("WORKER_DIFFUSION_MAX_IMAGES_PER_CALL", "").strip()
-    if not raw:
-        return 4
-    if not raw.isdecimal() or int(raw) == 0:
-        raise ExecutionError(
-            "WORKER_DIFFUSION_MAX_IMAGES_PER_CALL must be a positive integer "
-            f"(got {raw!r})."
-        )
-    return int(raw)
+def _pack_calls(members: list[_Member], num_images: int, cap: int) -> list[slice]:
+    """Image ranges of the pipeline calls: whole members, in order, packed into
+    calls of at most ``cap`` images. A member larger than ``cap`` gets a call
+    of its own."""
+    calls: list[slice] = []
+    begin = end = 0
+    for member in members:
+        count = len(member.prompts) * num_images
+        if end > begin and end + count - begin > cap:
+            calls.append(slice(begin, end))
+            begin = end
+        end += count
+    calls.append(slice(begin, end))
+    return calls
 
 
 class DiffusersExecutor(DataMixin, Executor):
@@ -289,29 +291,25 @@ class DiffusersExecutor(DataMixin, Executor):
         with self._task_span(
             task_id, task.workflow_id, out_dir, owner_id=task.owner_id
         ):
-            members, result = self._run_inner(task, spec, task_id, out_dir)
+            members = self._members(task, spec, task_id, out_dir)
+            result = self._run_inner(spec, task_id, members)
         maybe_upload_artifacts(task, out_dir, logger=logger)
         maybe_upload_traces(task, out_dir, logger=logger)
         for member in members[1:]:
             maybe_upload_artifacts(member.ref, member.out_dir, logger=logger)
         return result
 
-    def _run_inner(
+    def _members(
         self,
         task: ExecutorTask,
         spec: DiffusionSpecStrict,
         task_id: str,
         out_dir: Path,
-    ) -> tuple[list[_Member], DiffusionResult]:
-        max_images_per_call = diffusion_max_images_per_call()
-        self._ensure_pipeline(spec)
-        assert self._pipe is not None
-
-        # Merged children share the parent's model and inference settings (the
-        # merge key); only their prompts differ, so they render on the same
-        # pipeline.
-        inference_config = spec.inference or {}
-        system_prompt = inference_config.get("system_prompt")
+    ) -> list[_Member]:
+        """The task and its merged children. Children share the parent's model
+        and inference settings (the merge key); only their prompts differ, so
+        they render on the same pipeline."""
+        system_prompt = (spec.inference or {}).get("system_prompt")
         members = [
             _Member(task_id, task, spec, out_dir, self._member_prompts(spec, task_id))
         ]
@@ -333,8 +331,20 @@ class DiffusersExecutor(DataMixin, Executor):
                     self._member_prompts(child.spec, child.task_id),
                 )
             )
-        prompts = [p for member in members for p in member.prompts]
+        return members
 
+    def _run_inner(
+        self,
+        spec: DiffusionSpecStrict,
+        task_id: str,
+        members: list[_Member],
+    ) -> DiffusionResult:
+        self._ensure_pipeline(spec)
+        assert self._pipe is not None
+
+        inference_config = spec.inference or {}
+        system_prompt = inference_config.get("system_prompt")
+        prompts = [p for member in members for p in member.prompts]
         num_inference_steps = int(inference_config.get("num_inference_steps", 50))
         guidance_scale = float(inference_config.get("guidance_scale", 7.5))
         height = int(inference_config.get("height", 768))
@@ -368,23 +378,13 @@ class DiffusersExecutor(DataMixin, Executor):
         )
         logger.info("Prompts encoded.")
 
-        # Diffusers denoises the whole batch at once, so whole members are
-        # packed into calls of at most max_images_per_call images; a member
-        # larger than that gets a call of its own, as it would unmerged.
+        # Diffusers denoises the whole batch at once, so cap the images per call.
         expected_count = len(prompts) * num_images
-        batches: list[slice] = []
-        begin = end = 0
-        for member in members:
-            count = len(member.prompts) * num_images
-            if end > begin and end + count - begin > max_images_per_call:
-                batches.append(slice(begin, end))
-                begin = end
-            end += count
-        batches.append(slice(begin, end))
-
         images: list[Image.Image] = []
         logger.info(f"Running pipeline with {num_inference_steps} steps...")
-        for batch in batches:
+        for batch in _pack_calls(
+            members, num_images, self._config.diffusion_max_images_per_call
+        ):
             kwargs = {
                 "prompt_embeds": prompt_embeds[batch],
                 "negative_prompt_embeds": (
@@ -431,7 +431,7 @@ class DiffusersExecutor(DataMixin, Executor):
             },
             owners_by_task={member.task_id: member.ref.owner_id for member in members},
         )
-        return members, result
+        return result
 
     def _member_prompts(self, spec: DiffusionSpecStrict, task_id: str) -> list[str]:
         """The text prompts of one task (parent or merged child)."""

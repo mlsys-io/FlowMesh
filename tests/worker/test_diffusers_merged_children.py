@@ -1,6 +1,7 @@
 """DiffusersExecutor runs a diffusion task with its merged children: each
-task's images, uploads and asset owner, per-call image caps, and seeded
-reproducibility. Driven through the public ``run`` with a fake pipeline."""
+task's images, uploads and asset owner, call packing under the per-call image
+cap, and seeded reproducibility. Driven through the public ``run`` with a fake
+pipeline."""
 
 import importlib.util
 import json
@@ -16,10 +17,10 @@ from shared.tasks import MergedChildTaskStrict
 from shared.tasks.components.model import ModelConfig, ModelSource
 from shared.tasks.specs import DiffusionSpecStrict, EchoSpecStrict
 from shared.tasks.task_type import TaskType
-from tests.worker.factories import DEFAULT_WORKER_CONFIG, make_worker_task_message
+from tests.worker.factories import make_worker_config, make_worker_task_message
 from worker.executors import diffusers_executor as mod
 from worker.executors.base_executor import ExecutionError, RunControl
-from worker.executors.diffusers_executor import DiffusersExecutor
+from worker.executors.diffusers_executor import DiffusersExecutor, _Member, _pack_calls
 
 pytestmark = pytest.mark.skipif(
     importlib.util.find_spec("torch") is None, reason="torch not installed"
@@ -69,10 +70,13 @@ def _child(task_id: str, items: list[str], **inference: Any) -> MergedChildTaskS
     )
 
 
-def _executor(monkeypatch: pytest.MonkeyPatch, pipe: _FakePipe) -> DiffusersExecutor:
-    """An executor on ``pipe`` whose encoder yields each prompt once per
-    image, grouped per prompt like the real one."""
-    executor = DiffusersExecutor(DEFAULT_WORKER_CONFIG)
+def _executor(
+    monkeypatch: pytest.MonkeyPatch, pipe: _FakePipe, cap: int = 4
+) -> DiffusersExecutor:
+    """An executor on ``pipe``, with at most ``cap`` images per call, whose
+    encoder yields each prompt once per image, grouped per prompt like the
+    real one."""
+    executor = DiffusersExecutor(make_worker_config(diffusion_max_images_per_call=cap))
     executor._pipe = pipe
     executor._model_name = "org/sd"
     executor._device = "cpu"
@@ -152,8 +156,7 @@ def test_merged_children_split_images_per_prompt(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     pipe = _FakePipe()
-    executor = _executor(monkeypatch, pipe)
-    monkeypatch.setenv("WORKER_DIFFUSION_MAX_IMAGES_PER_CALL", "8")
+    executor = _executor(monkeypatch, pipe, cap=8)
     monkeypatch.setattr(mod, "maybe_upload_artifacts", lambda *a, **k: [])
     task = make_worker_task_message(
         _spec(["p"], num_images_per_prompt=2),
@@ -173,8 +176,7 @@ def test_merged_tasks_are_packed_whole_under_the_per_call_cap(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     pipe = _FakePipe()
-    executor = _executor(monkeypatch, pipe)
-    monkeypatch.setenv("WORKER_DIFFUSION_MAX_IMAGES_PER_CALL", "2")
+    executor = _executor(monkeypatch, pipe, cap=2)
     monkeypatch.setattr(mod, "maybe_upload_artifacts", lambda *a, **k: [])
     task = make_worker_task_message(
         _spec(["p"]),
@@ -200,8 +202,7 @@ def test_task_larger_than_the_cap_runs_in_one_call(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     pipe = _FakePipe()
-    executor = _executor(monkeypatch, pipe)
-    monkeypatch.setenv("WORKER_DIFFUSION_MAX_IMAGES_PER_CALL", "1")
+    executor = _executor(monkeypatch, pipe, cap=1)
     monkeypatch.setattr(mod, "maybe_upload_artifacts", lambda *a, **k: [])
     task = make_worker_task_message(
         _spec(["x", "y", "z"]), task_type=TaskType.DIFFUSION, task_id="tsk-solo"
@@ -212,32 +213,40 @@ def test_task_larger_than_the_cap_runs_in_one_call(
     assert pipe.calls == [["x", "y", "z"]]
 
 
-@pytest.mark.parametrize("value", ["0", "-1", "2.5", "true"])
-def test_invalid_per_call_cap_fails(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, value: str
+def _member(task_id: str, prompts: list[str]) -> _Member:
+    child = _child(task_id, prompts)
+    return _Member(task_id, child, _spec(prompts), Path(task_id), prompts)
+
+
+@pytest.mark.parametrize(
+    ("sizes", "num_images", "cap", "expected"),
+    [
+        ([1, 1, 1], 1, 4, [(0, 3)]),
+        ([1, 2, 1, 1], 1, 2, [(0, 1), (1, 3), (3, 5)]),
+        ([1, 3, 1], 1, 2, [(0, 1), (1, 4), (4, 5)]),
+        ([1, 2], 2, 4, [(0, 2), (2, 6)]),
+        ([3], 1, 1, [(0, 3)]),
+    ],
+)
+def test_pack_calls_keeps_members_whole(
+    sizes: list[int], num_images: int, cap: int, expected: list[tuple[int, int]]
 ) -> None:
-    pipe = _FakePipe()
-    executor = _executor(monkeypatch, pipe)
-    monkeypatch.setenv("WORKER_DIFFUSION_MAX_IMAGES_PER_CALL", value)
-    task = make_worker_task_message(
-        _spec(["p"]), task_type=TaskType.DIFFUSION, task_id="tsk-solo"
-    )
-    with pytest.raises(ExecutionError, match="WORKER_DIFFUSION_MAX_IMAGES_PER_CALL"):
-        executor.run(task, tmp_path / "tsk-solo", RunControl(task.task_id))
-    assert pipe.calls == []
+    members = [_member(f"tsk-{i}", ["p"] * n) for i, n in enumerate(sizes)]
+    calls = _pack_calls(members, num_images, cap)
+    assert [(call.start, call.stop) for call in calls] == expected
 
 
+@pytest.mark.parametrize(("cap", "calls"), [(2, 2), (6, 1)])
 def test_seeded_task_renders_the_same_merged_or_alone(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cap: int, calls: int
 ) -> None:
     monkeypatch.setattr(mod, "maybe_upload_artifacts", lambda *a, **k: [])
-    monkeypatch.setenv("WORKER_DIFFUSION_MAX_IMAGES_PER_CALL", "2")
     alone = make_worker_task_message(
         _spec(["x"], seed=7, num_images_per_prompt=2),
         task_type=TaskType.DIFFUSION,
         task_id="tsk-alone",
     )
-    _executor(monkeypatch, _FakePipe()).run(
+    _executor(monkeypatch, _FakePipe(), cap=cap).run(
         alone, tmp_path / "tsk-alone", RunControl(alone.task_id)
     )
     merged = make_worker_task_message(
@@ -247,11 +256,11 @@ def test_seeded_task_renders_the_same_merged_or_alone(
         merged_children=[_child("tsk-c1", ["x"], seed=7, num_images_per_prompt=2)],
     )
     pipe = _FakePipe()
-    _executor(monkeypatch, pipe).run(
+    _executor(monkeypatch, pipe, cap=cap).run(
         merged, tmp_path / "tsk-parent", RunControl(merged.task_id)
     )
 
-    assert len(pipe.calls) == 2
+    assert len(pipe.calls) == calls
     assert _shades(tmp_path / "tsk-c1") == _shades(tmp_path / "tsk-alone")
 
 
