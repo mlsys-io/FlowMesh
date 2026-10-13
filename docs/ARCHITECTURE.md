@@ -74,13 +74,13 @@ executor errors are not retried. A task that no worker can satisfy fails
 after `TASK_NO_WORKER_GRACE_SEC`.
 
 `metadata.annotations.schedule_hint.selected_worker` restricts a task to the
-named worker IDs, including standalone tasks. While any pinned worker is
-registered and not declared dead by the watchdog, the pin is strict, even when
-that worker is busy or cordoned. Once none remains, another suitable worker may
-run the task if fallback is enabled: by the hint's `allow_worker_fallback`, or
-otherwise by `TASK_WORKER_PIN_FALLBACK` (default `true`). A pinned worker whose
-heartbeat has expired holds a fallback-enabled task until the watchdog declares
-it dead or sees it recover. The policy is fixed at submission. Dispatch and task
+named worker IDs, including standalone tasks. If fallback is enabled — by the
+hint's `allow_worker_fallback`, or otherwise by `TASK_WORKER_PIN_FALLBACK`
+(default `true`) — another suitable worker may run the task once no pinned
+worker remains registered, uncordoned, and not declared dead by the watchdog;
+until then, and always without fallback, the pin is strict even when that worker
+is busy. A remaining pinned worker whose heartbeat has expired holds a
+fallback-enabled task until the watchdog declares it dead or sees it recover. The policy is fixed at submission. Dispatch and task
 merging enforce it, and the original pin remains in the task record across
 retries and server restarts. See [`WORKFLOWS.md`](WORKFLOWS.md#schedule-hints)
 for the hint format.
@@ -246,7 +246,8 @@ scripts/dev/            compile_protos, sync_requirements, check_env_examples
   GPU.
 - **Worker cordon.** A cordoned worker keeps running and finishes what it was
   already dispatched, but is left out of both the idle pool and the eligibility
-  set, so tasks neither go to it nor wait for it. The cordon is keyed on
+  set, so tasks neither go to it nor wait for it; a fallback-enabled task
+  pinned only to cordoned workers runs elsewhere. The cordon is keyed on
   `(node_alias, alias)` and lasts until it is uncordoned, independent of any
   worker's lifecycle, so it also applies to a worker that registers under the
   key later.

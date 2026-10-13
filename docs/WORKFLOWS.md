@@ -294,19 +294,21 @@ Workflows can declare scheduling preferences via
   decides (`true` by default). Set `false` when the task must run on the
   selected worker.
 
-A selected worker remains while it is registered and the worker watchdog has
-not declared it dead. While any selected worker remains, the pin is strict: a
-busy selected worker is waited for, and a pin that no remaining worker can
-satisfy fails after `TASK_NO_WORKER_GRACE_SEC` with reason
-`selected_worker_unavailable`. A cordoned selected worker still remains, so its
-pin waits or fails rather than falling back. With fallback enabled, a selected
-worker whose heartbeat has expired holds the task until the watchdog either sees
-it recover or declares it dead, which takes `WORKER_DEATH_GRACE_SEC` (or
-`WORKER_REHYDRATION_GRACE_SEC` for a worker with tasks in flight across a server
-restart) from when the running server first sees the expired heartbeat; the
-no-worker grace does not run meanwhile. With the watchdog disabled, a selected
-worker remains until its record is removed. A restarted worker may register
-under a new ID; fallback does not resolve an old ID by alias.
+Without fallback, the pin is strict: a busy selected worker is waited for, and
+a pin that no selected worker can satisfy fails after `TASK_NO_WORKER_GRACE_SEC`
+with reason `selected_worker_unavailable`. With fallback, the pin stays strict
+in the same way while any selected worker remains, and relaxes once none does.
+A selected worker remains while it is registered, not cordoned, and not
+declared dead by the worker watchdog, so cordoning a worker to drain it moves
+its fallback-enabled pinned tasks elsewhere; uncordoning it restores the pin
+for tasks still waiting. A remaining selected worker whose heartbeat has
+expired holds the task until the watchdog either sees it recover or declares it
+dead, which takes `WORKER_DEATH_GRACE_SEC` (or `WORKER_REHYDRATION_GRACE_SEC`
+for a worker with tasks in flight across a server restart) from when the
+running server first sees the expired heartbeat; the no-worker grace does not
+run meanwhile. With the watchdog disabled, only unregistering or cordoning a
+selected worker makes it gone. A restarted worker may register under a new ID;
+fallback does not resolve an old ID by alias.
 
 Fallback picks among all workers that satisfy the task's hardware,
 capabilities, cordons, and failed-worker retry exclusions.
