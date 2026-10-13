@@ -38,10 +38,6 @@ package. The base class carries two cross-cutting fields:
 - `artifacts: ArtifactContext | None` (wire key `_artifacts`) —
   resolution context for relative artifact refs.
 
-A merged child gets its own result only from an executor that writes it into
-`result.children`, as the vLLM inference executor does. The server never merges
-inference tasks that explicitly select Transformers.
-
 Each subclass declares its exact fields (typed nested payloads) and tags itself
 with a `task_type` discriminator — e.g. `InferenceResult`, `LoRAResult`,
 `AgentResult`, `SSHResult`. The `AnyExecutorResult` discriminated union in

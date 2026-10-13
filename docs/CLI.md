@@ -234,14 +234,11 @@ Migration: the former `flowmesh stack purge <version>` (pre-v0.2.0) is replaced 
 
 ## SSH tasks
 
-When submitting an SSH session or command, `--worker <worker_id>` restricts it
-to that worker and disables
-[worker fallback](WORKFLOWS.md#schedule-hints): the command is never sent to
-another worker. A pinned worker that cannot take it fails the task after the
-no-worker grace.
-
 ```bash
 flowmesh ssh connect <tsk-id>          # interactive shell into an SSH task
 flowmesh ssh run <tsk-id> -- <cmd>     # one-shot exec
 flowmesh ssh connections               # list active proxy/forward connections
 ```
+
+A task submitted with `--worker` runs only on that worker, without
+[fallback](WORKFLOWS.md#schedule-hints).

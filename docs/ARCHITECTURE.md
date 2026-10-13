@@ -73,18 +73,6 @@ reached; the terminal error is the executor's own message. Controlled
 executor errors are not retried. A task that no worker can satisfy fails
 after `TASK_NO_WORKER_GRACE_SEC`.
 
-`metadata.annotations.schedule_hint.selected_worker` restricts a task to the
-named worker IDs, including standalone tasks. If fallback is enabled — by the
-hint's `allow_worker_fallback`, or otherwise by `TASK_WORKER_PIN_FALLBACK`
-(default `true`) — another suitable worker may run the task once no pinned
-worker remains registered, uncordoned, and not declared dead by the watchdog;
-until then, and always without fallback, the pin is strict even when that worker
-is busy. A remaining pinned worker whose heartbeat has expired holds a
-fallback-enabled task until the watchdog declares it dead or sees it recover. The policy is fixed at submission. Dispatch and task
-merging enforce it, and the original pin remains in the task record across
-retries and server restarts. See [`WORKFLOWS.md`](WORKFLOWS.md#schedule-hints)
-for the hint format.
-
 ## Directory map
 
 ```
@@ -128,10 +116,8 @@ scripts/dev/            compile_protos, sync_requirements, check_env_examples
 
 - **Task merging.** Compatible adjacent tasks in a DAG (same `taskType`,
   model, hardware shape, and merge key) coalesce into a single dispatch.
-  Inference tasks that explicitly select Transformers dispatch individually.
-  Merged children ride on `WorkerTaskMessage.merged_children`; an executor
-  that supports merging writes per-child results into `result.children`
-  (see [`EXECUTORS.md`](EXECUTORS.md)); the dispatcher fans
+  Merged children ride on `WorkerTaskMessage.merged_children`; the worker
+  writes per-child results into `result.children`; the dispatcher fans
   out synthetic `TASK_SUCCEEDED` / `TASK_FAILED` events. Disable with
   `ENABLE_TASK_MERGE=false`. When only some children of a batch fail, they
   fail individually with their dependents and the parent dispatches with its
@@ -244,10 +230,15 @@ scripts/dev/            compile_protos, sync_requirements, check_env_examples
   set `CUDA_DEVICE_ORDER=PCI_BUS_ID` on a host with mixed GPU models. A MIG
   slice reports its own memory and is probed on its own, under the UUID of its
   GPU.
+- **Worker pins.** `schedule_hint.selected_worker` restricts a task to the
+  listed worker IDs. A pinned worker is available while it is registered, not
+  cordoned, and not declared dead by the watchdog. The task waits while any
+  pinned worker is available; once none is, it runs on another suitable worker
+  if it allows fallback, and otherwise fails after `TASK_NO_WORKER_GRACE_SEC`.
+  See [`WORKFLOWS.md`](WORKFLOWS.md#schedule-hints) for the hint format.
 - **Worker cordon.** A cordoned worker keeps running and finishes what it was
   already dispatched, but is left out of both the idle pool and the eligibility
-  set, so tasks neither go to it nor wait for it; a fallback-enabled task
-  pinned only to cordoned workers runs elsewhere. The cordon is keyed on
+  set, so tasks neither go to it nor wait for it. The cordon is keyed on
   `(node_alias, alias)` and lasts until it is uncordoned, independent of any
   worker's lifecycle, so it also applies to a worker that registers under the
   key later.

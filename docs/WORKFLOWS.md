@@ -289,29 +289,17 @@ Workflows can declare scheduling preferences via
   global list. For a standalone task, the name is `metadata.name`, or `task`
   when no name is supplied. Unknown names in `selected` are rejected.
 - `allow_worker_fallback: true|false` — whether another suitable worker may
-  run a pinned task once none of its selected workers remains. Applies to all
-  tasks in the workflow. When omitted, the server's `TASK_WORKER_PIN_FALLBACK`
-  decides (`true` by default). Set `false` when the task must run on the
-  selected worker.
+  run a pinned task once none of its selected workers is available. Applies to
+  all tasks in the workflow. When omitted, the server's
+  `TASK_WORKER_PIN_FALLBACK` decides (`true` by default). Set `false` when the
+  task must run on the selected worker.
 
-Without fallback, the pin is strict: a busy selected worker is waited for, and
-a pin that no selected worker can satisfy fails after `TASK_NO_WORKER_GRACE_SEC`
-with reason `selected_worker_unavailable`. With fallback, the pin stays strict
-in the same way while any selected worker remains, and relaxes once none does.
-A selected worker remains while it is registered, not cordoned, and not
-declared dead by the worker watchdog, so cordoning a worker to drain it moves
-its fallback-enabled pinned tasks elsewhere; uncordoning it restores the pin
-for tasks still waiting. A remaining selected worker whose heartbeat has
-expired holds the task until the watchdog either sees it recover or declares it
-dead, which takes `WORKER_DEATH_GRACE_SEC` (or `WORKER_REHYDRATION_GRACE_SEC`
-for a worker with tasks in flight across a server restart) from when the
-running server first sees the expired heartbeat; the no-worker grace does not
-run meanwhile. With the watchdog disabled, only unregistering or cordoning a
-selected worker makes it gone. A restarted worker may register under a new ID;
-fallback does not resolve an old ID by alias.
-
-Fallback picks among all workers that satisfy the task's hardware,
-capabilities, cordons, and failed-worker retry exclusions.
+A pinned task waits while a selected worker is busy. Once none of its selected
+workers is available (removed, cordoned, or found dead), a task that allows
+fallback runs on another suitable worker. Otherwise, a task that no selected
+worker can run fails after `TASK_NO_WORKER_GRACE_SEC`. A restarted worker gets
+a new ID, so a pin does not follow it. See [`ARCHITECTURE.md`](ARCHITECTURE.md#key-runtime-behavior) for
+how availability is decided.
 
 ```yaml
 metadata:
@@ -323,7 +311,3 @@ metadata:
           evaluate: [wkr-9, wkr-10]
       allow_worker_fallback: true
 ```
-
-The dispatcher and merged-task planner use the same effective pin. The fallback
-policy is fixed when the workflow is submitted; the requested IDs and the policy
-survive retries and server restarts.
