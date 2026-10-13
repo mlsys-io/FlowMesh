@@ -55,7 +55,12 @@ def setup(tmp_path: Path) -> PinSetup:
         node_id="nde-1",
         node_alias="test-node",
     )
-    registry.worker_exists.side_effect = lambda wid: wid in {"wkr-new", "wkr-live"}
+    registry.get_worker.side_effect = lambda wid: (
+        worker.model_copy(update={"id": wid})
+        if wid in {"wkr-new", "wkr-live"}
+        else None
+    )
+    registry.is_cordoned.return_value = False
     registry.is_worker_stale.return_value = False
     registry.idle_satisfying_pool.return_value = [worker]
     registry.satisfying_workers.return_value = [worker]
@@ -189,7 +194,13 @@ def test_pin_registration_race_requeues_without_spending_attempts(
     runtime, dispatcher, registry = setup
     dispatcher._task_merge_enabled = merge
     task_id = _register(runtime, ["wkr-old"], fallback=True)
-    registry.worker_exists.side_effect = exists
+    lookup = registry.get_worker.side_effect
+    replies = iter(exists)
+    registry.get_worker.side_effect = lambda wid: (
+        (lookup("wkr-new") if next(replies) else None)
+        if wid == "wkr-old"
+        else lookup(wid)
+    )
     assert dispatcher.dispatch_once(task_id) is False
     record = runtime.get_record(task_id)
     assert record is not None
@@ -387,9 +398,9 @@ def test_plan_merge_checks_each_pinned_worker_once(setup: PinSetup) -> None:
     runtime, _, registry = setup
     parent = _register(runtime, ["wkr-old"], fallback=True)
     children = [_register(runtime, ["wkr-old"], fallback=True) for _ in range(3)]
-    registry.worker_exists.reset_mock()
+    registry.get_worker.reset_mock()
     assert runtime.plan_merge(parent, 4, "wkr-new") == children
-    assert registry.worker_exists.call_count == 1
+    assert [c.args for c in registry.get_worker.call_args_list] == [("wkr-old",)]
 
 
 def test_fallback_is_logged_once_per_dispatch(
@@ -407,3 +418,40 @@ def test_fallback_is_logged_once_per_dispatch(
     fallback_logs = [r for r in caplog.records if "wkr-old" in r.getMessage()]
     assert len(fallback_logs) == 1
     assert fallback_logs[0].levelno == logging.INFO
+
+
+@pytest.mark.parametrize(("fallback", "falls_back"), [(True, True), (False, False)])
+def test_cordoned_pinned_worker_relaxes_only_an_opted_in_pin(
+    setup: PinSetup, fallback: bool, falls_back: bool
+) -> None:
+    runtime, dispatcher, registry = setup
+    registry.is_cordoned.side_effect = lambda worker: worker.id == "wkr-live"
+    task_id = _register(runtime, ["wkr-live"], fallback=fallback, task_type="echo")
+    assert dispatcher.dispatch_once(task_id) is falls_back
+    record = runtime.get_record(task_id)
+    assert record is not None
+    if falls_back:
+        assert record.assigned_worker == "wkr-new"
+        assert record.selected_worker == ["wkr-live"]
+    else:
+        assert record.status == TaskStatus.FAILED
+        registry.publish_task.assert_not_called()
+
+
+def test_uncordoning_a_pinned_worker_restores_the_pin(setup: PinSetup) -> None:
+    runtime, _, registry = setup
+    record = runtime.get_record(_register(runtime, ["wkr-live"], fallback=True))
+    assert record is not None
+    registry.is_cordoned.return_value = True
+    assert runtime.resolve_pins(record) is None
+    registry.is_cordoned.return_value = False
+    assert runtime.resolve_pins(record) == ["wkr-live"]
+
+
+def test_cordoned_stale_pinned_worker_does_not_hold_the_task(setup: PinSetup) -> None:
+    runtime, _, registry = setup
+    registry.is_cordoned.return_value = True
+    registry.is_worker_stale.return_value = True
+    record = runtime.get_record(_register(runtime, ["wkr-live"], fallback=True))
+    assert record is not None
+    assert not runtime.awaits_pinned_worker(record)

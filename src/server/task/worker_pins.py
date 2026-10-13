@@ -19,12 +19,12 @@ def resolve_worker_fallback(task: TaskEnvelopeTemplate, default: bool) -> bool:
 
 
 def effective_selected_worker(
-    record: TaskRecord, is_present: Callable[[str], bool]
+    record: TaskRecord, is_available: Callable[[str], bool]
 ) -> list[str] | None:
-    """Resolve a worker pin, relaxing a fallback-enabled pin once no ID is present."""
+    """Resolve a worker pin, relaxing a fallback-enabled pin once no ID is available."""
     pins = record.selected_worker
     if not pins:
         return None
-    if not record.allow_worker_fallback or any(is_present(wid) for wid in pins):
+    if not record.allow_worker_fallback or any(is_available(wid) for wid in pins):
         return list(pins)
     return None

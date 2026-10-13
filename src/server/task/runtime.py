@@ -765,29 +765,29 @@ class TaskRuntime:
                 self._cv.notify_all()
             return added
 
-    def is_pinned_worker_present(self, worker_id: str) -> bool:
-        """Whether a pinned worker is registered and not declared dead."""
+    def is_pinned_worker_available(self, worker_id: str) -> bool:
+        """Whether a pinned worker is registered, uncordoned, and not declared dead."""
         if self._worker_deaths is not None and self._worker_deaths.is_dead(worker_id):
             return False
-        return self._worker_registry.worker_exists(worker_id)
+        worker = self._worker_registry.get_worker(worker_id)
+        return worker is not None and not self._worker_registry.is_cordoned(worker)
 
     def resolve_pins(self, record: TaskRecord) -> list[str] | None:
         """The worker IDs a task is currently restricted to, or None if unrestricted."""
-        return effective_selected_worker(record, self.is_pinned_worker_present)
+        return effective_selected_worker(record, self.is_pinned_worker_available)
 
     def awaits_pinned_worker(self, record: TaskRecord) -> bool:
         """Whether a fallback-enabled pin should wait for the watchdog's verdict.
 
-        True while some pinned worker is registered and has an expired heartbeat but
-        is not yet declared dead: it either recovers or is declared dead within the
-        watchdog's grace, which then relaxes the pin.
+        True while some available pinned worker has an expired heartbeat: it either
+        recovers or is declared dead within the watchdog's grace, which then makes it
+        unavailable.
         """
         deaths = self._worker_deaths
         if not record.allow_worker_fallback or deaths is None or not deaths.enabled:
             return False
         return any(
-            not deaths.is_dead(wid)
-            and self._worker_registry.worker_exists(wid)
+            self.is_pinned_worker_available(wid)
             and self._worker_registry.is_worker_stale(wid)
             for wid in record.selected_worker or []
         )
@@ -810,8 +810,8 @@ class TaskRuntime:
             return []
         if self._merge_children_map.get(task_id):
             return []
-        present = functools.cache(self.is_pinned_worker_present)
-        pins = effective_selected_worker(record, present)
+        available = functools.cache(self.is_pinned_worker_available)
+        pins = effective_selected_worker(record, available)
         if pins and assigned_worker not in pins:
             raise WorkerPinMismatch(
                 f"The worker assigned for task {task_id} ({assigned_worker}) "
@@ -834,7 +834,7 @@ class TaskRuntime:
                 continue
             if assigned_worker in candidate_record.failed_workers:
                 continue
-            candidate_pins = effective_selected_worker(candidate_record, present)
+            candidate_pins = effective_selected_worker(candidate_record, available)
             if candidate_pins and assigned_worker not in candidate_pins:
                 continue
             if candidate not in self._ready_index:

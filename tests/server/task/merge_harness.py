@@ -56,8 +56,8 @@ class CapturingWorkflowRegistry:
 
 
 class WorkerRegistryStub:
-    def worker_exists(self, worker_id: str) -> bool:
-        return True
+    def is_cordoned(self, worker: Any) -> bool:
+        return False
 
     def get_worker(self, worker_id: str) -> Any:
         return {"id": worker_id, "node_id": "nde-1"}
