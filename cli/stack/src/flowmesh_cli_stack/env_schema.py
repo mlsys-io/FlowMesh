@@ -468,6 +468,7 @@ STACK_ENV_SCHEMA = EnvSchema(
                     var_type=EnvVarType.INT,
                     min_value=0,
                 ),
+                EnvVar("TASK_WORKER_PIN_FALLBACK", "true", var_type=EnvVarType.BOOL),
                 EnvVar(
                     "TASK_STAGE_RESULT_GRACE_SEC",
                     "120",

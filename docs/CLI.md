@@ -239,3 +239,6 @@ flowmesh ssh connect <tsk-id>          # interactive shell into an SSH task
 flowmesh ssh run <tsk-id> -- <cmd>     # one-shot exec
 flowmesh ssh connections               # list active proxy/forward connections
 ```
+
+A task submitted with `--worker` runs only on that worker, without
+[fallback](WORKFLOWS.md#schedule-hints).

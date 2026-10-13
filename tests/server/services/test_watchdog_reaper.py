@@ -11,10 +11,20 @@ from unittest.mock import MagicMock
 from server.services.watchdog import WorkerWatchdog, _WatchdogState
 
 
+def _marking_registry() -> Any:
+    registry: Any = MagicMock()
+    marks: set[str] = set()
+    registry.mark_dead.side_effect = marks.add
+    registry.clear_dead_mark.side_effect = marks.discard
+    registry.is_marked_dead.side_effect = marks.__contains__
+    registry.dead_marks.side_effect = lambda: set(marks)
+    return registry
+
+
 def _watchdog(**kwargs) -> Any:
     defaults: dict[str, Any] = dict(
         redis_client=MagicMock(),
-        worker_registry=MagicMock(),
+        worker_registry=_marking_registry(),
         runtime=MagicMock(),
         dispatcher=MagicMock(),
         logger=logging.getLogger("test-watchdog"),
@@ -30,7 +40,7 @@ def _watchdog(**kwargs) -> Any:
 
 
 def _stale_registry(worker_ids: set[str]) -> Any:
-    registry: Any = MagicMock()
+    registry = _marking_registry()
     registry.get_worker_ids.return_value = worker_ids
     registry.is_worker_stale.return_value = True
     return registry

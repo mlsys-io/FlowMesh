@@ -278,8 +278,36 @@ data:
 Workflows can declare scheduling preferences via
 `metadata.annotations.schedule_hint`:
 
-- `epoch_groups: [[<task_name>, ...], ...]` — epoch-ordered execution;
+- `node_execution_order: [[<task_name>, ...], ...]` — epoch-ordered execution;
   tasks in epoch `n` only dispatch after every task in epoch `n-1`
   succeeds.
-- `schedule_in_epoch_order: true` — for dependent DAGs, prefer
+- `node_schedule_in_epoch_order: true` — for dependent DAGs, prefer
   position-in-epoch tie-breaks during dispatch.
+- `selected_worker: <worker_id>` or `[<worker_id>, ...]` — restrict all tasks to
+  those worker IDs. A mapping supports `global: [<worker_id>, ...]` and
+  `selected: {<task_name>: <worker_id-or-list>}`; per-task entries override the
+  global list. For a standalone task, the name is `metadata.name`, or `task`
+  when no name is supplied. Unknown names in `selected` are rejected.
+- `allow_worker_fallback: true|false` — whether another suitable worker may
+  run a pinned task once none of its selected workers is available. Applies to
+  all tasks in the workflow. When omitted, the server's
+  `TASK_WORKER_PIN_FALLBACK` decides (`true` by default). Set `false` when the
+  task must run on the selected worker.
+
+A pinned task waits while a selected worker is busy. Once none of its selected
+workers is available (removed, cordoned, or found dead), a task that allows
+fallback runs on another suitable worker. Otherwise, a task that no selected
+worker can run fails after `TASK_NO_WORKER_GRACE_SEC`. A restarted worker gets
+a new ID, so a pin does not follow it. See [`ARCHITECTURE.md`](ARCHITECTURE.md#key-runtime-behavior) for
+how availability is decided.
+
+```yaml
+metadata:
+  annotations:
+    schedule_hint:
+      selected_worker:
+        global: [wkr-8]
+        selected:
+          evaluate: [wkr-9, wkr-10]
+      allow_worker_fallback: true
+```

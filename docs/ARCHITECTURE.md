@@ -230,6 +230,12 @@ scripts/dev/            compile_protos, sync_requirements, check_env_examples
   set `CUDA_DEVICE_ORDER=PCI_BUS_ID` on a host with mixed GPU models. A MIG
   slice reports its own memory and is probed on its own, under the UUID of its
   GPU.
+- **Worker pins.** `schedule_hint.selected_worker` restricts a task to the
+  listed worker IDs. A pinned worker is available while it is registered, not
+  cordoned, and not declared dead by the watchdog. The task waits while any
+  pinned worker is available; once none is, it runs on another suitable worker
+  if it allows fallback, and otherwise fails after `TASK_NO_WORKER_GRACE_SEC`.
+  See [`WORKFLOWS.md`](WORKFLOWS.md#schedule-hints) for the hint format.
 - **Worker cordon.** A cordoned worker keeps running and finishes what it was
   already dispatched, but is left out of both the idle pool and the eligibility
   set, so tasks neither go to it nor wait for it. The cordon is keyed on

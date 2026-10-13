@@ -1,5 +1,6 @@
 import asyncio
 import copy
+import functools
 import heapq
 import json
 import logging
@@ -56,6 +57,21 @@ def _compute_merge_key(task: TaskEnvelopeTemplate) -> str | None:
         return None
 
 
+def _merge_index_key(record: TaskRecord) -> tuple[str | None, str | None]:
+    """Merge bucket for a task: a strict single-worker pin gets that worker's bucket.
+
+    A fallback-enabled pin uses the general bucket so the task stays discoverable
+    after its pinned worker disappears.
+    """
+    pins = record.selected_worker
+    pinned_worker = (
+        pins[0]
+        if pins and len(pins) == 1 and not record.allow_worker_fallback
+        else None
+    )
+    return record.merge_key, pinned_worker
+
+
 class TaskRuntime:
     """In-memory task registry with FIFO-ready queue and dependency tracking."""
 
@@ -64,10 +80,14 @@ class TaskRuntime:
         workflow_registry: WorkflowRegistry,
         worker_registry: WorkerRegistry,
         logger: logging.Logger,
+        worker_pin_fallback: bool = True,
+        watchdog_enabled: bool = False,
     ) -> None:
         self._workflow_registry = workflow_registry
         self._worker_registry = worker_registry
         self._logger = logger
+        self._worker_pin_fallback = worker_pin_fallback
+        self._watchdog_enabled = watchdog_enabled
         self._tasks: dict[str, TaskRecord] = {}
         self._original_deps: dict[str, set[str]] = {}
         self._pending_deps: dict[str, set[str]] = {}
@@ -170,19 +190,14 @@ class TaskRuntime:
                     load=entry.load,
                     position_in_epoch=entry.position_in_epoch,
                     selected_worker=selected_worker,
+                    allow_worker_fallback=self._resolve_worker_fallback(task),
                     task_type=task_type,
                     category=category,
                 )
                 task_records.append(record)
                 record.last_queue_ts = record.submitted_ts
-                merge_key = _compute_merge_key(task)
-                record.merge_key = merge_key
-                selected_worker_hint = (
-                    record.selected_worker[0]
-                    if record.selected_worker and len(record.selected_worker) == 1
-                    else None
-                )
-                self._merge_key_by_task[task_id] = (merge_key, selected_worker_hint)
+                record.merge_key = _compute_merge_key(task)
+                self._merge_key_by_task[task_id] = _merge_index_key(record)
 
                 self._tasks[task_id] = record
                 if record.graph_node_name:
@@ -340,12 +355,7 @@ class TaskRuntime:
             task_id = record.task_id
             self._tasks[task_id] = record
             self._original_deps[task_id] = set(persisted.depends_on)
-            selected_worker_hint = (
-                record.selected_worker[0]
-                if record.selected_worker and len(record.selected_worker) == 1
-                else None
-            )
-            self._merge_key_by_task[task_id] = (record.merge_key, selected_worker_hint)
+            self._merge_key_by_task[task_id] = _merge_index_key(record)
             if persisted.epoch_index is not None:
                 self._task_epoch_index[task_id] = persisted.epoch_index
                 epoch_members[persisted.epoch_index].add(task_id)
@@ -735,6 +745,38 @@ class TaskRuntime:
                 self._cv.notify_all()
             return added
 
+    def _resolve_worker_fallback(self, task: TaskEnvelopeTemplate) -> bool:
+        hint = task.schedule_hint
+        if hint is None or hint.allow_worker_fallback is None:
+            return self._worker_pin_fallback
+        return hint.allow_worker_fallback
+
+    def is_pinned_worker_available(self, worker_id: str) -> bool:
+        """Whether a pinned worker is registered, uncordoned, and not declared dead."""
+        if self._worker_registry.is_marked_dead(worker_id):
+            return False
+        worker = self._worker_registry.get_worker(worker_id)
+        return worker is not None and not self._worker_registry.is_cordoned(worker)
+
+    def resolve_pins(self, record: TaskRecord) -> list[str] | None:
+        """The worker IDs a task is currently restricted to, or None if unrestricted."""
+        return record.effective_selected_worker(self.is_pinned_worker_available)
+
+    def awaits_pinned_worker(self, record: TaskRecord) -> bool:
+        """Whether a fallback-enabled pin should wait for the watchdog's verdict.
+
+        True while some available pinned worker has an expired heartbeat: it either
+        recovers or is declared dead within the watchdog's grace, which then makes it
+        unavailable.
+        """
+        if not record.allow_worker_fallback or not self._watchdog_enabled:
+            return False
+        return any(
+            self.is_pinned_worker_available(wid)
+            and self._worker_registry.is_worker_stale(wid)
+            for wid in record.selected_worker or []
+        )
+
     def plan_merge(
         self, task_id: str, max_batch_size: int, assigned_worker: str
     ) -> list[str]:
@@ -753,11 +795,7 @@ class TaskRuntime:
             return []
         if self._merge_children_map.get(task_id):
             return []
-        if record.selected_worker and assigned_worker not in record.selected_worker:
-            raise ValueError(
-                f"The worker assigned for task {task_id} ({assigned_worker}) "
-                f"is not in selected workers {record.selected_worker}."
-            )
+        available = functools.cache(self.is_pinned_worker_available)
         bucket = (
             self._merge_buckets[(record.merge_key, assigned_worker)]
             + self._merge_buckets[(record.merge_key, None)]
@@ -773,10 +811,10 @@ class TaskRuntime:
             candidate_record = self._tasks.get(candidate)
             if not candidate_record or candidate_record.status != TaskStatus.PENDING:
                 continue
-            if (
-                candidate_record.selected_worker
-                and assigned_worker not in candidate_record.selected_worker
-            ):
+            if assigned_worker in candidate_record.failed_workers:
+                continue
+            candidate_pins = candidate_record.effective_selected_worker(available)
+            if candidate_pins and assigned_worker not in candidate_pins:
                 continue
             if candidate not in self._ready_index:
                 continue

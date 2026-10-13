@@ -33,6 +33,7 @@ listed here is in `.env.example`.
 | `WORKER_CACHE_TTL_SEC` | `3600` | Cache metadata TTL |
 | `ENABLE_STAGE_WEIGHT_STICKINESS` | `false` | Pin stages to checkpoint-producing workers |
 | `TASK_NO_WORKER_GRACE_SEC` | `60` | Grace before failing a task no worker can satisfy |
+| `TASK_WORKER_PIN_FALLBACK` | `true` | Let a task pinned with `selected_worker` run on another suitable worker once none of its pinned workers is available; a workflow's `allow_worker_fallback` overrides it |
 | `TASK_STAGE_RESULT_GRACE_SEC` | `120` | Grace after an upstream stage finishes for its result to reach the server before a dependent that reads it fails |
 | `TASK_RESULT_DELIVERY` | `true` | Have workers publish what dependent stages need to the server; set `false` only when every worker shares the server's results directory |
 | `ENABLE_WORKER_WATCHDOG` | `true` | Worker death detection |

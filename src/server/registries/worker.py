@@ -1,4 +1,5 @@
 import json
+import threading
 from collections.abc import Iterable, Sequence
 from typing import Any
 
@@ -153,6 +154,8 @@ class WorkerInfo(Worker):
 class WorkerRegistry:
     def __init__(self, rds: RedisClient) -> None:
         self._rds = rds
+        self._dead_marks: set[str] = set()
+        self._dead_marks_lock = threading.Lock()
 
     # ------------------------------------------------------------------ #
     # Worker lifecycle helpers
@@ -307,6 +310,22 @@ class WorkerRegistry:
 
     async def get_worker_heartbeat_async(self, worker_id: str) -> str | None:
         return await self._rds.asyncio.get(worker_hb_key(worker_id))
+
+    def mark_dead(self, worker_id: str) -> None:
+        with self._dead_marks_lock:
+            self._dead_marks.add(worker_id)
+
+    def clear_dead_mark(self, worker_id: str) -> None:
+        with self._dead_marks_lock:
+            self._dead_marks.discard(worker_id)
+
+    def is_marked_dead(self, worker_id: str) -> bool:
+        with self._dead_marks_lock:
+            return worker_id in self._dead_marks
+
+    def dead_marks(self) -> set[str]:
+        with self._dead_marks_lock:
+            return set(self._dead_marks)
 
     def worker_exists(self, worker_id: str) -> bool:
         return self._rds.sync.exists(worker_key(worker_id))

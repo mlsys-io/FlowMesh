@@ -1,5 +1,6 @@
 import json
 import time
+from collections.abc import Callable
 from typing import Any
 
 from pydantic import (
@@ -162,6 +163,11 @@ class TaskRecord(BaseModel):
     selected_worker: list[str] | None = Field(
         default=None, description="Selected worker identifiers."
     )
+    allow_worker_fallback: bool = Field(
+        default=False,
+        description="Whether another worker may run the task once none of its "
+        "selected workers is available.",
+    )
     merged_children: list[str] | None = Field(
         default=None, description="Merged child task identifiers."
     )
@@ -181,6 +187,20 @@ class TaskRecord(BaseModel):
     def last_failed_worker(self) -> str | None:
         """The most recent worker to have failed this task."""
         return self.failed_workers[-1] if self.failed_workers else None
+
+    def effective_selected_worker(
+        self, is_available: Callable[[str], bool]
+    ) -> list[str] | None:
+        """The worker IDs the task is restricted to, or None when unrestricted.
+
+        A fallback-enabled pin is lifted once none of its workers is available.
+        """
+        pins = self.selected_worker
+        if not pins:
+            return None
+        if not self.allow_worker_fallback or any(is_available(wid) for wid in pins):
+            return list(pins)
+        return None
 
     _redacted_spec: TaskSpecTemplate | None = PrivateAttr(default=None)
 
