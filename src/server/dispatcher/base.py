@@ -661,7 +661,7 @@ class Dispatcher:
         self._runtime.mark_dispatched(task_id, worker)
         if record.selected_worker and worker.id not in record.selected_worker:
             self._logger.info(
-                "Task %s runs on %s: none of its selected workers %s remains",
+                "Task %s runs on %s: none of its selected workers %s is available",
                 task_id,
                 worker.id,
                 record.selected_worker,
