@@ -14,10 +14,19 @@ import tempfile
 import wave
 from abc import abstractmethod
 from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Self, cast
 
 import yaml
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    PositiveInt,
+    ValidationError,
+    model_validator,
+)
 
 from shared.schemas.result import OmniResult
 from shared.tasks.specs import TaskSpecStrictBase
@@ -59,16 +68,57 @@ except Exception:
 
 logger = logging.getLogger(__name__)
 
-_OMNI_OFFLOAD_FLAGS = ("enable_cpu_offload", "enable_layerwise_offload")
+
+class OmniWeightOptions(BaseModel):
+    """``Omni`` options for how model weights are held: where they live
+    (``enable_cpu_offload`` / ``enable_layerwise_offload``) and how they are
+    stored (``quantization``, a method name or a quantization-config mapping)."""
+
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    enable_cpu_offload: bool | None = None
+    enable_layerwise_offload: bool | None = None
+    quantization: str | dict[str, Any] | None = None
+
+
+class OmniExecutionOptions(BaseModel):
+    """``Omni`` options for how a diffusion stage executes: request batching
+    (``step_execution``), sequence parallelism (``ulysses_degree`` /
+    ``ring_degree``, which need that many GPUs) and step caching
+    (``cache_backend`` with an optional ``cache_config`` mapping)."""
+
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    step_execution: bool | None = None
+    ulysses_degree: PositiveInt | None = None
+    ring_degree: PositiveInt | None = None
+    cache_backend: str | None = Field(default=None, min_length=1)
+    cache_config: dict[str, Any] | None = None
+
+    @model_validator(mode="after")
+    def _cache_config_needs_backend(self) -> Self:
+        if self.cache_config is not None and self.cache_backend is None:
+            raise ValueError("cache_config needs cache_backend")
+        return self
+
+
+@dataclass(frozen=True)
+class OmniMember:
+    """One task of a dispatch: the dispatched task or one of its merged children."""
+
+    task_id: str
+    spec: TaskSpecStrictBase
+    out_dir: Path
 
 
 class OmniExecutorBase(InferenceMixin, Executor):
     """Shared base for Omni-family executors.
 
     Manages the ``_omni`` model handle, runs the generic ``run()`` shape
-    (task span + artifact / trace upload), and delegates the task body to
-    each subclass's ``_run_inner``. Subclasses set ``_TASK_SPEC_TYPE`` so
-    the base can call ``require_spec`` without knowing the concrete type.
+    (task span + artifact / trace upload, merged children's results under
+    ``result.children``), and delegates the task body to each subclass's
+    ``_run_inner``. Subclasses set ``_TASK_SPEC_TYPE`` so the base can call
+    ``require_spec`` without knowing the concrete type.
     """
 
     _TASK_SPEC_TYPE: ClassVar[type[TaskSpecStrictBase]]
@@ -86,26 +136,55 @@ class OmniExecutorBase(InferenceMixin, Executor):
 
     def run(self, task: ExecutorTask, out_dir: Path, control: RunControl) -> OmniResult:
         spec = self.require_spec(task, self._TASK_SPEC_TYPE)
-        spec_dict = spec.model_dump(by_alias=True)
         out_dir = Path(out_dir).resolve()
+        children = task.merged_children or []
+        members = [OmniMember(task.task_id, spec, out_dir)]
+        for child in children:
+            if not isinstance(child.spec, self._TASK_SPEC_TYPE):
+                raise ExecutionError(
+                    f"Merged child spec must be {self.name} for merged execution."
+                )
+            members.append(
+                OmniMember(child.task_id, child.spec, out_dir.parent / child.task_id)
+            )
         with self._task_span(
             task.task_id, task.workflow_id, out_dir, owner_id=task.owner_id
         ):
-            result = self._run_inner(task, spec, spec_dict, out_dir)
+            results = self._run_members(members)
         maybe_upload_artifacts(task, out_dir, logger=logger)
         maybe_upload_traces(task, out_dir, logger=logger)
-        return result
+        for child, member, result in zip(children, members[1:], results[1:]):
+            maybe_upload_artifacts(child, member.out_dir, logger=logger)
+            results[0].children[child.task_id] = result
+        return results[0]
+
+    def _run_members(self, members: list[OmniMember]) -> list[OmniResult]:
+        """Run a task and its merged children, returning one result per member
+        in order. Members share a merge key, so they share the model and its
+        settings; this runs them one after another on that model. Executors
+        whose engine call takes a prompt batch override it to render every
+        member in one call."""
+        return [
+            self._run_inner(
+                member.task_id,
+                member.spec,
+                member.spec.model_dump(by_alias=True),
+                member.out_dir,
+            )
+            for member in members
+        ]
 
     @abstractmethod
     def _run_inner(
         self,
-        task: ExecutorTask,
+        task_id: str,
         spec: TaskSpecStrictBase,
         spec_dict: dict[str, Any],
         out_dir: Path,
     ) -> OmniResult:
-        """Run the executor-specific body. ``spec`` is the concrete strict
-        spec; subclasses ``assert isinstance(spec, ...)`` to narrow."""
+        """Run the executor-specific body for one task. ``spec`` is the
+        concrete strict spec; subclasses ``assert isinstance(spec, ...)`` to
+        narrow."""
         raise NotImplementedError
 
     # ── model lifecycle ──────────────────────────────────────────────────
@@ -161,25 +240,25 @@ class OmniExecutorBase(InferenceMixin, Executor):
             cfg.get("init_timeout"),
             cfg.get("async_chunk"),
             json.dumps(cls.engine_weight_kwargs(cfg), sort_keys=True),
+            json.dumps(cls.engine_execution_kwargs(cfg), sort_keys=True),
         )
 
     @staticmethod
     def engine_weight_kwargs(cfg: dict[str, Any]) -> dict[str, Any]:
-        """``Omni`` options for how model weights are held: where they live
-        (``enable_cpu_offload`` / ``enable_layerwise_offload``) and how they are
-        stored (``quantization``, a method name or a quantization-config mapping)."""
-        kwargs: dict[str, Any] = {}
-        for key in _OMNI_OFFLOAD_FLAGS:
-            if cfg.get(key) is not None:
-                kwargs[key] = to_bool(cfg.get(key), default=False)
-        quantization = cfg.get("quantization")
-        if quantization:
-            if not isinstance(quantization, (str, dict)):
-                raise ExecutionError(
-                    "omni quantization must be a method name or a mapping."
-                )
-            kwargs["quantization_config"] = quantization
+        """``Omni`` options for how model weights are held, validated by
+        ``OmniWeightOptions``. Only the options set in the spec are passed."""
+        options = validate_options(OmniWeightOptions, cfg, "omni weight options")
+        kwargs = options.model_dump(exclude_none=True, exclude={"quantization"})
+        if options.quantization:
+            kwargs["quantization_config"] = options.quantization
         return kwargs
+
+    @staticmethod
+    def engine_execution_kwargs(cfg: dict[str, Any]) -> dict[str, Any]:
+        """``Omni`` options for how a diffusion stage executes, validated by
+        ``OmniExecutionOptions``. Only the options set in the spec are passed."""
+        options = validate_options(OmniExecutionOptions, cfg, "omni execution options")
+        return options.model_dump(exclude_none=True)
 
     def _materialize_deploy_config(self, cfg: dict[str, Any]) -> str | None:
         """Resolve ``deploy_config`` to a path.
@@ -341,6 +420,7 @@ class OmniExecutorBase(InferenceMixin, Executor):
             if val is not None:
                 init_kwargs[key] = val
         init_kwargs.update(self.engine_weight_kwargs(cfg))
+        init_kwargs.update(self.engine_execution_kwargs(cfg))
         return init_kwargs
 
     # ── common small helpers ─────────────────────────────────────────────
@@ -362,6 +442,30 @@ def prompt_index_from_request_id(request_id: str) -> int | None:
     """Parse the prompt index from a vllm_omni ``{index}_{uuid}`` request id."""
     head = request_id.split("_", 1)[0]
     return int(head) if head.isdecimal() else None
+
+
+def validate_options[M: BaseModel](
+    model: type[M], cfg: dict[str, Any], label: str
+) -> M:
+    """Validate the keys of ``cfg`` that ``model`` declares; other keys are
+    left to their own readers. Raises ``ExecutionError`` naming each bad key."""
+    try:
+        return model.model_validate(
+            {key: cfg[key] for key in model.model_fields if key in cfg}
+        )
+    except ValidationError as exc:
+        raise ExecutionError(
+            f"invalid {label}: {_describe_validation_error(exc)}"
+        ) from exc
+
+
+def _describe_validation_error(exc: ValidationError) -> str:
+    """One line naming each invalid field and why it was rejected."""
+    problems = []
+    for err in exc.errors():
+        field = ".".join(str(part) for part in err["loc"])
+        problems.append(f"{field}: {err['msg']}" if field else err["msg"])
+    return "; ".join(problems)
 
 
 def release_gpu_memory() -> None:

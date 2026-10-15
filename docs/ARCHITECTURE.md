@@ -116,6 +116,9 @@ scripts/dev/            compile_protos, sync_requirements, check_env_examples
 
 - **Task merging.** Compatible adjacent tasks in a DAG (same `taskType`,
   model, hardware shape, and merge key) coalesce into a single dispatch.
+  `inference`, `rag`, `diffusion` and `omni_text2*` tasks merge; the merge key
+  is the spec without its `data`, so tasks that differ only in their prompts
+  share one dispatch.
   Merged children ride on `WorkerTaskMessage.merged_children`; the worker
   writes per-child results into `result.children`; the dispatcher fans
   out synthetic `TASK_SUCCEEDED` / `TASK_FAILED` events. Disable with

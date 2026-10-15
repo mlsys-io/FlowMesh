@@ -12,6 +12,8 @@ model coalesce; because ``commit_transition`` is per-workflow, each merged
 sibling's dispatch membership must commit under its own workflow.
 """
 
+import pytest
+
 from server.task.models import TaskStatus
 from server.task.runtime import _compute_merge_key, _sanitize_merge_spec
 from shared.tasks import TaskEnvelopeTemplate
@@ -126,6 +128,30 @@ class TestComputeMergeKey:
         t = self._make_task("echo")
         assert _compute_merge_key(t) is None
 
+    @pytest.mark.parametrize(
+        "task_type",
+        [
+            "omni_text2image",
+            "omni_text2speech",
+            "omni_text2audio",
+            "omni_text2general",
+            "omni_text2video",
+        ],
+    )
+    def test_omni_merges_across_prompts_not_settings(self, task_type: str) -> None:
+        def omni(prompt: str, seed: int) -> TaskEnvelopeTemplate:
+            return self._make_task(
+                task_type,
+                model={"source": {"identifier": "org/omni"}},
+                omni={"num_frames": 81, "seed": seed},
+                data={"type": "list", "items": [prompt]},
+            )
+
+        key = _compute_merge_key(omni("a fox", 42))
+        assert key is not None
+        assert key == _compute_merge_key(omni("a harbor", 42))
+        assert key != _compute_merge_key(omni("a fox", 43))
+
     def test_ignores_data_field(self) -> None:
         """Two tasks with same model but different prompts should merge."""
         t1 = self._make_task(
@@ -148,6 +174,47 @@ def test_clean_siblings_merge() -> None:
     runtime, _ = build_runtime()
     _, nodes = register(runtime, _MERGE_PAYLOAD)
     assert runtime.plan_merge(nodes["a"], 2, _WORKER) == [nodes["b"]]
+
+
+_VIDEO_PAYLOAD = """
+apiVersion: flowmesh/v1
+kind: Workflow
+metadata:
+  name: video-batch
+spec:
+  graph:
+    nodes:
+      - name: fox
+        spec: &video
+          taskType: omni_text2video
+          model:
+            source:
+              identifier: Wan-AI/Wan2.1-T2V-1.3B-Diffusers
+          omni:
+            num_frames: 81
+            seed: 42
+          data:
+            type: list
+            items: [a fox in snow]
+      - name: harbor
+        spec:
+          <<: *video
+          data:
+            type: list
+            items: [a harbor at dawn]
+      - name: other-seed
+        spec:
+          <<: *video
+          omni:
+            num_frames: 81
+            seed: 43
+"""
+
+
+def test_omni_text2video_siblings_with_one_setting_merge() -> None:
+    runtime, _ = build_runtime()
+    _, nodes = register(runtime, _VIDEO_PAYLOAD)
+    assert runtime.plan_merge(nodes["fox"], 3, _WORKER) == [nodes["harbor"]]
 
 
 def test_fail_merged_children_fails_child_and_cascades_atomically() -> None:

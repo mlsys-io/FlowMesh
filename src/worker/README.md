@@ -155,11 +155,14 @@ Relevant env vars for SSH tasks:
 | `ENABLE_SSH_BY_DEFAULT` | `false` | Accept SSH tasks even without an explicit image in the spec |
 
 ## Task Merge & Multi-GPU
-- **Task merge** lets the orchestrator coalesce duplicate inference/RAG
-  requests. Workers receive a parent payload with `merged_children`, and
-  executors (e.g. vLLM) emit per-child outputs under `result.children`; the
-  runner writes each child result to its own directory. Disabled with
-  `ENABLE_TASK_MERGE=false` on the server.
+- **Task merge** lets the orchestrator coalesce `inference`, `rag`,
+  `diffusion` and `omni_text2*` tasks whose specs differ only in their `data`
+  (prompts). Workers receive a parent payload with `merged_children`, and
+  executors emit per-child outputs under `result.children`; the runner writes
+  each child result to its own directory. vLLM, `omni_text2image` and
+  `omni_text2video` render every merged prompt in one engine call; the other
+  Omni executors run the children one after another on the already loaded
+  model. Disabled with `ENABLE_TASK_MERGE=false` on the server.
 - **Multi-GPU execution**: when multiple GPUs are available, vLLM automatically
   sets `tensor_parallel_size`, and PPO/DPO/SFT executors launch distributed jobs
   via `torchrun`. Override `training.allow_multi_gpu=false` or
