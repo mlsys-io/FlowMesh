@@ -74,7 +74,7 @@ class TestSanitizeMergeSpec:
             "inference": {"system_prompt": "secret", "temperature": 0.7},
             "data": {"messages": [{"role": "user", "content": "hi"}]},
         }
-        result = _sanitize_merge_spec(spec)
+        result = _sanitize_merge_spec(spec, "inference")
         assert "system_prompt" not in result.get("inference", {})
         assert "data" not in result  # data is stripped too
 
@@ -84,15 +84,23 @@ class TestSanitizeMergeSpec:
             "inference": {"temperature": 0.7, "max_tokens": 100},
             "model": {"source": {"identifier": "llama"}},
         }
-        result = _sanitize_merge_spec(spec)
+        result = _sanitize_merge_spec(spec, "inference")
         assert result["inference"]["temperature"] == 0.7
         assert result["model"]["source"]["identifier"] == "llama"
 
     def test_no_inference_key(self) -> None:
         spec = {"taskType": "echo", "data": {"items": ["x"]}}
-        result = _sanitize_merge_spec(spec)
+        result = _sanitize_merge_spec(spec, "echo")
         assert "data" not in result
         assert result["taskType"] == "echo"
+
+    def test_diffusion_keeps_system_prompt(self) -> None:
+        spec = {
+            "taskType": "diffusion",
+            "inference": {"system_prompt": "watercolor", "guidance_scale": 7.5},
+        }
+        result = _sanitize_merge_spec(spec, "diffusion")
+        assert result["inference"]["system_prompt"] == "watercolor"
 
 
 class TestComputeMergeKey:
@@ -142,6 +150,20 @@ class TestComputeMergeKey:
         k2 = _compute_merge_key(t2)
         assert k1 is not None
         assert k1 == k2
+
+    def test_system_prompt_splits_diffusion_but_not_inference(self) -> None:
+        def key(task_type: str, system_prompt: str) -> str | None:
+            return _compute_merge_key(
+                self._make_task(
+                    task_type,
+                    model={"source": {"identifier": "sdxl"}},
+                    inference={"system_prompt": system_prompt},
+                )
+            )
+
+        assert key("diffusion", "watercolor") is not None
+        assert key("diffusion", "watercolor") != key("diffusion", "photo")
+        assert key("inference", "watercolor") == key("inference", "photo")
 
 
 def test_clean_siblings_merge() -> None:

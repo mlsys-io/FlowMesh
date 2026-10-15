@@ -68,6 +68,7 @@ At startup the worker:
 | `WORKER_RESULT_TRANSFER_TIMEOUT_SEC` | `1800` | Seconds the worker waits for the server while publishing a result or fetching an upstream one, including the time the server spends packing a large bundle. |
 | `WORKER_UPLOAD_RETRIES` | `5` | Additional upload attempts after retryable failures; `0` disables retries. |
 | `WORKER_UPLOAD_BACKOFF_SEC` | `2` | First wait between upload retries, doubled per retry up to 60 s; a `Retry-After` header takes precedence, under the same cap. |
+| `WORKER_DIFFUSION_MAX_IMAGES_PER_CALL` | `4` | Images one diffusion pipeline call may denoise across merged tasks; a task is never split across calls, so one larger than this runs alone. |
 | `WORKER_EXECUTOR_IDLE_CLEANUP_SEC` | `60` | Seconds a worker waits before unloading an idle executor to release the resources it holds; higher values avoid reload thrash between tasks but keep those resources reserved while idle. |
 
 > The heartbeat TTL is computed automatically as `max(HEARTBEAT_INTERVAL_SEC * 4, 120)`.
@@ -155,10 +156,12 @@ Relevant env vars for SSH tasks:
 | `ENABLE_SSH_BY_DEFAULT` | `false` | Accept SSH tasks even without an explicit image in the spec |
 
 ## Task Merge & Multi-GPU
-- **Task merge** lets the orchestrator coalesce duplicate inference/RAG
-  requests. Workers receive a parent payload with `merged_children`, and
-  executors (e.g. vLLM) emit per-child outputs under `result.children`; the
-  runner writes each child result to its own directory. Disabled with
+- **Task merge** lets the orchestrator coalesce duplicate inference, RAG and
+  diffusion requests. Workers receive a parent payload with `merged_children`,
+  and executors (e.g. vLLM, diffusers) emit per-child outputs under
+  `result.children`; the runner writes each child result to its own directory.
+  Merged diffusion tasks with the same settings render in shared pipeline
+  calls of up to `WORKER_DIFFUSION_MAX_IMAGES_PER_CALL` images. Disabled with
   `ENABLE_TASK_MERGE=false` on the server.
 - **Multi-GPU execution**: when multiple GPUs are available, vLLM automatically
   sets `tensor_parallel_size`, and PPO/DPO/SFT executors launch distributed jobs

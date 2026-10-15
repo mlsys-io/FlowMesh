@@ -660,6 +660,16 @@ STACK_ENV_SCHEMA = EnvSchema(
                     min_value=0,
                 ),
                 EnvVar(
+                    "WORKER_DIFFUSION_MAX_IMAGES_PER_CALL",
+                    "4",
+                    description=(
+                        "Images one diffusion pipeline call may denoise across "
+                        "merged tasks."
+                    ),
+                    var_type=EnvVarType.INT,
+                    min_value=1,
+                ),
+                EnvVar(
                     "WORKER_EXECUTOR_IDLE_CLEANUP_SEC",
                     "60",
                     var_type=EnvVarType.FLOAT,

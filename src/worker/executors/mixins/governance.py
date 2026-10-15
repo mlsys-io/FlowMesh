@@ -175,9 +175,11 @@ class GovernanceMixin:
         data_id: str,
         data: Any,
         source_data_ids: list[str],
+        owner_id: str | None = None,
     ) -> None:
         """Emit asset + lineage rows; ``data`` is only serialized to size the
-        ``"dump to storage"`` span (runtime does not upload payloads)."""
+        ``"dump to storage"`` span (runtime does not upload payloads). The
+        asset belongs to ``owner_id``, by default the running task's owner."""
         with self._span(
             READY_SPAN_NAME, span_type=SpanType.NETWORK, data_id=data_id
         ) as dump_span:
@@ -198,7 +200,7 @@ class GovernanceMixin:
                 data_id=data_id,
                 asset_guid=asset_guid,
                 version=1,
-                user_id=self._task_owner_id,
+                user_id=self._task_owner_id if owner_id is None else owner_id,
             )
             if source_data_ids:
                 self._record_lineage(data_id=data_id, source_data_ids=source_data_ids)
@@ -241,14 +243,19 @@ class GovernanceMixin:
         task_id: str,
         result: BaseExecutorResult,
         dependencies_by_task: dict[str, list[str]],
+        owners_by_task: dict[str, str] | None = None,
     ) -> None:
-        """Write parent + merged-child results and emit asset/lineage rows."""
+        """Write parent + merged-child results and emit asset/lineage rows.
+        Each asset belongs to its task's entry in ``owners_by_task``, by
+        default the running task's owner."""
+        owners = owners_by_task or {}
         parent_deps = dependencies_by_task.get(task_id, [])
         collection_jobs: list[dict[str, Any]] = [
             {
                 "task_id": task_id,
                 "result": result.model_dump(),
                 "deps": parent_deps,
+                "owner_id": owners.get(task_id),
                 "is_parent": True,
             }
         ]
@@ -259,6 +266,7 @@ class GovernanceMixin:
                     "task_id": child_id,
                     "result": child_result.model_dump(),
                     "deps": child_deps,
+                    "owner_id": owners.get(child_id),
                     "is_parent": False,
                 }
             )
@@ -269,6 +277,7 @@ class GovernanceMixin:
                 data_id=job["task_id"],
                 data=job["result"],
                 source_data_ids=job["deps"],
+                owner_id=job["owner_id"],
             )
         else:
             logger.info(
@@ -281,6 +290,7 @@ class GovernanceMixin:
                     data_id=job["task_id"],
                     data=job["result"],
                     source_data_ids=job["deps"],
+                    owner_id=job["owner_id"],
                 ): job
                 for job in collection_jobs
             }

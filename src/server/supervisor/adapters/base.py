@@ -81,6 +81,8 @@ class WorkerConfig(BaseModel):
     """First wait between upload retries, doubled per retry"""
     executor_idle_cleanup_sec: float = env.WORKER_EXECUTOR_IDLE_CLEANUP_SEC
     """Seconds an executor may sit idle before the worker unloads it"""
+    diffusion_max_images_per_call: int = env.WORKER_DIFFUSION_MAX_IMAGES_PER_CALL
+    """Images one diffusion pipeline call may denoise across merged tasks"""
     foreign_gpu_gate: bool = env.WORKER_FOREIGN_GPU_GATE
     """Whether a worker reports a GPU as unavailable while a process outside
     FlowMesh holds it"""
@@ -193,6 +195,9 @@ class WorkerAdapter(ABC):
             "WORKER_UPLOAD_BACKOFF_SEC": to_env_str(config.upload_backoff_sec),
             "WORKER_EXECUTOR_IDLE_CLEANUP_SEC": to_env_str(
                 config.executor_idle_cleanup_sec
+            ),
+            "WORKER_DIFFUSION_MAX_IMAGES_PER_CALL": to_env_str(
+                config.diffusion_max_images_per_call
             ),
             "WORKER_FOREIGN_GPU_GATE": to_env_str(config.foreign_gpu_gate),
             "WORKER_FOREIGN_GPU_MEM_MIB": to_env_str(config.foreign_gpu_mem_mib),
