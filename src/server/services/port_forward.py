@@ -18,6 +18,7 @@ from ..clients.redis import RedisClient, relay_down_key, relay_up_key
 from ..registries.node import NodeRegistry
 from ..registries.worker import WorkerRegistry
 from ..schemas.ssh import SSHConnectionInfo
+from ..task.models import TaskRecord, TaskStatus
 from .ssh_connections import SshConnectionRegistry
 
 _STREAM_MAXLEN = 1000
@@ -184,12 +185,18 @@ class PortForwardService:
         workflow_id: str | None,
         assigned_worker: str,
         endpoint: dict[str, Any],
+        preferred_port: int | None = None,
     ) -> dict[str, Any]:
         loop = self._require_loop()
         registration = _Registration()
         fut = asyncio.run_coroutine_threadsafe(
             self._register_task_async(
-                task_id, workflow_id, assigned_worker, endpoint, registration
+                task_id,
+                workflow_id,
+                assigned_worker,
+                endpoint,
+                registration,
+                preferred_port,
             ),
             loop,
         )
@@ -227,6 +234,7 @@ class PortForwardService:
         assigned_worker: str,
         endpoint: dict[str, Any],
         registration: _Registration | None = None,
+        preferred_port: int | None = None,
     ) -> dict[str, Any]:
         if registration is None:
             registration = _Registration()
@@ -275,6 +283,7 @@ class PortForwardService:
                     str(session_id),
                     audit,
                     registration,
+                    preferred_port,
                 )
                 self._sessions[task_id] = session
                 self._port_to_task[session.port] = task_id
@@ -287,6 +296,7 @@ class PortForwardService:
                 str(session_id),
                 audit,
                 registration,
+                preferred_port,
             )
             created = True
         if created:
@@ -299,6 +309,75 @@ class PortForwardService:
         updated["port"] = session.port
         updated["mode"] = "forward"
         return updated
+
+    def _candidate_ports(self, preferred_port: int | None) -> list[int]:
+        """Ports to try, in order: the preferred one (when in range), then the rest."""
+        ports = list(range(self._port_start, self._port_end + 1))
+        if preferred_port is not None and preferred_port in ports:
+            ports.remove(preferred_port)
+            ports.insert(0, preferred_port)
+        return ports
+
+    async def restore_forwards(
+        self,
+        records: dict[str, TaskRecord],
+        update_endpoint: Callable[[str, dict[str, Any]], None],
+        attempts: int = 12,
+        retry_delay_sec: float = 10.0,
+    ) -> None:
+        """Re-register the forward of every active task that published one.
+
+        Assignments live only in this service, so a restarted server would
+        otherwise leave each running forward-mode session without a listener
+        while handing its port to the next session. Each task is restored on
+        the port it last published; when that port is taken it gets another and
+        `update_endpoint` rewrites the task's endpoint. A worker that has not
+        re-registered yet is retried for `attempts` x `retry_delay_sec`.
+        """
+        pending = []
+        for task_id, record in list(records.items()):
+            if record.status != TaskStatus.DISPATCHED or not record.assigned_worker:
+                continue
+            update = record.latest_update or {}
+            for key in ("ssh", "serve"):
+                inner = update.get(key)
+                if (
+                    isinstance(inner, dict)
+                    and inner.get("mode") == "forward"
+                    and inner.get("session_id")
+                ):
+                    pending.append((task_id, record, key, inner))
+                    break
+        for attempt in range(attempts):
+            retry = []
+            for task_id, record, key, inner in pending:
+                port = inner.get("port")
+                try:
+                    restored = await self._register_task_async(
+                        task_id,
+                        record.workflow_id,
+                        record.assigned_worker or "",
+                        inner,
+                        preferred_port=port if isinstance(port, int) else None,
+                    )
+                except Exception as exc:
+                    retry.append((task_id, record, key, inner))
+                    if attempt == attempts - 1:
+                        self._logger.warning(
+                            "Could not restore forward for task %s: %s", task_id, exc
+                        )
+                    continue
+                self._logger.info(
+                    "Restored forward port %s for task %s", restored["port"], task_id
+                )
+                if restored["port"] != port:
+                    payload = dict(record.latest_update or {})
+                    payload[key] = {**inner, "port": restored["port"]}
+                    update_endpoint(task_id, payload)
+            pending = retry
+            if not pending:
+                return
+            await asyncio.sleep(retry_delay_sec)
 
     def _start_registration_locked(
         self, task_id: str, registration: _Registration
@@ -326,8 +405,9 @@ class PortForwardService:
         session_id: str,
         audit: _AuditContext,
         registration: _Registration,
+        preferred_port: int | None = None,
     ) -> PortForwardSession:
-        for port in range(self._port_start, self._port_end + 1):
+        for port in self._candidate_ports(preferred_port):
             if port in self._servers and port not in self._port_to_task:
                 return PortForwardSession(
                     task_id=task_id,
@@ -347,6 +427,7 @@ class PortForwardService:
         session_id: str,
         audit: _AuditContext,
         registration: _Registration,
+        preferred_port: int | None = None,
     ) -> PortForwardSession:
         unavailable_ports: set[int] = set()
         while True:
@@ -356,7 +437,7 @@ class PortForwardService:
                 port = next(
                     (
                         candidate
-                        for candidate in range(self._port_start, self._port_end + 1)
+                        for candidate in self._candidate_ports(preferred_port)
                         if candidate not in self._used_ports
                         and candidate not in unavailable_ports
                     ),
