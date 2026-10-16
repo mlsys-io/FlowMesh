@@ -87,6 +87,21 @@ class SSHLimits(BaseModel):
 class WorkerCapabilities(BaseModel):
     supported_task_types: frozenset[TaskType] = Field(default_factory=frozenset)
 
+    @field_validator("supported_task_types", mode="before")
+    @classmethod
+    def _drop_unknown_task_types(cls, value: Any) -> Any:
+        """Keep only the task types this SDK knows.
+
+        A worker on a newer FlowMesh advertises task types this SDK predates. Rejecting
+        them failed validation of the worker, and of every worker listing that contained
+        it, so an older client could list no workers at all. A type the SDK cannot name
+        is one it cannot submit, so dropping it loses nothing the caller could use.
+        """
+        if isinstance(value, (list, tuple, set, frozenset)):
+            known = {t.value for t in TaskType}
+            return [v for v in value if not isinstance(v, str) or v in known]
+        return value
+
 
 class Worker(BaseModel):
     id: str
