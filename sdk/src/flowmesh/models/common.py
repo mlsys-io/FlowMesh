@@ -1,9 +1,13 @@
 """Common models shared across the FlowMesh SDK."""
 
 from enum import StrEnum
-from typing import Any
+from typing import Annotated, Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+# A server newer than this SDK can send values its enum predates; those stay plain
+# strings instead of failing validation of the whole response.
+type OpenEnum[E] = Annotated[E | str, Field(union_mode="left_to_right")]
 
 
 class OkResponse(BaseModel):
