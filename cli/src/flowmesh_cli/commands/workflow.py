@@ -130,12 +130,13 @@ def watch(
     last_status: str | None = None
     try:
         while True:
-            wf = client.workflows.retrieve(workflow_id)
-            status_value = WorkflowStatus(wf.status)
+            view = client.workflows.status(workflow_id)
+            status_value = WorkflowStatus(view.status)
             if status_value != last_status:
                 logging.log(f"[{workflow_id}] status: {status_value}")
                 last_status = status_value
             if status_value in TERMINAL_WORKFLOW_STATUSES:
+                wf = client.workflows.retrieve(workflow_id)
                 logging.log(wf.model_dump_json(indent=2))
                 return
             time.sleep(interval)

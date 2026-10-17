@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 import typer
 from flowmesh.models import (
     TaskStatus,
+    WorkflowStatus,
     WorkflowSubmitResponse,
 )
 from flowmesh_cli.cli import build_cli_app
@@ -67,6 +68,26 @@ class TestWorkflowSubmit:
         call_args = client.workflows.submit.call_args
         assert call_args.args[0] == '{"nodes": []}'
         assert call_args.kwargs["workflow_format"] == "n8n"
+
+
+class TestWorkflowWatch:
+    @patch("flowmesh_cli.commands.workflow.FlowMesh")
+    def test_polls_status_then_prints_full_workflow(self, mock_hc: MagicMock) -> None:
+        client = _mock_client()
+        client.workflows.status.side_effect = [
+            MagicMock(status=WorkflowStatus.DISPATCHED),
+            MagicMock(status=WorkflowStatus.DONE),
+        ]
+        client.workflows.retrieve.return_value.model_dump_json.return_value = (
+            '{"workflow_id": "wf-1"}'
+        )
+        mock_hc.return_value = client
+
+        result = runner.invoke(_app(), ["workflow", "watch", "wf-1", "--interval", "0"])
+        assert result.exit_code == 0
+        assert client.workflows.status.call_count == 2
+        client.workflows.retrieve.assert_called_once_with("wf-1")
+        assert '"workflow_id": "wf-1"' in result.stdout
 
 
 class TestWorkflowList:

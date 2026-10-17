@@ -45,6 +45,7 @@ from flowmesh.models import (
     WorkerStatus,
     Workflow,
     WorkflowStatus,
+    WorkflowStatusView,
     WorkflowSubmitResponse,
     WorkflowSubmitTaskEntry,
     WorkflowValidateResponse,
@@ -82,6 +83,7 @@ from server.schemas.node import WorkerRegisterResponse as SrvWorkerRegisterRespo
 from server.schemas.task import TaskStatusView as SrvTaskStatusView
 from server.schemas.worker import WorkerCordon as SrvWorkerCordon
 from server.schemas.worker import WorkerCordonResult as SrvWorkerCordonResult
+from server.schemas.workflow import WorkflowStatusView as SrvWorkflowStatusView
 from server.schemas.workflow import WorkflowSubmitResponse as SrvWorkflowSubmitResponse
 from server.schemas.workflow import (
     WorkflowSubmitTaskEntry as SrvWorkflowSubmitTaskEntry,
@@ -180,6 +182,7 @@ MODEL_PAIRS = [
     (SrvWorkflowValidateTaskEntry, WorkflowValidateTaskEntry),
     # Workflow registry
     (SrvWorkflow, Workflow),
+    (SrvWorkflowStatusView, WorkflowStatusView),
     # Task models (last_queue_ts is server-internal scheduling field)
     (SrvTaskUsage, TaskUsage),
     # Worker models

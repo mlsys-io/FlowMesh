@@ -26,6 +26,7 @@ from flowmesh.models import (
     WorkerHardware,
     WorkerInfo,
     Workflow,
+    WorkflowStatusView,
     WorkflowSubmitResponse,
     WorkflowValidateResponse,
 )
@@ -62,6 +63,7 @@ from server.schemas.node import StorageInfo as SrvStorageInfo
 from server.schemas.node import WorkerHardware as SrvWorkerHardware
 from server.schemas.ssh import SSHConnectionInfo as SrvSSHConnectionInfo
 from server.schemas.task import TaskStatusView as SrvTaskStatusView
+from server.schemas.workflow import WorkflowStatusView as SrvWorkflowStatusView
 from server.schemas.workflow import WorkflowSubmitResponse as SrvWorkflowSubmitResponse
 from server.schemas.workflow import (
     WorkflowSubmitTaskEntry as SrvWorkflowSubmitTaskEntry,
@@ -283,6 +285,21 @@ class TestWorkflowModels:
         wf = Workflow.model_validate(_dump(_SRV_WORKFLOW))
         assert wf.workflow_id == "wf-abc123"
         assert wf.status == "DONE"
+
+    def test_workflow_status_view_validate(self) -> None:
+        payload = _dump(SrvWorkflowStatusView.from_workflow(_SRV_WORKFLOW))
+        view = WorkflowStatusView.model_validate(payload)
+        assert view.workflow_id == "wf-abc123"
+        assert (view.task_count, view.completed_count, view.failed_count) == (2, 2, 0)
+
+    def test_workflow_status_view_counts_full_workflow(self) -> None:
+        view = WorkflowStatusView.model_validate(_dump(_SRV_WORKFLOW))
+        assert view.status == "DONE"
+        assert (view.task_count, view.dispatched_count, view.cancelled_count) == (
+            2,
+            2,
+            0,
+        )
 
     def test_workflow_submit_response(self) -> None:
         server = SrvWorkflowSubmitResponse(
