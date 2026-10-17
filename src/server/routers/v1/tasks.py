@@ -43,11 +43,11 @@ _TASK_STATUS_LIST = TypeAdapter(list[TaskStatusView])
 # Query keys the list endpoint consumes itself; they are not model-field filters.
 _CONTROL_PARAMS = ("view", "limit")
 
-TaskView = Literal["full", "status"]
+type TaskView = Literal["full", "status"]
 _VIEW_QUERY = Query(
     "full",
     description="`status` returns only status, placement, timing, errors and the "
-    "latest update (no task spec or source) — use it for polling.",
+    "latest update (no task spec or source).",
 )
 
 

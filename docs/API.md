@@ -35,8 +35,8 @@ self-authenticate the same way, sending `FLOWMESH_API_KEY` as the bearer.
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/v1/tasks` | List tasks, oldest submission first. Filters: `workflow_id`, `status`, `task_type`, `assigned_worker`. `limit` keeps the newest matching tasks; `view=status` returns each task's status view. |
-| GET | `/api/v1/tasks/{id}` | Task details. `view=status` returns only status, placement, timing, errors and the latest update, without the task spec or source; use it for polling. |
+| GET | `/api/v1/tasks` | List tasks, oldest first. Filters: `workflow_id`, `status`, `task_type`, `assigned_worker`. `limit` keeps the newest; `view=status` omits specs and sources. |
+| GET | `/api/v1/tasks/{id}` | Task details. `view=status` omits the task spec and source. |
 | GET | `/api/v1/tasks/{id}/logs` | Query task logs. |
 | GET | `/api/v1/tasks/{id}/logs/stream` | SSE task log stream. |
 

@@ -72,9 +72,7 @@ class TaskInfo(BaseModel):
 
 class TaskStatusView(BaseModel):
     """A task's status, placement, timing, errors and latest update, without its
-    spec or source.
-
-    A server without this view returns the full task, which validates here too."""
+    spec or source."""
 
     task_id: str
     workflow_id: str
