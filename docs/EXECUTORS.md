@@ -22,8 +22,8 @@ The worker resolves `spec.taskType` against an executor registry in
 | `serve` | `VLLMServeExecutor` | Persistent vLLM API server for a single model |
 
 Helper utilities live in `src/worker/executors/utils/` (`artifacts`,
-`checkpoints`, `data_utils`, `distributed`, `graph_templates`,
-`huggingface`, `safe_eval`). Cross-cutting behavior is in
+`checkpoints`, `data_utils`, `distributed`, `docker`, `graph_templates`,
+`huggingface`, `safe_eval`, `vllm_engine`). Cross-cutting behavior is in
 `src/worker/executors/mixins/` (`data`, `governance`, `inference`,
 `training`).
 

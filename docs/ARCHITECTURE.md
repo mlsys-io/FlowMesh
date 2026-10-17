@@ -101,7 +101,8 @@ src/
     executors/            Executor implementations
       mixins/               data, governance, inference, training
       utils/                artifacts, checkpoints, data_utils, distributed,
-                            graph_templates, huggingface, safe_eval
+                            docker, graph_templates, huggingface, safe_eval,
+                            vllm_engine
     runner.py             Task lifecycle (execute, write results, upload artifacts)
 cli/                    Typer CLI (`flowmesh`)
 hook/                   Plugin hook protocol interfaces

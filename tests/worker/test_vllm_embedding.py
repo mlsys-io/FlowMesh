@@ -152,7 +152,7 @@ def test_embedding_reloads_engine_on_model_change() -> None:
 
     def fake_llm(**kwargs: Any) -> Any:
         built.append(kwargs["model"])
-        return SimpleNamespace()
+        return SimpleNamespace(llm_engine=SimpleNamespace(engine_core=None))
 
     def fake_shutdown() -> None:
         shutdowns.append(1)

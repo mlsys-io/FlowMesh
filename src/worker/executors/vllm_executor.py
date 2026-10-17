@@ -85,6 +85,7 @@ from .utils.checkpoints import (
     maybe_upload_traces,
     resolve_checkpoint_load,
 )
+from .utils.vllm_engine import EngineCoreWatch
 
 logger = logging.getLogger(__name__)
 
@@ -161,6 +162,7 @@ Summary:"""
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self._llm: LLM | None = None
+        self._engine_watch: EngineCoreWatch | None = None
         self._model_name: str | None = None
         self._batched_inputs: list[str | TextPrompt] = []
         self._prompt_owners: list[str] = []
@@ -330,7 +332,12 @@ Summary:"""
     ) -> None:
         """Load or reuse the vLLM engine for ``ident``."""
         if self._llm:
-            if self._inference_spec == new_inference_spec:
+            if self._engine_watch and self._engine_watch.dead:
+                logger.warning(
+                    "vLLM engine core for %s has exited; reloading", self._model_name
+                )
+                self._shutdown_llm()
+            elif self._inference_spec == new_inference_spec:
                 logger.info("Reusing existing vLLM instance for model %s", ident)
                 return
             else:
@@ -524,6 +531,7 @@ Summary:"""
                         },
                     ):
                         self._llm = LLM(**attempt_kwargs)  # type: ignore[call-arg]
+                        self._engine_watch = EngineCoreWatch(self._llm)
                     chosen_kwargs = dict(attempt_kwargs)
                     success = True
                     break
@@ -1193,6 +1201,11 @@ Summary:"""
 
         generate_kwargs = self._build_generate_kwargs(spec, out_dir)
 
+        logger.info(
+            "Generating %d prompts for %d tasks",
+            len(self._batched_inputs),
+            len(task_ids),
+        )
         t0 = time.time()
         with self._span(
             "generation",
@@ -1398,6 +1411,9 @@ Summary:"""
         if self._llm is None:
             logger.warning("No vLLM instance to shutdown")
             return
+        if self._engine_watch is not None:
+            self._engine_watch.stop()
+            self._engine_watch = None
         try:
             destroy_distributed_environment()
             if dist.is_initialized():
