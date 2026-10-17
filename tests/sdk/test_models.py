@@ -26,6 +26,7 @@ from flowmesh.models import (
     WorkerHardware,
     WorkerInfo,
     Workflow,
+    WorkflowStatusView,
     WorkflowSubmitResponse,
     WorkflowValidateResponse,
 )
@@ -62,6 +63,7 @@ from server.schemas.node import StorageInfo as SrvStorageInfo
 from server.schemas.node import WorkerHardware as SrvWorkerHardware
 from server.schemas.ssh import SSHConnectionInfo as SrvSSHConnectionInfo
 from server.schemas.task import TaskStatusView as SrvTaskStatusView
+from server.schemas.workflow import WorkflowStatusView as SrvWorkflowStatusView
 from server.schemas.workflow import WorkflowSubmitResponse as SrvWorkflowSubmitResponse
 from server.schemas.workflow import (
     WorkflowSubmitTaskEntry as SrvWorkflowSubmitTaskEntry,
@@ -283,6 +285,33 @@ class TestWorkflowModels:
         wf = Workflow.model_validate(_dump(_SRV_WORKFLOW))
         assert wf.workflow_id == "wf-abc123"
         assert wf.status == "DONE"
+
+    def test_workflow_status_view_validate(self) -> None:
+        payload = _dump(SrvWorkflowStatusView.from_workflow(_SRV_WORKFLOW))
+        view = WorkflowStatusView.model_validate(payload)
+        assert view.workflow_id == "wf-abc123"
+        assert (view.task_count, view.completed_count, view.failed_count) == (2, 2, 0)
+
+    def test_workflow_status_view_counts_full_workflow(self) -> None:
+        workflow = _SRV_WORKFLOW.model_copy(
+            update={
+                "task_ids": [f"t-{i}" for i in range(10)],
+                "dispatched_tasks": ["t-0"],
+                "completed_tasks": ["t-1", "t-2"],
+                "failed_tasks": ["t-3", "t-4", "t-5"],
+                "cancelled_tasks": ["t-6", "t-7", "t-8", "t-9"],
+            }
+        )
+        view = WorkflowStatusView.model_validate(_dump(workflow))
+        assert view.status == "DONE"
+        counts = (
+            view.task_count,
+            view.dispatched_count,
+            view.completed_count,
+            view.failed_count,
+            view.cancelled_count,
+        )
+        assert counts == (10, 1, 2, 3, 4)
 
     def test_workflow_submit_response(self) -> None:
         server = SrvWorkflowSubmitResponse(

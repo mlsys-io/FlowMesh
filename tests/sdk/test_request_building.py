@@ -11,7 +11,7 @@ import httpx
 import pytest
 import respx
 from flowmesh import AsyncFlowMesh, FlowMesh
-from flowmesh.models import TaskStatus
+from flowmesh.models import TaskStatus, WorkflowStatus
 from pydantic import BaseModel
 
 from server.registries.node import Node as SrvNode
@@ -22,6 +22,7 @@ from server.registries.workflow import WorkflowStatus as SrvWorkflowStatus
 from server.schemas.common import OkResponse as SrvOkResponse
 from server.schemas.common import VersionResponse as SrvVersionResponse
 from server.schemas.task import TaskStatusView as SrvTaskStatusView
+from server.schemas.workflow import WorkflowStatusView as SrvWorkflowStatusView
 from server.schemas.workflow import WorkflowSubmitResponse as SrvWorkflowSubmitResponse
 from server.schemas.workflow import (
     WorkflowSubmitTaskEntry as SrvWorkflowSubmitTaskEntry,
@@ -106,6 +107,11 @@ def _status_json(
     return _json(
         view.model_copy(update={"status": status, "latest_update": latest_update})
     )
+
+
+def _workflow_status_json(status: SrvWorkflowStatus) -> dict[str, Any]:
+    view = SrvWorkflowStatusView.from_workflow(_WORKFLOW_RESPONSE)
+    return _json(view.model_copy(update={"status": status}))
 
 
 def _json(server_obj: BaseModel) -> dict:  # type: ignore[type-arg]
@@ -383,6 +389,100 @@ class TestTaskPolling:
         assert info == ssh
         assert [v.task_id for v in views] == ["t-1"]
         assert all(c.request.url.params["view"] == "status" for c in task_route.calls)
+        assert list_route.calls[0].request.url.params["view"] == "status"
+        assert list_route.calls[0].request.url.params["limit"] == "1"
+
+
+class TestWorkflowPolling:
+    @respx.mock
+    def test_status_requests_status_view(self, mock_client: FlowMesh) -> None:
+        route = respx.get(route_url("get_workflow", workflow_id="wf-1")).respond(
+            json=_workflow_status_json(SrvWorkflowStatus.DISPATCHED)
+        )
+        view = mock_client.workflows.status("wf-1")
+        assert route.calls[0].request.url.params["view"] == "status"
+        assert view.status == WorkflowStatus.DISPATCHED
+
+    @respx.mock
+    def test_list_sends_limit(self, mock_client: FlowMesh) -> None:
+        route = respx.get(route_url("list_workflows")).respond(json=[])
+        mock_client.workflows.list(status="DONE", limit=2)
+        params = route.calls[0].request.url.params
+        assert params["limit"] == "2"
+        assert params["status"] == "DONE"
+        assert "view" not in params
+
+    @respx.mock
+    def test_list_statuses_requests_status_view(self, mock_client: FlowMesh) -> None:
+        route = respx.get(route_url("list_workflows")).respond(
+            json=[_workflow_status_json(SrvWorkflowStatus.PENDING)]
+        )
+        views = mock_client.workflows.list_statuses(task_ids="t-1", limit=5)
+        params = route.calls[0].request.url.params
+        assert params["view"] == "status"
+        assert params["task_ids"] == "t-1"
+        assert params["limit"] == "5"
+        assert [v.workflow_id for v in views] == ["wf-1"]
+
+    @respx.mock
+    def test_wait_polls_status_then_fetches_full_workflow(
+        self, mock_client: FlowMesh
+    ) -> None:
+        route = respx.get(route_url("get_workflow", workflow_id="wf-1")).mock(
+            side_effect=[
+                httpx.Response(
+                    200, json=_workflow_status_json(SrvWorkflowStatus.DISPATCHED)
+                ),
+                httpx.Response(200, json=_workflow_status_json(SrvWorkflowStatus.DONE)),
+                httpx.Response(200, json=_json(_WORKFLOW_RESPONSE)),
+            ]
+        )
+        workflow = mock_client.workflows.wait("wf-1", interval=0)
+        views = [call.request.url.params.get("view") for call in route.calls]
+        assert views == ["status", "status", None]
+        assert workflow.task_ids == []
+
+    @respx.mock
+    def test_wait_status_returns_terminal_view(self, mock_client: FlowMesh) -> None:
+        route = respx.get(route_url("get_workflow", workflow_id="wf-1")).mock(
+            side_effect=[
+                httpx.Response(
+                    200, json=_workflow_status_json(SrvWorkflowStatus.PENDING)
+                ),
+                httpx.Response(
+                    200, json=_workflow_status_json(SrvWorkflowStatus.FAILED)
+                ),
+            ]
+        )
+        view = mock_client.workflows.wait_status("wf-1", interval=0)
+        views = [call.request.url.params.get("view") for call in route.calls]
+        assert views == ["status", "status"]
+        assert view.status == WorkflowStatus.FAILED
+
+    @pytest.mark.anyio
+    @respx.mock
+    async def test_async_polling_requests_status_view(self) -> None:
+        get_route = respx.get(route_url("get_workflow", workflow_id="wf-1")).mock(
+            side_effect=[
+                httpx.Response(200, json=_workflow_status_json(SrvWorkflowStatus.DONE)),
+                httpx.Response(200, json=_workflow_status_json(SrvWorkflowStatus.DONE)),
+                httpx.Response(200, json=_json(_WORKFLOW_RESPONSE)),
+            ]
+        )
+        list_route = respx.get(route_url("list_workflows")).respond(
+            json=[_workflow_status_json(SrvWorkflowStatus.DONE)]
+        )
+        async with AsyncFlowMesh(
+            base_url=TEST_BASE_URL, api_key="flm-test-key"
+        ) as client:
+            view = await client.workflows.status("wf-1")
+            workflow = await client.workflows.wait("wf-1", interval=0)
+            views = await client.workflows.list_statuses(limit=1)
+        assert view.status == WorkflowStatus.DONE
+        assert workflow.workflow_id == "wf-1"
+        assert [v.workflow_id for v in views] == ["wf-1"]
+        get_views = [call.request.url.params.get("view") for call in get_route.calls]
+        assert get_views == ["status", "status", None]
         assert list_route.calls[0].request.url.params["view"] == "status"
         assert list_route.calls[0].request.url.params["limit"] == "1"
 

@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 import typer
 from flowmesh.models import (
     TaskStatus,
+    WorkflowStatus,
     WorkflowSubmitResponse,
 )
 from flowmesh_cli.cli import build_cli_app
@@ -69,6 +70,26 @@ class TestWorkflowSubmit:
         assert call_args.kwargs["workflow_format"] == "n8n"
 
 
+class TestWorkflowWatch:
+    @patch("flowmesh_cli.commands.workflow.FlowMesh")
+    def test_polls_status_then_prints_full_workflow(self, mock_hc: MagicMock) -> None:
+        client = _mock_client()
+        client.workflows.status.side_effect = [
+            MagicMock(status=WorkflowStatus.DISPATCHED),
+            MagicMock(status=WorkflowStatus.DONE),
+        ]
+        client.workflows.retrieve.return_value.model_dump_json.return_value = (
+            '{"workflow_id": "wf-1"}'
+        )
+        mock_hc.return_value = client
+
+        result = runner.invoke(_app(), ["workflow", "watch", "wf-1", "--interval", "0"])
+        assert result.exit_code == 0
+        assert client.workflows.status.call_count == 2
+        client.workflows.retrieve.assert_called_once_with("wf-1")
+        assert '"workflow_id": "wf-1"' in result.stdout
+
+
 class TestWorkflowList:
     @patch("flowmesh_cli.commands.workflow.FlowMesh")
     def test_status_filter(self, mock_hc: MagicMock) -> None:
@@ -99,10 +120,68 @@ class TestWorkflowList:
             ("status", "DONE"),
         ]
 
+    @patch("flowmesh_cli.commands.workflow.FlowMesh")
+    def test_limit_forwarded(self, mock_hc: MagicMock) -> None:
+        client = _mock_client()
+        client.workflows.list.return_value = []
+        mock_hc.return_value = client
+
+        result = runner.invoke(_app(), ["workflow", "list", "--limit", "20"])
+        assert result.exit_code == 0
+        assert client.workflows.list.call_args.kwargs["limit"] == 20
+
+    @patch("flowmesh_cli.commands.workflow.FlowMesh")
+    def test_limit_defaults_to_none(self, mock_hc: MagicMock) -> None:
+        client = _mock_client()
+        client.workflows.list.return_value = []
+        mock_hc.return_value = client
+
+        result = runner.invoke(_app(), ["workflow", "list"])
+        assert result.exit_code == 0
+        assert client.workflows.list.call_args.kwargs["limit"] is None
+
+    @patch("flowmesh_cli.commands.workflow.FlowMesh")
+    def test_limit_out_of_range_rejected(self, mock_hc: MagicMock) -> None:
+        result = runner.invoke(_app(), ["workflow", "list", "--limit", "0"])
+        assert result.exit_code != 0
+        mock_hc.assert_not_called()
+
 
 # ------------------------------------------------------------------ #
 # Task commands
 # ------------------------------------------------------------------ #
+
+
+class TestTaskList:
+    @patch("flowmesh_cli.commands.task.FlowMesh")
+    def test_limit_forwarded(self, mock_hc: MagicMock) -> None:
+        client = _mock_client()
+        client.tasks.list.return_value = []
+        mock_hc.return_value = client
+
+        result = runner.invoke(
+            _app(), ["task", "list", "--workflow-id", "wf-1", "--limit", "50"]
+        )
+        assert result.exit_code == 0
+        call_kwargs = client.tasks.list.call_args.kwargs
+        assert call_kwargs["limit"] == 50
+        assert call_kwargs["workflow_id"] == "wf-1"
+
+    @patch("flowmesh_cli.commands.task.FlowMesh")
+    def test_limit_defaults_to_none(self, mock_hc: MagicMock) -> None:
+        client = _mock_client()
+        client.tasks.list.return_value = []
+        mock_hc.return_value = client
+
+        result = runner.invoke(_app(), ["task", "list"])
+        assert result.exit_code == 0
+        assert client.tasks.list.call_args.kwargs["limit"] is None
+
+    @patch("flowmesh_cli.commands.task.FlowMesh")
+    def test_limit_out_of_range_rejected(self, mock_hc: MagicMock) -> None:
+        result = runner.invoke(_app(), ["task", "list", "--limit", "10001"])
+        assert result.exit_code != 0
+        mock_hc.assert_not_called()
 
 
 class TestTaskInfo:

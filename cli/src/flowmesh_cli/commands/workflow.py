@@ -5,7 +5,7 @@ from pathlib import Path
 import typer
 from flowmesh import FlowMesh
 from flowmesh.exceptions import FlowMeshError
-from flowmesh.models.common import TERMINAL_WORKFLOW_STATUSES, WorkflowStatus
+from flowmesh.models.common import TERMINAL_WORKFLOW_STATUSES
 from flowmesh.resources.workflows import WorkflowFormat
 
 from ..core import logging
@@ -100,6 +100,9 @@ def list_workflows(
         "--task-id",
         help="Filter by task id in workflow (repeatable)",
     ),
+    limit: int | None = typer.Option(
+        None, "--limit", min=1, max=10_000, help="Keep only the newest N workflows"
+    ),
     query: list[str] | None = typer.Option(
         None, "--query", "-q", help="Filter workflows by key=value pairs"
     ),
@@ -112,6 +115,7 @@ def list_workflows(
             workflow_id=workflow_id,
             status=status or None,
             task_ids=task_id or None,
+            limit=limit,
             query_params=query_params,
         )
     except FlowMeshError as exc:
@@ -130,12 +134,13 @@ def watch(
     last_status: str | None = None
     try:
         while True:
-            wf = client.workflows.retrieve(workflow_id)
-            status_value = WorkflowStatus(wf.status)
+            view = client.workflows.status(workflow_id)
+            status_value = view.status
             if status_value != last_status:
                 logging.log(f"[{workflow_id}] status: {status_value}")
                 last_status = status_value
             if status_value in TERMINAL_WORKFLOW_STATUSES:
+                wf = client.workflows.retrieve(workflow_id)
                 logging.log(wf.model_dump_json(indent=2))
                 return
             time.sleep(interval)

@@ -14,6 +14,8 @@ from pydantic import (
     model_serializer,
 )
 
+from shared.utils.time import parse_iso_datetime
+
 from ..clients.redis import (
     WORKFLOWS_SET_KEY,
     RedisClient,
@@ -104,6 +106,15 @@ class Workflow(BaseModel):
     completed_tasks: list[str] = Field(description="Completed task identifiers.")
     failed_tasks: list[str] = Field(description="Failed task identifiers.")
     cancelled_tasks: list[str] = Field(description="Cancelled task identifiers.")
+
+
+def workflow_order(workflow: Workflow) -> tuple[float, str]:
+    """Order by submission time, then id; an unparsable time sorts oldest."""
+    try:
+        submitted = parse_iso_datetime(workflow.submitted_at)
+    except ValueError:
+        submitted = None
+    return (submitted.timestamp() if submitted else 0.0), workflow.workflow_id
 
 
 def _create_workflow_record(

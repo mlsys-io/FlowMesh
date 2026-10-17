@@ -1,6 +1,7 @@
 """Workflow resource operations."""
 
 import asyncio
+import builtins
 import json
 import time
 from collections.abc import AsyncIterator, Iterator
@@ -17,6 +18,7 @@ from ..models.common import (
 )
 from ..models.workflows import (
     Workflow,
+    WorkflowStatusView,
     WorkflowSubmitResponse,
     WorkflowValidateResponse,
 )
@@ -38,6 +40,23 @@ def _serialize_workflow(
 
 def _workflow_content_type(workflow_format: WorkflowFormat) -> str:
     return "application/json" if workflow_format == "n8n" else "text/plain"
+
+
+def _list_params(
+    workflow_id: str | None = None,
+    status: str | list[str] | None = None,
+    task_ids: str | list[str] | None = None,
+    limit: int | None = None,
+    query_params: list[tuple[str, str]] | None = None,
+) -> list[tuple[str, str]]:
+    params: list[tuple[str, str]] = []
+    append_param(params, "workflow_id", workflow_id)
+    extend_params(params, "status", status)
+    extend_params(params, "task_ids", task_ids)
+    append_param(params, "limit", limit)
+    if query_params:
+        params.extend(query_params)
+    return params
 
 
 class Workflows(SyncResource):
@@ -85,22 +104,55 @@ class Workflows(SyncResource):
         data = self._client._request("GET", f"/workflows/{workflow_id}")
         return Workflow.model_validate(data)
 
+    def status(self, workflow_id: str) -> WorkflowStatusView:
+        """Retrieve a workflow's status view, with task counts instead of task IDs.
+
+        Prefer this over ``retrieve`` for polling."""
+        data = self._client._request(
+            "GET", f"/workflows/{workflow_id}", params=[("view", "status")]
+        )
+        return WorkflowStatusView.model_validate(data)
+
     def list(
         self,
         workflow_id: str | None = None,
         status: str | list[str] | None = None,
         task_ids: str | list[str] | None = None,
+        limit: int | None = None,
         query_params: list[tuple[str, str]] | None = None,
     ) -> list[Workflow]:
-        """List workflows with optional filters."""
-        params: list[tuple[str, str]] = []
-        append_param(params, "workflow_id", workflow_id)
-        extend_params(params, "status", status)
-        extend_params(params, "task_ids", task_ids)
-        if query_params:
-            params.extend(query_params)
+        """List workflows with optional filters, oldest submission first.
+
+        ``limit`` keeps only the newest matching workflows."""
+        params = _list_params(
+            workflow_id=workflow_id,
+            status=status,
+            task_ids=task_ids,
+            limit=limit,
+            query_params=query_params,
+        )
         data = self._client._request("GET", "/workflows", params=params or None)
         return [Workflow.model_validate(w) for w in data]
+
+    def list_statuses(
+        self,
+        workflow_id: str | None = None,
+        status: str | builtins.list[str] | None = None,
+        task_ids: str | builtins.list[str] | None = None,
+        limit: int | None = None,
+        query_params: builtins.list[tuple[str, str]] | None = None,
+    ) -> builtins.list[WorkflowStatusView]:
+        """List the status views of workflows; takes the filters of ``list``."""
+        params = _list_params(
+            workflow_id=workflow_id,
+            status=status,
+            task_ids=task_ids,
+            limit=limit,
+            query_params=query_params,
+        )
+        params.append(("view", "status"))
+        data = self._client._request("GET", "/workflows", params=params)
+        return [WorkflowStatusView.model_validate(w) for w in data]
 
     def cancel(self, workflow_id: str) -> Workflow:
         """Cancel a running workflow."""
@@ -151,11 +203,21 @@ class Workflows(SyncResource):
         workflow_id: str,
         interval: float = 2.0,
     ) -> Workflow:
-        """Poll a workflow until it reaches a terminal state."""
+        """Poll a workflow until it reaches a terminal state, then retrieve it."""
+        self.wait_status(workflow_id, interval=interval)
+        return self.retrieve(workflow_id)
+
+    def wait_status(
+        self,
+        workflow_id: str,
+        interval: float = 2.0,
+    ) -> WorkflowStatusView:
+        """Poll a workflow until it reaches a terminal state and return its status
+        view."""
         while True:
-            workflow = self.retrieve(workflow_id)
-            if workflow.status in TERMINAL_WORKFLOW_STATUSES:
-                return workflow
+            view = self.status(workflow_id)
+            if view.status in TERMINAL_WORKFLOW_STATUSES:
+                return view
             time.sleep(interval)
 
 
@@ -199,22 +261,55 @@ class AsyncWorkflows(AsyncResource):
         data = await self._client._request("GET", f"/workflows/{workflow_id}")
         return Workflow.model_validate(data)
 
+    async def status(self, workflow_id: str) -> WorkflowStatusView:
+        """Retrieve a workflow's status view, with task counts instead of task IDs.
+
+        Prefer this over ``retrieve`` for polling."""
+        data = await self._client._request(
+            "GET", f"/workflows/{workflow_id}", params=[("view", "status")]
+        )
+        return WorkflowStatusView.model_validate(data)
+
     async def list(
         self,
         workflow_id: str | None = None,
         status: str | list[str] | None = None,
         task_ids: str | list[str] | None = None,
+        limit: int | None = None,
         query_params: list[tuple[str, str]] | None = None,
     ) -> list[Workflow]:
-        """List workflows with optional filters."""
-        params: list[tuple[str, str]] = []
-        append_param(params, "workflow_id", workflow_id)
-        extend_params(params, "status", status)
-        extend_params(params, "task_ids", task_ids)
-        if query_params:
-            params.extend(query_params)
+        """List workflows with optional filters, oldest submission first.
+
+        ``limit`` keeps only the newest matching workflows."""
+        params = _list_params(
+            workflow_id=workflow_id,
+            status=status,
+            task_ids=task_ids,
+            limit=limit,
+            query_params=query_params,
+        )
         data = await self._client._request("GET", "/workflows", params=params or None)
         return [Workflow.model_validate(w) for w in data]
+
+    async def list_statuses(
+        self,
+        workflow_id: str | None = None,
+        status: str | builtins.list[str] | None = None,
+        task_ids: str | builtins.list[str] | None = None,
+        limit: int | None = None,
+        query_params: builtins.list[tuple[str, str]] | None = None,
+    ) -> builtins.list[WorkflowStatusView]:
+        """List the status views of workflows; takes the filters of ``list``."""
+        params = _list_params(
+            workflow_id=workflow_id,
+            status=status,
+            task_ids=task_ids,
+            limit=limit,
+            query_params=query_params,
+        )
+        params.append(("view", "status"))
+        data = await self._client._request("GET", "/workflows", params=params)
+        return [WorkflowStatusView.model_validate(w) for w in data]
 
     async def cancel(self, workflow_id: str) -> Workflow:
         """Cancel a running workflow."""
@@ -263,9 +358,17 @@ class AsyncWorkflows(AsyncResource):
             yield out_path
 
     async def wait(self, workflow_id: str, interval: float = 2.0) -> Workflow:
-        """Poll a workflow until it reaches a terminal state."""
+        """Poll a workflow until it reaches a terminal state, then retrieve it."""
+        await self.wait_status(workflow_id, interval=interval)
+        return await self.retrieve(workflow_id)
+
+    async def wait_status(
+        self, workflow_id: str, interval: float = 2.0
+    ) -> WorkflowStatusView:
+        """Poll a workflow until it reaches a terminal state and return its status
+        view."""
         while True:
-            workflow = await self.retrieve(workflow_id)
-            if workflow.status in TERMINAL_WORKFLOW_STATUSES:
-                return workflow
+            view = await self.status(workflow_id)
+            if view.status in TERMINAL_WORKFLOW_STATUSES:
+                return view
             await asyncio.sleep(interval)

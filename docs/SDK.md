@@ -43,14 +43,19 @@ async with AsyncFlowMesh(base_url="...", api_key="...") as client:
 - **Submit YAML / JSON / n8n** — `client.workflows.submit(text_or_mapping)`;
   pass `workflow_format="n8n"` for n8n graphs.
 - **Validate without executing** — `client.workflows.validate(text_or_mapping)`.
-- **List with filters** — `client.workflows.list(status=...)` and
-  `client.tasks.list(workflow_id=..., status=..., limit=...)`; tasks come oldest
+- **List with filters** — `client.workflows.list(status=..., limit=...)` and
+  `client.tasks.list(workflow_id=..., status=..., limit=...)`; both come oldest
   submission first, and `limit` keeps the newest. Pass further filters with
   `query_params`.
 - **Poll task status** — `client.tasks.status(task_id)` and
   `client.tasks.list_statuses(...)` return status views without the task spec or
   source. `client.tasks.wait_status(task_id)` polls until the task finishes and
   returns its status view; `client.tasks.wait(task_id)` returns the full task.
+- **Poll workflow status** — `client.workflows.status(wf_id)` and
+  `client.workflows.list_statuses(...)` return status views with per-state task
+  counts instead of task ID lists. `client.workflows.wait_status(wf_id)` polls
+  until the workflow is `DONE`, `FAILED` or `CANCELLED` and returns its status
+  view; `client.workflows.wait(wf_id)` returns the full workflow.
 - **Stream logs** — `client.workflows.stream_logs(wf_id)` and
   `client.tasks.stream_logs(task_id)` yield server-sent events; the
   iterator stops when the source closes.

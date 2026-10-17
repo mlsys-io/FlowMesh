@@ -79,6 +79,9 @@ def list_tasks(
         "--failed/--not-failed",
         help="Filter by failure state",
     ),
+    limit: int | None = typer.Option(
+        None, "--limit", min=1, max=10_000, help="Keep only the newest N tasks"
+    ),
     query: list[str] | None = typer.Option(
         None, "--query", "-q", help="Filter tasks by key=value pairs"
     ),
@@ -97,6 +100,7 @@ def list_tasks(
             graph_node_name=graph_node_name,
             completed=completed,
             failed=failed,
+            limit=limit,
             query_params=query_params,
         )
     except FlowMeshError as exc:

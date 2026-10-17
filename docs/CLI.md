@@ -37,10 +37,10 @@ flowmesh workflow logs stream <wfl-id>        # SSE log stream
 flowmesh workflow logs download <wfl-id> -o logs/
 ```
 
-List, filter, paginate:
+List and filter; `--limit` keeps the newest matches:
 
 ```bash
-flowmesh workflow list --status DONE
+flowmesh workflow list --status DONE --limit 20
 flowmesh task list --workflow-id <wfl-id> --status FAILED
 ```
 

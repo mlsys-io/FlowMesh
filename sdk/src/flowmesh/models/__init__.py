@@ -103,6 +103,7 @@ from .workers import (
 )
 from .workflows import (
     Workflow,
+    WorkflowStatusView,
     WorkflowSubmitResponse,
     WorkflowSubmitTaskEntry,
     WorkflowValidateResponse,
@@ -206,6 +207,7 @@ __all__ = [
     "WorkerStatus",
     "Workflow",
     "WorkflowStatus",
+    "WorkflowStatusView",
     "WorkflowSubmitResponse",
     "WorkflowSubmitTaskEntry",
     "WorkflowValidateResponse",
