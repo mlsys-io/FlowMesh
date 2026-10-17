@@ -280,7 +280,7 @@ async def test_task_records_are_detached_from_the_runtime() -> None:
     await _register(runtime, GRAPH)
     live = runtime.get_record(a)
     assert live is not None and live.latest_update is not None
-    live.latest_update["serve"] = {}
+    live.latest_update["ssh"]["port"] = 32001
 
     assert {r.task_id for r in records} == set(ids.values())
     snapshot = next(r for r in records if r.task_id == a)

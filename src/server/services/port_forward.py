@@ -583,8 +583,12 @@ class PortForwardService:
                 except Exception:
                     source_port = None
         try:
-            node_id = await self._current_node_id(session.audit.worker_id)
-            await self._start_server_uplink(session, node_id, relay_token)
+            worker_id = session.audit.worker_id
+            endpoint_id = session.session_id
+            node_id = await self._current_node_id(worker_id)
+            await self._start_server_uplink(
+                node_id, worker_id, endpoint_id, relay_token
+            )
         except Exception as exc:
             self._logger.warning(
                 "Failed to start relay uplink for task %s: %s", task_id, exc
@@ -604,9 +608,9 @@ class PortForwardService:
                         access_mode="forward",
                         task_id=task_id,
                         workflow_id=session.audit.workflow_id,
-                        worker_id=session.audit.worker_id,
+                        worker_id=worker_id,
                         node_id=node_id,
-                        session_id=session.session_id,
+                        session_id=endpoint_id,
                         username=(
                             username
                             if (username := session.audit.username) is not None
@@ -705,15 +709,15 @@ class PortForwardService:
         return worker.node_id
 
     async def _start_server_uplink(
-        self, session: PortForwardSession, node_id: str, relay_token: str
+        self, node_id: str, worker_id: str, endpoint_id: str, relay_token: str
     ) -> None:
-        """Ask the assigned node to start a relay uplink for this session."""
+        """Ask the worker's node to start a relay uplink for this session."""
         cmd = CommandMessage(
             command=CommandType.START_RELAY,
             payload={
                 "relay_token": relay_token,
-                "worker_id": session.audit.worker_id,
-                "endpoint_id": session.session_id,
+                "worker_id": worker_id,
+                "endpoint_id": endpoint_id,
             },
         )
         resp = await self._node_registry.exec_node_cmd(
