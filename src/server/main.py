@@ -36,6 +36,7 @@ from .services.port_forward import PortForwardService
 from .services.ssh_connections import SshConnectionRegistry
 from .services.watchdog import WorkerWatchdog
 from .supervisor import WorkerSupervisor
+from .task.models import TaskStatus
 from .task.runtime import TaskRuntime
 from .utils.logging import get_logger
 
@@ -379,6 +380,10 @@ async def _lifespan(_: FastAPI):
                 await RUNTIME.rehydrate()
             if PORT_FORWARD_SERVICE is not None:
                 await PORT_FORWARD_SERVICE.start()
+                if RUNTIME is not None:
+                    await PORT_FORWARD_SERVICE.restore_sessions(
+                        RUNTIME.list_tasks(statuses={TaskStatus.DISPATCHED})
+                    )
             _start_root_threads()
             if EVENT_MONITOR is not None:
                 EVENT_MONITOR.start()

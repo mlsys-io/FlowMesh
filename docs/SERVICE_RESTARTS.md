@@ -88,6 +88,14 @@ restart safe:
   reclaim those tasks, so a worker that is merely catching up is not mistaken
   for a dead one and its tasks are not needlessly requeued.
 
+A running `forward`-mode SSH or serve session on a worker of another node is
+served again on the port it published. The port is claimed before the server
+accepts traffic, so a new session never receives it. Restoring never moves a
+session, because its clients hold that host and port: a session whose port the
+server cannot bind again stays unreachable. A session on a worker of the root's
+own supervisor is not carried over, since that worker re-registers under a new
+id.
+
 A workflow with a durable record the server cannot read on startup (its workflow
 record, its schedule, or a task state that is missing or damaged) fails its
 pending tasks and each task whose state is unreadable, while every other

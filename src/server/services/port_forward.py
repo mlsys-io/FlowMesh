@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import secrets
-from collections.abc import Callable, Coroutine
+from collections.abc import Callable, Coroutine, Iterable, Sequence
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from dataclasses import dataclass, field
 from threading import Event, Lock
@@ -13,16 +13,19 @@ from shared.utils.encoding import (
     decode_base64_text_to_bytes,
     encode_bytes_to_base64_text,
 )
+from shared.utils.json import safe_get
 
 from ..clients.redis import RedisClient, relay_down_key, relay_up_key
 from ..registries.node import NodeRegistry
 from ..registries.worker import WorkerRegistry
 from ..schemas.ssh import SSHConnectionInfo
+from ..task.models import TaskRecord, TaskStatus
 from .ssh_connections import SshConnectionRegistry
 
 _STREAM_MAXLEN = 1000
 _READ_CHUNK = 16384
 _DEFAULT_TIMEOUT_SEC = 5.0
+_FORWARD_ENDPOINT_KEYS = ("ssh", "serve")
 
 
 @dataclass(slots=True)
@@ -54,7 +57,6 @@ class _Registration:
 @dataclass(slots=True)
 class PortForwardSession:
     task_id: str
-    node_id: str
     session_id: str
     port: int
     """The local port on which the port-forward service listens for this session."""
@@ -201,6 +203,66 @@ class PortForwardService:
             self._schedule_registration_invalidation(task_id, registration, loop)
             raise
 
+    async def restore_sessions(self, records: Iterable[TaskRecord]) -> None:
+        """Serve the forward session of each running task again, on the port its
+        record last published.
+
+        A session whose port cannot be claimed again is left unreachable rather than
+        moved: its clients know only that port.
+        """
+        for record in records:
+            if record.status != TaskStatus.DISPATCHED or not record.assigned_worker:
+                continue
+            for key in _FORWARD_ENDPOINT_KEYS:
+                endpoint = safe_get(record.latest_update, key)
+                if isinstance(endpoint, dict) and endpoint.get("mode") == "forward":
+                    await self._restore_session(
+                        record, record.assigned_worker, endpoint
+                    )
+                    break
+
+    async def _restore_session(
+        self, record: TaskRecord, assigned_worker: str, endpoint: dict[str, Any]
+    ) -> None:
+        task_id = record.task_id
+        port = endpoint.get("port")
+        if not isinstance(port, int):
+            self._logger.warning(
+                "Forward session of task %s published no port; leaving it unreachable",
+                task_id,
+            )
+            return
+        forward_input = endpoint.copy()
+        # A serve endpoint is registered under its task id and does not publish it.
+        forward_input.setdefault("session_id", task_id)
+        registration = _Registration()
+        try:
+            await self._register_task_async(
+                task_id,
+                record.workflow_id,
+                assigned_worker,
+                forward_input,
+                registration,
+                port,
+            )
+        except (RuntimeError, OSError) as exc:
+            await self._invalidate_registration(task_id, registration)
+            self._logger.warning(
+                "Cannot restore forward port %s of task %s; leaving the session "
+                "unreachable: %s",
+                port,
+                task_id,
+                exc,
+            )
+            return
+        except Exception:
+            await self._invalidate_registration(task_id, registration)
+            self._logger.exception(
+                "Restoring forward port %s of task %s failed", port, task_id
+            )
+            return
+        self._logger.info("Restored forward port %s for task %s", port, task_id)
+
     def unregister_task(self, task_id: str) -> None:
         loop = self._get_loop()
         if loop is None:
@@ -227,6 +289,7 @@ class PortForwardService:
         assigned_worker: str,
         endpoint: dict[str, Any],
         registration: _Registration | None = None,
+        requested_port: int | None = None,
     ) -> dict[str, Any]:
         if registration is None:
             registration = _Registration()
@@ -262,7 +325,6 @@ class PortForwardService:
             session = self._sessions.get(task_id)
             if session is not None:
                 # Update existing session info
-                session.node_id = worker.node_id
                 session.session_id = str(session_id)
                 session.audit.workflow_id = workflow_id
                 session.audit.worker_id = assigned_worker
@@ -271,10 +333,10 @@ class PortForwardService:
             elif self._persistent_listeners:
                 session = self._create_persistent_session_locked(
                     task_id,
-                    worker.node_id,
                     str(session_id),
                     audit,
                     registration,
+                    requested_port,
                 )
                 self._sessions[task_id] = session
                 self._port_to_task[session.port] = task_id
@@ -283,10 +345,10 @@ class PortForwardService:
         if session is None:
             session = await self._create_dynamic_session(
                 task_id,
-                worker.node_id,
                 str(session_id),
                 audit,
                 registration,
+                requested_port,
             )
             created = True
         if created:
@@ -319,19 +381,26 @@ class PortForwardService:
         ):
             raise RuntimeError("Forward registration was cancelled")
 
+    def _candidate_ports(self, requested_port: int | None) -> Sequence[int]:
+        """The ports a session may take: any in range, or exactly the one requested."""
+        if requested_port is None:
+            return range(self._port_start, self._port_end + 1)
+        if self._port_start <= requested_port <= self._port_end:
+            return (requested_port,)
+        return ()
+
     def _create_persistent_session_locked(
         self,
         task_id: str,
-        node_id: str,
         session_id: str,
         audit: _AuditContext,
         registration: _Registration,
+        requested_port: int | None,
     ) -> PortForwardSession:
-        for port in range(self._port_start, self._port_end + 1):
+        for port in self._candidate_ports(requested_port):
             if port in self._servers and port not in self._port_to_task:
                 return PortForwardSession(
                     task_id=task_id,
-                    node_id=node_id,
                     session_id=session_id,
                     port=port,
                     audit=audit,
@@ -343,11 +412,12 @@ class PortForwardService:
     async def _create_dynamic_session(
         self,
         task_id: str,
-        node_id: str,
         session_id: str,
         audit: _AuditContext,
         registration: _Registration,
+        requested_port: int | None,
     ) -> PortForwardSession:
+        candidates = self._candidate_ports(requested_port)
         unavailable_ports: set[int] = set()
         while True:
             pending_drained: asyncio.Event | None = None
@@ -356,14 +426,14 @@ class PortForwardService:
                 port = next(
                     (
                         candidate
-                        for candidate in range(self._port_start, self._port_end + 1)
+                        for candidate in candidates
                         if candidate not in self._used_ports
                         and candidate not in unavailable_ports
                     ),
                     None,
                 )
                 if port is None:
-                    if not self._pending_dynamic:
+                    if requested_port is not None or not self._pending_dynamic:
                         raise RuntimeError("No available forward ports")
                     pending_drained = self._no_pending_dynamic
                 else:
@@ -391,7 +461,6 @@ class PortForwardService:
                     self._require_registration_locked(task_id, registration)
                     session = PortForwardSession(
                         task_id=task_id,
-                        node_id=node_id,
                         session_id=session_id,
                         port=port,
                         audit=audit,
@@ -514,7 +583,12 @@ class PortForwardService:
                 except Exception:
                     source_port = None
         try:
-            await self._start_server_uplink(session, relay_token)
+            worker_id = session.audit.worker_id
+            endpoint_id = session.session_id
+            node_id = await self._current_node_id(worker_id)
+            await self._start_server_uplink(
+                node_id, worker_id, endpoint_id, relay_token
+            )
         except Exception as exc:
             self._logger.warning(
                 "Failed to start relay uplink for task %s: %s", task_id, exc
@@ -534,9 +608,9 @@ class PortForwardService:
                         access_mode="forward",
                         task_id=task_id,
                         workflow_id=session.audit.workflow_id,
-                        worker_id=session.audit.worker_id,
-                        node_id=session.node_id,
-                        session_id=session.session_id,
+                        worker_id=worker_id,
+                        node_id=node_id,
+                        session_id=endpoint_id,
                         username=(
                             username
                             if (username := session.audit.username) is not None
@@ -626,20 +700,28 @@ class PortForwardService:
             except Exception:
                 pass
 
+    async def _current_node_id(self, worker_id: str) -> str:
+        """The node the worker is registered under now, which a node's
+        re-registration changes."""
+        worker = await self._worker_registry.get_worker_async(worker_id)
+        if worker is None:
+            raise RuntimeError(f"Assigned worker not found: {worker_id}")
+        return worker.node_id
+
     async def _start_server_uplink(
-        self, session: PortForwardSession, relay_token: str
+        self, node_id: str, worker_id: str, endpoint_id: str, relay_token: str
     ) -> None:
-        """Ask the assigned node to start a relay uplink for this session."""
+        """Ask the worker's node to start a relay uplink for this session."""
         cmd = CommandMessage(
             command=CommandType.START_RELAY,
             payload={
                 "relay_token": relay_token,
-                "worker_id": session.audit.worker_id,
-                "endpoint_id": session.session_id,
+                "worker_id": worker_id,
+                "endpoint_id": endpoint_id,
             },
         )
         resp = await self._node_registry.exec_node_cmd(
-            session.node_id, cmd, timeout=_DEFAULT_TIMEOUT_SEC
+            node_id, cmd, timeout=_DEFAULT_TIMEOUT_SEC
         )
         if not resp.success:
             raise RuntimeError(resp.message or "Server refused START_RELAY")
