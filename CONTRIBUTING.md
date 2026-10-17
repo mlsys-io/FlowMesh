@@ -107,6 +107,15 @@ uv run pytest tests/server/            # Server-specific tests
 uv run pytest tests/test_core_flow.py  # Single file
 ```
 
+The suite runs in parallel under [pytest-xdist](https://pytest-xdist.readthedocs.io/):
+
+```bash
+uv run pytest tests/ -n 8 --dist loadgroup  # Eight workers
+uv run pytest tests/path/to/test_file.py::test_name -n 0  # Serially, for debugging, as is any run without -n
+```
+
+Each worker collects the whole suite, so past about 16 workers a run gets slower; pass a count rather than `-n auto` on a many-core host. `--dist loadgroup` runs tests that share an `xdist_group` mark on one worker, for tests that share an external resource.
+
 If your change touches shared schemas or proto definitions, verify downstream compatibility across Server and Worker packages.
 
 ## CI runners
