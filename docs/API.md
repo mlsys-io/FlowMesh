@@ -25,8 +25,8 @@ self-authenticate the same way, sending `FLOWMESH_API_KEY` as the bearer.
 |--------|------|-------------|
 | POST | `/api/v1/workflows` | Submit a workflow. Body is YAML (`text/plain`) or JSON; set `Workflow-Format: n8n` for n8n graphs. |
 | POST | `/api/v1/workflows/validate` | Parse without executing. |
-| GET | `/api/v1/workflows` | List workflows, oldest first. Filters: `workflow_id`, `status`, `task_ids`. `limit` keeps the newest; `view=status` returns task counts instead of task ID lists. |
-| GET | `/api/v1/workflows/{id}` | Workflow details + per-task summary. `view=status` returns task counts instead of task ID lists. |
+| GET | `/api/v1/workflows` | List workflows, oldest first. Filters: `workflow_id`, `status`, `task_ids`. `limit` keeps the newest; `view=status` returns only each workflow's status and progress. |
+| GET | `/api/v1/workflows/{id}` | Workflow details + per-task summary. `view=status` returns only the workflow's status and progress. |
 | GET | `/api/v1/workflows/{id}/logs` | Query logs (`limit`, `before`/`after` cursors). |
 | GET | `/api/v1/workflows/{id}/logs/stream` | SSE log stream. |
 | POST | `/api/v1/workflows/{id}/cancel` | Cancel a workflow and all in-flight tasks. |
