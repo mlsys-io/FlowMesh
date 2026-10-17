@@ -54,8 +54,8 @@ async with AsyncFlowMesh(base_url="...", api_key="...") as client:
 - **Poll workflow status** — `client.workflows.status(wf_id)` and
   `client.workflows.list_statuses(...)` return status views with per-state task
   counts instead of task ID lists. `client.workflows.wait_status(wf_id)` polls
-  until the workflow finishes and returns its status view;
-  `client.workflows.wait(wf_id)` returns the full workflow.
+  until the workflow is `DONE`, `FAILED` or `CANCELLED` and returns its status
+  view; `client.workflows.wait(wf_id)` returns the full workflow.
 - **Stream logs** — `client.workflows.stream_logs(wf_id)` and
   `client.tasks.stream_logs(task_id)` yield server-sent events; the
   iterator stops when the source closes.
