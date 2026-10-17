@@ -14,6 +14,7 @@ import typer
 import websockets
 from flowmesh import FlowMesh
 from flowmesh.exceptions import FlowMeshError, NotFoundError
+from flowmesh.models import TaskStatusView
 from flowmesh.models.common import TERMINAL_TASK_STATUSES, TaskStatus
 from flowmesh.params import append_param, extend_params
 from flowmesh.ssh import describe_direct_route
@@ -82,13 +83,13 @@ def _exec_ssh(
     os.execvp(ssh_bin, args)
 
 
-def _exit_for_task_status(task_id: str, task_info: Any) -> None:
-    status = task_info.status
+def _exit_for_task_status(task_id: str, view: TaskStatusView) -> None:
+    status = view.status
     if status == TaskStatus.DONE:
         logging.info(f"Task {task_id} completed successfully.")
         raise typer.Exit(code=0)
     if status == TaskStatus.FAILED:
-        logging.error(f"Task {task_id} failed: {task_info.error or 'unknown error'}")
+        logging.error(f"Task {task_id} failed: {view.error or 'unknown error'}")
         raise typer.Exit(code=1)
     if status == TaskStatus.CANCELLED:
         logging.info(f"Task {task_id} was cancelled.")
@@ -97,14 +98,14 @@ def _exit_for_task_status(task_id: str, task_info: Any) -> None:
 
 def _poll_status_and_exit(client: FlowMesh, task_id: str, interval: float) -> None:
     try:
-        task_info = client.tasks.wait(task_id, interval=interval)
+        view = client.tasks.wait_status(task_id, interval=interval)
     except KeyboardInterrupt:
         logging.warning("Interrupted.")
         raise typer.Exit(code=130)
     except FlowMeshError as exc:
         logging.error(str(exc))
         raise typer.Exit(code=1)
-    _exit_for_task_status(task_id, task_info)
+    _exit_for_task_status(task_id, view)
 
 
 def _stream_logs_and_exit(
@@ -130,9 +131,9 @@ def _stream_logs_and_exit(
             except NotFoundError:
                 pass
 
-            task_info = client.tasks.status(task_id)
-            if task_info.status in TERMINAL_TASK_STATUSES:
-                _exit_for_task_status(task_id, task_info)
+            view = client.tasks.status(task_id)
+            if view.status in TERMINAL_TASK_STATUSES:
+                _exit_for_task_status(task_id, view)
             if not saw_logs:
                 time.sleep(interval)
     except KeyboardInterrupt:

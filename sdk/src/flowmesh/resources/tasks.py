@@ -180,10 +180,20 @@ class Tasks(SyncResource):
         task_id: str,
         interval: float = 2.0,
     ) -> TaskInfo:
-        """Poll a task until it reaches a terminal state."""
+        """Poll a task until it reaches a terminal state, then retrieve it."""
+        self.wait_status(task_id, interval=interval)
+        return self.retrieve(task_id)
+
+    def wait_status(
+        self,
+        task_id: str,
+        interval: float = 2.0,
+    ) -> TaskStatusView:
+        """Poll a task until it reaches a terminal state and return its status view."""
         while True:
-            if self.status(task_id).status in TERMINAL_TASK_STATUSES:
-                return self.retrieve(task_id)
+            view = self.status(task_id)
+            if view.status in TERMINAL_TASK_STATUSES:
+                return view
             time.sleep(interval)
 
     def ssh_info(self, task_id: str) -> dict[str, Any] | None:
@@ -334,10 +344,20 @@ class AsyncTasks(AsyncResource):
         task_id: str,
         interval: float = 2.0,
     ) -> TaskInfo:
-        """Poll a task until it reaches a terminal state."""
+        """Poll a task until it reaches a terminal state, then retrieve it."""
+        await self.wait_status(task_id, interval=interval)
+        return await self.retrieve(task_id)
+
+    async def wait_status(
+        self,
+        task_id: str,
+        interval: float = 2.0,
+    ) -> TaskStatusView:
+        """Poll a task until it reaches a terminal state and return its status view."""
         while True:
-            if (await self.status(task_id)).status in TERMINAL_TASK_STATUSES:
-                return await self.retrieve(task_id)
+            view = await self.status(task_id)
+            if view.status in TERMINAL_TASK_STATUSES:
+                return view
             await asyncio.sleep(interval)
 
     async def ssh_info(self, task_id: str) -> dict[str, Any] | None:

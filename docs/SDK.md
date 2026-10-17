@@ -49,8 +49,8 @@ async with AsyncFlowMesh(base_url="...", api_key="...") as client:
   `query_params`.
 - **Poll task status** — `client.tasks.status(task_id)` and
   `client.tasks.list_statuses(...)` return status views without the task spec or
-  source; `client.tasks.wait(task_id)` polls the status view and returns the full
-  task once it finishes.
+  source. `client.tasks.wait_status(task_id)` polls until the task finishes and
+  returns its status view; `client.tasks.wait(task_id)` returns the full task.
 - **Stream logs** — `client.workflows.stream_logs(wf_id)` and
   `client.tasks.stream_logs(task_id)` yield server-sent events; the
   iterator stops when the source closes.

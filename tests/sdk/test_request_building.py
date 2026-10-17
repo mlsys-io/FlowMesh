@@ -11,6 +11,7 @@ import httpx
 import pytest
 import respx
 from flowmesh import AsyncFlowMesh, FlowMesh
+from flowmesh.models import TaskStatus
 from pydantic import BaseModel
 
 from server.registries.node import Node as SrvNode
@@ -319,6 +320,36 @@ class TestTaskPolling:
         views = [call.request.url.params.get("view") for call in route.calls]
         assert views == ["status", None]
         assert task.task_id == "t-1"
+
+    @respx.mock
+    def test_wait_status_returns_terminal_view(self, mock_client: FlowMesh) -> None:
+        route = respx.get(route_url("get_task", task_id="t-1")).mock(
+            side_effect=[
+                httpx.Response(200, json=_status_json("DISPATCHED")),
+                httpx.Response(200, json=_status_json("DONE")),
+            ]
+        )
+        view = mock_client.tasks.wait_status("t-1", interval=0)
+        views = [call.request.url.params.get("view") for call in route.calls]
+        assert views == ["status", "status"]
+        assert view.status == TaskStatus.DONE
+
+    @pytest.mark.anyio
+    @respx.mock
+    async def test_async_wait_status_returns_terminal_view(self) -> None:
+        route = respx.get(route_url("get_task", task_id="t-1")).mock(
+            side_effect=[
+                httpx.Response(200, json=_status_json("DISPATCHED")),
+                httpx.Response(200, json=_status_json("FAILED")),
+            ]
+        )
+        async with AsyncFlowMesh(
+            base_url=TEST_BASE_URL, api_key="flm-test-key"
+        ) as client:
+            view = await client.tasks.wait_status("t-1", interval=0)
+        views = [call.request.url.params.get("view") for call in route.calls]
+        assert views == ["status", "status"]
+        assert view.status == TaskStatus.FAILED
 
     @respx.mock
     def test_wait_for_ssh_polls_status_view(self, mock_client: FlowMesh) -> None:
