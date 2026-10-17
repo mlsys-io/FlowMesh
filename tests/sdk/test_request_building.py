@@ -109,7 +109,7 @@ def _status_json(
     )
 
 
-def _workflow_status_json(status: SrvWorkflowStatus) -> dict[str, Any]:
+def _workflow_status_json(status: str) -> dict[str, Any]:
     view = SrvWorkflowStatusView.from_workflow(_WORKFLOW_RESPONSE)
     return _json(view.model_copy(update={"status": status}))
 
@@ -471,6 +471,19 @@ class TestWorkflowPolling:
         views = [call.request.url.params.get("view") for call in route.calls]
         assert views == ["status", "status"]
         assert view.status == WorkflowStatus.FAILED
+
+    @respx.mock
+    def test_wait_status_polls_through_unknown_status(
+        self, mock_client: FlowMesh
+    ) -> None:
+        respx.get(route_url("get_workflow", workflow_id="wf-1")).mock(
+            side_effect=[
+                httpx.Response(200, json=_workflow_status_json("PAUSED")),
+                httpx.Response(200, json=_workflow_status_json(SrvWorkflowStatus.DONE)),
+            ]
+        )
+        view = mock_client.workflows.wait_status("wf-1", interval=0)
+        assert view.status is WorkflowStatus.DONE
 
     @pytest.mark.anyio
     @respx.mock

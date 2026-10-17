@@ -433,7 +433,6 @@ class TestWorkerModels:
         payload = _dump(_SRV_WORKER_INFO)
         payload["capabilities"] = {"supported_task_types": ["echo", "omni_text2next"]}
         types = WorkerInfo.model_validate(payload).capabilities.supported_task_types
-        assert types == {TaskType.ECHO, "omni_text2next"}
         assert {(t, type(t)) for t in types} == {
             (TaskType.ECHO, TaskType),
             ("omni_text2next", str),
