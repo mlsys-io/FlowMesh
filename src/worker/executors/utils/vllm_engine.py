@@ -1,5 +1,6 @@
 """Liveness watch for the out-of-process vLLM engine core."""
 
+import asyncio
 import logging
 import queue
 import threading
@@ -7,19 +8,19 @@ from concurrent.futures import Future, InvalidStateError
 from typing import TYPE_CHECKING, Any
 
 try:
+    from vllm import LLM
     from vllm.v1.engine.core_client import BackgroundResources, SyncMPClient
     from vllm.v1.engine.exceptions import EngineDeadError
 except Exception:
     if TYPE_CHECKING:
+        from vllm import LLM
         from vllm.v1.engine.core_client import BackgroundResources, SyncMPClient
         from vllm.v1.engine.exceptions import EngineDeadError
     else:
+        LLM = None
         BackgroundResources = None
         SyncMPClient = None
         EngineDeadError = None
-
-if TYPE_CHECKING:
-    from vllm import LLM
 
 logger = logging.getLogger(__name__)
 
@@ -38,10 +39,10 @@ class EngineCoreWatch:
     it is dropped.
     """
 
-    def __init__(self, llm: "LLM", poll_interval: float = 1.0) -> None:
+    def __init__(self, llm: LLM, poll_interval: float = 1.0) -> None:
         self._resources: BackgroundResources | None = None
         self._outputs: queue.Queue[Any] | None = None
-        self._utility_results: dict[int, Future[Any]] = {}
+        self._utility_results: dict[int, asyncio.Future[Any] | Future[Any]] = {}
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
@@ -81,5 +82,5 @@ class EngineCoreWatch:
         for future in list(self._utility_results.values()):
             try:
                 future.set_exception(EngineDeadError())
-            except InvalidStateError:
+            except (InvalidStateError, asyncio.InvalidStateError):
                 pass
