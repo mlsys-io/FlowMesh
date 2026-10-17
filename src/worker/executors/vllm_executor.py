@@ -331,13 +331,13 @@ Summary:"""
         task_ids: Iterable[str] | None,
     ) -> None:
         """Load or reuse the vLLM engine for ``ident``."""
-        if self._llm and self._engine_watch and self._engine_watch.dead:
-            logger.warning(
-                "vLLM engine core for %s has exited; reloading", self._model_name
-            )
-            self._shutdown_llm()
         if self._llm:
-            if self._inference_spec == new_inference_spec:
+            if self._engine_watch and self._engine_watch.dead:
+                logger.warning(
+                    "vLLM engine core for %s has exited; reloading", self._model_name
+                )
+                self._shutdown_llm()
+            elif self._inference_spec == new_inference_spec:
                 logger.info("Reusing existing vLLM instance for model %s", ident)
                 return
             else:

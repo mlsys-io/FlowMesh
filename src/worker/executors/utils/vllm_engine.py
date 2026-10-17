@@ -7,13 +7,14 @@ from concurrent.futures import Future, InvalidStateError
 from typing import TYPE_CHECKING, Any
 
 try:
-    from vllm.v1.engine.core_client import SyncMPClient
+    from vllm.v1.engine.core_client import BackgroundResources, SyncMPClient
     from vllm.v1.engine.exceptions import EngineDeadError
 except Exception:
     if TYPE_CHECKING:
-        from vllm.v1.engine.core_client import SyncMPClient
+        from vllm.v1.engine.core_client import BackgroundResources, SyncMPClient
         from vllm.v1.engine.exceptions import EngineDeadError
     else:
+        BackgroundResources = None
         SyncMPClient = None
         EngineDeadError = None
 
@@ -38,7 +39,7 @@ class EngineCoreWatch:
     """
 
     def __init__(self, llm: "LLM", poll_interval: float = 1.0) -> None:
-        self._resources: Any = None
+        self._resources: BackgroundResources | None = None
         self._outputs: queue.Queue[Any] | None = None
         self._utility_results: dict[int, Future[Any]] = {}
         self._stop = threading.Event()
@@ -60,11 +61,11 @@ class EngineCoreWatch:
 
     @property
     def dead(self) -> bool:
-        return self._resources is not None and bool(self._resources.engine_dead)
+        return self._resources is not None and self._resources.engine_dead
 
     def stop(self) -> None:
         self._stop.set()
-        if self._thread is not None and self._thread is not threading.current_thread():
+        if self._thread is not None:
             self._thread.join(timeout=5.0)
 
     def _watch(self, poll_interval: float) -> None:
