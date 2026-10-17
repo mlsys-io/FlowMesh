@@ -4,7 +4,7 @@ from typing import Any
 
 from pydantic import AliasChoices, BaseModel, Field
 
-from .common import TaskStatus
+from .common import OpenEnum, TaskStatus
 
 
 class HardwareUsage(BaseModel, extra="allow"):
@@ -18,7 +18,7 @@ class TaskUsage(BaseModel):
     hardware: HardwareUsage
     cost_per_hour: float
     total_cost: float
-    status: TaskStatus
+    status: OpenEnum[TaskStatus]
 
 
 class TaskInfo(BaseModel):
@@ -31,7 +31,7 @@ class TaskInfo(BaseModel):
     # under that key; remove in the next minor release.
     source: str = Field(validation_alias=AliasChoices("source", "raw_yaml"))
     task: dict[str, Any]
-    status: TaskStatus
+    status: OpenEnum[TaskStatus]
     task_type: str | None = None
     category: str | None = None
     assigned_worker: str | None = None
@@ -76,7 +76,7 @@ class TaskStatusView(BaseModel):
 
     task_id: str
     workflow_id: str
-    status: TaskStatus
+    status: OpenEnum[TaskStatus]
     task_type: str | None = None
     category: str | None = None
     assigned_worker: str | None = None

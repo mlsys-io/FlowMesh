@@ -340,6 +340,19 @@ class TestTaskPolling:
         assert views == ["status", "status"]
         assert view.status == TaskStatus.DONE
 
+    @respx.mock
+    def test_wait_status_polls_through_unknown_status(
+        self, mock_client: FlowMesh
+    ) -> None:
+        respx.get(route_url("get_task", task_id="t-1")).mock(
+            side_effect=[
+                httpx.Response(200, json=_status_json("PAUSED")),
+                httpx.Response(200, json=_status_json("DONE")),
+            ]
+        )
+        view = mock_client.tasks.wait_status("t-1", interval=0)
+        assert view.status is TaskStatus.DONE
+
     @pytest.mark.anyio
     @respx.mock
     async def test_async_wait_status_returns_terminal_view(self) -> None:

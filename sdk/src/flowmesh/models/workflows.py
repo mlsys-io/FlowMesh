@@ -4,12 +4,12 @@ from typing import Any
 
 from pydantic import BaseModel, model_validator
 
-from .common import TaskStatus, WorkflowStatus
+from .common import OpenEnum, TaskStatus, WorkflowStatus
 
 
 class WorkflowSubmitTaskEntry(BaseModel):
     task_id: str
-    status: TaskStatus | None = None
+    status: OpenEnum[TaskStatus] | None = None
     assigned_worker: str | None = None
     topic: str | None = None
     waiting_on: list[str] | None = None
@@ -43,7 +43,7 @@ class Workflow(BaseModel):
     task_ids: list[str]
     submitted_at: str
     updated_at: str
-    status: WorkflowStatus
+    status: OpenEnum[WorkflowStatus]
     dispatched_tasks: list[str]
     completed_tasks: list[str]
     failed_tasks: list[str]
@@ -64,7 +64,7 @@ class WorkflowStatusView(BaseModel):
     ID lists."""
 
     workflow_id: str
-    status: WorkflowStatus
+    status: OpenEnum[WorkflowStatus]
     submitted_at: str
     updated_at: str
     task_count: int

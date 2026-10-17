@@ -150,7 +150,7 @@ def watch(
 ) -> None:
     """Monitor a task's status by polling until completion."""
     client = FlowMesh()
-    last_status: TaskStatus | None = None
+    last_status: str | None = None
     last_update: dict | None = None
     try:
         while True:
