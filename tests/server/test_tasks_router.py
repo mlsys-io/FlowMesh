@@ -16,6 +16,8 @@ from server.app_state import get_runtime
 from server.auth.security import PrincipalContext, authenticate_connection
 from server.hooks import PERMISSION_CHECKERS
 from server.routers.v1 import tasks as tasks_router
+from server.schemas.task import TaskStatusView
+from server.task.models import TaskInfo
 from server.task.runtime import TaskRuntime
 from tests.server.task.merge_harness import build_runtime
 
@@ -301,3 +303,93 @@ async def test_event_loop_stays_responsive_during_list_serialization(
     assert ping_resp.status_code == 200
     assert elapsed < 0.3
     assert list_resp.status_code == 200
+
+
+def test_status_view_fields_match_task_info() -> None:
+    for name, field in TaskStatusView.model_fields.items():
+        if computed := TaskInfo.model_computed_fields.get(name):
+            served = (computed.return_type, computed.description)
+        else:
+            info = TaskInfo.model_fields[name]
+            served = (info.annotation, info.description)
+        assert (field.annotation, field.description) == served, name
+
+
+@pytest.mark.anyio
+async def test_get_task_status_view_omits_spec_and_source(no_checkers: None) -> None:
+    runtime, _ = build_runtime()
+    wf = await _register(runtime, _PAYLOAD)
+    task_id = _task_ids(runtime, wf)[0]
+    runtime.tasks[task_id].latest_update = {"ssh": {"host": "h", "_secret": "s"}}
+
+    async with _client(runtime) as ac:
+        full = await ac.get(f"{PREFIX}/tasks/{task_id}")
+        slim = await ac.get(f"{PREFIX}/tasks/{task_id}", params={"view": "status"})
+
+    assert full.status_code == 200 and slim.status_code == 200
+    f, s = full.json(), slim.json()
+    assert "task" in f and "source" in f
+    assert set(s) == set(TaskStatusView.model_fields)
+    assert {key: f[key] for key in s} == s
+    assert s["latest_update"] == {"ssh": {"host": "h"}}
+
+
+@pytest.mark.anyio
+async def test_get_task_unknown_view_is_rejected(no_checkers: None) -> None:
+    runtime, _ = build_runtime()
+    wf = await _register(runtime, _PAYLOAD)
+    task_id = _task_ids(runtime, wf)[0]
+    async with _client(runtime) as ac:
+        resp = await ac.get(f"{PREFIX}/tasks/{task_id}", params={"view": "bogus"})
+    assert resp.status_code == 422
+
+
+@pytest.mark.anyio
+async def test_list_tasks_orders_by_submission_and_limits_to_newest(
+    no_checkers: None,
+) -> None:
+    runtime, _ = build_runtime()
+    wf = await _register(runtime, _PAYLOAD)
+    first, second = _task_ids(runtime, wf)
+    runtime.tasks[first].submitted_ts = 200.0
+    runtime.tasks[second].submitted_ts = 100.0
+
+    async with _client(runtime) as ac:
+        every = await ac.get(f"{PREFIX}/tasks", params={"workflow_id": wf})
+        newest = await ac.get(f"{PREFIX}/tasks", params={"workflow_id": wf, "limit": 1})
+
+    assert [t["task_id"] for t in every.json()] == [second, first]
+    assert [t["task_id"] for t in newest.json()] == [first]
+
+
+@pytest.mark.anyio
+async def test_list_tasks_status_view(no_checkers: None) -> None:
+    runtime, _ = build_runtime()
+    wf = await _register(runtime, _PAYLOAD)
+
+    async with _client(runtime) as ac:
+        slim = await ac.get(
+            f"{PREFIX}/tasks", params={"workflow_id": wf, "view": "status"}
+        )
+
+    assert slim.status_code == 200 and len(slim.json()) == 2
+    assert all(set(t) == set(TaskStatusView.model_fields) for t in slim.json())
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("limit", [0, 10_001])
+async def test_list_tasks_rejects_out_of_range_limit(
+    no_checkers: None, limit: int
+) -> None:
+    runtime, _ = build_runtime()
+    async with _client(runtime) as ac:
+        resp = await ac.get(f"{PREFIX}/tasks", params={"limit": limit})
+    assert resp.status_code == 422
+
+
+@pytest.mark.anyio
+async def test_list_tasks_unknown_view_is_rejected(no_checkers: None) -> None:
+    runtime, _ = build_runtime()
+    async with _client(runtime) as ac:
+        resp = await ac.get(f"{PREFIX}/tasks", params={"view": "bogus"})
+    assert resp.status_code == 422

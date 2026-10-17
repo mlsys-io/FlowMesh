@@ -1,7 +1,7 @@
 import asyncio
 import json
 import logging
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException
 from fastapi import Path as ApiPath
@@ -30,12 +30,25 @@ from ...hooks import ResourceAction, ResourceKind
 from ...registries.worker import WorkerRegistry
 from ...schemas.common import OkResponse
 from ...schemas.logs import LogEntry, LogEvent, LogQueryResponse
+from ...schemas.task import TaskStatusView
+from ...task.models import task_order
 from ...task.runtime import TaskInfo, TaskRuntime
 from ...utils.misc import filter_models_by_queries
 
 router = APIRouter(prefix="/tasks", tags=["Tasks"])
 
 _TASK_LIST = TypeAdapter(list[TaskInfo])
+_TASK_STATUS_LIST = TypeAdapter(list[TaskStatusView])
+
+# Query keys the list endpoint consumes itself; they are not model-field filters.
+_CONTROL_PARAMS = ("view", "limit")
+
+type TaskView = Literal["full", "status"]
+_VIEW_QUERY = Query(
+    "full",
+    description="`status` returns only status, placement, timing, errors and the "
+    "latest update (no task spec or source).",
+)
 
 
 def _strip_private_fields(data: dict[str, Any]) -> dict[str, Any]:
@@ -49,15 +62,16 @@ def _pushed_down_queries(
 
     Returns (workflow_ids, statuses, remaining). ``workflow_id`` and ``status``
     are matched by membership in ``TaskRuntime.list_tasks`` before any TaskInfo
-    is built, so a query that only filters on them never dumps a model. The
-    remaining params still go through ``filter_models_by_queries``.
+    is built, and the control params (``view``, ``limit``) are dropped, so a
+    query that only filters on them never dumps a model. The remaining params
+    still go through ``filter_models_by_queries``.
     """
     workflow_ids = query_params.getlist("workflow_id")
     statuses = query_params.getlist("status")
     remaining = [
         (key, value)
         for key, value in query_params.multi_items()
-        if key not in ("workflow_id", "status")
+        if key not in ("workflow_id", "status", *_CONTROL_PARAMS)
     ]
     return workflow_ids, statuses, QueryParams(remaining)
 
@@ -79,12 +93,16 @@ def _sanitize_latest_update(info: TaskInfo) -> None:
 @router.get(
     "",
     summary="List tasks",
-    description="List all tasks.",
+    description="List tasks ordered by submission, oldest first.",
     response_description="List of task details.",
-    response_model=list[TaskInfo],
+    response_model=list[TaskInfo] | list[TaskStatusView],
 )
 async def list_tasks(
     request: Request,
+    view: TaskView = _VIEW_QUERY,
+    limit: int | None = Query(
+        None, ge=1, le=10_000, description="Keep only the newest N matching tasks."
+    ),
     principal: PrincipalContext = Depends(authenticate_connection),
     runtime: TaskRuntime = Depends(get_runtime),
     logger: logging.Logger = Depends(get_logger),
@@ -101,8 +119,14 @@ async def list_tasks(
         tasks = filter_models_by_queries(tasks, remaining)
         if allowed is not None:
             tasks = [task for task in tasks if task.task_id in allowed]
+        tasks.sort(key=task_order)
+        if limit is not None:
+            tasks = tasks[-limit:]
         for task in tasks:
             _sanitize_latest_update(task)
+        if view == "status":
+            views = [TaskStatusView.from_info(task) for task in tasks]
+            return _TASK_STATUS_LIST.dump_json(views, by_alias=True)
         return _TASK_LIST.dump_json(tasks, by_alias=True)
 
     return Response(
@@ -115,13 +139,15 @@ async def list_tasks(
     summary="Get a task",
     description="Get task details by ID.",
     response_description="Task details.",
+    response_model=TaskInfo | TaskStatusView,
 )
 async def get_task(
     task_id: str = ApiPath(..., min_length=1),
+    view: TaskView = _VIEW_QUERY,
     principal: PrincipalContext = Depends(authenticate_connection),
     runtime: TaskRuntime = Depends(get_runtime),
     logger: logging.Logger = Depends(get_logger),
-) -> TaskInfo:
+) -> TaskInfo | TaskStatusView:
     await require_permission(
         principal, ResourceKind.TASK, task_id, ResourceAction.READ, logger
     )
@@ -131,6 +157,8 @@ async def get_task(
             status_code=status.HTTP_404_NOT_FOUND, detail="task not found"
         )
     _sanitize_latest_update(info)
+    if view == "status":
+        return TaskStatusView.from_info(info)
     return info
 
 

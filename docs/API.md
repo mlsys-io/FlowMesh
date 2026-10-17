@@ -25,7 +25,7 @@ self-authenticate the same way, sending `FLOWMESH_API_KEY` as the bearer.
 |--------|------|-------------|
 | POST | `/api/v1/workflows` | Submit a workflow. Body is YAML (`text/plain`) or JSON; set `Workflow-Format: n8n` for n8n graphs. |
 | POST | `/api/v1/workflows/validate` | Parse without executing. |
-| GET | `/api/v1/workflows` | List workflows (`workflow_id`, `owner`, `status`, cursor pagination). |
+| GET | `/api/v1/workflows` | List workflows (`workflow_id`, `owner`, `status`). |
 | GET | `/api/v1/workflows/{id}` | Workflow details + per-task summary. |
 | GET | `/api/v1/workflows/{id}/logs` | Query logs (`limit`, `before`/`after` cursors). |
 | GET | `/api/v1/workflows/{id}/logs/stream` | SSE log stream. |
@@ -35,8 +35,8 @@ self-authenticate the same way, sending `FLOWMESH_API_KEY` as the bearer.
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/v1/tasks` | List tasks. Filters: `workflow_id`, `status`, `task_type`, `assigned_worker`. |
-| GET | `/api/v1/tasks/{id}` | Task details. |
+| GET | `/api/v1/tasks` | List tasks, oldest first. Filters: `workflow_id`, `status`, `task_type`, `assigned_worker`. `limit` keeps the newest; `view=status` omits specs and sources. |
+| GET | `/api/v1/tasks/{id}` | Task details. `view=status` omits the task spec and source. |
 | GET | `/api/v1/tasks/{id}/logs` | Query task logs. |
 | GET | `/api/v1/tasks/{id}/logs/stream` | SSE task log stream. |
 
@@ -121,6 +121,5 @@ Gated by `ENABLE_SERVER_SERVE_PROXY`.
 
 ## Cursor pagination
 
-List endpoints (`/api/v1/workflows`, `/api/v1/tasks`, log queries)
-accept `limit` and `before` / `after` cursors. The cursor is an opaque
-base64 of `(timestamp, id)`; do not parse client-side.
+Log queries accept `limit` and `before` / `after` cursors. A cursor is an opaque
+string taken from `entries[].cursor`; pass it back unchanged.

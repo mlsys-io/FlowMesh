@@ -68,3 +68,33 @@ class TaskInfo(BaseModel):
     dependents: list[str]
     completed: bool
     failed: bool
+
+
+class TaskStatusView(BaseModel):
+    """A task's status, placement, timing, errors and latest update, without its
+    spec or source."""
+
+    task_id: str
+    workflow_id: str
+    status: TaskStatus
+    task_type: str | None = None
+    category: str | None = None
+    assigned_worker: str | None = None
+    submitted_at: str
+    submitted_ts: float
+    dispatched_ts: float | None = None
+    started_ts: float | None = None
+    finished_ts: float | None = None
+    error: str | None = None
+    last_error: str | None = None
+    attempts: int
+    max_attempts: int
+    next_retry_at: str | None = None
+    last_failed_worker: str | None = None
+    parent_task_id: str | None = None
+    merged_parent_id: str | None = None
+    local_name: str | None = None
+    graph_node_name: str | None = None
+    latest_update: dict[str, Any] | None = None
+    completed: bool
+    failed: bool

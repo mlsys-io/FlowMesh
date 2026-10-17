@@ -1,6 +1,7 @@
 """Task resource operations."""
 
 import asyncio
+import builtins
 import time
 from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
@@ -13,10 +14,39 @@ from ..models.common import (
     LogQueryResponse,
     OkResponse,
 )
-from ..models.tasks import TaskInfo
+from ..models.tasks import TaskInfo, TaskStatusView
 from ..params import append_param, extend_params
 from ..ssh import task_ssh_info, wait_for_ssh_info, wait_for_ssh_info_async
 from ._base import AsyncResource, SyncResource
+
+
+def _list_params(
+    task_id: str | None = None,
+    workflow_id: str | None = None,
+    status: str | list[str] | None = None,
+    category: str | None = None,
+    task_type: str | None = None,
+    assigned_worker: str | None = None,
+    graph_node_name: str | None = None,
+    completed: bool | None = None,
+    failed: bool | None = None,
+    limit: int | None = None,
+    query_params: list[tuple[str, str]] | None = None,
+) -> list[tuple[str, str]]:
+    params: list[tuple[str, str]] = []
+    append_param(params, "task_id", task_id)
+    append_param(params, "workflow_id", workflow_id)
+    extend_params(params, "status", status)
+    append_param(params, "category", category)
+    append_param(params, "task_type", task_type)
+    append_param(params, "assigned_worker", assigned_worker)
+    append_param(params, "graph_node_name", graph_node_name)
+    append_param(params, "completed", completed)
+    append_param(params, "failed", failed)
+    append_param(params, "limit", limit)
+    if query_params:
+        params.extend(query_params)
+    return params
 
 
 class Tasks(SyncResource):
@@ -26,6 +56,15 @@ class Tasks(SyncResource):
         """Retrieve task details by ID."""
         data = self._client._request("GET", f"/tasks/{task_id}")
         return TaskInfo.model_validate(data)
+
+    def status(self, task_id: str) -> TaskStatusView:
+        """Retrieve a task's status view, without its spec or source.
+
+        Prefer this over ``retrieve`` for polling."""
+        data = self._client._request(
+            "GET", f"/tasks/{task_id}", params=[("view", "status")]
+        )
+        return TaskStatusView.model_validate(data)
 
     def list(
         self,
@@ -38,23 +77,59 @@ class Tasks(SyncResource):
         graph_node_name: str | None = None,
         completed: bool | None = None,
         failed: bool | None = None,
+        limit: int | None = None,
         query_params: list[tuple[str, str]] | None = None,
     ) -> list[TaskInfo]:
-        """List tasks with optional filters."""
-        params: list[tuple[str, str]] = []
-        append_param(params, "task_id", task_id)
-        append_param(params, "workflow_id", workflow_id)
-        extend_params(params, "status", status)
-        append_param(params, "category", category)
-        append_param(params, "task_type", task_type)
-        append_param(params, "assigned_worker", assigned_worker)
-        append_param(params, "graph_node_name", graph_node_name)
-        append_param(params, "completed", completed)
-        append_param(params, "failed", failed)
-        if query_params:
-            params.extend(query_params)
+        """List tasks with optional filters, oldest submission first.
+
+        ``limit`` keeps only the newest matching tasks."""
+        params = _list_params(
+            task_id=task_id,
+            workflow_id=workflow_id,
+            status=status,
+            category=category,
+            task_type=task_type,
+            assigned_worker=assigned_worker,
+            graph_node_name=graph_node_name,
+            completed=completed,
+            failed=failed,
+            limit=limit,
+            query_params=query_params,
+        )
         data = self._client._request("GET", "/tasks", params=params or None)
         return [TaskInfo.model_validate(t) for t in data]
+
+    def list_statuses(
+        self,
+        task_id: str | None = None,
+        workflow_id: str | None = None,
+        status: str | builtins.list[str] | None = None,
+        category: str | None = None,
+        task_type: str | None = None,
+        assigned_worker: str | None = None,
+        graph_node_name: str | None = None,
+        completed: bool | None = None,
+        failed: bool | None = None,
+        limit: int | None = None,
+        query_params: builtins.list[tuple[str, str]] | None = None,
+    ) -> builtins.list[TaskStatusView]:
+        """List the status views of tasks; takes the filters of ``list``."""
+        params = _list_params(
+            task_id=task_id,
+            workflow_id=workflow_id,
+            status=status,
+            category=category,
+            task_type=task_type,
+            assigned_worker=assigned_worker,
+            graph_node_name=graph_node_name,
+            completed=completed,
+            failed=failed,
+            limit=limit,
+            query_params=query_params,
+        )
+        params.append(("view", "status"))
+        data = self._client._request("GET", "/tasks", params=params)
+        return [TaskStatusView.model_validate(t) for t in data]
 
     def stop(self, task_id: str) -> OkResponse:
         """Request a running task to stop."""
@@ -105,16 +180,25 @@ class Tasks(SyncResource):
         task_id: str,
         interval: float = 2.0,
     ) -> TaskInfo:
-        """Poll a task until it reaches a terminal state."""
+        """Poll a task until it reaches a terminal state, then retrieve it."""
+        self.wait_status(task_id, interval=interval)
+        return self.retrieve(task_id)
+
+    def wait_status(
+        self,
+        task_id: str,
+        interval: float = 2.0,
+    ) -> TaskStatusView:
+        """Poll a task until it reaches a terminal state and return its status view."""
         while True:
-            task = self.retrieve(task_id)
-            if task.status in TERMINAL_TASK_STATUSES:
-                return task
+            view = self.status(task_id)
+            if view.status in TERMINAL_TASK_STATUSES:
+                return view
             time.sleep(interval)
 
     def ssh_info(self, task_id: str) -> dict[str, Any] | None:
         """Return SSH publish info for a task if present."""
-        return task_ssh_info(self.retrieve(task_id))
+        return task_ssh_info(self.status(task_id))
 
     def wait_for_ssh(
         self,
@@ -123,7 +207,7 @@ class Tasks(SyncResource):
     ) -> dict[str, Any]:
         """Poll a task until SSH session information is available."""
         return wait_for_ssh_info(
-            self.retrieve, task_id, interval=interval, sleep=time.sleep
+            self.status, task_id, interval=interval, sleep=time.sleep
         )
 
 
@@ -134,6 +218,15 @@ class AsyncTasks(AsyncResource):
         """Retrieve task details by ID."""
         data = await self._client._request("GET", f"/tasks/{task_id}")
         return TaskInfo.model_validate(data)
+
+    async def status(self, task_id: str) -> TaskStatusView:
+        """Retrieve a task's status view, without its spec or source.
+
+        Prefer this over ``retrieve`` for polling."""
+        data = await self._client._request(
+            "GET", f"/tasks/{task_id}", params=[("view", "status")]
+        )
+        return TaskStatusView.model_validate(data)
 
     async def list(
         self,
@@ -146,23 +239,59 @@ class AsyncTasks(AsyncResource):
         graph_node_name: str | None = None,
         completed: bool | None = None,
         failed: bool | None = None,
+        limit: int | None = None,
         query_params: list[tuple[str, str]] | None = None,
     ) -> list[TaskInfo]:
-        """List tasks with optional filters."""
-        params: list[tuple[str, str]] = []
-        append_param(params, "task_id", task_id)
-        append_param(params, "workflow_id", workflow_id)
-        extend_params(params, "status", status)
-        append_param(params, "category", category)
-        append_param(params, "task_type", task_type)
-        append_param(params, "assigned_worker", assigned_worker)
-        append_param(params, "graph_node_name", graph_node_name)
-        append_param(params, "completed", completed)
-        append_param(params, "failed", failed)
-        if query_params:
-            params.extend(query_params)
+        """List tasks with optional filters, oldest submission first.
+
+        ``limit`` keeps only the newest matching tasks."""
+        params = _list_params(
+            task_id=task_id,
+            workflow_id=workflow_id,
+            status=status,
+            category=category,
+            task_type=task_type,
+            assigned_worker=assigned_worker,
+            graph_node_name=graph_node_name,
+            completed=completed,
+            failed=failed,
+            limit=limit,
+            query_params=query_params,
+        )
         data = await self._client._request("GET", "/tasks", params=params or None)
         return [TaskInfo.model_validate(t) for t in data]
+
+    async def list_statuses(
+        self,
+        task_id: str | None = None,
+        workflow_id: str | None = None,
+        status: str | builtins.list[str] | None = None,
+        category: str | None = None,
+        task_type: str | None = None,
+        assigned_worker: str | None = None,
+        graph_node_name: str | None = None,
+        completed: bool | None = None,
+        failed: bool | None = None,
+        limit: int | None = None,
+        query_params: builtins.list[tuple[str, str]] | None = None,
+    ) -> builtins.list[TaskStatusView]:
+        """List the status views of tasks; takes the filters of ``list``."""
+        params = _list_params(
+            task_id=task_id,
+            workflow_id=workflow_id,
+            status=status,
+            category=category,
+            task_type=task_type,
+            assigned_worker=assigned_worker,
+            graph_node_name=graph_node_name,
+            completed=completed,
+            failed=failed,
+            limit=limit,
+            query_params=query_params,
+        )
+        params.append(("view", "status"))
+        data = await self._client._request("GET", "/tasks", params=params)
+        return [TaskStatusView.model_validate(t) for t in data]
 
     async def stop(self, task_id: str) -> OkResponse:
         """Request a running task to stop."""
@@ -215,16 +344,25 @@ class AsyncTasks(AsyncResource):
         task_id: str,
         interval: float = 2.0,
     ) -> TaskInfo:
-        """Poll a task until it reaches a terminal state."""
+        """Poll a task until it reaches a terminal state, then retrieve it."""
+        await self.wait_status(task_id, interval=interval)
+        return await self.retrieve(task_id)
+
+    async def wait_status(
+        self,
+        task_id: str,
+        interval: float = 2.0,
+    ) -> TaskStatusView:
+        """Poll a task until it reaches a terminal state and return its status view."""
         while True:
-            task = await self.retrieve(task_id)
-            if task.status in TERMINAL_TASK_STATUSES:
-                return task
+            view = await self.status(task_id)
+            if view.status in TERMINAL_TASK_STATUSES:
+                return view
             await asyncio.sleep(interval)
 
     async def ssh_info(self, task_id: str) -> dict[str, Any] | None:
         """Return SSH publish info for a task if present."""
-        task = await self.retrieve(task_id)
+        task = await self.status(task_id)
         return task_ssh_info(task)
 
     async def wait_for_ssh(
@@ -234,7 +372,7 @@ class AsyncTasks(AsyncResource):
     ) -> dict[str, Any]:
         """Poll a task until SSH session information is available."""
         return await wait_for_ssh_info_async(
-            self.retrieve,
+            self.status,
             task_id,
             interval=interval,
             sleep=asyncio.sleep,

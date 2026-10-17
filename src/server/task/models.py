@@ -256,6 +256,10 @@ class TaskRecord(BaseModel):
         return handler(redacted)
 
 
+def task_order(record: TaskRecord) -> tuple[float, str]:
+    return record.submitted_ts, record.task_id
+
+
 class TaskInfo(TaskRecord):
     depends_on: list[str] = Field(description="Dependency task IDs.")
     pending_dependencies: list[str] = Field(

@@ -150,19 +150,19 @@ def watch(
     last_update: dict | None = None
     try:
         while True:
-            task = client.tasks.retrieve(task_id)
-            payload = task.model_dump(mode="json")
-            status_value = task.status
+            view = client.tasks.status(task_id)
+            status_value = view.status
             if status_value != last_status:
                 logging.log(f"[{task_id}] status: {status_value}")
                 last_status = status_value
-            latest_update = payload.get("latest_update")
+            latest_update = view.latest_update
             if isinstance(latest_update, dict) and latest_update != last_update:
                 logging.log(json.dumps(latest_update, indent=2))
                 _log_ssh_connection_instructions(task_id, latest_update, client)
                 last_update = latest_update
             if status_value in TERMINAL_TASK_STATUSES:
-                logging.log(json.dumps(payload, indent=2))
+                task = client.tasks.retrieve(task_id)
+                logging.log(json.dumps(task.model_dump(mode="json"), indent=2))
                 return
             time.sleep(interval)
     except KeyboardInterrupt:

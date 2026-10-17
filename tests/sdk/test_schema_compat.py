@@ -32,6 +32,7 @@ from flowmesh.models import (
     SSHLimits,
     StorageInfo,
     TaskInfo,
+    TaskStatusView,
     TaskType,
     TaskUsage,
     VersionResponse,
@@ -78,6 +79,7 @@ from server.schemas.node import NodeWorkerInfo as SrvNodeWorkerInfo
 from server.schemas.node import StorageInfo as SrvStorageInfo
 from server.schemas.node import WorkerHardware as SrvWorkerHardware
 from server.schemas.node import WorkerRegisterResponse as SrvWorkerRegisterResponse
+from server.schemas.task import TaskStatusView as SrvTaskStatusView
 from server.schemas.worker import WorkerCordon as SrvWorkerCordon
 from server.schemas.worker import WorkerCordonResult as SrvWorkerCordonResult
 from server.schemas.workflow import WorkflowSubmitResponse as SrvWorkflowSubmitResponse
@@ -260,6 +262,10 @@ def test_result_field_types_match(server_model: type, sdk_model: type) -> None:
 def test_task_info_fields() -> None:
     """TaskInfo: last_queue_ts is server-internal, skip it."""
     assert_fields_match(SrvTaskInfo, TaskInfo, skip_server_fields={"last_queue_ts"})
+
+
+def test_task_status_view_fields() -> None:
+    assert_fields_match(SrvTaskStatusView, TaskStatusView)
 
 
 def test_worker_register_response_fields() -> None:

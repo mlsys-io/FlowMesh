@@ -12,16 +12,16 @@ def wait_for_task_completion(task_id: str, interval: float) -> tuple[str, str | 
     """Poll task until it reaches a terminal state."""
     client = FlowMesh()
     try:
-        task = client.tasks.wait(task_id, interval=interval)
-        status = task.status
+        view = client.tasks.wait_status(task_id, interval=interval)
+        status = view.status
         match status:
             case TaskStatus.DONE:
                 return TaskStatus.DONE, None
             case TaskStatus.FAILED | TaskStatus.CANCELLED:
-                error = task.error or status.lower()
+                error = view.error or status.lower()
                 return status, error
             case _:
-                return status, task.error
+                return status, view.error
     except KeyboardInterrupt:
         logging.warning("Cancelled by user.")
         raise typer.Exit(code=1)

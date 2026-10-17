@@ -11,10 +11,10 @@ import yaml
 from ._constants import API_VERSION_PREFIX
 from .exceptions import FlowMeshError
 from .models.common import TaskStatus
-from .models.tasks import TaskInfo
+from .models.tasks import TaskInfo, TaskStatusView
 
 
-def task_ssh_info(task: TaskInfo) -> dict[str, Any] | None:
+def task_ssh_info(task: TaskInfo | TaskStatusView) -> dict[str, Any] | None:
     """Extract SSH publish information from a task update."""
     latest = task.latest_update
     if not isinstance(latest, dict):
@@ -24,7 +24,7 @@ def task_ssh_info(task: TaskInfo) -> dict[str, Any] | None:
 
 
 def wait_for_ssh_info(
-    retrieve_task: Callable[[str], TaskInfo],
+    retrieve_task: Callable[[str], TaskInfo | TaskStatusView],
     task_id: str,
     interval: float,
     sleep: Callable[[float], Any],
@@ -45,7 +45,7 @@ def wait_for_ssh_info(
 
 
 async def wait_for_ssh_info_async(
-    retrieve_task: Callable[[str], Awaitable[TaskInfo]],
+    retrieve_task: Callable[[str], Awaitable[TaskInfo | TaskStatusView]],
     task_id: str,
     interval: float,
     sleep: Any,

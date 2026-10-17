@@ -7,9 +7,11 @@ any schema change in the server is automatically reflected here.
 import json
 from typing import Any
 
+import httpx
 import pytest
 import respx
 from flowmesh import AsyncFlowMesh, FlowMesh
+from flowmesh.models import TaskStatus
 from pydantic import BaseModel
 
 from server.registries.node import Node as SrvNode
@@ -19,10 +21,15 @@ from server.registries.workflow import Workflow as SrvWorkflow
 from server.registries.workflow import WorkflowStatus as SrvWorkflowStatus
 from server.schemas.common import OkResponse as SrvOkResponse
 from server.schemas.common import VersionResponse as SrvVersionResponse
+from server.schemas.task import TaskStatusView as SrvTaskStatusView
 from server.schemas.workflow import WorkflowSubmitResponse as SrvWorkflowSubmitResponse
 from server.schemas.workflow import (
     WorkflowSubmitTaskEntry as SrvWorkflowSubmitTaskEntry,
 )
+from server.task.models import TaskInfo as SrvTaskInfo
+from shared.tasks.envelope import TaskEnvelopeTemplate
+from shared.tasks.specs.misc import EchoSpecTemplate
+from shared.tasks.task_type import TaskType
 
 from .helpers import clear_env_and_config_file
 from .router_app import TEST_BASE_URL, route_url
@@ -69,6 +76,36 @@ _NODE_RESPONSE = SrvNode(
     tags=["gpu", "prod"],
     last_seen="2025-01-01T00:05:00Z",
 )
+
+
+_TASK_RESPONSE = SrvTaskInfo(
+    task_id="t-1",
+    workflow_id="wf-1",
+    owner_id="usr-1",
+    source="apiVersion: flowmesh/v1\nkind: Task",
+    task=TaskEnvelopeTemplate(
+        apiVersion="flowmesh/v1",
+        kind="Task",
+        spec=EchoSpecTemplate(taskType=TaskType.ECHO),
+    ),
+    status="DONE",
+    submitted_at="2025-01-15T10:30:00Z",
+    submitted_ts=1705312200.0,
+    depends_on=[],
+    pending_dependencies=[],
+    dependents=[],
+    completed=True,
+    failed=False,
+)
+
+
+def _status_json(
+    status: str, latest_update: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    view = SrvTaskStatusView.from_info(_TASK_RESPONSE)
+    return _json(
+        view.model_copy(update={"status": status, "latest_update": latest_update})
+    )
 
 
 def _json(server_obj: BaseModel) -> dict:  # type: ignore[type-arg]
@@ -219,6 +256,135 @@ class TestQueryParams:
         url = str(request.url)
         assert "tags=gpu" in url
         assert "tags=a100" in url
+
+
+class TestTaskPolling:
+    @respx.mock
+    def test_status_requests_status_view(self, mock_client: FlowMesh) -> None:
+        route = respx.get(route_url("get_task", task_id="t-1")).respond(
+            json=_status_json("DISPATCHED")
+        )
+        view = mock_client.tasks.status("t-1")
+        assert route.calls[0].request.url.params["view"] == "status"
+        assert view.status == "DISPATCHED"
+
+    @respx.mock
+    def test_list_sends_limit(self, mock_client: FlowMesh) -> None:
+        route = respx.get(route_url("list_tasks")).respond(json=[])
+        mock_client.tasks.list(workflow_id="wf-1", limit=2)
+        params = route.calls[0].request.url.params
+        assert params["limit"] == "2"
+        assert "view" not in params
+
+    @respx.mock
+    def test_list_statuses_requests_status_view(self, mock_client: FlowMesh) -> None:
+        route = respx.get(route_url("list_tasks")).respond(
+            json=[_status_json("PENDING")]
+        )
+        views = mock_client.tasks.list_statuses(status="PENDING", limit=5)
+        params = route.calls[0].request.url.params
+        assert params["view"] == "status"
+        assert params["status"] == "PENDING"
+        assert params["limit"] == "5"
+        assert [v.task_id for v in views] == ["t-1"]
+
+    @respx.mock
+    def test_wait_polls_status_then_fetches_full_task(
+        self, mock_client: FlowMesh
+    ) -> None:
+        route = respx.get(route_url("get_task", task_id="t-1")).mock(
+            side_effect=[
+                httpx.Response(200, json=_status_json("DISPATCHED")),
+                httpx.Response(200, json=_status_json("DONE")),
+                httpx.Response(200, json=_json(_TASK_RESPONSE)),
+            ]
+        )
+        task = mock_client.tasks.wait("t-1", interval=0)
+        views = [call.request.url.params.get("view") for call in route.calls]
+        assert views == ["status", "status", None]
+        assert task.source == _TASK_RESPONSE.source
+
+    @pytest.mark.anyio
+    @respx.mock
+    async def test_async_wait_polls_status_then_fetches_full_task(self) -> None:
+        route = respx.get(route_url("get_task", task_id="t-1")).mock(
+            side_effect=[
+                httpx.Response(200, json=_status_json("DONE")),
+                httpx.Response(200, json=_json(_TASK_RESPONSE)),
+            ]
+        )
+        async with AsyncFlowMesh(
+            base_url=TEST_BASE_URL, api_key="flm-test-key"
+        ) as client:
+            task = await client.tasks.wait("t-1", interval=0)
+        views = [call.request.url.params.get("view") for call in route.calls]
+        assert views == ["status", None]
+        assert task.task_id == "t-1"
+
+    @respx.mock
+    def test_wait_status_returns_terminal_view(self, mock_client: FlowMesh) -> None:
+        route = respx.get(route_url("get_task", task_id="t-1")).mock(
+            side_effect=[
+                httpx.Response(200, json=_status_json("DISPATCHED")),
+                httpx.Response(200, json=_status_json("DONE")),
+            ]
+        )
+        view = mock_client.tasks.wait_status("t-1", interval=0)
+        views = [call.request.url.params.get("view") for call in route.calls]
+        assert views == ["status", "status"]
+        assert view.status == TaskStatus.DONE
+
+    @pytest.mark.anyio
+    @respx.mock
+    async def test_async_wait_status_returns_terminal_view(self) -> None:
+        route = respx.get(route_url("get_task", task_id="t-1")).mock(
+            side_effect=[
+                httpx.Response(200, json=_status_json("DISPATCHED")),
+                httpx.Response(200, json=_status_json("FAILED")),
+            ]
+        )
+        async with AsyncFlowMesh(
+            base_url=TEST_BASE_URL, api_key="flm-test-key"
+        ) as client:
+            view = await client.tasks.wait_status("t-1", interval=0)
+        views = [call.request.url.params.get("view") for call in route.calls]
+        assert views == ["status", "status"]
+        assert view.status == TaskStatus.FAILED
+
+    @respx.mock
+    def test_wait_for_ssh_polls_status_view(self, mock_client: FlowMesh) -> None:
+        ssh = {"mode": "direct", "host": "h", "port": 22}
+        route = respx.get(route_url("get_task", task_id="t-1")).mock(
+            side_effect=[
+                httpx.Response(200, json=_status_json("DISPATCHED")),
+                httpx.Response(200, json=_status_json("DISPATCHED", {"ssh": ssh})),
+            ]
+        )
+        assert mock_client.tasks.wait_for_ssh("t-1", interval=0) == ssh
+        assert [c.request.url.params["view"] for c in route.calls] == ["status"] * 2
+
+    @pytest.mark.anyio
+    @respx.mock
+    async def test_async_status_calls_request_status_view(self) -> None:
+        ssh = {"mode": "direct", "host": "h", "port": 22}
+        task_route = respx.get(route_url("get_task", task_id="t-1")).respond(
+            json=_status_json("DISPATCHED", {"ssh": ssh})
+        )
+        list_route = respx.get(route_url("list_tasks")).respond(
+            json=[_status_json("DISPATCHED")]
+        )
+        async with AsyncFlowMesh(
+            base_url=TEST_BASE_URL, api_key="flm-test-key"
+        ) as client:
+            view = await client.tasks.status("t-1")
+            info = await client.tasks.wait_for_ssh("t-1", interval=0)
+            views = await client.tasks.list_statuses(limit=1)
+        assert view.status == "DISPATCHED"
+        assert info == ssh
+        assert [v.task_id for v in views] == ["t-1"]
+        assert all(c.request.url.params["view"] == "status" for c in task_route.calls)
+        assert list_route.calls[0].request.url.params["view"] == "status"
+        assert list_route.calls[0].request.url.params["limit"] == "1"
 
 
 class TestNodeRegister:
