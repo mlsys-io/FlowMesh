@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import typer
 from flowmesh.models import (
+    TaskStatus,
     WorkflowSubmitResponse,
 )
 from flowmesh_cli.cli import build_cli_app
@@ -116,6 +117,26 @@ class TestTaskInfo:
         result = runner.invoke(_app(), ["task", "info", "t-123"])
         assert result.exit_code == 0
         client.tasks.retrieve.assert_called_once_with("t-123")
+
+
+class TestTaskWatch:
+    @patch("flowmesh_cli.commands.task.FlowMesh")
+    def test_polls_status_then_prints_full_task(self, mock_hc: MagicMock) -> None:
+        client = _mock_client()
+        client.tasks.status.side_effect = [
+            MagicMock(status=TaskStatus.DISPATCHED, latest_update=None),
+            MagicMock(status=TaskStatus.DONE, latest_update=None),
+        ]
+        client.tasks.retrieve.return_value.model_dump.return_value = {
+            "task_id": "t-123"
+        }
+        mock_hc.return_value = client
+
+        result = runner.invoke(_app(), ["task", "watch", "t-123", "--interval", "0"])
+        assert result.exit_code == 0
+        assert client.tasks.status.call_count == 2
+        client.tasks.retrieve.assert_called_once_with("t-123")
+        assert '"task_id": "t-123"' in result.stdout
 
 
 class TestVersion:

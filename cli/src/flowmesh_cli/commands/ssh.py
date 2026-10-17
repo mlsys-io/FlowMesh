@@ -130,7 +130,7 @@ def _stream_logs_and_exit(
             except NotFoundError:
                 pass
 
-            task_info = client.tasks.retrieve(task_id)
+            task_info = client.tasks.status(task_id)
             if task_info.status in TERMINAL_TASK_STATUSES:
                 _exit_for_task_status(task_id, task_info)
             if not saw_logs:
