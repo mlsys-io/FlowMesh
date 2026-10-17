@@ -100,6 +100,9 @@ def list_workflows(
         "--task-id",
         help="Filter by task id in workflow (repeatable)",
     ),
+    limit: int | None = typer.Option(
+        None, "--limit", min=1, max=10_000, help="Keep only the newest N workflows"
+    ),
     query: list[str] | None = typer.Option(
         None, "--query", "-q", help="Filter workflows by key=value pairs"
     ),
@@ -112,6 +115,7 @@ def list_workflows(
             workflow_id=workflow_id,
             status=status or None,
             task_ids=task_id or None,
+            limit=limit,
             query_params=query_params,
         )
     except FlowMeshError as exc:
