@@ -11,6 +11,7 @@ from collections.abc import Collection, Sequence
 from itertools import batched
 from typing import Any
 
+from pydantic import ValidationError
 from redis.exceptions import RedisError
 
 from shared.schemas.command import InterruptMessage
@@ -18,11 +19,24 @@ from shared.tasks import TaskEnvelopeTemplate
 from shared.utils import new_workflow_id
 from shared.utils.redact import redact_raw_yaml
 
+from ..clients.redis import (
+    task_state_key,
+    workflow_failed_tasks_key,
+    workflow_key,
+    workflow_sched_key,
+    workflow_tasks_key,
+)
 from ..hooks import SUPPLIER_RESOLVERS
 from ..registries.worker import Worker, WorkerRegistry
-from ..registries.workflow import PersistedTask, WorkflowRegistry, WorkflowSched
-from ..utils.time import parse_iso_ts
+from ..registries.workflow import (
+    UNREADABLE_STATE_ERRORS,
+    PersistedTask,
+    WorkflowRegistry,
+    WorkflowSched,
+)
+from ..utils.time import now_iso, parse_iso_ts
 from .models import (
+    TASK_STATUSES,
     TERMINAL_TASK_STATUSES,
     TaskInfo,
     TaskParsingResult,
@@ -34,6 +48,51 @@ from .models import (
 from .parser import parse_workflow
 
 REHYDRATE_LOAD_BATCH = 16
+
+_STATE_UNREADABLE = "state_unreadable"
+
+
+def _unreadable_cause(exc: Exception) -> str:
+    if isinstance(exc, ValidationError):
+        first = exc.errors()[0]
+        loc = ".".join(str(part) for part in first["loc"]) or "<root>"
+        return (
+            f"{first['type']} at {loc}: {first['msg']} "
+            f"({exc.error_count()} error(s))"
+        )
+    return str(exc)
+
+
+def _state_mismatch(
+    state: PersistedTask,
+    task_id: str,
+    workflow_id: str,
+    in_epoch_order: bool,
+    workflow_task_ids: Collection[str] | None,
+) -> str | None:
+    """Why a task state that parsed cannot be the one stored for ``task_id``, if
+    it cannot. A damaged byte can leave valid JSON with a wrong identity, status,
+    or dependency, or drop the position an ordered task needs to be queued.
+    Dependencies are checked only against a known ``workflow_task_ids``."""
+    record = state.record
+    if record.task_id != task_id:
+        return f"the record is for task {record.task_id}"
+    if record.workflow_id != workflow_id:
+        return f"the record is for workflow {record.workflow_id}"
+    if workflow_task_ids is not None and (
+        unknown := state.depends_on.difference(workflow_task_ids)
+    ):
+        return f"it depends on tasks outside its workflow: {sorted(unknown)}"
+    if record.status not in TASK_STATUSES:
+        return f"unknown status {record.status!r}"
+    if (
+        in_epoch_order
+        and state.epoch_index is not None
+        and record.status not in TERMINAL_TASK_STATUSES
+        and record.position_in_epoch is None
+    ):
+        return "an unfinished ordered task has no position in its epoch"
+    return None
 
 
 def _sanitize_merge_spec(spec: dict[str, Any], task_type: str) -> dict[str, Any]:
@@ -285,49 +344,218 @@ class TaskRuntime:
         assigned to their worker: completions that landed during the restart arrive via
         the replayed task-event stream, and genuinely departed workers are recovered by
         the watchdog. Returns the number of workflows restored.
+
+        A workflow with a durable record that cannot be read has its pending and
+        unreadable tasks failed while its in-flight tasks finish, as
+        ``_fail_unreadable_workflow_async`` describes; every other workflow is
+        restored as usual.
         """
         workflow_ids = await self._workflow_registry.get_workflow_ids_async()
         rehydrated_at = time.time()
         restored = 0
+        failed = 0
         for workflow_id in sorted(workflow_ids):
-            wf_record = await self._workflow_registry.get_workflow_record_async(
-                workflow_id
+            try:
+                wf_record = await self._workflow_registry.get_workflow_record_async(
+                    workflow_id
+                )
+            except UNREADABLE_STATE_ERRORS as exc:
+                self._log_unreadable_state(
+                    workflow_id, workflow_key(workflow_id), _unreadable_cause(exc)
+                )
+                # Without the record's task list, the workflow's tasks are taken
+                # from its remaining and failed sets.
+                try:
+                    task_ids = sorted(
+                        await self._workflow_registry.get_remaining_tasks_async(
+                            workflow_id
+                        )
+                        | await self._workflow_registry.get_failed_tasks_async(
+                            workflow_id
+                        )
+                    )
+                except UNREADABLE_STATE_ERRORS as exc:
+                    self._log_unreadable_state(
+                        workflow_id,
+                        f"{workflow_tasks_key(workflow_id)} or "
+                        f"{workflow_failed_tasks_key(workflow_id)}",
+                        _unreadable_cause(exc),
+                    )
+                    self._logger.error(
+                        "Left workflow %s unrestored: its tasks cannot be listed",
+                        workflow_id,
+                    )
+                    continue
+                listed: Collection[str] | None = None
+                unreadable = True
+            else:
+                if wf_record is None:
+                    continue
+                task_ids = wf_record.task_ids
+                listed = frozenset(task_ids)
+                unreadable = False
+            try:
+                sched = await self._workflow_registry.load_workflow_sched_async(
+                    workflow_id
+                )
+            except UNREADABLE_STATE_ERRORS as exc:
+                self._log_unreadable_state(
+                    workflow_id, workflow_sched_key(workflow_id), _unreadable_cause(exc)
+                )
+                sched, unreadable = None, True
+            tasks, unreadable_tasks = await self._load_task_states_async(
+                workflow_id,
+                task_ids,
+                in_epoch_order=sched.in_epoch_order if sched else False,
+                workflow_task_ids=listed,
             )
-            if wf_record is None:
+            unreadable = unreadable or unreadable_tasks
+            if not tasks and not unreadable:
                 continue
-            tasks = await self._load_task_states_async(wf_record.task_ids)
-            if not tasks:
-                continue
-            sched = await self._workflow_registry.load_workflow_sched_async(workflow_id)
             with self._cv:
                 self._install_rehydrated_workflow_locked(
                     workflow_id, tasks, sched, rehydrated_at
                 )
                 self._cv.notify_all()
-            restored += 1
+            if not unreadable:
+                restored += 1
+            elif await self._fail_unreadable_workflow_async(workflow_id, tasks):
+                failed += 1
         if restored:
             self._logger.info("Rehydrated %d workflow(s) from durable state", restored)
+        if failed:
+            self._logger.error(
+                "Failed %d workflow(s) whose durable state could not be read", failed
+            )
         return restored
 
+    def _log_unreadable_state(self, workflow_id: str, key: str, cause: str) -> None:
+        self._logger.error(
+            "Unreadable durable state for workflow %s at key %s: %s",
+            workflow_id,
+            key,
+            cause,
+        )
+
+    async def _fail_unreadable_workflow_async(
+        self, workflow_id: str, tasks: Sequence[PersistedTask]
+    ) -> bool:
+        """Fail the pending and unreadable tasks of a workflow that has a durable
+        record that cannot be read, and return whether any task failed.
+
+        Its readable PENDING tasks fail with ``state_unreadable``, taking their
+        dependents with them as any failure does. Its in-flight tasks keep running
+        and finish as usual, so a workflow with no other unfinished task ends with
+        their outcome. Every other unfinished task, including each one whose state
+        could not be read, has no record left to fail, so its id moves from the
+        workflow's remaining set to its failed set directly.
+        """
+        finished_at = now_iso()
+        in_flight: set[str] = set()
+        failed_any = False
+        for persisted in tasks:
+            record = persisted.record
+            if record.status == TaskStatus.PENDING:
+                self.mark_failed(
+                    record.task_id, None, {}, finished_at, error=_STATE_UNREADABLE
+                )
+                failed_any = True
+            elif record.status not in TERMINAL_TASK_STATUSES:
+                in_flight.add(record.task_id)
+        try:
+            remaining = await self._workflow_registry.get_remaining_tasks_async(
+                workflow_id
+            )
+        except UNREADABLE_STATE_ERRORS as exc:
+            self._log_unreadable_state(
+                workflow_id, workflow_tasks_key(workflow_id), _unreadable_cause(exc)
+            )
+            self._logger.error(
+                "Left the unreadable tasks of workflow %s unfinished: its remaining "
+                "tasks cannot be listed",
+                workflow_id,
+            )
+        else:
+            if stranded := remaining - in_flight:
+                await self._workflow_registry.commit_transition_async(
+                    workflow_id, failed=sorted(stranded)
+                )
+                failed_any = True
+        if failed_any:
+            self._logger.error(
+                "Failed workflow %s: its durable state could not be read", workflow_id
+            )
+        elif in_flight:
+            self._logger.error(
+                "Left workflow %s to finish its in-flight tasks: its durable state "
+                "could not be read",
+                workflow_id,
+            )
+        return failed_any
+
     async def _load_task_states_async(
-        self, task_ids: Sequence[str]
-    ) -> list[PersistedTask]:
+        self,
+        workflow_id: str,
+        task_ids: Sequence[str],
+        *,
+        in_epoch_order: bool,
+        workflow_task_ids: Collection[str] | None,
+    ) -> tuple[list[PersistedTask], bool]:
         """Load task states ``REHYDRATE_LOAD_BATCH`` at a time, dropping terminal
-        tasks' oversized inputs and saving each changed state back.
+        tasks' oversized inputs and saving each changed state back. Also returns
+        whether any state could not be read.
+
+        A state that is not valid UTF-8 fails its whole batch's read, so a batch that
+        fails is re-read one task at a time to leave out only the unreadable states. A
+        missing state, or one that parses but cannot be the one stored for its task,
+        is unreadable too.
 
         Saving back is best-effort: a Redis that refuses writes (``maxmemory`` under
         ``noeviction``, a read-only replica) still serves reads, so a failed save
         logs and rehydration continues with the dropped inputs in memory.
         """
         states: list[PersistedTask] = []
+        unreadable: set[str] = set()
         for batch in batched(task_ids, REHYDRATE_LOAD_BATCH):
-            loaded = [
-                state
-                for state in await self._workflow_registry.load_task_states_async(
+            batch_states: list[PersistedTask | None]
+            try:
+                batch_states = await self._workflow_registry.load_task_states_async(
                     *batch
                 )
-                if state
-            ]
+            except UNREADABLE_STATE_ERRORS:
+                batch_states = []
+                for task_id in batch:
+                    try:
+                        batch_states.extend(
+                            await self._workflow_registry.load_task_states_async(
+                                task_id
+                            )
+                        )
+                    except UNREADABLE_STATE_ERRORS as exc:
+                        self._log_unreadable_state(
+                            workflow_id, task_state_key(task_id), _unreadable_cause(exc)
+                        )
+                        batch_states.append(None)
+                        unreadable.add(task_id)
+            loaded: list[PersistedTask] = []
+            for task_id, state in zip(batch, batch_states, strict=True):
+                if task_id in unreadable:
+                    continue
+                if state is None:
+                    self._log_unreadable_state(
+                        workflow_id, task_state_key(task_id), "no state is stored"
+                    )
+                    unreadable.add(task_id)
+                    continue
+                if problem := _state_mismatch(
+                    state, task_id, workflow_id, in_epoch_order, workflow_task_ids
+                ):
+                    self._log_unreadable_state(
+                        workflow_id, task_state_key(task_id), problem
+                    )
+                    unreadable.add(task_id)
+                    continue
+                loaded.append(state)
             changed = [state for state in loaded if state.record.drop_terminal_inputs()]
             try:
                 await self._workflow_registry.save_task_states_async(changed)
@@ -338,7 +566,7 @@ class TaskRuntime:
                     exc,
                 )
             states.extend(loaded)
-        return states
+        return states, bool(unreadable)
 
     def _install_rehydrated_workflow_locked(
         self,
@@ -349,7 +577,20 @@ class TaskRuntime:
     ) -> None:
         terminal = TERMINAL_TASK_STATUSES
         in_epoch_order = sched.in_epoch_order if sched else False
-        frontier = sched.epoch_frontier if sched else 0
+        if sched is not None:
+            frontier = sched.epoch_frontier
+        else:
+            # The frontier only advances past an epoch whose tasks all succeeded, so
+            # without a schedule it rests at the first epoch with a task not DONE.
+            frontier = min(
+                (
+                    persisted.epoch_index
+                    for persisted in tasks
+                    if persisted.epoch_index is not None
+                    and persisted.record.status != TaskStatus.DONE
+                ),
+                default=0,
+            )
         epoch_members: dict[int, set[str]] = defaultdict(set)
 
         for persisted in tasks:

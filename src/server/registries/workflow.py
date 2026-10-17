@@ -9,6 +9,7 @@ from pydantic import (
     ConfigDict,
     Field,
     SerializerFunctionWrapHandler,
+    ValidationError,
     field_serializer,
     field_validator,
     model_serializer,
@@ -29,6 +30,10 @@ from ..clients.redis import (
 )
 from ..task.models import TaskRecord, TaskStatus
 from ..utils.time import now_iso
+
+# What reading a corrupt durable record raises. Replies are decoded strictly, so a
+# damaged byte fails decoding when it breaks UTF-8 and validation when it does not.
+UNREADABLE_STATE_ERRORS = (ValidationError, UnicodeDecodeError)
 
 
 class PersistedTask(BaseModel):
@@ -465,6 +470,14 @@ class WorkflowRegistry:
 
     async def get_remaining_tasks_async(self, workflow_id: str) -> set[str]:
         return await self._rds.asyncio.set_members(workflow_tasks_key(workflow_id))
+
+    def get_failed_tasks(self, workflow_id: str) -> set[str]:
+        return self._rds.sync.set_members(workflow_failed_tasks_key(workflow_id))
+
+    async def get_failed_tasks_async(self, workflow_id: str) -> set[str]:
+        return await self._rds.asyncio.set_members(
+            workflow_failed_tasks_key(workflow_id)
+        )
 
     def _build_workflow(
         self,

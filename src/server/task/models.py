@@ -50,6 +50,17 @@ class TaskStatus(str):
     DONE = "DONE"
 
 
+TASK_STATUSES = frozenset(
+    {
+        TaskStatus.PENDING,
+        TaskStatus.DISPATCHED,
+        TaskStatus.CANCELLING,
+        TaskStatus.FAILED,
+        TaskStatus.CANCELLED,
+        TaskStatus.DONE,
+    }
+)
+
 TERMINAL_TASK_STATUSES = frozenset(
     {TaskStatus.FAILED, TaskStatus.CANCELLED, TaskStatus.DONE}
 )
