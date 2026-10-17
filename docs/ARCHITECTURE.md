@@ -267,11 +267,11 @@ Any Compose service can be recreated in place with `flowmesh stack restart
 [SERVICE ...]`, without a full teardown. The root server survives its own
 restart without losing in-flight work: scheduling state is persisted to Redis
 and rebuilt on startup (`TaskRuntime.rehydrate`), and task events replay from a
-durable stream. Forward-mode SSH and serve sessions that are still
-running get their forward port back on restart — the same port they published, or
-another free one (rewriting the task's endpoint) if it is taken — so a restart never
-hands a live session's port to a new one. Rolling a new image across the cluster one node at a time is one
-application. See [`SERVICE_RESTARTS.md`](SERVICE_RESTARTS.md).
+durable stream. A running `forward` SSH or serve session on another node's
+worker is served again on the port it published; one whose port cannot be bound
+again stays unreachable rather than moving. Rolling a new image across the
+cluster one node at a time is one application. See
+[`SERVICE_RESTARTS.md`](SERVICE_RESTARTS.md).
 
 ## Plugin extension points
 

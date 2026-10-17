@@ -1,5 +1,4 @@
 import argparse
-import asyncio
 import atexit
 import importlib
 import inspect
@@ -381,13 +380,7 @@ async def _lifespan(_: FastAPI):
             if PORT_FORWARD_SERVICE is not None:
                 await PORT_FORWARD_SERVICE.start()
                 if RUNTIME is not None:
-                    # In the background: a task's worker may not have
-                    # re-registered yet, and startup must not wait on it.
-                    app.state.forward_restore = asyncio.create_task(
-                        PORT_FORWARD_SERVICE.restore_forwards(
-                            RUNTIME.tasks, RUNTIME.mark_updated
-                        )
-                    )
+                    await PORT_FORWARD_SERVICE.restore_sessions(RUNTIME.task_records())
             _start_root_threads()
             if EVENT_MONITOR is not None:
                 EVENT_MONITOR.start()
