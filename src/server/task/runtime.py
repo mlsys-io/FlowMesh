@@ -966,6 +966,7 @@ class TaskRuntime:
             record.started_ts = None
             record.finished_ts = None
             record.error = None
+            record.latest_update = None
             if increment_retry:
                 try:
                     if record.max_attempts is not None and record.max_attempts >= 0:

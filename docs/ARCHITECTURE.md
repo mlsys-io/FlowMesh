@@ -65,7 +65,8 @@ The runtime is two top-level processes:
 ## Task state machine
 
 `PENDING → DISPATCHED → (DONE | FAILED | CANCELLED)`. Retried tasks
-cycle back to `PENDING` until exhausted.
+cycle back to `PENDING` until exhausted, dropping the previous attempt's
+`latest_update`.
 
 Retries are routed to a worker that has not already failed the task and
 stop once every eligible worker has been tried or `max_attempts` is

@@ -250,6 +250,25 @@ async def test_rehydrate_keeps_in_flight_task_dispatched() -> None:
 
 
 @pytest.mark.anyio
+async def test_requeued_task_drops_its_previous_attempt_s_update() -> None:
+    registry = FakeWorkflowRegistry()
+    runtime = _runtime(registry)
+    _, ids = await _register(runtime, GRAPH)
+    a = ids["a"]
+
+    runtime.mark_dispatched(a, cast(Any, SimpleNamespace(id="wkr-9", node_id="nde-1")))
+    runtime.mark_updated(a, {"ssh": {"mode": "forward", "port": 32000}})
+    runtime.mark_pending(a, increment_retry=True)
+
+    restored = _runtime(registry)
+    await restored.rehydrate()
+    for rt in (runtime, restored):
+        record = rt.get_record(a)
+        assert record is not None
+        assert record.latest_update is None
+
+
+@pytest.mark.anyio
 async def test_rehydrate_restores_epoch_frontier() -> None:
     registry = FakeWorkflowRegistry()
     runtime = _runtime(registry)
