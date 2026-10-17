@@ -41,8 +41,11 @@ jobs:
 
       - name: Run unit tests
         # Skip the multiprocessing GPU-cleanup test — it's too costly to
-        # run on every PR (vllm engine startup + multi-process cleanup).
+        # run on every PR (vllm engine startup + multi-process cleanup). Each xdist
+        # worker collects the whole suite, so more workers than ubuntu-latest's four
+        # vCPUs run slower; a fixed count also bounds memory on nus-flowmesh.
         run: >
           uv run pytest tests/
           --ignore=tests/worker/test_mp_executor_cleanup_gpu.py
+          -n 4 --dist loadgroup
           -v
