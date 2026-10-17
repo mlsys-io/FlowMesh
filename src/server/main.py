@@ -343,20 +343,27 @@ async def _reconcile_resources() -> None:
             try:
                 record = await WORKFLOW_REGISTRY.get_workflow_record_async(workflow_id)
             except UNREADABLE_STATE_ERRORS as exc:
+                # Rehydration failed the workflow; its tasks that were unfinished
+                # are now in its remaining or failed set.
                 logger.error(
                     "Startup reconcile: unreadable record for workflow %s; "
-                    "reconciling it without its tasks: %s",
+                    "reconciling its unfinished tasks: %s",
                     workflow_id,
                     exc,
                 )
-                refs.append(
-                    ResourceRef(kind=ResourceKind.WORKFLOW.value, id=workflow_id)
-                )
-                continue
-            if record is None:
-                continue
+                try:
+                    task_ids = sorted(
+                        await WORKFLOW_REGISTRY.get_remaining_tasks_async(workflow_id)
+                        | await WORKFLOW_REGISTRY.get_failed_tasks_async(workflow_id)
+                    )
+                except UNREADABLE_STATE_ERRORS:
+                    task_ids = []
+            else:
+                if record is None:
+                    continue
+                task_ids = record.task_ids
             refs.append(ResourceRef(kind=ResourceKind.WORKFLOW.value, id=workflow_id))
-            for task_id in record.task_ids:
+            for task_id in task_ids:
                 refs.append(ResourceRef(kind=ResourceKind.TASK.value, id=task_id))
 
     logger.info("Startup reconcile: %d live resource(s)", len(refs))

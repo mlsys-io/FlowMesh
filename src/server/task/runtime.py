@@ -21,6 +21,7 @@ from shared.utils.redact import redact_raw_yaml
 
 from ..clients.redis import (
     task_state_key,
+    workflow_failed_tasks_key,
     workflow_key,
     workflow_sched_key,
     workflow_tasks_key,
@@ -78,7 +79,7 @@ def _state_mismatch(
 ) -> str | None:
     """Why a task state that parsed cannot be the one stored for ``task_id``, if
     it cannot. A damaged byte can leave valid JSON with a wrong identity or status,
-    or drop an ordered task's position, which rehydration cannot enqueue."""
+    or drop the position an ordered task needs to be queued."""
     record = state.record
     if record.task_id != task_id:
         return f"the record is for task {record.task_id}"
@@ -89,10 +90,10 @@ def _state_mismatch(
     if (
         in_epoch_order
         and state.epoch_index is not None
-        and record.status == TaskStatus.PENDING
+        and record.status not in TERMINAL_TASK_STATUSES
         and record.position_in_epoch is None
     ):
-        return "an ordered pending task has no position in its epoch"
+        return "an unfinished ordered task has no position in its epoch"
     return None
 
 
@@ -170,6 +171,9 @@ class TaskRuntime:
         self._workflow_in_epoch_order: dict[str, bool] = {}
         self._task_epoch_index: dict[str, int] = {}
         self._rehydrated_dispatched: dict[str, float] = {}
+        # Workflows failed on startup for unreadable durable state; none of their
+        # tasks is dispatched again.
+        self._unreadable_workflows: set[str] = set()
 
         self._lock = threading.RLock()
         self._cv = threading.Condition(self._lock)
@@ -363,12 +367,31 @@ class TaskRuntime:
                 self._log_unreadable_state(
                     workflow_id, workflow_key(workflow_id), _unreadable_cause(exc)
                 )
-                await self._fail_unreadable_workflow_async(workflow_id, [])
-                failed += 1
-                continue
-            if wf_record is None:
-                continue
-            unreadable = False
+                # Without the record's task list, the workflow's unfinished tasks
+                # are found in its remaining and failed sets.
+                try:
+                    task_ids = sorted(
+                        await self._workflow_registry.get_remaining_tasks_async(
+                            workflow_id
+                        )
+                        | await self._workflow_registry.get_failed_tasks_async(
+                            workflow_id
+                        )
+                    )
+                except UNREADABLE_STATE_ERRORS as exc:
+                    self._log_unreadable_state(
+                        workflow_id,
+                        f"{workflow_tasks_key(workflow_id)} or "
+                        f"{workflow_failed_tasks_key(workflow_id)}",
+                        _unreadable_cause(exc),
+                    )
+                    continue
+                unreadable = True
+            else:
+                if wf_record is None:
+                    continue
+                task_ids = wf_record.task_ids
+                unreadable = False
             try:
                 sched = await self._workflow_registry.load_workflow_sched_async(
                     workflow_id
@@ -380,7 +403,7 @@ class TaskRuntime:
                 sched, unreadable = None, True
             tasks, unreadable_tasks = await self._load_task_states_async(
                 workflow_id,
-                wf_record.task_ids,
+                task_ids,
                 in_epoch_order=sched.in_epoch_order if sched else False,
             )
             unreadable = unreadable or unreadable_tasks
@@ -420,10 +443,13 @@ class TaskRuntime:
 
         Its readable PENDING tasks fail with ``state_unreadable``, taking their
         dependents with them as any failure does. Its in-flight tasks keep running
-        and finish as usual. Every other unfinished task, including each one whose
-        state could not be read, has no record left to fail, so its id moves from the
+        and finish as usual, but one that would be retried fails instead (see
+        ``mark_pending``). Every other unfinished task, including each one whose state
+        could not be read, has no record left to fail, so its id moves from the
         workflow's remaining set to its failed set directly.
         """
+        with self._cv:
+            self._unreadable_workflows.add(workflow_id)
         finished_at = now_iso()
         in_flight: set[str] = set()
         for persisted in tasks:
@@ -882,13 +908,24 @@ class TaskRuntime:
                 self._cv.wait(timeout)
             return None
 
-    def mark_pending(self, task_id: str, *, increment_retry: bool = False) -> None:
+    def mark_pending(self, task_id: str, *, increment_retry: bool = False) -> bool:
+        """Return a task to PENDING for another attempt. Returns whether it is
+        pending now: a task of a workflow failed for unreadable durable state fails
+        instead."""
         with self._cv:
             record = self._tasks.get(task_id)
             if not record:
-                return
+                return False
             if record.status == TaskStatus.CANCELLED:
-                return
+                return False
+            if record.workflow_id in self._unreadable_workflows:
+                self._logger.warning(
+                    "Failing task %s instead of retrying it: its workflow's durable "
+                    "state could not be read",
+                    task_id,
+                )
+                self.mark_failed(task_id, None, {}, now_iso(), error=_STATE_UNREADABLE)
+                return False
             record.status = TaskStatus.PENDING
             record.assigned_worker = None
             record.topic = None
@@ -909,6 +946,7 @@ class TaskRuntime:
                 records=self._records_locked(task_id),
                 pending=[task_id],
             )
+            return True
 
     def requeue(self, task_id: str, *, front: bool = False) -> bool:
         """Reinsert a task into the ready queue."""

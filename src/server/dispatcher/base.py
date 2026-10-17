@@ -760,8 +760,10 @@ class Dispatcher:
         if release_merge:
             self._runtime.release_merge(task_id)
 
-        if mark_pending:
-            self._runtime.mark_pending(task_id, increment_retry=count_retry)
+        if mark_pending and not self._runtime.mark_pending(
+            task_id, increment_retry=count_retry
+        ):
+            return
 
         record = self._runtime.get_record(task_id)
         if count_retry and record:

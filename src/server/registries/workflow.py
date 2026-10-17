@@ -471,6 +471,14 @@ class WorkflowRegistry:
     async def get_remaining_tasks_async(self, workflow_id: str) -> set[str]:
         return await self._rds.asyncio.set_members(workflow_tasks_key(workflow_id))
 
+    def get_failed_tasks(self, workflow_id: str) -> set[str]:
+        return self._rds.sync.set_members(workflow_failed_tasks_key(workflow_id))
+
+    async def get_failed_tasks_async(self, workflow_id: str) -> set[str]:
+        return await self._rds.asyncio.set_members(
+            workflow_failed_tasks_key(workflow_id)
+        )
+
     def _build_workflow(
         self,
         record: WorkflowRecord,

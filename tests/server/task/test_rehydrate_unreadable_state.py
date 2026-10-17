@@ -166,6 +166,33 @@ async def test_unreadable_schedule_fails_its_workflow_and_lets_in_flight_finish(
 
 
 @pytest.mark.anyio
+async def test_in_flight_task_of_failed_workflow_fails_instead_of_retrying(
+    server: fakeredis.FakeServer, raw: fakeredis.FakeRedis
+) -> None:
+    previous, workflow_id, ids, _ = await _two_workflows(server)
+    previous.mark_dispatched(
+        ids["a"], cast(Any, SimpleNamespace(id="wkr-1", node_id="nde-1"))
+    )
+    _corrupt(raw, workflow_sched_key(workflow_id), _flip_high_bit)
+
+    registry = _registry(server)
+    runtime = _runtime(registry)
+    await runtime.rehydrate()
+    assert runtime.recover_tasks_for_worker("wkr-1") == [ids["a"]]
+
+    assert not runtime.mark_pending(ids["a"], increment_retry=True)
+    record = runtime.get_record(ids["a"])
+    assert record is not None
+    assert record.status == TaskStatus.FAILED
+    assert record.error == "state_unreadable"
+    assert not runtime.requeue(ids["a"])
+    workflow = await registry.get_workflow_async(workflow_id)
+    assert workflow is not None
+    assert set(workflow.failed_tasks) == {ids["a"], ids["b"]}
+    assert workflow.dispatched_tasks == []
+
+
+@pytest.mark.anyio
 async def test_ordered_task_without_its_position_fails_its_workflow(
     server: fakeredis.FakeServer, raw: fakeredis.FakeRedis
 ) -> None:
@@ -184,20 +211,37 @@ async def test_ordered_task_without_its_position_fails_its_workflow(
 
 
 @pytest.mark.anyio
-async def test_unreadable_workflow_record_fails_its_remaining_tasks(
-    server: fakeredis.FakeServer, raw: fakeredis.FakeRedis
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        pytest.param("task_ids", b'["tsk-', id="invalid-task-ids"),
+        pytest.param("updated_at", b"2026-\xb1", id="invalid-utf8"),
+    ],
+)
+async def test_unreadable_workflow_record_fails_its_unfinished_tasks(
+    server: fakeredis.FakeServer, raw: fakeredis.FakeRedis, field: str, value: bytes
 ) -> None:
     _, workflow_id, ids, healthy = await _two_workflows(server)
-    raw.hset(workflow_key(workflow_id), "task_ids", '["tsk-')
+    raw.hset(workflow_key(workflow_id), mapping={field: value})
 
     runtime = _runtime(_registry(server))
     assert await runtime.rehydrate() == 1
 
+    for task_id in ids.values():
+        record = runtime.get_record(task_id)
+        assert record is not None and record.status == TaskStatus.FAILED
     assert raw.smembers(workflow_tasks_key(workflow_id)) == set()
     assert raw.smembers(workflow_failed_tasks_key(workflow_id)) == {
         task_id.encode() for task_id in ids.values()
     }
     _assert_healthy_restored(runtime, healthy)
+
+    restarted = _runtime(_registry(server))
+    await restarted.rehydrate()
+    for task_id in ids.values():
+        record = restarted.get_record(task_id)
+        assert record is not None and record.status == TaskStatus.FAILED
+    _assert_healthy_restored(restarted, healthy)
 
 
 @pytest.mark.anyio
