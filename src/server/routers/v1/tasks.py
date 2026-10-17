@@ -46,8 +46,8 @@ _CONTROL_PARAMS = ("view", "limit")
 TaskView = Literal["full", "status"]
 _VIEW_QUERY = Query(
     "full",
-    description="`status` returns only status, placement, timing and errors "
-    "(no task spec or source) — use it for polling.",
+    description="`status` returns only status, placement, timing, errors and the "
+    "latest update (no task spec or source) — use it for polling.",
 )
 
 
@@ -62,8 +62,9 @@ def _pushed_down_queries(
 
     Returns (workflow_ids, statuses, remaining). ``workflow_id`` and ``status``
     are matched by membership in ``TaskRuntime.list_tasks`` before any TaskInfo
-    is built, so a query that only filters on them never dumps a model. The
-    remaining params still go through ``filter_models_by_queries``.
+    is built, and the control params (``view``, ``limit``) are dropped, so a
+    query that only filters on them never dumps a model. The remaining params
+    still go through ``filter_models_by_queries``.
     """
     workflow_ids = query_params.getlist("workflow_id")
     statuses = query_params.getlist("status")
@@ -100,7 +101,7 @@ async def list_tasks(
     request: Request,
     view: TaskView = _VIEW_QUERY,
     limit: int | None = Query(
-        None, ge=1, le=10_000, description="Return only the newest this many tasks."
+        None, ge=1, le=10_000, description="Keep only the newest N matching tasks."
     ),
     principal: PrincipalContext = Depends(authenticate_connection),
     runtime: TaskRuntime = Depends(get_runtime),

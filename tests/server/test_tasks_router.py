@@ -305,9 +305,14 @@ async def test_event_loop_stays_responsive_during_list_serialization(
     assert list_resp.status_code == 200
 
 
-def test_status_view_fields_are_task_info_fields() -> None:
-    served = set(TaskInfo.model_fields) | set(TaskInfo.model_computed_fields)
-    assert set(TaskStatusView.model_fields) <= served
+def test_status_view_fields_match_task_info() -> None:
+    for name, field in TaskStatusView.model_fields.items():
+        if computed := TaskInfo.model_computed_fields.get(name):
+            served = (computed.return_type, computed.description)
+        else:
+            info = TaskInfo.model_fields[name]
+            served = (info.annotation, info.description)
+        assert (field.annotation, field.description) == served, name
 
 
 @pytest.mark.anyio
@@ -383,7 +388,7 @@ async def test_list_tasks_rejects_out_of_range_limit(
 
 
 @pytest.mark.anyio
-async def test_unknown_view_is_rejected(no_checkers: None) -> None:
+async def test_list_tasks_unknown_view_is_rejected(no_checkers: None) -> None:
     runtime, _ = build_runtime()
     async with _client(runtime) as ac:
         resp = await ac.get(f"{PREFIX}/tasks", params={"view": "bogus"})

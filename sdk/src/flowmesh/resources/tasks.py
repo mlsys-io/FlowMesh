@@ -84,17 +84,17 @@ class Tasks(SyncResource):
 
         ``limit`` keeps only the newest matching tasks."""
         params = _list_params(
-            task_id,
-            workflow_id,
-            status,
-            category,
-            task_type,
-            assigned_worker,
-            graph_node_name,
-            completed,
-            failed,
-            limit,
-            query_params,
+            task_id=task_id,
+            workflow_id=workflow_id,
+            status=status,
+            category=category,
+            task_type=task_type,
+            assigned_worker=assigned_worker,
+            graph_node_name=graph_node_name,
+            completed=completed,
+            failed=failed,
+            limit=limit,
+            query_params=query_params,
         )
         data = self._client._request("GET", "/tasks", params=params or None)
         return [TaskInfo.model_validate(t) for t in data]
@@ -115,17 +115,17 @@ class Tasks(SyncResource):
     ) -> builtins.list[TaskStatusView]:
         """List the status views of tasks; takes the filters of ``list``."""
         params = _list_params(
-            task_id,
-            workflow_id,
-            status,
-            category,
-            task_type,
-            assigned_worker,
-            graph_node_name,
-            completed,
-            failed,
-            limit,
-            query_params,
+            task_id=task_id,
+            workflow_id=workflow_id,
+            status=status,
+            category=category,
+            task_type=task_type,
+            assigned_worker=assigned_worker,
+            graph_node_name=graph_node_name,
+            completed=completed,
+            failed=failed,
+            limit=limit,
+            query_params=query_params,
         )
         params.append(("view", "status"))
         data = self._client._request("GET", "/tasks", params=params)
@@ -236,17 +236,17 @@ class AsyncTasks(AsyncResource):
 
         ``limit`` keeps only the newest matching tasks."""
         params = _list_params(
-            task_id,
-            workflow_id,
-            status,
-            category,
-            task_type,
-            assigned_worker,
-            graph_node_name,
-            completed,
-            failed,
-            limit,
-            query_params,
+            task_id=task_id,
+            workflow_id=workflow_id,
+            status=status,
+            category=category,
+            task_type=task_type,
+            assigned_worker=assigned_worker,
+            graph_node_name=graph_node_name,
+            completed=completed,
+            failed=failed,
+            limit=limit,
+            query_params=query_params,
         )
         data = await self._client._request("GET", "/tasks", params=params or None)
         return [TaskInfo.model_validate(t) for t in data]
@@ -267,17 +267,17 @@ class AsyncTasks(AsyncResource):
     ) -> builtins.list[TaskStatusView]:
         """List the status views of tasks; takes the filters of ``list``."""
         params = _list_params(
-            task_id,
-            workflow_id,
-            status,
-            category,
-            task_type,
-            assigned_worker,
-            graph_node_name,
-            completed,
-            failed,
-            limit,
-            query_params,
+            task_id=task_id,
+            workflow_id=workflow_id,
+            status=status,
+            category=category,
+            task_type=task_type,
+            assigned_worker=assigned_worker,
+            graph_node_name=graph_node_name,
+            completed=completed,
+            failed=failed,
+            limit=limit,
+            query_params=query_params,
         )
         params.append(("view", "status"))
         data = await self._client._request("GET", "/tasks", params=params)

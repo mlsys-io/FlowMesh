@@ -6,7 +6,8 @@ from ..task.models import TaskInfo
 
 
 class TaskStatusView(BaseModel):
-    """A task's status, placement, timing and errors, without its spec or source."""
+    """A task's status, placement, timing, errors and latest update, without its
+    spec or source."""
 
     task_id: str = Field(description="Task identifier.")
     workflow_id: str = Field(description="Workflow identifier.")

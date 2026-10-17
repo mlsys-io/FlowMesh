@@ -256,11 +256,7 @@ class TaskRecord(BaseModel):
         return handler(redacted)
 
 
-# A task's position in a listing: its submission time, then its id.
-type TaskOrder = tuple[float, str]
-
-
-def task_order(record: TaskRecord) -> TaskOrder:
+def task_order(record: TaskRecord) -> tuple[float, str]:
     return record.submitted_ts, record.task_id
 
 

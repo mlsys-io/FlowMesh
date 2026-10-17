@@ -98,9 +98,13 @@ _TASK_RESPONSE = SrvTaskInfo(
 )
 
 
-def _status_json(status: str) -> dict[str, Any]:
+def _status_json(
+    status: str, latest_update: dict[str, Any] | None = None
+) -> dict[str, Any]:
     view = SrvTaskStatusView.from_info(_TASK_RESPONSE)
-    return _json(view.model_copy(update={"status": status}))
+    return _json(
+        view.model_copy(update={"status": status, "latest_update": latest_update})
+    )
 
 
 def _json(server_obj: BaseModel) -> dict:  # type: ignore[type-arg]
@@ -315,6 +319,41 @@ class TestTaskPolling:
         views = [call.request.url.params.get("view") for call in route.calls]
         assert views == ["status", None]
         assert task.task_id == "t-1"
+
+    @respx.mock
+    def test_wait_for_ssh_polls_status_view(self, mock_client: FlowMesh) -> None:
+        ssh = {"mode": "direct", "host": "h", "port": 22}
+        route = respx.get(route_url("get_task", task_id="t-1")).mock(
+            side_effect=[
+                httpx.Response(200, json=_status_json("DISPATCHED")),
+                httpx.Response(200, json=_status_json("DISPATCHED", {"ssh": ssh})),
+            ]
+        )
+        assert mock_client.tasks.wait_for_ssh("t-1", interval=0) == ssh
+        assert [c.request.url.params["view"] for c in route.calls] == ["status"] * 2
+
+    @pytest.mark.anyio
+    @respx.mock
+    async def test_async_status_calls_request_status_view(self) -> None:
+        ssh = {"mode": "direct", "host": "h", "port": 22}
+        task_route = respx.get(route_url("get_task", task_id="t-1")).respond(
+            json=_status_json("DISPATCHED", {"ssh": ssh})
+        )
+        list_route = respx.get(route_url("list_tasks")).respond(
+            json=[_status_json("DISPATCHED")]
+        )
+        async with AsyncFlowMesh(
+            base_url=TEST_BASE_URL, api_key="flm-test-key"
+        ) as client:
+            view = await client.tasks.status("t-1")
+            info = await client.tasks.wait_for_ssh("t-1", interval=0)
+            views = await client.tasks.list_statuses(limit=1)
+        assert view.status == "DISPATCHED"
+        assert info == ssh
+        assert [v.task_id for v in views] == ["t-1"]
+        assert all(c.request.url.params["view"] == "status" for c in task_route.calls)
+        assert list_route.calls[0].request.url.params["view"] == "status"
+        assert list_route.calls[0].request.url.params["limit"] == "1"
 
 
 class TestNodeRegister:

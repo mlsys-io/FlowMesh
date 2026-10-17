@@ -71,7 +71,8 @@ class TaskInfo(BaseModel):
 
 
 class TaskStatusView(BaseModel):
-    """A task's status, placement, timing and errors, without its spec or source.
+    """A task's status, placement, timing, errors and latest update, without its
+    spec or source.
 
     A server without this view returns the full task, which validates here too."""
 
