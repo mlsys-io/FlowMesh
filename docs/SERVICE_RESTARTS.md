@@ -68,12 +68,7 @@ restart safe:
   it with the credential. When it was a merged child, only that child and its
   dependents fail while the parent dispatches its remaining valid children.
   Event-driven transitions are additionally healed by replay; the API-driven
-  workflow cancel relies on this atomicity alone. A workflow with a record the
-  server cannot read on startup (its workflow record, its schedule, or a task
-  state) fails instead of being restored. Its pending tasks fail, with
-  `state_unreadable` or because a task that did blocks them, while its in-flight
-  tasks finish as usual. The server logs each unreadable key and restores every
-  other workflow.
+  workflow cancel relies on this atomicity alone.
 - **Replayable task events.** Task lifecycle events flow through a durable Redis
   stream consumed from a persisted cursor. The ordering is what makes replay
   safe: a transition is written to durable scheduler state *before* its event is
@@ -92,6 +87,15 @@ restart safe:
   extended grace (`WORKER_REHYDRATION_GRACE_SEC`, default 120s) before it may
   reclaim those tasks, so a worker that is merely catching up is not mistaken
   for a dead one and its tasks are not needlessly requeued.
+
+A workflow with a durable record the server cannot read on startup (its workflow
+record, its schedule, or a task state that is missing or damaged) fails instead
+of being restored, and every other workflow is restored as usual. Each of its
+pending tasks fails, with `state_unreadable` or with an error naming the failed
+task that blocks it, while its in-flight tasks finish as usual. The server logs each unreadable key at
+ERROR; inspect it, then repair it or rename it aside. Until then, an unreadable
+workflow record also fails `GET /workflows` and skips the startup reconcile of
+plugin resource records.
 
 Rehydration runs inside the ASGI lifespan **before it yields**, so the server
 does not accept traffic (and its healthcheck does not pass) until scheduling
