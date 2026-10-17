@@ -1,7 +1,7 @@
 import asyncio
 import json
 import logging
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import (
     APIRouter,
@@ -13,6 +13,7 @@ from fastapi import (
     status,
 )
 from fastapi.responses import StreamingResponse
+from starlette.datastructures import QueryParams
 
 from shared.schemas.event import TaskEvent
 
@@ -36,9 +37,10 @@ from ...clients.redis import (
     workflow_log_stream_key,
 )
 from ...hooks import SUBMISSION_GUARDS, ResourceAction, ResourceKind
-from ...registries.workflow import Workflow, WorkflowRegistry
+from ...registries.workflow import Workflow, WorkflowRegistry, workflow_order
 from ...schemas.logs import LogEntry, LogEvent, LogQueryResponse
 from ...schemas.workflow import (
+    WorkflowStatusView,
     WorkflowSubmitResponse,
     WorkflowSubmitTaskEntry,
     WorkflowValidateResponse,
@@ -69,6 +71,16 @@ _WORKFLOW_REQUEST_BODY_FORMAT = {
     },
 }
 router = APIRouter(prefix="/workflows", tags=["Workflows"])
+
+# Query keys the list endpoint consumes itself; they are not model-field filters.
+_CONTROL_PARAMS = ("view", "limit")
+
+type WorkflowView = Literal["full", "status"]
+_VIEW_QUERY = Query(
+    "full",
+    description="`status` returns only status, timestamps and per-state task "
+    "counts (no task ID lists).",
+)
 
 
 def _parse_submission_body(raw_body: bytes, content_type: str) -> str:
@@ -268,13 +280,15 @@ async def validate_workflow(
         "DONE (all tasks completed). "
     ),
     response_description="Workflow details",
+    response_model=Workflow | WorkflowStatusView,
 )
 async def get_workflow(
     workflow_id: str,
+    view: WorkflowView = _VIEW_QUERY,
     principal: PrincipalContext = Depends(authenticate_connection),
     registry: WorkflowRegistry = Depends(get_workflow_registry),
     logger: logging.Logger = Depends(get_logger),
-) -> Workflow:
+) -> Workflow | WorkflowStatusView:
     await require_permission(
         principal, ResourceKind.WORKFLOW, workflow_id, ResourceAction.READ, logger
     )
@@ -284,6 +298,8 @@ async def get_workflow(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Workflow '{workflow_id}' not found",
         )
+    if view == "status":
+        return WorkflowStatusView.from_workflow(workflow)
     return workflow
 
 
@@ -514,15 +530,20 @@ async def cancel_workflow(
 @router.get(
     "",
     summary="List workflows",
-    description="List submitted workflows.",
+    description="List submitted workflows ordered by submission, oldest first.",
     response_description="List of workflows",
+    response_model=list[Workflow] | list[WorkflowStatusView],
 )
 async def list_workflows(
     request: Request,
+    view: WorkflowView = _VIEW_QUERY,
+    limit: int | None = Query(
+        None, ge=1, le=10_000, description="Keep only the newest N matching workflows."
+    ),
     principal: PrincipalContext = Depends(authenticate_connection),
     registry: WorkflowRegistry = Depends(get_workflow_registry),
     logger: logging.Logger = Depends(get_logger),
-) -> list[Workflow]:
+) -> list[Workflow] | list[WorkflowStatusView]:
     workflow_ids = await registry.get_workflow_ids_async()
     allowed = await resolve_accessible_ids(
         principal, ResourceKind.WORKFLOW, ResourceAction.READ, logger
@@ -530,7 +551,20 @@ async def list_workflows(
     if allowed is not None:
         workflow_ids = workflow_ids & allowed
     workflows = await registry.get_workflows_async(sorted(workflow_ids))
-    return filter_models_by_queries(workflows, request.query_params)
+    filters = QueryParams(
+        [
+            (key, value)
+            for key, value in request.query_params.multi_items()
+            if key not in _CONTROL_PARAMS
+        ]
+    )
+    workflows = filter_models_by_queries(workflows, filters)
+    workflows.sort(key=workflow_order)
+    if limit is not None:
+        workflows = workflows[-limit:]
+    if view == "status":
+        return [WorkflowStatusView.from_workflow(wf) for wf in workflows]
+    return workflows
 
 
 def _get_workflow_from_request(

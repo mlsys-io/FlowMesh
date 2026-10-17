@@ -1,4 +1,8 @@
+from typing import Self
+
 from pydantic import BaseModel, Field
+
+from ..registries.workflow import Workflow, WorkflowStatus
 
 
 class WorkflowSubmitTaskEntry(BaseModel):
@@ -40,3 +44,32 @@ class WorkflowValidateResponse(BaseModel):
     tasks: list[WorkflowValidateTaskEntry] = Field(
         description="Validated task entries."
     )
+
+
+class WorkflowStatusView(BaseModel):
+    """A workflow's status, timestamps and per-state task counts, without its task
+    ID lists."""
+
+    workflow_id: str = Field(description="Workflow identifier.")
+    status: WorkflowStatus = Field(description="Workflow status.")
+    submitted_at: str = Field(description="Submission timestamp.")
+    updated_at: str = Field(description="Last update timestamp.")
+    task_count: int = Field(description="Number of tasks in the workflow.")
+    dispatched_count: int = Field(description="Number of dispatched tasks.")
+    completed_count: int = Field(description="Number of completed tasks.")
+    failed_count: int = Field(description="Number of failed tasks.")
+    cancelled_count: int = Field(description="Number of cancelled tasks.")
+
+    @classmethod
+    def from_workflow(cls, workflow: Workflow) -> Self:
+        return cls(
+            workflow_id=workflow.workflow_id,
+            status=workflow.status,
+            submitted_at=workflow.submitted_at,
+            updated_at=workflow.updated_at,
+            task_count=len(workflow.task_ids),
+            dispatched_count=len(workflow.dispatched_tasks),
+            completed_count=len(workflow.completed_tasks),
+            failed_count=len(workflow.failed_tasks),
+            cancelled_count=len(workflow.cancelled_tasks),
+        )
