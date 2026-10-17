@@ -68,7 +68,11 @@ restart safe:
   it with the credential. When it was a merged child, only that child and its
   dependents fail while the parent dispatches its remaining valid children.
   Event-driven transitions are additionally healed by replay; the API-driven
-  workflow cancel relies on this atomicity alone.
+  workflow cancel relies on this atomicity alone. A workflow with a record the
+  server cannot read on startup (its workflow record, its schedule, or a task
+  state) fails instead of being restored. Its pending tasks fail with
+  `state_unreadable`, its in-flight tasks run to completion, and the server logs
+  each unreadable key and restores every other workflow.
 - **Replayable task events.** Task lifecycle events flow through a durable Redis
   stream consumed from a persisted cursor. The ordering is what makes replay
   safe: a transition is written to durable scheduler state *before* its event is
