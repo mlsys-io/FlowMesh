@@ -70,8 +70,8 @@ bundle missing a requested section raises `FlowMeshError`.
 ## Cursor pagination
 
 Log queries take `limit` and `before` / `after` params.
-Cursors are opaque base64 strings — pass them through; do not parse
-them.
+A cursor is an opaque string taken from `entries[].cursor` — pass it back
+unchanged; do not parse it.
 
 ## Errors
 

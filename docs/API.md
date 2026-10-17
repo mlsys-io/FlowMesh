@@ -121,5 +121,5 @@ Gated by `ENABLE_SERVER_SERVE_PROXY`.
 
 ## Cursor pagination
 
-Log queries accept `limit` and `before` / `after` cursors. The cursor is an opaque
-base64 of `(timestamp, id)`; do not parse client-side.
+Log queries accept `limit` and `before` / `after` cursors. A cursor is an opaque
+string taken from `entries[].cursor`; pass it back unchanged.
