@@ -14,11 +14,11 @@ import pytest
 
 pytest.importorskip("vllm.v1.engine.core_client", reason="vllm not installed")
 
-from vllm.v1.engine.core_client import SyncMPClient  # noqa: E402
-from vllm.v1.engine.exceptions import EngineDeadError  # noqa: E402
+from vllm.v1.engine.core_client import SyncMPClient
+from vllm.v1.engine.exceptions import EngineDeadError
 
-from worker.executors.utils.vllm_engine import EngineCoreWatch  # noqa: E402
-from worker.executors.vllm_executor import VLLMExecutor  # noqa: E402
+from worker.executors.utils.vllm_engine import EngineCoreWatch
+from worker.executors.vllm_executor import VLLMExecutor
 
 POLL_SEC = 0.01
 WAIT_SEC = 5.0
