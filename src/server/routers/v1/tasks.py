@@ -30,7 +30,7 @@ from ...hooks import ResourceAction, ResourceKind
 from ...registries.worker import WorkerRegistry
 from ...schemas.common import OkResponse
 from ...schemas.logs import LogEntry, LogEvent, LogQueryResponse
-from ...task.models import TaskStatusView
+from ...schemas.task import TaskStatusView
 from ...task.runtime import TaskInfo, TaskRuntime
 from ...utils.misc import filter_models_by_queries
 
@@ -46,7 +46,7 @@ TaskView = Literal["full", "status"]
 _VIEW_QUERY = Query(
     "full",
     description="`status` returns only status, placement, timing and errors "
-    "(no task spec or source) -- use it for polling.",
+    "(no task spec or source) — use it for polling.",
 )
 
 
@@ -121,11 +121,11 @@ async def list_tasks(
             # `limit` used to be ignored (an unknown filter key), so a client
             # asking for 100 tasks got every task: 240+ MB on a busy cluster.
             tasks = tasks[:limit]
+        for task in tasks:
+            _sanitize_latest_update(task)
         if view == "status":
             views = [TaskStatusView.from_info(task) for task in tasks]
             return _TASK_STATUS_LIST.dump_json(views, by_alias=True)
-        for task in tasks:
-            _sanitize_latest_update(task)
         return _TASK_LIST.dump_json(tasks, by_alias=True)
 
     return Response(
@@ -155,9 +155,9 @@ async def get_task(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="task not found"
         )
+    _sanitize_latest_update(info)
     if view == "status":
         return TaskStatusView.from_info(info)
-    _sanitize_latest_update(info)
     return info
 
 

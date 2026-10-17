@@ -79,6 +79,7 @@ from server.schemas.node import NodeWorkerInfo as SrvNodeWorkerInfo
 from server.schemas.node import StorageInfo as SrvStorageInfo
 from server.schemas.node import WorkerHardware as SrvWorkerHardware
 from server.schemas.node import WorkerRegisterResponse as SrvWorkerRegisterResponse
+from server.schemas.task import TaskStatusView as SrvTaskStatusView
 from server.schemas.worker import WorkerCordon as SrvWorkerCordon
 from server.schemas.worker import WorkerCordonResult as SrvWorkerCordonResult
 from server.schemas.workflow import WorkflowSubmitResponse as SrvWorkflowSubmitResponse
@@ -92,7 +93,6 @@ from server.schemas.workflow import (
     WorkflowValidateTaskEntry as SrvWorkflowValidateTaskEntry,
 )
 from server.task.models import TaskInfo as SrvTaskInfo
-from server.task.models import TaskStatusView as SrvTaskStatusView
 from server.task.models import TaskUsage as SrvTaskUsage
 from shared.schemas.artifact import ArtifactContext as SrvArtifactContext
 from shared.schemas.artifact import ArtifactRef as SrvArtifactRef

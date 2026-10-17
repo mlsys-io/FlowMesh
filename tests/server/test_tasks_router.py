@@ -16,6 +16,8 @@ from server.app_state import get_runtime
 from server.auth.security import PrincipalContext, authenticate_connection
 from server.hooks import PERMISSION_CHECKERS
 from server.routers.v1 import tasks as tasks_router
+from server.schemas.task import TaskStatusView
+from server.task.models import TaskInfo
 from server.task.runtime import TaskRuntime
 from tests.server.task.merge_harness import build_runtime
 
@@ -303,8 +305,9 @@ async def test_event_loop_stays_responsive_during_list_serialization(
     assert list_resp.status_code == 200
 
 
-# mlsys-io/FlowMesh#225: pollers asked for a ~0.5-1 MB task to read one status
-# field, and `limit` on the list was silently ignored (240+ MB responses).
+def test_status_view_fields_are_task_info_fields() -> None:
+    served = set(TaskInfo.model_fields) | set(TaskInfo.model_computed_fields)
+    assert set(TaskStatusView.model_fields) <= served
 
 
 @pytest.mark.anyio
@@ -312,6 +315,7 @@ async def test_get_task_status_view_omits_spec_and_source(no_checkers: None) -> 
     runtime, _ = build_runtime()
     wf = await _register(runtime, _PAYLOAD)
     task_id = _task_ids(runtime, wf)[0]
+    runtime.tasks[task_id].latest_update = {"ssh": {"host": "h", "_secret": "s"}}
 
     async with _client(runtime) as ac:
         full = await ac.get(f"{PREFIX}/tasks/{task_id}")
@@ -319,10 +323,20 @@ async def test_get_task_status_view_omits_spec_and_source(no_checkers: None) -> 
 
     assert full.status_code == 200 and slim.status_code == 200
     f, s = full.json(), slim.json()
-    assert "task" in f and "source" in f  # default unchanged
-    assert "task" not in s and "source" not in s
-    for key in ("task_id", "status", "attempts", "error", "assigned_worker"):
-        assert s[key] == f[key]
+    assert "task" in f and "source" in f
+    assert set(s) == set(TaskStatusView.model_fields)
+    assert {key: f[key] for key in s} == s
+    assert s["latest_update"] == {"ssh": {"host": "h"}}
+
+
+@pytest.mark.anyio
+async def test_get_task_unknown_view_is_rejected(no_checkers: None) -> None:
+    runtime, _ = build_runtime()
+    wf = await _register(runtime, _PAYLOAD)
+    task_id = _task_ids(runtime, wf)[0]
+    async with _client(runtime) as ac:
+        resp = await ac.get(f"{PREFIX}/tasks/{task_id}", params={"view": "bogus"})
+    assert resp.status_code == 422
 
 
 @pytest.mark.anyio
