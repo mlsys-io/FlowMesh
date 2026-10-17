@@ -186,6 +186,53 @@ async def test_in_flight_task_of_failed_workflow_is_retried_as_usual(
 
 
 @pytest.mark.anyio
+async def test_dependency_outside_the_workflow_fails_its_workflow(
+    server: fakeredis.FakeServer, raw: fakeredis.FakeRedis
+) -> None:
+    _, workflow_id, ids, healthy = await _two_workflows(server)
+    _corrupt(
+        raw,
+        task_state_key(ids["b"]),
+        lambda b: b.replace(b'"depends_on":["tsk-', b'"depends_on":["tsk/', 1),
+    )
+
+    registry = _registry(server)
+    runtime = _runtime(registry)
+    assert await runtime.rehydrate() == 1
+
+    assert runtime.get_record(ids["b"]) is None
+    record_a = runtime.get_record(ids["a"])
+    assert record_a is not None and record_a.error == "state_unreadable"
+    workflow = await registry.get_workflow_async(workflow_id)
+    assert workflow is not None and workflow.status == WorkflowStatus.FAILED
+    _assert_healthy_restored(runtime, healthy)
+
+
+@pytest.mark.anyio
+async def test_listed_task_without_a_state_fails_its_workflow(
+    server: fakeredis.FakeServer, raw: fakeredis.FakeRedis
+) -> None:
+    _, workflow_id, ids, healthy = await _two_workflows(server)
+    task_ids = cast(bytes, raw.hget(workflow_key(workflow_id), "task_ids"))
+    flipped = ids["b"].replace("tsk-", "tsk/", 1)
+    raw.hset(
+        workflow_key(workflow_id),
+        mapping={"task_ids": task_ids.replace(ids["b"].encode(), flipped.encode())},
+    )
+
+    registry = _registry(server)
+    runtime = _runtime(registry)
+    assert await runtime.rehydrate() == 1
+
+    record_a = runtime.get_record(ids["a"])
+    assert record_a is not None and record_a.status == TaskStatus.FAILED
+    workflow = await registry.get_workflow_async(workflow_id)
+    assert workflow is not None and workflow.status == WorkflowStatus.FAILED
+    assert ids["b"] in workflow.failed_tasks
+    _assert_healthy_restored(runtime, healthy)
+
+
+@pytest.mark.anyio
 async def test_ordered_task_without_its_position_fails_its_workflow(
     server: fakeredis.FakeServer, raw: fakeredis.FakeRedis
 ) -> None:

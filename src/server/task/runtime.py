@@ -36,6 +36,7 @@ from ..registries.workflow import (
 )
 from ..utils.time import now_iso, parse_iso_ts
 from .models import (
+    TASK_STATUSES,
     TERMINAL_TASK_STATUSES,
     TaskInfo,
     TaskParsingResult,
@@ -51,18 +52,6 @@ REHYDRATE_LOAD_BATCH = 16
 _STATE_UNREADABLE = "state_unreadable"
 
 
-_TASK_STATUSES = frozenset(
-    {
-        TaskStatus.PENDING,
-        TaskStatus.DISPATCHED,
-        TaskStatus.CANCELLING,
-        TaskStatus.FAILED,
-        TaskStatus.CANCELLED,
-        TaskStatus.DONE,
-    }
-)
-
-
 def _unreadable_cause(exc: Exception) -> str:
     if isinstance(exc, ValidationError):
         first = exc.errors()[0]
@@ -75,17 +64,26 @@ def _unreadable_cause(exc: Exception) -> str:
 
 
 def _state_mismatch(
-    state: PersistedTask, task_id: str, workflow_id: str, in_epoch_order: bool
+    state: PersistedTask,
+    task_id: str,
+    workflow_id: str,
+    in_epoch_order: bool,
+    workflow_task_ids: Collection[str] | None,
 ) -> str | None:
     """Why a task state that parsed cannot be the one stored for ``task_id``, if
-    it cannot. A damaged byte can leave valid JSON with a wrong identity or status,
-    or drop the position an ordered task needs to be queued."""
+    it cannot. A damaged byte can leave valid JSON with a wrong identity, status,
+    or dependency, or drop the position an ordered task needs to be queued.
+    Dependencies are checked only against a known ``workflow_task_ids``."""
     record = state.record
     if record.task_id != task_id:
         return f"the record is for task {record.task_id}"
     if record.workflow_id != workflow_id:
         return f"the record is for workflow {record.workflow_id}"
-    if record.status not in _TASK_STATUSES:
+    if workflow_task_ids is not None and (
+        unknown := state.depends_on.difference(workflow_task_ids)
+    ):
+        return f"it depends on tasks outside its workflow: {sorted(unknown)}"
+    if record.status not in TASK_STATUSES:
         return f"unknown status {record.status!r}"
     if (
         in_epoch_order
@@ -364,8 +362,8 @@ class TaskRuntime:
                 self._log_unreadable_state(
                     workflow_id, workflow_key(workflow_id), _unreadable_cause(exc)
                 )
-                # Without the record's task list, the workflow's unfinished tasks
-                # are found in its remaining and failed sets.
+                # Without the record's task list, the workflow's tasks are taken
+                # from its remaining and failed sets.
                 try:
                     task_ids = sorted(
                         await self._workflow_registry.get_remaining_tasks_async(
@@ -382,12 +380,18 @@ class TaskRuntime:
                         f"{workflow_failed_tasks_key(workflow_id)}",
                         _unreadable_cause(exc),
                     )
+                    self._logger.error(
+                        "Left workflow %s unrestored: its tasks cannot be listed",
+                        workflow_id,
+                    )
                     continue
+                listed: Collection[str] | None = None
                 unreadable = True
             else:
                 if wf_record is None:
                     continue
                 task_ids = wf_record.task_ids
+                listed = frozenset(task_ids)
                 unreadable = False
             try:
                 sched = await self._workflow_registry.load_workflow_sched_async(
@@ -402,6 +406,7 @@ class TaskRuntime:
                 workflow_id,
                 task_ids,
                 in_epoch_order=sched.in_epoch_order if sched else False,
+                workflow_task_ids=listed,
             )
             unreadable = unreadable or unreadable_tasks
             if not tasks and not unreadable:
@@ -426,8 +431,7 @@ class TaskRuntime:
 
     def _log_unreadable_state(self, workflow_id: str, key: str, cause: str) -> None:
         self._logger.error(
-            "Unreadable durable state for workflow %s at key %s; failing the "
-            "workflow: %s",
+            "Unreadable durable state for workflow %s at key %s: %s",
             workflow_id,
             key,
             cause,
@@ -444,6 +448,9 @@ class TaskRuntime:
         state could not be read, has no record left to fail, so its id moves from the
         workflow's remaining set to its failed set directly.
         """
+        self._logger.error(
+            "Failing workflow %s: its durable state could not be read", workflow_id
+        )
         finished_at = now_iso()
         in_flight: set[str] = set()
         for persisted in tasks:
@@ -462,6 +469,11 @@ class TaskRuntime:
             self._log_unreadable_state(
                 workflow_id, workflow_tasks_key(workflow_id), _unreadable_cause(exc)
             )
+            self._logger.error(
+                "Left the unreadable tasks of workflow %s unfinished: its remaining "
+                "tasks cannot be listed",
+                workflow_id,
+            )
             return
         if stranded := remaining - in_flight:
             await self._workflow_registry.commit_transition_async(
@@ -469,7 +481,12 @@ class TaskRuntime:
             )
 
     async def _load_task_states_async(
-        self, workflow_id: str, task_ids: Sequence[str], *, in_epoch_order: bool
+        self,
+        workflow_id: str,
+        task_ids: Sequence[str],
+        *,
+        in_epoch_order: bool,
+        workflow_task_ids: Collection[str] | None,
     ) -> tuple[list[PersistedTask], bool]:
         """Load task states ``REHYDRATE_LOAD_BATCH`` at a time, dropping terminal
         tasks' oversized inputs and saving each changed state back. Also returns
@@ -477,14 +494,15 @@ class TaskRuntime:
 
         A state that is not valid UTF-8 fails its whole batch's read, so a batch that
         fails is re-read one task at a time to leave out only the unreadable states. A
-        state that parses but cannot be the one stored for its task is unreadable too.
+        missing state, or one that parses but cannot be the one stored for its task,
+        is unreadable too.
 
         Saving back is best-effort: a Redis that refuses writes (``maxmemory`` under
         ``noeviction``, a read-only replica) still serves reads, so a failed save
         logs and rehydration continues with the dropped inputs in memory.
         """
         states: list[PersistedTask] = []
-        unreadable = False
+        unreadable: set[str] = set()
         for batch in batched(task_ids, REHYDRATE_LOAD_BATCH):
             batch_states: list[PersistedTask | None]
             try:
@@ -505,18 +523,24 @@ class TaskRuntime:
                             workflow_id, task_state_key(task_id), _unreadable_cause(exc)
                         )
                         batch_states.append(None)
-                        unreadable = True
+                        unreadable.add(task_id)
             loaded: list[PersistedTask] = []
             for task_id, state in zip(batch, batch_states, strict=True):
+                if task_id in unreadable:
+                    continue
                 if state is None:
+                    self._log_unreadable_state(
+                        workflow_id, task_state_key(task_id), "no state is stored"
+                    )
+                    unreadable.add(task_id)
                     continue
                 if problem := _state_mismatch(
-                    state, task_id, workflow_id, in_epoch_order
+                    state, task_id, workflow_id, in_epoch_order, workflow_task_ids
                 ):
                     self._log_unreadable_state(
                         workflow_id, task_state_key(task_id), problem
                     )
-                    unreadable = True
+                    unreadable.add(task_id)
                     continue
                 loaded.append(state)
             changed = [state for state in loaded if state.record.drop_terminal_inputs()]
@@ -529,7 +553,7 @@ class TaskRuntime:
                     exc,
                 )
             states.extend(loaded)
-        return states, unreadable
+        return states, bool(unreadable)
 
     def _install_rehydrated_workflow_locked(
         self,
