@@ -27,6 +27,7 @@ from .dispatcher.factory import create_dispatcher
 from .hooks import register
 from .registries import WorkerRegistry, WorkflowRegistry
 from .registries.node import NodeRegistry
+from .registries.workflow import UNREADABLE_STATE_ERRORS
 from .routers import docs, health, v1
 from .services.log_archiver import TaskLogArchiver
 from .services.metrics import MetricsRecorder
@@ -339,7 +340,19 @@ async def _reconcile_resources() -> None:
     if WORKFLOW_REGISTRY is not None:
         workflow_ids = await WORKFLOW_REGISTRY.get_workflow_ids_async()
         for workflow_id in workflow_ids:
-            record = await WORKFLOW_REGISTRY.get_workflow_record_async(workflow_id)
+            try:
+                record = await WORKFLOW_REGISTRY.get_workflow_record_async(workflow_id)
+            except UNREADABLE_STATE_ERRORS as exc:
+                logger.error(
+                    "Startup reconcile: unreadable record for workflow %s; "
+                    "reconciling it without its tasks: %s",
+                    workflow_id,
+                    exc,
+                )
+                refs.append(
+                    ResourceRef(kind=ResourceKind.WORKFLOW.value, id=workflow_id)
+                )
+                continue
             if record is None:
                 continue
             refs.append(ResourceRef(kind=ResourceKind.WORKFLOW.value, id=workflow_id))
