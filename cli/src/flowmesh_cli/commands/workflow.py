@@ -5,7 +5,7 @@ from pathlib import Path
 import typer
 from flowmesh import FlowMesh
 from flowmesh.exceptions import FlowMeshError
-from flowmesh.models.common import TERMINAL_WORKFLOW_STATUSES, WorkflowStatus
+from flowmesh.models.common import TERMINAL_WORKFLOW_STATUSES
 from flowmesh.resources.workflows import WorkflowFormat
 
 from ..core import logging
@@ -131,7 +131,7 @@ def watch(
     try:
         while True:
             view = client.workflows.status(workflow_id)
-            status_value = WorkflowStatus(view.status)
+            status_value = view.status
             if status_value != last_status:
                 logging.log(f"[{workflow_id}] status: {status_value}")
                 last_status = status_value
