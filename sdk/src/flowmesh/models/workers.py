@@ -4,7 +4,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 
-from .common import TaskType
+from .common import OpenEnum, TaskType
 
 
 class CPUInfo(BaseModel):
@@ -85,7 +85,9 @@ class SSHLimits(BaseModel):
 
 
 class WorkerCapabilities(BaseModel):
-    supported_task_types: frozenset[TaskType] = Field(default_factory=frozenset)
+    supported_task_types: frozenset[OpenEnum[TaskType]] = Field(
+        default_factory=frozenset
+    )
 
 
 class Worker(BaseModel):

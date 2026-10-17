@@ -19,13 +19,16 @@ from flowmesh.models import (
     OkResponse,
     ProfileSummary,
     TaskInfo,
+    TaskStatus,
     TaskStatusView,
     TaskTiming,
+    TaskType,
     TaskUsage,
     VersionResponse,
     WorkerHardware,
     WorkerInfo,
     Workflow,
+    WorkflowStatus,
     WorkflowStatusView,
     WorkflowSubmitResponse,
     WorkflowValidateResponse,
@@ -327,6 +330,29 @@ class TestWorkflowModels:
         assert resp.ok is True
         assert resp.count == 2
 
+    def test_workflow_status_stays_enum_when_known(self) -> None:
+        assert Workflow.model_validate(_dump(_SRV_WORKFLOW)).status is (
+            WorkflowStatus.DONE
+        )
+
+    def test_workflow_models_keep_unknown_status(self) -> None:
+        payload = _dump(_SRV_WORKFLOW) | {"status": "PAUSED"}
+        statuses = [
+            Workflow.model_validate(payload).status,
+            WorkflowStatusView.model_validate(payload).status,
+            WorkflowSubmitResponse.model_validate(
+                {
+                    "ok": True,
+                    "workflow_id": "wf-1",
+                    "count": 1,
+                    "tasks": [{"task_id": "t-1", "status": "PAUSED"}],
+                }
+            )
+            .tasks[0]
+            .status,
+        ]
+        assert all(type(s) is str and s == "PAUSED" for s in statuses)
+
     def test_workflow_validate_response(self) -> None:
         server = SrvWorkflowValidateResponse(
             ok=True,
@@ -354,6 +380,22 @@ class TestTaskModels:
         expected = payload["source"]
         payload.pop("raw_yaml" if key == "source" else "source")
         assert TaskInfo.model_validate(payload).source == expected
+
+    def test_task_status_stays_enum_when_known(self) -> None:
+        task = TaskInfo.model_validate(_dump(_SRV_TASK_INFO))
+        assert task.status is TaskStatus.DONE
+        assert task.usages[0].status is TaskStatus.DONE
+
+    def test_task_models_keep_unknown_status(self) -> None:
+        payload = _dump(_SRV_TASK_INFO) | {"status": "PAUSED"}
+        payload["usages"][0]["status"] = "PAUSED"
+        task = TaskInfo.model_validate(payload)
+        statuses = [
+            task.status,
+            task.usages[0].status,
+            TaskStatusView.model_validate(payload).status,
+        ]
+        assert all(type(s) is str and s == "PAUSED" for s in statuses)
 
     def test_task_status_view_validate(self) -> None:
         payload = _dump(SrvTaskStatusView.from_info(_SRV_TASK_INFO))
@@ -386,6 +428,15 @@ class TestWorkerModels:
         payload["tags"] = "gpu,a100"
         w = WorkerInfo.model_validate(payload)
         assert w.tags == ["gpu", "a100"]
+
+    def test_worker_info_keeps_unknown_task_types(self) -> None:
+        payload = _dump(_SRV_WORKER_INFO)
+        payload["capabilities"] = {"supported_task_types": ["echo", "omni_text2next"]}
+        types = WorkerInfo.model_validate(payload).capabilities.supported_task_types
+        assert {(t, type(t)) for t in types} == {
+            (TaskType.ECHO, TaskType),
+            ("omni_text2next", str),
+        }
 
     def test_worker_hardware_roundtrip(self) -> None:
         hw = WorkerHardware.model_validate(_dump(_SRV_HARDWARE))

@@ -72,6 +72,10 @@ Results are read from the server, so a result that was never published there
 raises `NotFoundError` (see `WORKER_UPLOAD_RESULTS` in [`ENV.md`](ENV.md)). A
 bundle missing a requested section raises `FlowMeshError`.
 
+A task or workflow status, or a worker's supported task type, that a newer
+server sends and this SDK does not know comes back as a plain string. The
+polling helpers treat an unknown status as not finished and keep polling.
+
 ## Cursor pagination
 
 Log queries take `limit` and `before` / `after` params.
