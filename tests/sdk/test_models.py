@@ -19,6 +19,7 @@ from flowmesh.models import (
     OkResponse,
     ProfileSummary,
     TaskInfo,
+    TaskStatusView,
     TaskTiming,
     TaskUsage,
     VersionResponse,
@@ -60,6 +61,7 @@ from server.schemas.node import NodeWorkerStatus as SrvNodeWorkerStatus
 from server.schemas.node import StorageInfo as SrvStorageInfo
 from server.schemas.node import WorkerHardware as SrvWorkerHardware
 from server.schemas.ssh import SSHConnectionInfo as SrvSSHConnectionInfo
+from server.schemas.task import TaskStatusView as SrvTaskStatusView
 from server.schemas.workflow import WorkflowSubmitResponse as SrvWorkflowSubmitResponse
 from server.schemas.workflow import (
     WorkflowSubmitTaskEntry as SrvWorkflowSubmitTaskEntry,
@@ -323,6 +325,17 @@ class TestTaskModels:
         expected = payload["source"]
         payload.pop("raw_yaml" if key == "source" else "source")
         assert TaskInfo.model_validate(payload).source == expected
+
+    def test_task_status_view_validate(self) -> None:
+        payload = _dump(SrvTaskStatusView.from_info(_SRV_TASK_INFO))
+        view = TaskStatusView.model_validate(payload)
+        assert view.task_id == "t-abc"
+        assert view.status == "DONE"
+
+    def test_task_status_view_accepts_full_task(self) -> None:
+        view = TaskStatusView.model_validate(_dump(_SRV_TASK_INFO))
+        assert view.attempts == 1
+        assert view.completed is True
 
     def test_task_usage(self) -> None:
         usage = TaskUsage.model_validate(_dump(_SRV_TASK_USAGE))
