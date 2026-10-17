@@ -166,7 +166,7 @@ async def test_unreadable_schedule_fails_its_workflow_and_lets_in_flight_finish(
 
 
 @pytest.mark.anyio
-async def test_in_flight_task_of_failed_workflow_fails_instead_of_retrying(
+async def test_in_flight_task_of_failed_workflow_is_retried_as_usual(
     server: fakeredis.FakeServer, raw: fakeredis.FakeRedis
 ) -> None:
     previous, workflow_id, ids, _ = await _two_workflows(server)
@@ -175,21 +175,14 @@ async def test_in_flight_task_of_failed_workflow_fails_instead_of_retrying(
     )
     _corrupt(raw, workflow_sched_key(workflow_id), _flip_high_bit)
 
-    registry = _registry(server)
-    runtime = _runtime(registry)
+    runtime = _runtime(_registry(server))
     await runtime.rehydrate()
     assert runtime.recover_tasks_for_worker("wkr-1") == [ids["a"]]
 
-    assert not runtime.mark_pending(ids["a"], increment_retry=True)
-    record = runtime.get_record(ids["a"])
-    assert record is not None
-    assert record.status == TaskStatus.FAILED
-    assert record.error == "state_unreadable"
-    assert not runtime.requeue(ids["a"])
-    workflow = await registry.get_workflow_async(workflow_id)
-    assert workflow is not None
-    assert set(workflow.failed_tasks) == {ids["a"], ids["b"]}
-    assert workflow.dispatched_tasks == []
+    runtime.mark_pending(ids["a"], increment_retry=True)
+    assert runtime.requeue(ids["a"])
+    record_b = runtime.get_record(ids["b"])
+    assert record_b is not None and record_b.status == TaskStatus.FAILED
 
 
 @pytest.mark.anyio

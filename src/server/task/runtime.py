@@ -171,9 +171,6 @@ class TaskRuntime:
         self._workflow_in_epoch_order: dict[str, bool] = {}
         self._task_epoch_index: dict[str, int] = {}
         self._rehydrated_dispatched: dict[str, float] = {}
-        # Workflows failed on startup for unreadable durable state; none of their
-        # tasks is dispatched again.
-        self._unreadable_workflows: set[str] = set()
 
         self._lock = threading.RLock()
         self._cv = threading.Condition(self._lock)
@@ -443,13 +440,10 @@ class TaskRuntime:
 
         Its readable PENDING tasks fail with ``state_unreadable``, taking their
         dependents with them as any failure does. Its in-flight tasks keep running
-        and finish as usual, but one that would be retried fails instead (see
-        ``mark_pending``). Every other unfinished task, including each one whose state
-        could not be read, has no record left to fail, so its id moves from the
+        and finish as usual. Every other unfinished task, including each one whose
+        state could not be read, has no record left to fail, so its id moves from the
         workflow's remaining set to its failed set directly.
         """
-        with self._cv:
-            self._unreadable_workflows.add(workflow_id)
         finished_at = now_iso()
         in_flight: set[str] = set()
         for persisted in tasks:
@@ -908,24 +902,13 @@ class TaskRuntime:
                 self._cv.wait(timeout)
             return None
 
-    def mark_pending(self, task_id: str, *, increment_retry: bool = False) -> bool:
-        """Return a task to PENDING for another attempt. Returns whether it is
-        pending now: a task of a workflow failed for unreadable durable state fails
-        instead."""
+    def mark_pending(self, task_id: str, *, increment_retry: bool = False) -> None:
         with self._cv:
             record = self._tasks.get(task_id)
             if not record:
-                return False
+                return
             if record.status == TaskStatus.CANCELLED:
-                return False
-            if record.workflow_id in self._unreadable_workflows:
-                self._logger.warning(
-                    "Failing task %s instead of retrying it: its workflow's durable "
-                    "state could not be read",
-                    task_id,
-                )
-                self.mark_failed(task_id, None, {}, now_iso(), error=_STATE_UNREADABLE)
-                return False
+                return
             record.status = TaskStatus.PENDING
             record.assigned_worker = None
             record.topic = None
@@ -946,7 +929,6 @@ class TaskRuntime:
                 records=self._records_locked(task_id),
                 pending=[task_id],
             )
-            return True
 
     def requeue(self, task_id: str, *, front: bool = False) -> bool:
         """Reinsert a task into the ready queue."""

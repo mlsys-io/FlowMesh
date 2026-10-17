@@ -71,9 +71,9 @@ restart safe:
   workflow cancel relies on this atomicity alone. A workflow with a record the
   server cannot read on startup (its workflow record, its schedule, or a task
   state) fails instead of being restored. Its pending tasks fail, with
-  `state_unreadable` or as dependents of a task that did; its in-flight tasks run
-  to completion but are not retried. The server logs each unreadable key and
-  restores every other workflow.
+  `state_unreadable` or because a task that did blocks them, while its in-flight
+  tasks finish as usual. The server logs each unreadable key and restores every
+  other workflow.
 - **Replayable task events.** Task lifecycle events flow through a durable Redis
   stream consumed from a persisted cursor. The ordering is what makes replay
   safe: a transition is written to durable scheduler state *before* its event is
