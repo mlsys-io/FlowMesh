@@ -340,20 +340,46 @@ async def test_get_task_unknown_view_is_rejected(no_checkers: None) -> None:
 
 
 @pytest.mark.anyio
-async def test_list_tasks_honours_limit_and_status_view(no_checkers: None) -> None:
+async def test_list_tasks_orders_by_submission_and_limits_to_newest(
+    no_checkers: None,
+) -> None:
     runtime, _ = build_runtime()
     wf = await _register(runtime, _PAYLOAD)
-    assert len(_task_ids(runtime, wf)) == 2
+    first, second = _task_ids(runtime, wf)
+    runtime.tasks[first].submitted_ts = 200.0
+    runtime.tasks[second].submitted_ts = 100.0
 
     async with _client(runtime) as ac:
-        one = await ac.get(f"{PREFIX}/tasks", params={"workflow_id": wf, "limit": 1})
+        every = await ac.get(f"{PREFIX}/tasks", params={"workflow_id": wf})
+        newest = await ac.get(f"{PREFIX}/tasks", params={"workflow_id": wf, "limit": 1})
+
+    assert [t["task_id"] for t in every.json()] == [second, first]
+    assert [t["task_id"] for t in newest.json()] == [first]
+
+
+@pytest.mark.anyio
+async def test_list_tasks_status_view(no_checkers: None) -> None:
+    runtime, _ = build_runtime()
+    wf = await _register(runtime, _PAYLOAD)
+
+    async with _client(runtime) as ac:
         slim = await ac.get(
             f"{PREFIX}/tasks", params={"workflow_id": wf, "view": "status"}
         )
 
-    assert one.status_code == 200 and len(one.json()) == 1
     assert slim.status_code == 200 and len(slim.json()) == 2
-    assert all("task" not in t and "source" not in t for t in slim.json())
+    assert all(set(t) == set(TaskStatusView.model_fields) for t in slim.json())
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("limit", [0, 10_001])
+async def test_list_tasks_rejects_out_of_range_limit(
+    no_checkers: None, limit: int
+) -> None:
+    runtime, _ = build_runtime()
+    async with _client(runtime) as ac:
+        resp = await ac.get(f"{PREFIX}/tasks", params={"limit": limit})
+    assert resp.status_code == 422
 
 
 @pytest.mark.anyio

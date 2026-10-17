@@ -244,7 +244,7 @@ scripts/dev/            compile_protos, sync_requirements, check_env_examples
   `(node_alias, alias)` and lasts until it is uncordoned, independent of any
   worker's lifecycle, so it also applies to a worker that registers under the
   key later.
-- **Cursor pagination.** List endpoints accept `limit` and `before` /
+- **Cursor pagination.** Log queries accept `limit` and `before` /
   `after` cursors. The cursor is an opaque base64 of `(timestamp, id)`;
   do not parse client-side.
 - **Redis channels.** The runtime uses two Redis endpoints (separate instances in the

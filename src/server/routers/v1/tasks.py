@@ -31,6 +31,7 @@ from ...registries.worker import WorkerRegistry
 from ...schemas.common import OkResponse
 from ...schemas.logs import LogEntry, LogEvent, LogQueryResponse
 from ...schemas.task import TaskStatusView
+from ...task.models import task_order
 from ...task.runtime import TaskInfo, TaskRuntime
 from ...utils.misc import filter_models_by_queries
 
@@ -91,7 +92,7 @@ def _sanitize_latest_update(info: TaskInfo) -> None:
 @router.get(
     "",
     summary="List tasks",
-    description="List all tasks.",
+    description="List tasks ordered by submission, oldest first.",
     response_description="List of task details.",
     response_model=list[TaskInfo] | list[TaskStatusView],
 )
@@ -99,7 +100,7 @@ async def list_tasks(
     request: Request,
     view: TaskView = _VIEW_QUERY,
     limit: int | None = Query(
-        None, ge=1, description="Return at most this many tasks (after filtering)."
+        None, ge=1, le=10_000, description="Return only the newest this many tasks."
     ),
     principal: PrincipalContext = Depends(authenticate_connection),
     runtime: TaskRuntime = Depends(get_runtime),
@@ -117,10 +118,9 @@ async def list_tasks(
         tasks = filter_models_by_queries(tasks, remaining)
         if allowed is not None:
             tasks = [task for task in tasks if task.task_id in allowed]
+        tasks.sort(key=task_order)
         if limit is not None:
-            # `limit` used to be ignored (an unknown filter key), so a client
-            # asking for 100 tasks got every task: 240+ MB on a busy cluster.
-            tasks = tasks[:limit]
+            tasks = tasks[-limit:]
         for task in tasks:
             _sanitize_latest_update(task)
         if view == "status":
