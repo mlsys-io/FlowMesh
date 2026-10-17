@@ -89,13 +89,15 @@ restart safe:
   for a dead one and its tasks are not needlessly requeued.
 
 A workflow with a durable record the server cannot read on startup (its workflow
-record, its schedule, or a task state that is missing or damaged) fails instead
-of being restored, and every other workflow is restored as usual. Each of its
-pending tasks fails, with `state_unreadable` or with an error naming the failed
-task that blocks it, while its in-flight tasks finish as usual. The server logs each unreadable key at
-ERROR; inspect it, then repair it or rename it aside. Until then, an unreadable
-workflow record also fails `GET /workflows` and skips the startup reconcile of
-plugin resource records.
+record, its schedule, or a task state that is missing or damaged) fails its
+pending tasks and each task whose state is unreadable, while every other
+workflow is restored as usual. A pending task fails with `state_unreadable` or
+with an error naming the failed task that blocks it. The workflow's in-flight
+tasks finish as usual, so a workflow with no other unfinished task ends with
+their outcome. The server logs each unreadable key at ERROR; inspect it, then
+repair it or rename it aside. Until then, an unreadable workflow record also
+fails `GET /workflows` and skips the startup reconcile of plugin resource
+records.
 
 Rehydration runs inside the ASGI lifespan **before it yields**, so the server
 does not accept traffic (and its healthcheck does not pass) until scheduling

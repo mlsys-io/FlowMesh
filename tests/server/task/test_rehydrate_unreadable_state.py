@@ -205,6 +205,59 @@ async def test_unreadable_schedule_resumes_at_the_first_unfinished_epoch(
 
 
 @pytest.mark.anyio
+async def test_unreadable_schedule_with_only_in_flight_tasks_finishes_with_them(
+    server: fakeredis.FakeServer,
+    raw: fakeredis.FakeRedis,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    previous, workflow_id, ids, healthy = await _two_workflows(server)
+    previous.mark_dispatched(ids["a"], _WORKER)
+    previous.mark_succeeded(ids["a"], "wkr-1", {}, "2026-06-01T00:00:00Z")
+    previous.mark_dispatched(ids["b"], _WORKER)
+    _corrupt(raw, workflow_sched_key(workflow_id), _flip_high_bit)
+
+    registry = _registry(server)
+    runtime = _runtime(registry)
+    with caplog.at_level(logging.ERROR):
+        assert await runtime.rehydrate() == 1
+
+    assert f"Left workflow {workflow_id} to finish its in-flight tasks" in caplog.text
+    assert f"Failed workflow {workflow_id}" not in caplog.text
+    workflow = await registry.get_workflow_async(workflow_id)
+    assert workflow is not None and workflow.status == WorkflowStatus.DISPATCHED
+    _assert_healthy_restored(runtime, healthy)
+
+    runtime.mark_succeeded(ids["b"], "wkr-1", {}, "2026-06-01T00:00:00Z")
+    workflow = await registry.get_workflow_async(workflow_id)
+    assert workflow is not None and workflow.status == WorkflowStatus.DONE
+
+
+@pytest.mark.anyio
+async def test_unreadable_schedule_of_a_finished_workflow_leaves_it_done(
+    server: fakeredis.FakeServer,
+    raw: fakeredis.FakeRedis,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    previous, workflow_id, ids, healthy = await _two_workflows(server)
+    for node in ("a", "b"):
+        previous.mark_dispatched(ids[node], _WORKER)
+        previous.mark_succeeded(ids[node], "wkr-1", {}, "2026-06-01T00:00:00Z")
+    _corrupt(raw, workflow_sched_key(workflow_id), _flip_high_bit)
+
+    registry = _registry(server)
+    runtime = _runtime(registry)
+    with caplog.at_level(logging.ERROR):
+        assert await runtime.rehydrate() == 1
+
+    assert workflow_sched_key(workflow_id) in caplog.text
+    assert f"Failed workflow {workflow_id}" not in caplog.text
+    assert f"Left workflow {workflow_id}" not in caplog.text
+    workflow = await registry.get_workflow_async(workflow_id)
+    assert workflow is not None and workflow.status == WorkflowStatus.DONE
+    _assert_healthy_restored(runtime, healthy)
+
+
+@pytest.mark.anyio
 async def test_dependency_outside_the_workflow_fails_its_workflow(
     server: fakeredis.FakeServer, raw: fakeredis.FakeRedis
 ) -> None:

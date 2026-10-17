@@ -345,9 +345,10 @@ class TaskRuntime:
         the replayed task-event stream, and genuinely departed workers are recovered by
         the watchdog. Returns the number of workflows restored.
 
-        A workflow with a durable record that cannot be read is failed instead of
-        restored, as ``_fail_unreadable_workflow_async`` describes; every other
-        workflow is restored as usual.
+        A workflow with a durable record that cannot be read has its pending and
+        unreadable tasks failed while its in-flight tasks finish, as
+        ``_fail_unreadable_workflow_async`` describes; every other workflow is
+        restored as usual.
         """
         workflow_ids = await self._workflow_registry.get_workflow_ids_async()
         rehydrated_at = time.time()
@@ -416,11 +417,10 @@ class TaskRuntime:
                     workflow_id, tasks, sched, rehydrated_at
                 )
                 self._cv.notify_all()
-            if unreadable:
-                await self._fail_unreadable_workflow_async(workflow_id, tasks)
-                failed += 1
-            else:
+            if not unreadable:
                 restored += 1
+            elif await self._fail_unreadable_workflow_async(workflow_id, tasks):
+                failed += 1
         if restored:
             self._logger.info("Rehydrated %d workflow(s) from durable state", restored)
         if failed:
@@ -439,26 +439,27 @@ class TaskRuntime:
 
     async def _fail_unreadable_workflow_async(
         self, workflow_id: str, tasks: Sequence[PersistedTask]
-    ) -> None:
-        """Fail a workflow that has a durable record that cannot be read.
+    ) -> bool:
+        """Fail the pending and unreadable tasks of a workflow that has a durable
+        record that cannot be read, and return whether any task failed.
 
         Its readable PENDING tasks fail with ``state_unreadable``, taking their
         dependents with them as any failure does. Its in-flight tasks keep running
-        and finish as usual. Every other unfinished task, including each one whose
-        state could not be read, has no record left to fail, so its id moves from the
+        and finish as usual, so a workflow with no other unfinished task ends with
+        their outcome. Every other unfinished task, including each one whose state
+        could not be read, has no record left to fail, so its id moves from the
         workflow's remaining set to its failed set directly.
         """
-        self._logger.error(
-            "Failing workflow %s: its durable state could not be read", workflow_id
-        )
         finished_at = now_iso()
         in_flight: set[str] = set()
+        failed_any = False
         for persisted in tasks:
             record = persisted.record
             if record.status == TaskStatus.PENDING:
                 self.mark_failed(
                     record.task_id, None, {}, finished_at, error=_STATE_UNREADABLE
                 )
+                failed_any = True
             elif record.status not in TERMINAL_TASK_STATUSES:
                 in_flight.add(record.task_id)
         try:
@@ -474,11 +475,23 @@ class TaskRuntime:
                 "tasks cannot be listed",
                 workflow_id,
             )
-            return
-        if stranded := remaining - in_flight:
-            await self._workflow_registry.commit_transition_async(
-                workflow_id, failed=sorted(stranded)
+        else:
+            if stranded := remaining - in_flight:
+                await self._workflow_registry.commit_transition_async(
+                    workflow_id, failed=sorted(stranded)
+                )
+                failed_any = True
+        if failed_any:
+            self._logger.error(
+                "Failed workflow %s: its durable state could not be read", workflow_id
             )
+        elif in_flight:
+            self._logger.error(
+                "Left workflow %s to finish its in-flight tasks: its durable state "
+                "could not be read",
+                workflow_id,
+            )
+        return failed_any
 
     async def _load_task_states_async(
         self,
