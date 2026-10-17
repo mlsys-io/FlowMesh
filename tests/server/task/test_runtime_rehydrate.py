@@ -269,25 +269,6 @@ async def test_requeued_task_drops_its_previous_attempt_s_update() -> None:
 
 
 @pytest.mark.anyio
-async def test_task_records_are_detached_from_the_runtime() -> None:
-    runtime = _runtime(FakeWorkflowRegistry())
-    _, ids = await _register(runtime, GRAPH)
-    a = ids["a"]
-    runtime.mark_dispatched(a, cast(Any, SimpleNamespace(id="wkr-9", node_id="nde-1")))
-    runtime.mark_updated(a, {"ssh": {"mode": "forward", "port": 32000}})
-
-    records = runtime.task_records()
-    await _register(runtime, GRAPH)
-    live = runtime.get_record(a)
-    assert live is not None and live.latest_update is not None
-    live.latest_update["ssh"]["port"] = 32001
-
-    assert {r.task_id for r in records} == set(ids.values())
-    snapshot = next(r for r in records if r.task_id == a)
-    assert snapshot.latest_update == {"ssh": {"mode": "forward", "port": 32000}}
-
-
-@pytest.mark.anyio
 async def test_rehydrate_restores_epoch_frontier() -> None:
     registry = FakeWorkflowRegistry()
     runtime = _runtime(registry)

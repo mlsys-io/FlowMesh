@@ -232,7 +232,7 @@ class PortForwardService:
                 task_id,
             )
             return
-        forward_input = dict(endpoint)
+        forward_input = endpoint.copy()
         # A serve endpoint is registered under its task id and does not publish it.
         forward_input.setdefault("session_id", task_id)
         registration = _Registration()

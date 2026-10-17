@@ -1705,11 +1705,6 @@ class TaskRuntime:
     def tasks(self) -> dict[str, TaskRecord]:
         return self._tasks
 
-    def task_records(self) -> list[TaskRecord]:
-        """Copy every task record, detached, at one moment under the lock."""
-        with self._lock:
-            return [record.model_copy(deep=True) for record in self._tasks.values()]
-
     def recover_tasks_for_worker(self, worker_id: str) -> list[str]:
         """
         Move DISPATCHED tasks assigned to a departed worker back to the ready queue.
