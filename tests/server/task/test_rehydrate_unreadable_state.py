@@ -29,6 +29,8 @@ from tests.server.task.test_runtime_rehydrate import (
     _WorkerRegistryStub,
 )
 
+_WORKER = cast(Any, SimpleNamespace(id="wkr-1", node_id="nde-1"))
+
 
 @pytest.fixture
 def server() -> fakeredis.FakeServer:
@@ -141,9 +143,7 @@ async def test_unreadable_schedule_fails_its_workflow_and_lets_in_flight_finish(
     server: fakeredis.FakeServer, raw: fakeredis.FakeRedis
 ) -> None:
     previous, workflow_id, ids, healthy = await _two_workflows(server)
-    previous.mark_dispatched(
-        ids["a"], cast(Any, SimpleNamespace(id="wkr-1", node_id="nde-1"))
-    )
+    previous.mark_dispatched(ids["a"], _WORKER)
     _corrupt(raw, workflow_sched_key(workflow_id), _flip_high_bit)
 
     registry = _registry(server)
@@ -170,9 +170,7 @@ async def test_in_flight_task_of_failed_workflow_is_retried_as_usual(
     server: fakeredis.FakeServer, raw: fakeredis.FakeRedis
 ) -> None:
     previous, workflow_id, ids, _ = await _two_workflows(server)
-    previous.mark_dispatched(
-        ids["a"], cast(Any, SimpleNamespace(id="wkr-1", node_id="nde-1"))
-    )
+    previous.mark_dispatched(ids["a"], _WORKER)
     _corrupt(raw, workflow_sched_key(workflow_id), _flip_high_bit)
 
     runtime = _runtime(_registry(server))
@@ -183,6 +181,27 @@ async def test_in_flight_task_of_failed_workflow_is_retried_as_usual(
     assert runtime.requeue(ids["a"])
     record_b = runtime.get_record(ids["b"])
     assert record_b is not None and record_b.status == TaskStatus.FAILED
+
+
+@pytest.mark.anyio
+async def test_unreadable_schedule_resumes_at_the_first_unfinished_epoch(
+    server: fakeredis.FakeServer, raw: fakeredis.FakeRedis
+) -> None:
+    previous = _runtime(_registry(server))
+    workflow_id, ids = await _register(previous, EPOCH_GRAPH)
+    for node in ("a", "b"):
+        previous.mark_dispatched(ids[node], _WORKER)
+        previous.mark_succeeded(ids[node], "wkr-1", {}, "2026-06-01T00:00:00Z")
+    previous.mark_dispatched(ids["c"], _WORKER)
+    _corrupt(raw, workflow_sched_key(workflow_id), _flip_high_bit)
+
+    runtime = _runtime(_registry(server))
+    await runtime.rehydrate()
+    assert runtime.recover_tasks_for_worker("wkr-1") == [ids["c"]]
+
+    runtime.mark_pending(ids["c"], increment_retry=True)
+    assert runtime.requeue(ids["c"])
+    assert runtime.next_ready(threading.Event(), timeout=0.01) == ids["c"]
 
 
 @pytest.mark.anyio

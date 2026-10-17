@@ -564,7 +564,20 @@ class TaskRuntime:
     ) -> None:
         terminal = TERMINAL_TASK_STATUSES
         in_epoch_order = sched.in_epoch_order if sched else False
-        frontier = sched.epoch_frontier if sched else 0
+        if sched is not None:
+            frontier = sched.epoch_frontier
+        else:
+            # The frontier only advances past an epoch whose tasks all succeeded, so
+            # without a schedule it rests at the first epoch with a task not DONE.
+            frontier = min(
+                (
+                    persisted.epoch_index
+                    for persisted in tasks
+                    if persisted.epoch_index is not None
+                    and persisted.record.status != TaskStatus.DONE
+                ),
+                default=0,
+            )
         epoch_members: dict[int, set[str]] = defaultdict(set)
 
         for persisted in tasks:
