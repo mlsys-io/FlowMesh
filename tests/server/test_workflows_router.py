@@ -7,6 +7,7 @@ from unittest.mock import MagicMock
 import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
+from lumid_hooks import ResourceRef
 
 from server.app_state import get_workflow_registry
 from server.auth.security import PrincipalContext, authenticate_connection
@@ -16,6 +17,33 @@ from server.routers.v1 import workflows as workflows_router
 from server.schemas.workflow import WorkflowStatusView
 
 PREFIX = "/api/v1"
+
+
+class _ScopedChecker:
+    """Scopes workflow access to a fixed set of workflow ids."""
+
+    name = "scoped"
+
+    def __init__(self, allowed: frozenset[str]) -> None:
+        self._allowed = allowed
+
+    async def require(
+        self,
+        principal: PrincipalContext,
+        resource: ResourceRef,
+        action: str,
+        logger: logging.Logger,
+    ) -> None:
+        return None
+
+    async def accessible_ids(
+        self,
+        principal: PrincipalContext,
+        kind: str,
+        action: str,
+        logger: logging.Logger,
+    ) -> frozenset[str] | None:
+        return self._allowed
 
 
 class _StubRegistry:
@@ -39,14 +67,14 @@ def _workflow(
 ) -> Workflow:
     return Workflow(
         workflow_id=workflow_id,
-        task_ids=["tsk-a", "tsk-b", "tsk-c", "tsk-d"],
+        task_ids=[f"tsk-{i}" for i in range(10)],
         submitted_at=submitted_at,
         updated_at="2026-10-12T10:05:00+00:00",
         status=status,
-        dispatched_tasks=["tsk-b"],
-        completed_tasks=["tsk-a"],
-        failed_tasks=[],
-        cancelled_tasks=["tsk-d"],
+        dispatched_tasks=["tsk-0"],
+        completed_tasks=["tsk-1", "tsk-2"],
+        failed_tasks=["tsk-3", "tsk-4", "tsk-5"],
+        cancelled_tasks=["tsk-6", "tsk-7", "tsk-8", "tsk-9"],
     )
 
 
@@ -95,7 +123,7 @@ async def test_get_workflow_status_view_counts_tasks(no_checkers: None) -> None:
         s["completed_count"],
         s["failed_count"],
         s["cancelled_count"],
-    ) == (4, 1, 1, 0, 1)
+    ) == (10, 1, 2, 3, 4)
 
 
 @pytest.mark.anyio
@@ -135,6 +163,21 @@ async def test_list_workflows_limit_applies_after_filters(no_checkers: None) -> 
         )
 
     assert [w["workflow_id"] for w in resp.json()] == ["wfl-a"]
+
+
+@pytest.mark.anyio
+async def test_list_workflows_limit_applies_after_permissions(
+    no_checkers: None,
+) -> None:
+    older = _workflow("wfl-a", submitted_at="2026-10-12T09:00:00+00:00")
+    newer = _workflow("wfl-b", submitted_at="2026-10-12T10:00:00+00:00")
+    hidden = _workflow("wfl-c", submitted_at="2026-10-12T11:00:00+00:00")
+
+    PERMISSION_CHECKERS.append(_ScopedChecker(frozenset({"wfl-a", "wfl-b"})))
+    async with _client(older, newer, hidden) as ac:
+        resp = await ac.get(f"{PREFIX}/workflows", params={"limit": 1})
+
+    assert [w["workflow_id"] for w in resp.json()] == ["wfl-b"]
 
 
 @pytest.mark.anyio

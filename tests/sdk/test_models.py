@@ -293,13 +293,25 @@ class TestWorkflowModels:
         assert (view.task_count, view.completed_count, view.failed_count) == (2, 2, 0)
 
     def test_workflow_status_view_counts_full_workflow(self) -> None:
-        view = WorkflowStatusView.model_validate(_dump(_SRV_WORKFLOW))
-        assert view.status == "DONE"
-        assert (view.task_count, view.dispatched_count, view.cancelled_count) == (
-            2,
-            2,
-            0,
+        workflow = _SRV_WORKFLOW.model_copy(
+            update={
+                "task_ids": [f"t-{i}" for i in range(10)],
+                "dispatched_tasks": ["t-0"],
+                "completed_tasks": ["t-1", "t-2"],
+                "failed_tasks": ["t-3", "t-4", "t-5"],
+                "cancelled_tasks": ["t-6", "t-7", "t-8", "t-9"],
+            }
         )
+        view = WorkflowStatusView.model_validate(_dump(workflow))
+        assert view.status == "DONE"
+        counts = (
+            view.task_count,
+            view.dispatched_count,
+            view.completed_count,
+            view.failed_count,
+            view.cancelled_count,
+        )
+        assert counts == (10, 1, 2, 3, 4)
 
     def test_workflow_submit_response(self) -> None:
         server = SrvWorkflowSubmitResponse(
